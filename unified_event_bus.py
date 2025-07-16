@@ -17,10 +17,13 @@ from .automated_reviewer import AutomatedReviewer
 
 logger = logging.getLogger(__name__)
 
+
 class EventBus(Protocol):
     """Protocol for event bus implementations."""
 
-    def subscribe(self, topic: str, callback: Callable[[str, object], None]) -> None:  # pragma: no cover - interface
+    def subscribe(
+        self, topic: str, callback: Callable[[str, object], None]
+    ) -> None:  # pragma: no cover - interface
         ...
 
     def subscribe_async(
@@ -28,7 +31,9 @@ class EventBus(Protocol):
     ) -> None:  # pragma: no cover - interface
         ...
 
-    def publish(self, topic: str, event: object) -> None:  # pragma: no cover - interface
+    def publish(
+        self, topic: str, event: object
+    ) -> None:  # pragma: no cover - interface
         ...
 
 
@@ -46,9 +51,17 @@ class UnifiedEventBus:
         reviewer: Optional[AutomatedReviewer] = None,
     ) -> None:
         self._subs: Dict[str, List[Callable[[str, object], None]]] = defaultdict(list)
-        self._async_subs: Dict[str, List[Callable[[str, object], Awaitable[None]]]] = defaultdict(list)
+        self._async_subs: Dict[str, List[Callable[[str, object], Awaitable[None]]]] = (
+            defaultdict(list)
+        )
         self._lock = Lock()
-        self._loop = loop or asyncio.get_event_loop()
+        self._loop = loop
+        if self._loop is None:
+            try:
+                self._loop = asyncio.get_event_loop()
+            except RuntimeError:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
         self._persist: Optional[sqlite3.Connection] = None
         self._network: Optional[EventBus] = None
         self._rethrow_errors = rethrow_errors
@@ -82,7 +95,9 @@ class UnifiedEventBus:
         with self._lock:
             self._subs[topic].append(callback)
 
-    def subscribe_async(self, topic: str, callback: Callable[[str, object], Awaitable[None]]) -> None:
+    def subscribe_async(
+        self, topic: str, callback: Callable[[str, object], Awaitable[None]]
+    ) -> None:
         """Register an async callback for *topic*."""
         if self._network:
             self._network.subscribe_async(topic, callback)
@@ -165,6 +180,7 @@ class UnifiedEventBus:
                     raise
         for acb in async_callbacks:
             if self._loop:
+
                 async def _run(acb=acb) -> None:
                     try:
                         await acb(topic, event)
@@ -174,6 +190,7 @@ class UnifiedEventBus:
                             self.callback_errors.append(exc)
                         if self._rethrow_errors:
                             raise
+
                 try:
                     self._loop.create_task(_run())
                 except Exception as exc:
