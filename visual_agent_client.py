@@ -8,6 +8,8 @@ import time
 import logging
 from typing import Iterable, Dict, Any
 
+from .audit_logger import log_event
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -42,6 +44,7 @@ class VisualAgentClient:
         self.token_refresh_cmd = token_refresh_cmd or os.getenv(
             "VISUAL_TOKEN_REFRESH_CMD"
         )
+        self.open_run_id: str | None = None
 
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
@@ -77,6 +80,14 @@ class VisualAgentClient:
             return False, "requests unavailable"
 
         def sender() -> tuple[bool, str]:
+            if self.open_run_id is None:
+                try:
+                    self.open_run_id = log_event(
+                        "visual_agent_run",
+                        {"url": base, "prompt": prompt, "status": "started"},
+                    )
+                except Exception:
+                    self.open_run_id = None
             resp = requests.post(
                 f"{base}/run",
                 headers={"x-token": self.token},
@@ -143,6 +154,19 @@ class VisualAgentClient:
             last_reason = reason
         raise RuntimeError(f"visual agent revert failed: {last_reason}")
 
+    # ------------------------------------------------------------------
+    def resolve_run_log(self, outcome: str) -> None:
+        """Mark the most recent /run call as resolved with ``outcome``."""
+        if not self.open_run_id:
+            return
+        try:
+            log_event(
+                "visual_agent_run_result",
+                {"run_id": self.open_run_id, "outcome": outcome},
+            )
+        finally:
+            self.open_run_id = None
+
 
 class VisualAgentClientStub:
     """Fallback client used when requests or the real client is unavailable."""
@@ -150,12 +174,16 @@ class VisualAgentClientStub:
     def __init__(self, *a: Any, **kw: Any) -> None:
         logger.info("VisualAgentClientStub active")
         self.urls: list[str] = []
+        self.open_run_id: str | None = None
 
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
         return {"choices": [{"message": {"content": ""}}]}
 
     def revert(self) -> bool:
         return False
+
+    def resolve_run_log(self, outcome: str) -> None:
+        self.open_run_id = None
 
 
 __all__ = ["VisualAgentClient", "VisualAgentClientStub"]
