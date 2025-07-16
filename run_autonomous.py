@@ -16,11 +16,12 @@ _pkg_dir = Path(__file__).resolve().parent
 if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
     sys.path.insert(0, str(_pkg_dir.parent))
 elif "menace" not in sys.modules:
-    import types
+    import importlib.util
 
-    menace_pkg = types.ModuleType("menace")
-    menace_pkg.__path__ = [str(_pkg_dir)]
+    spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
+    menace_pkg = importlib.util.module_from_spec(spec)
     sys.modules["menace"] = menace_pkg
+    spec.loader.exec_module(menace_pkg)
 
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies
