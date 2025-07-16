@@ -18,12 +18,19 @@ class MetricsDashboard:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.app = Flask(__name__)
         self.history_file = Path(history_file)
+        self.app.add_url_rule("/", "index", self.index)
+        self.app.add_url_rule("/dashboard", "dashboard", self.index)
         self.app.add_url_rule("/metrics", "metrics", self.metrics)
         self.app.add_url_rule("/roi", "roi", self.roi)
         self.app.add_url_rule("/metrics/<name>", "metric_series", self.metric_series)
         self.app.add_url_rule(
             "/plots/predictions.png", "plot_predictions", self.plot_predictions
         )
+
+    # ------------------------------------------------------------------
+    def index(self) -> tuple[str, int]:
+        msg = "Metrics dashboard running. Access /roi or /metrics for data."
+        return msg, 200
 
     # ------------------------------------------------------------------
     def metrics(self) -> tuple[str, int]:
