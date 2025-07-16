@@ -108,7 +108,7 @@ def main(argv: List[str] | None = None) -> None:
     _check_dependencies()
 
     if args.dashboard_port:
-        from metrics_dashboard import MetricsDashboard
+        from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
 
         history_file = (
