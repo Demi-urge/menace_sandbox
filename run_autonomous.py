@@ -15,6 +15,12 @@ import sys
 _pkg_dir = Path(__file__).resolve().parent
 if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
     sys.path.insert(0, str(_pkg_dir.parent))
+elif "menace" not in sys.modules:
+    import types
+
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = [str(_pkg_dir)]
+    sys.modules["menace"] = menace_pkg
 
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies
