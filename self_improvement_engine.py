@@ -338,11 +338,15 @@ class SelfImprovementEngine:
         try:
             state = self._policy_state() if self.policy else (0,) * 15
             predicted = self.policy.score(state) if self.policy else 0.0
-            self.logger.info("cycle start", extra={"energy": energy, "predicted_roi": predicted})
+            self.logger.info(
+                "cycle start",
+                extra={"energy": energy, "predicted_roi": predicted, "state": state},
+            )
             before_roi = 0.0
             if self.capital_bot:
                 try:
                     before_roi = self.capital_bot.profit()
+                    self.logger.info("initial ROI", extra={"value": before_roi})
                 except Exception as exc:
                     self.logger.exception("profit lookup failed: %s", exc)
                     before_roi = 0.0
@@ -360,29 +364,39 @@ class SelfImprovementEngine:
                             * 5
                         )
                     )
+                    self.logger.info("available energy", extra={"value": energy})
                 except Exception as exc:
                     self.logger.exception("energy calculation failed: %s", exc)
                     energy = 1
             if self.policy:
                 try:
                     energy = max(1, int(round(energy * (1 + max(0.0, predicted)))))
+                    self.logger.info("policy adjusted energy", extra={"value": energy})
                 except Exception as exc:
                     self.logger.exception("policy energy adjustment failed: %s", exc)
             model_id = bootstrap()
+            self.logger.info("model bootstrapped", extra={"model_id": model_id})
             self.info_db.set_current_model(model_id)
             self._record_state()
             if self.learning_engine:
                 try:
+                    self.logger.info("training learning engine")
                     self.learning_engine.train()
                     self._evaluate_learning()
                 except Exception as exc:
                     self.logger.exception("learning engine run failed: %s", exc)
+            self.logger.info("running automation pipeline", extra={"energy": energy})
             result = self.pipeline.run(self.bot_name, energy=energy)
+            self.logger.info("pipeline complete", extra={"roi": getattr(result.roi, 'roi', 0.0)})
             trending_topic = getattr(result, "trending_topic", None)
             patch_id = None
             reverted = False
             if self.self_coding_engine and result.package:
                 try:
+                    self.logger.info(
+                        "applying helper patch",
+                        extra={"trending_topic": trending_topic},
+                    )
                     patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                         Path("auto_helpers.py"),
                         "helper",
@@ -412,12 +426,16 @@ class SelfImprovementEngine:
             if self.error_bot:
                 try:
                     self.error_bot.auto_patch_recurrent_errors()
+                    self.logger.info("error auto-patching complete")
                 except Exception as exc:
                     self.logger.exception("auto patch recurrent errors failed: %s", exc)
             after_roi = before_roi
             if self.capital_bot:
                 try:
                     after_roi = self.capital_bot.profit()
+                    self.logger.info(
+                        "post-cycle ROI", extra={"before": before_roi, "after": after_roi}
+                    )
                 except Exception as exc:
                     self.logger.exception("post-cycle profit lookup failed: %s", exc)
                     after_roi = before_roi
@@ -512,6 +530,15 @@ class SelfImprovementEngine:
                         trending_topic=trending_topic,
                         reverted=reverted,
                     )
+                    self.logger.info(
+                        "cycle metrics",
+                        extra={
+                            "patch_success": patch_rate,
+                            "roi_delta": after_roi - before_roi,
+                            "roi_trend": trend,
+                            "anomaly": anomaly,
+                        },
+                    )
                     if self.capital_bot:
                         try:
                             self.capital_bot.log_evolution_event(
@@ -528,6 +555,9 @@ class SelfImprovementEngine:
                 try:
                     next_state = self._policy_state()
                     self.policy.update(state, after_roi - before_roi, next_state)
+                    self.logger.info(
+                        "policy updated", extra={"reward": after_roi - before_roi}
+                    )
                 except Exception as exc:
                     self.logger.exception("policy update failed: %s", exc)
             self.logger.info("cycle complete", extra={"roi": roi_value})
