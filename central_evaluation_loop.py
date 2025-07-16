@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""Central evaluation loop for Security AI.
+
+This script continuously monitors Menace AI actions logged in
+/mnt/shared/menace_logs/actions.jsonl, evaluates them using the immutable
+kpi_reward_core module, and dispatches rewards via reward_dispatcher.
+Audit logs are written locally for every processed action.
+
+The loop is designed to run as a long-lived daemon that enforces safety
+without requiring network access or third-party dependencies.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import time
+from typing import Any, List
+
+from dotenv import load_dotenv
+
+from .kpi_reward_core import compute_reward, explain_reward
+from . import reward_dispatcher
+
+load_dotenv()
+
+# Paths for input logs and output records
+ACTIONS_FILE = os.getenv("ACTIONS_FILE", "/mnt/shared/menace_logs/actions.jsonl")
+CURSOR_FILE = os.getenv(
+    "CURSOR_FILE", os.path.join(os.path.dirname(__file__), "last_processed.txt")
+)
+AUDIT_DIR = os.getenv(
+    "AUDIT_DIR", os.path.join(os.path.dirname(__file__), "audit_logs")
+)
+
+# Interval between scans (seconds)
+SLEEP_INTERVAL = float(os.getenv("SLEEP_INTERVAL", "5"))
+FAILURE_THROTTLE_SLEEP = float(os.getenv("FAILURE_THROTTLE_SLEEP", "60"))
+
+
+def setup_logging() -> None:
+    """Configure application logging."""
+    os.makedirs(AUDIT_DIR, exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(AUDIT_DIR, "security_ai.log")),
+            logging.StreamHandler(),
+        ],
+    )
+
+
+def load_cursor() -> int:
+    """Return last processed byte offset."""
+    try:
+        with open(CURSOR_FILE, "r", encoding="utf-8") as fh:
+            return int(fh.read().strip() or 0)
+    except FileNotFoundError:
+        return 0
+    except Exception as exc:
+        logging.error("Failed to load cursor: %s", exc)
+        return 0
+
+
+def save_cursor(offset: int) -> None:
+    """Persist the current byte offset."""
+    try:
+        with open(CURSOR_FILE, "w", encoding="utf-8") as fh:
+            fh.write(str(offset))
+    except Exception as exc:
+        logging.error("Failed to save cursor: %s", exc)
+
+
+def flag_risky_behaviour(action: dict[str, Any]) -> List[str]:
+    """Return list of flags detected in *action*."""
+    flags: List[str] = []
+    joined = json.dumps(action).lower()
+    if "bypass" in joined:
+        flags.append("bypass_attempt")
+    if any(term in joined for term in ["darkweb", "malware", "phishing"]):
+        flags.append("risky_domain")
+    return flags
+
+
+def _audit_file_for_today() -> str:
+    date_str = time.strftime("%Y-%m-%d")
+    return os.path.join(AUDIT_DIR, f"audit_{date_str}.jsonl")
+
+
+def append_audit(entry: dict[str, Any]) -> None:
+    """Append an audit record."""
+    try:
+        with open(_audit_file_for_today(), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception as exc:
+        logging.error("Failed to write audit entry: %s", exc)
+
+
+def _dispatch_with_retry(action: dict[str, Any], max_attempts: int = 3) -> None:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            reward_dispatcher.dispatch_reward(action)
+            return
+        except Exception as exc:  # pragma: no cover - rarely exercised in tests
+            if attempt == max_attempts:
+                raise
+            backoff = 2 ** (attempt - 1)
+            logging.warning(
+                "Dispatch attempt %s failed: %s; retrying in %s s",
+                attempt,
+                exc,
+                backoff,
+            )
+            time.sleep(backoff)
+
+
+def process_action(raw_line: str) -> bool:
+    """Evaluate a single log entry."""
+    try:
+        action = json.loads(raw_line)
+    except json.JSONDecodeError as exc:
+        logging.error("Malformed log entry: %s", exc)
+        append_audit({
+            "timestamp": int(time.time()),
+            "error": "malformed_entry",
+            "details": str(exc),
+            "raw": raw_line.strip(),
+        })
+        return False
+
+    flags = flag_risky_behaviour(action)
+
+    try:
+        reward = compute_reward(action)
+        explanation = explain_reward(action)
+    except Exception as exc:
+        logging.error("Reward computation failed: %s", exc)
+        append_audit(
+            {
+                "timestamp": int(time.time()),
+                "error": "reward_failure",
+                "details": str(exc),
+                "action": action,
+            }
+        )
+        return False
+
+    dispatch_error = None
+    try:
+        _dispatch_with_retry(action)
+    except Exception as exc:
+        dispatch_error = str(exc)
+        logging.error("Reward dispatch failed: %s", exc)
+
+    audit_record = {
+        "timestamp": int(time.time()),
+        "reward": reward,
+        "explanation": explanation,
+        "action": action,
+        "flags": flags,
+    }
+    if dispatch_error:
+        audit_record["dispatch_error"] = dispatch_error
+    append_audit(audit_record)
+    return dispatch_error is None
+
+
+
+def main_loop() -> None:
+    """Run the continuous evaluation loop."""
+    setup_logging()
+    logging.info("Starting central evaluation loop")
+
+    offset = load_cursor()
+    failures = 0
+    while True:
+        try:
+            if not os.path.exists(ACTIONS_FILE):
+                time.sleep(SLEEP_INTERVAL)
+                continue
+
+            with open(ACTIONS_FILE, "r", encoding="utf-8") as fh:
+                fh.seek(offset)
+                for line in fh:
+                    current_pos = fh.tell()
+                    if not line.strip():
+                        offset = current_pos
+                        continue
+                    success = process_action(line)
+                    failures = 0 if success else failures + 1
+                    if failures > 20:
+                        logging.warning(
+                            "Throttling after %s consecutive failures", failures
+                        )
+                        time.sleep(FAILURE_THROTTLE_SLEEP)
+                    offset = current_pos
+        except Exception as exc:
+            logging.error("Unexpected error reading actions: %s", exc)
+        finally:
+            save_cursor(offset)
+            time.sleep(SLEEP_INTERVAL)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run Security AI evaluation loop")
+    parser.add_argument("--actions-file", default=ACTIONS_FILE, help="Path to actions log")
+    parser.add_argument("--cursor-file", default=CURSOR_FILE, help="Path to cursor file")
+    parser.add_argument("--audit-dir", default=AUDIT_DIR, help="Audit log directory")
+    parser.add_argument(
+        "--sleep-interval", type=float, default=SLEEP_INTERVAL, help="Sleep seconds"
+    )
+    args = parser.parse_args()
+
+    ACTIONS_FILE = args.actions_file
+    CURSOR_FILE = args.cursor_file
+    AUDIT_DIR = args.audit_dir
+    SLEEP_INTERVAL = args.sleep_interval
+
+    main_loop()

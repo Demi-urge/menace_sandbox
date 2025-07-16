@@ -1,0 +1,11 @@
+ROI for {{ section }} is declining.
+Recent ROI: [{{ history }}]
+ROI deltas: {{ deltas }}
+Top metrics: {{ metrics }}
+{% if synergy_summary %}Synergy summary: {{ synergy_summary }}{% endif %}
+{% if metrics_summary %}Metrics summary: {{ metrics_summary }}{% endif %}
+{% if synergy %}Synergy: {{ synergy }}{% endif %}
+{% if summary %}Purpose: {{ summary }}{% endif %}
+{% if prior %}Earlier ideas: {{ prior }}{% endif %}
+Suggest a concise improvement:
+{{ snippet }}

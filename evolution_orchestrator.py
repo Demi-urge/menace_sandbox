@@ -1,0 +1,541 @@
+from __future__ import annotations
+
+"""Orchestrate system evolution based on metrics and capital signals."""
+
+import logging
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Iterable
+import time
+
+from .data_bot import DataBot
+from .capital_management_bot import CapitalManagementBot
+from .self_improvement_engine import SelfImprovementEngine
+from .system_evolution_manager import SystemEvolutionManager, EvolutionCycleResult
+from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+from .trend_predictor import TrendPredictor, TrendPrediction
+from .bot_creation_bot import BotCreationBot
+from .resource_allocation_optimizer import ResourceAllocationOptimizer
+from .workflow_evolution_bot import WorkflowEvolutionBot
+from .experiment_manager import ExperimentManager
+from .evolution_analysis_bot import EvolutionAnalysisBot
+
+
+@dataclass
+class EvolutionTrigger:
+    """Trigger thresholds for evolution."""
+
+    error_rate: float = 0.1
+    roi_drop: float = -0.1
+    energy_threshold: float = 0.3
+
+
+class EvolutionOrchestrator:
+    """Monitor metrics and coordinate improvement and evolution cycles."""
+
+    def __init__(
+        self,
+        data_bot: DataBot,
+        capital_bot: CapitalManagementBot,
+        improvement_engine: SelfImprovementEngine,
+        evolution_manager: SystemEvolutionManager,
+        *,
+        history_db: EvolutionHistoryDB | None = None,
+        triggers: EvolutionTrigger | None = None,
+        bot_creator: BotCreationBot | None = None,
+        resource_optimizer: ResourceAllocationOptimizer | None = None,
+        workflow_evolver: WorkflowEvolutionBot | None = None,
+        experiment_manager: ExperimentManager | None = None,
+        analysis_bot: EvolutionAnalysisBot | None = None,
+        trend_predictor: TrendPredictor | None = None,
+        predictor: EvolutionPredictor | None = None,
+        multi_predictor: object | None = None,
+        event_bus: UnifiedEventBus | None = None,
+    ) -> None:
+        self.data_bot = data_bot
+        self.capital_bot = capital_bot
+        self.improvement_engine = improvement_engine
+        self.evolution_manager = evolution_manager
+        self.history = history_db or EvolutionHistoryDB()
+        self.triggers = triggers or EvolutionTrigger()
+        self.bot_creator = bot_creator
+        self.resource_optimizer = resource_optimizer
+        self.workflow_evolver = workflow_evolver
+        self.experiment_manager = experiment_manager
+        self.analysis_bot = analysis_bot
+        self.predictor = predictor
+        self.multi_predictor = multi_predictor
+        self.trend_predictor = trend_predictor
+        self.event_bus = event_bus
+        if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
+            try:
+                self.capital_bot.trend_predictor = trend_predictor
+            except Exception:
+                self.logger.exception("failed to set trend predictor")
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("EvolutionOrchestrator")
+        self.prev_roi = self._latest_roi()
+        self._cycles = 0
+        self._last_workflow_benchmark = 0.0
+        self._benchmark_interval = 3600
+        self._workflow_roi_history: dict[str, list[float]] = {}
+        if self.event_bus:
+            try:
+                self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
+            except Exception:
+                self.logger.exception("event bus subscription failed")
+
+    # ------------------------------------------------------------------
+    def _latest_roi(self) -> float:
+        try:
+            df = self.data_bot.db.fetch(limit=50)
+            if getattr(df, "empty", True):
+                return 0.0
+            if hasattr(df, "sum"):
+                revenue = float(df["revenue"].sum())
+                expense = float(df["expense"].sum())
+            else:
+                revenue = sum(r.get("revenue", 0.0) for r in df)
+                expense = sum(r.get("expense", 0.0) for r in df)
+            return revenue - expense
+        except Exception:
+            return 0.0
+
+    def _error_rate(self) -> float:
+        try:
+            df = self.data_bot.db.fetch(limit=50)
+            if getattr(df, "empty", True):
+                return 0.0
+            if hasattr(df, "mean"):
+                return float(df["errors"].mean() or 0.0)
+            return float(sum(r.get("errors", 0.0) for r in df) / len(df))
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    def run_cycle(self) -> None:
+        """Check triggers and run appropriate evolution steps."""
+        if self.analysis_bot and hasattr(self.analysis_bot, "train"):
+            try:
+                self.analysis_bot.train()
+            except Exception:
+                self.logger.exception("analysis training failed")
+        before_roi = self._latest_roi()
+        delta_roi = before_roi - self.prev_roi
+        self.prev_roi = before_roi
+        error_rate = self._error_rate()
+        pred_roi = before_roi
+        pred_err = error_rate
+        if self.trend_predictor:
+            try:
+                pred = self.trend_predictor.predict_future_metrics(3)
+                pred_roi = pred.roi
+                pred_err = pred.errors
+            except Exception:
+                pred_roi = before_roi
+                pred_err = error_rate
+        energy = self.capital_bot.energy_score(
+            load=0.0,
+            success_rate=1.0,
+            deploy_eff=1.0,
+            failure_rate=error_rate,
+        )
+        result_roi = before_roi
+        close = lambda val, thr: abs(val - thr) <= abs(thr) * 0.1
+        candidates: list[str] = []
+        if (
+            error_rate > self.triggers.error_rate
+            or pred_err > self.triggers.error_rate
+            or close(error_rate, self.triggers.error_rate)
+        ):
+            candidates.append("self_improvement")
+        if (
+            delta_roi <= self.triggers.roi_drop
+            or pred_roi - before_roi <= self.triggers.roi_drop
+            or energy < self.triggers.energy_threshold
+            or close(delta_roi, self.triggers.roi_drop)
+            or close(energy, self.triggers.energy_threshold)
+        ):
+            candidates.append("system_evolution")
+        if delta_roi > abs(self.triggers.roi_drop) and self.bot_creator:
+            candidates.append("bot_creation")
+        candidates = list(dict.fromkeys(candidates))
+        predictions: dict[str, float] = {}
+        variances: dict[str, float] = {}
+        sequence: list[str] = []
+        predicted_action_roi = 0.0
+        if self.multi_predictor and hasattr(self.multi_predictor, "predict"):
+            best_score = float("-inf")
+            best_act: str | None = None
+            for cand in candidates:
+                try:
+                    mean, var = self.multi_predictor.predict(cand, before_roi)
+                except Exception:
+                    mean = var = 0.0
+                predictions[cand] = mean
+                variances[cand] = var
+                score = mean - var
+                if score > best_score:
+                    best_score = score
+                    best_act = cand
+                    predicted_action_roi = mean
+            if best_act:
+                sequence = [best_act]
+        else:
+            if self.analysis_bot:
+                for cand in candidates:
+                    try:
+                        predictions[cand] = self.analysis_bot.predict(cand, before_roi)
+                    except Exception:
+                        predictions[cand] = 0.0
+            if self.predictor:
+                for cand in candidates:
+                    try:
+                        val = self.predictor.predict(cand, before_roi)
+                        predictions[cand] = max(predictions.get(cand, 0.0), val)
+                    except Exception:
+                        predictions[cand] = predictions.get(cand, 0.0)
+            if candidates:
+                sequences = [[c] for c in candidates]
+                if self.multi_predictor and len(candidates) > 1:
+                    import itertools
+
+                    for pair in itertools.permutations(candidates, 2):
+                        sequences.append(list(pair))
+                scores: dict[str, float] = {}
+                for seq in sequences:
+                    key = "->".join(seq)
+                    base = sum(predictions.get(a, 0.0) for a in seq)
+                    prob = 1.0
+                    if self.multi_predictor and hasattr(self.multi_predictor, "predict_success"):
+                        try:
+                            prob = float(
+                                self.multi_predictor.predict_success(
+                                    1.0, 1.0, before_roi, 1.0, key
+                                )
+                            )
+                        except Exception:
+                            prob = 1.0
+                    scores[key] = base * prob
+                if scores:
+                    best = max(scores, key=scores.get)
+                    sequence = best.split("->")
+                    predicted_action_roi = scores[best]
+                else:
+                    sequence = [candidates[0]]
+                    predicted_action_roi = predictions.get(sequence[0], 0.0)
+        result_values: list[float] = []
+        trending_topic: str | None = None
+        for act in sequence:
+            if act == "self_improvement":
+                self.logger.info(
+                    "Triggering self improvement due to errors %.2f", error_rate
+                )
+                res = self.improvement_engine.run_cycle()
+                trending_topic = getattr(res, "trending_topic", trending_topic)
+                if res.roi:
+                    result_values.append(res.roi.roi)
+            elif act == "system_evolution":
+                self.logger.info(
+                    "Triggering system evolution due to performance drop %.2f",
+                    delta_roi,
+                )
+                res = self.evolution_manager.run_cycle()
+                trending_topic = getattr(res, "trending_topic", trending_topic)
+                rois = list(res.ga_results.values())
+                if rois:
+                    result_values.append(sum(rois) / len(rois))
+            elif act == "bot_creation":
+                self.logger.info(
+                    "Launching bot creation due to ROI increase %.2f", delta_roi
+                )
+                try:
+                    from .bot_planning_bot import PlanningTask
+                    import asyncio
+
+                    task = PlanningTask(
+                        description="growth",
+                        complexity=1,
+                        frequency=1,
+                        expected_time=1.0,
+                        actions=["run"],
+                    )
+                    asyncio.run(self.bot_creator.create_bots([task]))
+                except Exception as exc:
+                    self.logger.error("bot creation failed: %s", exc)
+        if self.resource_optimizer:
+            try:
+                w_names = self.resource_optimizer.available_workflows()
+                self.resource_optimizer.update_priorities(
+                    self.evolution_manager.bots,
+                    workflows=w_names,
+                    metrics_db=self.data_bot.db,
+                    prune_threshold=0.0,
+                )
+            except Exception:
+                self.logger.exception("resource optimizer update failed")
+
+        if sequence:
+            action_seq = "->".join(sequence)
+            result_roi = (
+                sum(result_values) / len(result_values) if result_values else before_roi
+            )
+            after_roi = self._latest_roi()
+            event = EvolutionEvent(
+                action=action_seq,
+                before_metric=before_roi,
+                after_metric=after_roi,
+                roi=result_roi,
+                predicted_roi=predicted_action_roi,
+                ts=datetime.utcnow().isoformat(),
+                trending_topic=trending_topic,
+            )
+            self.history.add(event)
+            try:
+                eff = bottleneck = 0.0
+                try:
+                    df = self.data_bot.db.fetch(20)
+                    if hasattr(df, "empty"):
+                        if not getattr(df, "empty", True):
+                            eff = float(max(0.0, 100.0 - df["cpu"].mean()))
+                            if "errors" in df.columns:
+                                bottleneck = float(df["errors"].mean())
+                    elif isinstance(df, list) and df:
+                        avg_cpu = sum(r.get("cpu", 0.0) for r in df) / len(df)
+                        eff = float(max(0.0, 100.0 - avg_cpu))
+                        bottleneck = float(
+                            sum(r.get("errors", 0.0) for r in df) / len(df)
+                        )
+                except Exception:
+                    eff = bottleneck = 0.0
+                self.data_bot.log_evolution_cycle(
+                    action_seq,
+                    before_roi,
+                    after_roi,
+                    result_roi,
+                    predicted_action_roi,
+                    roi_delta=after_roi - before_roi,
+                    efficiency=eff,
+                    bottleneck=bottleneck,
+                    trending_topic=trending_topic,
+                )
+                if self.capital_bot:
+                    try:
+                        self.capital_bot.log_evolution_event(
+                            action_seq,
+                            before_roi,
+                            after_roi,
+                        )
+                    except Exception:
+                        self.logger.exception("capital event log failed")
+            except Exception:
+                self.logger.exception("evolution cycle logging failed")
+            try:
+                from .metrics_exporter import evolution_cycle_count
+
+                if evolution_cycle_count:
+                    evolution_cycle_count.inc()
+            except Exception:
+                self.logger.exception("metrics export failed")
+        self._run_bot_experiments()
+        self._run_workflow_experiments()
+        self._cycles += 1
+        if self._cycles % 10 == 0:
+            self._cleanup_workflows()
+        if self.predictor:
+            try:
+                self.predictor.train()
+            except Exception:
+                self.logger.exception("predictor training failed")
+        if self.multi_predictor and hasattr(self.multi_predictor, "train"):
+            try:
+                self.multi_predictor.train()
+            except Exception:
+                self.logger.exception("multi predictor training failed")
+        
+    # ------------------------------------------------------------------
+    def _run_workflow_experiments(self, limit: int = 3) -> None:
+        """Propose alternative workflows and optionally benchmark them."""
+        if not self.workflow_evolver:
+            return
+        try:
+            proposals = list(self.workflow_evolver.propose_rearrangements(limit))
+        except Exception:
+            proposals = []
+        main_wf = None
+        if self.resource_optimizer and (
+            time.time() - self._last_workflow_benchmark >= self._benchmark_interval
+        ):
+            try:
+                names = self.resource_optimizer.available_workflows()
+                if names:
+                    main_wf = names[0]
+                    if main_wf not in proposals:
+                        proposals.append(main_wf)
+            except Exception:
+                main_wf = None
+        results = []
+        if self.experiment_manager and proposals:
+            try:
+                import asyncio
+
+                results = asyncio.run(self.experiment_manager.run_experiments(proposals))
+            except Exception:
+                results = []
+        if not results:
+            return
+        self._last_workflow_benchmark = time.time()
+        try:
+            base_roi = self._latest_roi()
+            best = self.experiment_manager.best_variant(results)
+        except Exception:
+            best = None
+        try:
+            mdb = getattr(self.resource_optimizer, "menace_db", None)
+            if mdb:
+                with mdb.engine.begin() as conn:
+                    for res in results:
+                        row = (
+                            conn.execute(
+                                mdb.workflows.select().where(
+                                    mdb.workflows.c.workflow_name == res.variant
+                                )
+                            )
+                            .mappings()
+                            .fetchone()
+                        )
+                        if row:
+                            conn.execute(
+                                mdb.workflows.update()
+                                .where(mdb.workflows.c.workflow_id == row["workflow_id"])
+                                .values(estimated_profit_per_bot=res.roi - base_roi)
+                            )
+                    if best:
+                        row = (
+                            conn.execute(
+                                mdb.workflows.select().where(
+                                    mdb.workflows.c.workflow_name == best.variant
+                                )
+                            )
+                            .mappings()
+                            .fetchone()
+                        )
+                        if row:
+                            conn.execute(
+                                mdb.workflows.update()
+                                .where(mdb.workflows.c.workflow_id == row["workflow_id"])
+                                .values(status="winner")
+                            )
+        except Exception:
+            self.logger.exception("workflow DB update failed")
+        for res in results:
+            try:
+                self.history.add(
+                    EvolutionEvent(
+                        action=f"experiment:{res.variant}",
+                        before_metric=base_roi,
+                        after_metric=res.roi,
+                        roi=res.roi - base_roi,
+                        trending_topic=getattr(res, "trending_topic", None),
+                    )
+                )
+                vals = self._workflow_roi_history.setdefault(res.variant, [])
+                vals.append(res.roi)
+                if len(vals) > 5:
+                    vals.pop(0)
+            except Exception:
+                self.logger.exception("record experiment failed")
+
+        if main_wf and main_wf in self._workflow_roi_history:
+            main_avg = sum(self._workflow_roi_history[main_wf]) / len(
+                self._workflow_roi_history[main_wf]
+            )
+            for wf, vals in self._workflow_roi_history.items():
+                if wf == main_wf or len(vals) < 3:
+                    continue
+                avg = sum(vals) / len(vals)
+                if avg > main_avg * 1.05:
+                    self._replace_main_workflow(wf)
+                    main_wf = wf
+                    main_avg = avg
+
+    # ------------------------------------------------------------------
+    def _run_bot_experiments(self) -> None:
+        """Run suggested bot experiments and record outcomes."""
+        if not self.experiment_manager or not self.improvement_engine:
+            return
+        try:
+            import asyncio
+
+            res = asyncio.run(
+                self.experiment_manager.run_suggested_experiments(
+                    self.improvement_engine.bot_name
+                )
+            )
+        except Exception:
+            res = None
+        if not res:
+            return
+        try:
+            base_roi = self._latest_roi()
+            self.history.add(
+                EvolutionEvent(
+                    action=f"bot_experiment:{res.variant}",
+                    before_metric=base_roi,
+                    after_metric=res.roi,
+                    roi=res.roi - base_roi,
+                    trending_topic=getattr(res, "trending_topic", None),
+                )
+            )
+        except Exception:
+            self.logger.exception("record bot experiment failed")
+
+    # ------------------------------------------------------------------
+    def _cleanup_workflows(self) -> None:
+        """Remove paused workflows from MenaceDB to keep the database small."""
+        mdb = getattr(self.resource_optimizer, "menace_db", None) if self.resource_optimizer else None
+        if not mdb:
+            return
+        try:
+            with mdb.engine.begin() as conn:
+                rows = (
+                    conn.execute(
+                        mdb.workflows.select().where(mdb.workflows.c.status == "paused")
+                    )
+                    .mappings()
+                    .fetchall()
+                )
+                for row in rows:
+                    conn.execute(
+                        mdb.workflows.delete().where(mdb.workflows.c.workflow_id == row["workflow_id"])
+                )
+        except Exception:
+            self.logger.exception("cleanup workflows failed")
+
+    # ------------------------------------------------------------------
+    def _replace_main_workflow(self, name: str) -> None:
+        """Set *name* as the active workflow in MenaceDB."""
+        mdb = getattr(self.resource_optimizer, "menace_db", None) if self.resource_optimizer else None
+        if not mdb:
+            return
+        try:
+            with mdb.engine.begin() as conn:
+                row = (
+                    conn.execute(
+                        mdb.workflows.select().where(mdb.workflows.c.workflow_name == name)
+                    )
+                    .mappings()
+                    .fetchone()
+                )
+                if row:
+                    conn.execute(
+                        mdb.workflows.update()
+                        .where(mdb.workflows.c.workflow_id == row["workflow_id"])
+                        .values(status="winner")
+                    )
+        except Exception:
+            self.logger.exception("replace main workflow failed")
+
+
+
+__all__ = ["EvolutionTrigger", "EvolutionOrchestrator"]

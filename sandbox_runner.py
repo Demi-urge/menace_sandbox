@@ -1,0 +1,1062 @@
+from __future__ import annotations
+
+import ast
+import json
+import os
+import re
+import shutil
+import subprocess
+import tempfile
+import concurrent.futures
+import multiprocessing
+import random
+import asyncio
+import time
+import textwrap
+import argparse
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, TYPE_CHECKING
+
+from menace.unified_event_bus import UnifiedEventBus
+from menace.menace_orchestrator import MenaceOrchestrator
+from menace.self_improvement_policy import SelfImprovementPolicy
+from menace.self_improvement_engine import SelfImprovementEngine
+from menace.self_test_service import SelfTestService
+from menace.code_database import PatchHistoryDB, CodeDB
+from menace.audit_trail import AuditTrail
+from menace.error_bot import ErrorBot, ErrorDB
+from menace.data_bot import MetricsDB, DataBot
+from sandbox_runner.metrics_plugins import (
+    discover_metrics_plugins,
+    load_metrics_plugins,
+)
+from menace.discrepancy_detection_bot import DiscrepancyDetectionBot
+from jinja2 import Template
+
+try:
+    from menace.pre_execution_roi_bot import PreExecutionROIBot
+except Exception:  # pragma: no cover - optional dependency
+    PreExecutionROIBot = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover
+    from menace.roi_tracker import ROITracker
+
+__path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
+logger = logging.getLogger(__name__)
+
+ROOT = Path(__file__).resolve().parent
+
+from sandbox_runner.config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
+
+_TPL_PATH = Path(
+    os.getenv("GPT_SECTION_TEMPLATE", ROOT / "templates" / "gpt_section_prompt.j2")
+)
+_TPL: Template | None = None
+_AUTO_PROMPTS_DIR = ROOT / "templates" / "auto_prompts"
+_AUTO_TEMPLATES: list[tuple[str, Template]] = []
+_AUTO_LOADED = False
+_prompt_len = os.getenv("GPT_SECTION_PROMPT_MAX_LENGTH")
+try:
+    GPT_SECTION_PROMPT_MAX_LENGTH: int | None = (
+        int(_prompt_len) if _prompt_len else None
+    )
+except Exception:
+    GPT_SECTION_PROMPT_MAX_LENGTH = None
+_summ_depth = os.getenv("GPT_SECTION_SUMMARY_DEPTH")
+try:
+    GPT_SECTION_SUMMARY_DEPTH: int = int(_summ_depth) if _summ_depth else 3
+except Exception:
+    GPT_SECTION_SUMMARY_DEPTH = 3
+
+from sandbox_runner.environment import (
+    SANDBOX_EXTRA_METRICS,
+    SANDBOX_ENV_PRESETS,
+    simulate_execution_environment,
+    simulate_full_environment,
+    generate_sandbox_report,
+    run_repo_section_simulations,
+    run_workflow_simulations,
+    _section_worker,
+)
+from sandbox_runner.cycle import _sandbox_cycle_runner
+from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
+
+
+# ----------------------------------------------------------------------
+def load_modified_code(code_path: str) -> str:
+    logger.debug("loading code from %s", code_path)
+    with open(code_path, "r", encoding="utf-8") as fh:
+        content = fh.read()
+    logger.debug("loaded %d bytes from %s", len(content), code_path)
+    return content
+
+
+# ----------------------------------------------------------------------
+def scan_repo_sections(repo_path: str) -> Dict[str, Dict[str, List[str]]]:
+    from menace.codebase_diff_checker import _extract_sections
+
+    sections: Dict[str, Dict[str, List[str]]] = {}
+    for base, _, files in os.walk(repo_path):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, repo_path)
+            try:
+                sections[rel] = _extract_sections(path)
+            except Exception:
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        sections[rel] = {"__file__": fh.read().splitlines()}
+                except Exception:
+                    sections[rel] = {}
+    return sections
+
+
+# ----------------------------------------------------------------------
+def prepare_snippet(
+    snippet: str,
+    *,
+    max_length: int = 1000,
+    summary_depth: int = GPT_SECTION_SUMMARY_DEPTH,
+) -> tuple[str, str]:
+    """Return a truncated or summarised snippet and extracted comment summary."""
+
+    if not snippet:
+        return "", ""
+
+    comments = re.findall(r"(?m)^\s*#\s*(.*)", snippet)
+    docstrings = re.findall(r'"""(.*?)"""|\'\'\'(.*?)\'\'\'', snippet, re.S)
+    docstrings = [d[0] or d[1] for d in docstrings]
+    text = " ".join(comments + docstrings).strip()
+    summary = text[: summary_depth * 50] if text else ""
+
+    if len(snippet) > max_length:
+        lines = snippet.splitlines()
+        depth = max(1, summary_depth)
+        head = lines[:depth]
+        tail = lines[-depth:] if len(lines) > depth else []
+        snippet = "\n".join(head + ["# ..."] + tail)
+        if len(snippet) > max_length:
+            snippet = snippet[:max_length]
+
+    return snippet, summary
+
+
+# ----------------------------------------------------------------------
+def build_section_prompt(
+    section: str,
+    tracker: "ROITracker",
+    snippet: str | None = None,
+    prior: str | None = None,
+    *,
+    max_length: int = 1000,
+    max_prompt_length: int | None = GPT_SECTION_PROMPT_MAX_LENGTH,
+    summary_depth: int = GPT_SECTION_SUMMARY_DEPTH,
+) -> str:
+    global _TPL, _AUTO_LOADED
+
+    if not _AUTO_LOADED:
+        _AUTO_LOADED = True
+        if _AUTO_PROMPTS_DIR.exists():
+            for p in sorted(_AUTO_PROMPTS_DIR.glob("*.j2")):
+                try:
+                    _AUTO_TEMPLATES.append((p.stem, Template(p.read_text())))
+                except Exception:
+                    continue
+
+    if _TPL is None:
+        try:
+            _TPL = Template(_TPL_PATH.read_text())
+        except Exception:
+            _TPL = Template(
+                "ROI for {{ section }} is declining. Recent ROI: [{{ history }}]. "
+                "Metrics: {{ metrics }}{% if metrics_summary %} Metrics summary: {{ metrics_summary }}{% endif %}"
+                "{% if synergy %} Synergy: {{ synergy }}{% endif %}{% if synergy_summary %} Synergy summary: {{ synergy_summary }}{% endif %}"
+                "{% if summary %} Purpose: {{ summary }}{% endif %}\n"
+                "Suggest a concise improvement:\n{{ snippet }}"
+            )
+
+    hist = tracker.module_deltas.get(section.split(":", 1)[0], [])
+    hist_str = ", ".join(f"{v:.2f}" for v in hist[-5:]) if hist else ""
+
+    metric_values = {
+        m: vals[-1]
+        for m, vals in tracker.metrics_history.items()
+        if vals and not m.startswith("synergy_")
+    }
+    metric_values["ROI"] = tracker.roi_history[-1] if tracker.roi_history else 0.0
+    top_metrics = sorted(metric_values.items(), key=lambda x: abs(x[1]), reverse=True)[
+        :3
+    ]
+    metric_str = ", ".join(f"{k}={v:.2f}" for k, v in top_metrics)
+
+    metric_summary = []
+    for name in metric_values:
+        vals = tracker.metrics_history.get(name, [])
+        if len(vals) >= 2:
+            delta = vals[-1] - vals[-2]
+        elif vals:
+            delta = vals[-1]
+        else:
+            delta = 0.0
+        metric_summary.append(f"{name}:{delta:+.2f}")
+    metric_summary_str = ", ".join(metric_summary[:3])
+
+    synergy_values = {
+        m: vals[-1]
+        for m, vals in tracker.metrics_history.items()
+        if vals and m.startswith("synergy_")
+    }
+    synergy_top = sorted(synergy_values.items(), key=lambda x: abs(x[1]), reverse=True)[
+        :2
+    ]
+    synergy_str = ", ".join(f"{k}={v:.2f}" for k, v in synergy_top)
+
+    synergy_summary = []
+    for name in synergy_values:
+        vals = tracker.metrics_history.get(name, [])
+        if len(vals) >= 2:
+            delta = vals[-1] - vals[-2]
+        elif vals:
+            delta = vals[-1]
+        else:
+            delta = 0.0
+        synergy_summary.append(f"{name}:{delta:+.2f}")
+    synergy_summary_str = ", ".join(synergy_summary[:2])
+
+    snippet_part, comment_summary = prepare_snippet(
+        snippet or "",
+        max_length=max_length,
+        summary_depth=summary_depth,
+    )
+
+    roi_deltas = [
+        round(tracker.roi_history[i] - tracker.roi_history[i - 1], 2)
+        for i in range(1, len(tracker.roi_history))
+    ]
+    roi_deltas = roi_deltas[-3:]
+    discrepancy_hist = tracker.metrics_history.get("discrepancy_count", [])[-3:]
+
+    tpl = _TPL
+
+    def _delta(vals):
+        if len(vals) < 2:
+            return 0.0
+        return vals[-1] - vals[-2]
+
+    sec_hist = tracker.metrics_history.get("security_score", [])
+    eff_hist = tracker.metrics_history.get("efficiency", [])
+
+    if _AUTO_TEMPLATES:
+        chosen = None
+        if _delta(sec_hist) < 0:
+            for name, t in _AUTO_TEMPLATES:
+                if "security" in name:
+                    chosen = t
+                    break
+        elif _delta(eff_hist) < 0:
+            for name, t in _AUTO_TEMPLATES:
+                if "efficiency" in name:
+                    chosen = t
+                    break
+        elif _delta(tracker.roi_history) < -tracker.diminishing():
+            for name, t in _AUTO_TEMPLATES:
+                if "roi" in name:
+                    chosen = t
+                    break
+        if not chosen:
+            chosen = random.choice([t for _, t in _AUTO_TEMPLATES])
+        tpl = chosen
+
+    prompt = tpl.render(
+        section=section,
+        history=hist_str,
+        metrics=metric_str,
+        metrics_summary=metric_summary_str,
+        synergy=synergy_str,
+        synergy_summary=synergy_summary_str,
+        summary=comment_summary.strip(),
+        snippet=snippet_part,
+        deltas=roi_deltas,
+        discrepancy_history=discrepancy_hist,
+        prior=prior,
+    )
+
+    if max_prompt_length and len(prompt) > max_prompt_length:
+        while True:
+            excess = len(prompt) - max_prompt_length
+            if excess <= 0:
+                break
+            if snippet_part:
+                trim = min(excess, len(snippet_part))
+                snippet_part = snippet_part[:-trim]
+                excess -= trim
+            elif metric_str:
+                trim = min(excess, len(metric_str))
+                metric_str = metric_str[:-trim]
+                excess -= trim
+            elif metric_summary_str:
+                trim = min(excess, len(metric_summary_str))
+                metric_summary_str = metric_summary_str[:-trim]
+                excess -= trim
+            elif synergy_str:
+                trim = min(excess, len(synergy_str))
+                synergy_str = synergy_str[:-trim]
+                excess -= trim
+            elif synergy_summary_str:
+                # keep at least the prefix; if cannot trim further break
+                if len(synergy_summary_str) > 10:
+                    trim = min(excess, len(synergy_summary_str) - 10)
+                    synergy_summary_str = synergy_summary_str[:-trim]
+                    excess -= trim
+                else:
+                    break
+            else:
+                break
+            prompt = tpl.render(
+                section=section,
+                history=hist_str,
+                metrics=metric_str,
+                metrics_summary=metric_summary_str,
+                synergy=synergy_str,
+                synergy_summary=synergy_summary_str,
+                summary=comment_summary.strip(),
+                snippet=snippet_part,
+                prior=prior,
+            )
+        if len(prompt) > max_prompt_length:
+            prompt = prompt[:max_prompt_length]
+
+    return prompt
+
+
+@dataclass
+class _CycleMeta:
+    cycle: int
+    roi: float
+    delta: float
+    modules: list[str]
+    reason: str
+
+
+class _SandboxMetaLogger:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.audit = AuditTrail(str(path))
+        self.records: list[_CycleMeta] = []
+        self.module_deltas: dict[str, list[float]] = {}
+        self.flagged_sections: set[str] = set()
+        self.last_patch_id = 0
+        logger.debug("SandboxMetaLogger initialised at %s", path)
+
+    def log_cycle(
+        self, cycle: int, roi: float, modules: list[str], reason: str
+    ) -> None:
+        prev = self.records[-1].roi if self.records else 0.0
+        delta = roi - prev
+        self.records.append(_CycleMeta(cycle, roi, delta, modules, reason))
+        for m in modules:
+            self.module_deltas.setdefault(m, []).append(delta)
+        try:
+            self.audit.record(
+                {
+                    "cycle": cycle,
+                    "roi": roi,
+                    "delta": delta,
+                    "modules": modules,
+                    "reason": reason,
+                }
+            )
+        except Exception:
+            logger.exception("meta log record failed")
+        logger.debug(
+            "cycle %d logged roi=%s delta=%s modules=%s", cycle, roi, delta, modules
+        )
+
+    def rankings(self) -> list[tuple[str, float]]:
+        totals = {m: sum(v) for m, v in self.module_deltas.items()}
+        logger.debug("rankings computed: %s", totals)
+        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+    def diminishing(
+        self, threshold: float | None = None, consecutive: int = 3
+    ) -> list[str]:
+        flags: list[str] = []
+        thr = 0.0 if threshold is None else float(threshold)
+        for m, vals in self.module_deltas.items():
+            if m in self.flagged_sections:
+                continue
+            if len(vals) >= consecutive and all(
+                abs(v) <= thr for v in vals[-consecutive:]
+            ):
+                flags.append(m)
+                self.flagged_sections.add(m)
+                continue
+            if len(vals) >= 3 and (
+                vals[-1] <= thr or abs(vals[-1]) < abs(vals[0]) * 0.1
+            ):
+                flags.append(m)
+                self.flagged_sections.add(m)
+        if flags:
+            logger.debug("modules with diminishing returns: %s", flags)
+        return flags
+
+
+@dataclass
+class SandboxContext:
+    tmp: str
+    repo: Path
+    orig_cwd: Path
+    data_dir: Path
+    event_bus: UnifiedEventBus
+    policy: SelfImprovementPolicy
+    patch_db: PatchHistoryDB
+    patch_db_path: Path
+    orchestrator: MenaceOrchestrator
+    improver: SelfImprovementEngine
+    sandbox: Any
+    tester: SelfTestService
+    tracker: "ROITracker"
+    meta_log: _SandboxMetaLogger
+    backups: Dict[str, Any]
+    env: Dict[str, str]
+    models: List[str]
+    module_counts: Dict[str, int]
+    changed_modules: Any
+    res_db: Any
+    pre_roi_bot: Any
+    va_client: Any
+    gpt_client: Any
+    engine: Any
+    dd_bot: DiscrepancyDetectionBot
+    data_bot: DataBot
+    plugins: list
+    extra_metrics: Dict[str, float]
+    cycles: int
+    base_roi_tolerance: float
+    roi_tolerance: float
+    prev_roi: float
+    predicted_roi: float | None
+    predicted_lucrativity: float | None
+    brainstorm_interval: int
+    brainstorm_retries: int
+    sections: Dict[str, Dict[str, List[str]]]
+    all_section_names: set[str]
+    roi_history_file: Path
+    brainstorm_history: List[str]
+    conversations: Dict[str, List[Dict[str, str]]]
+    offline_suggestions: bool = False
+    suggestion_cache: Dict[str, str] = field(default_factory=dict)
+    synergy_needed: bool = False
+    best_roi: float = 0.0
+    best_synergy_metrics: Dict[str, float] = field(default_factory=dict)
+
+
+def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxContext:
+    tmp = tempfile.mkdtemp(prefix="menace_sandbox_")
+    logger.info("sandbox temporary directory", extra={"path": tmp})
+    repo = SANDBOX_REPO_PATH
+    orig_cwd = Path.cwd()
+
+    data_dir = Path(
+        getattr(args, "sandbox_data_dir", None)
+        or os.getenv("SANDBOX_DATA_DIR", str(ROOT / "sandbox_data"))
+    )
+    if not data_dir.is_absolute():
+        data_dir = ROOT / data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("using data directory", extra={"path": str(data_dir)})
+    policy_file = data_dir / "improvement_policy.pkl"
+    patch_file = data_dir / "patch_history.db"
+    module_map_file = data_dir / "module_map.json"
+
+    _env_vars = {
+        "DATABASE_URL": "sqlite:///:memory:",
+        "BOT_DB_PATH": str(Path(tmp) / "bots.db"),
+        "BOT_PERFORMANCE_DB": str(Path(tmp) / "perf.db"),
+        "MAINTENANCE_DB": str(Path(tmp) / "maint.db"),
+    }
+    preset = {k: v for k, v in preset.items() if k != "SANDBOX_ENV_PRESETS"}
+    backups = {k: os.environ.get(k) for k in {**_env_vars, **preset}}
+    os.environ.update(_env_vars)
+    os.environ.update({k: str(v) for k, v in preset.items()})
+    logger.debug("temporary env vars set: %s", _env_vars)
+
+    event_bus = UnifiedEventBus(persist_path=str(Path(tmp) / "events.db"))
+    logger.info("event bus initialised")
+
+    meta_log = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
+    metrics_db = MetricsDB(data_dir / "metrics.db")
+    data_bot = DataBot(metrics_db)
+    dd_bot = DiscrepancyDetectionBot()
+    module_counts: Dict[str, int] = {}
+    patch_db_path = patch_file
+
+    def _changed_modules(last_id: int) -> tuple[list[str], int]:
+        if not patch_db_path.exists():
+            return [], last_id
+        import sqlite3
+
+        try:
+            with sqlite3.connect(patch_db_path, check_same_thread=False) as conn:
+                rows = conn.execute(
+                    "SELECT id, filename FROM patch_history WHERE id>?",
+                    (last_id,),
+                ).fetchall()
+        except Exception:
+            logger.exception("patch history read failed")
+            return [], last_id
+        modules = [str(r[1]) for r in rows]
+        new_last = max([last_id, *[r[0] for r in rows]]) if rows else last_id
+        return modules, new_last
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo)
+    models = env.get("MODELS", "demo").split(",")
+    os.chdir(repo)
+    orchestrator = MenaceOrchestrator()
+    orchestrator.create_oversight("root", "L1")
+    try:
+        from menace.module_index_db import ModuleIndexDB  # type: ignore
+    except Exception:
+        ModuleIndexDB = None  # type: ignore
+    policy = SelfImprovementPolicy(path=str(policy_file))
+    patch_db = PatchHistoryDB(patch_db_path)
+    improver = SelfImprovementEngine(
+        meta_logger=meta_log,
+        module_index=ModuleIndexDB(module_map_file) if ModuleIndexDB else None,
+        patch_db=patch_db,
+        policy=policy,
+    )
+
+    telem_db = ErrorDB(Path(tmp) / "errors.db")
+    improver.error_bot = ErrorBot(telem_db, MetricsDB())
+
+    class _TelemProxy:
+        def __init__(self, db: ErrorDB) -> None:
+            self.db = db
+
+        def recent_errors(self, limit: int = 5) -> list[str]:
+            cur = self.db.conn.execute(
+                "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            return [str(r[0]) for r in cur.fetchall()]
+
+    from menace.self_coding_engine import SelfCodingEngine
+    from menace.menace_memory_manager import MenaceMemoryManager
+    from menace.self_debugger_sandbox import SelfDebuggerSandbox
+
+    try:
+        from menace.visual_agent_client import VisualAgentClient
+    except Exception as exc:
+        logger.warning("VisualAgentClient import failed: %s", exc)
+        try:
+            from menace.visual_agent_client import (
+                VisualAgentClientStub as VisualAgentClient,
+            )
+        except Exception:
+            VisualAgentClient = None  # type: ignore
+
+    va_client = None
+    if VisualAgentClient:
+        try:
+            va_client = VisualAgentClient()
+        except Exception as exc:
+            logger.warning("VisualAgentClient init failed: %s", exc)
+            try:
+                from menace.visual_agent_client import VisualAgentClientStub
+
+                va_client = VisualAgentClientStub()
+                logger.info("using VisualAgentClientStub due to failure")
+            except Exception:
+                va_client = None
+    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), llm_client=va_client)
+    gpt_client = None
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            from menace.chatgpt_idea_bot import ChatGPTClient
+
+            gpt_client = ChatGPTClient(model="gpt-4")
+        except Exception:
+            logger.exception("GPT client init failed")
+            gpt_client = None
+    sandbox = SelfDebuggerSandbox(
+        _TelemProxy(telem_db),
+        engine,
+        policy=policy,
+        state_getter=improver._policy_state,
+    )
+    tester = SelfTestService()
+    from menace.roi_tracker import ROITracker
+
+    try:
+        from menace.resources_bot import ROIHistoryDB
+    except Exception:  # pragma: no cover
+        ROIHistoryDB = None  # type: ignore
+
+    res_db = None
+    res_path = env.get("SANDBOX_RESOURCE_DB")
+    if res_path and ROIHistoryDB:
+        try:
+            res_db = ROIHistoryDB(res_path)
+        except Exception:
+            logger.exception("failed to load resource db: %s", res_path)
+
+    pre_roi_bot = None
+    if PreExecutionROIBot:
+        try:
+            pre_roi_bot = PreExecutionROIBot(data_bot=data_bot)
+            manager = getattr(pre_roi_bot, "prediction_manager", None)
+            if manager is None:
+                from menace.prediction_manager_bot import PredictionManager
+
+                metric_names = PredictionManager.DEFAULT_METRIC_BOTS
+                manager = PredictionManager(
+                    data_bot=data_bot,
+                    default_metric_bots=metric_names,
+                )
+                pre_roi_bot.prediction_manager = manager
+                if hasattr(pre_roi_bot, "assigned_prediction_bots"):
+                    try:
+                        pre_roi_bot.assigned_prediction_bots = (
+                            manager.assign_prediction_bots(pre_roi_bot)
+                        )
+                    except Exception as exc:
+                        logger.exception("failed to assign prediction bots: %s", exc)
+        except Exception as exc:
+            logger.exception("failed to init PreExecutionROIBot")
+            try:
+                from menace.pre_execution_roi_bot import PreExecutionROIBotStub
+
+                pre_roi_bot = PreExecutionROIBotStub()
+                logger.info("using PreExecutionROIBotStub due to error: %s", exc)
+            except Exception:
+                pre_roi_bot = None
+    else:
+        try:
+            from menace.pre_execution_roi_bot import PreExecutionROIBotStub
+
+            pre_roi_bot = PreExecutionROIBotStub()
+            logger.info("using PreExecutionROIBotStub due to missing implementation")
+        except Exception:
+            pre_roi_bot = None
+
+    tracker = ROITracker(resource_db=res_db)
+    roi_history_file = data_dir / "roi_history.json"
+    try:
+        tracker.load_history(str(roi_history_file))
+    except Exception:
+        logger.exception("failed to load roi history")
+    meta_log.module_deltas.update(tracker.module_deltas)
+    prev_roi = 0.0
+    predicted_roi = None
+    predicted_lucrativity = None
+    roi_tolerance = float(env.get("SANDBOX_ROI_TOLERANCE", "0.01"))
+    base_roi_tolerance = roi_tolerance
+    cycles = int(env.get("SANDBOX_CYCLES", "5"))
+    brainstorm_interval = int(env.get("SANDBOX_BRAINSTORM_INTERVAL", "0"))
+    brainstorm_retries = int(env.get("SANDBOX_BRAINSTORM_RETRIES", "3"))
+
+    sections = scan_repo_sections(str(repo))
+    all_section_names: set[str] = set()
+    for mod, sec_map in sections.items():
+        for name in sec_map:
+            all_section_names.add(f"{mod}:{name}")
+
+    try:
+        plugins = discover_metrics_plugins(env)
+    except Exception:
+        logger.exception("failed to load metrics plugins")
+        plugins = []
+
+    metrics_cfg_path = os.getenv(
+        "SANDBOX_METRICS_FILE", str(ROOT / "sandbox_metrics.yaml")
+    )
+    extra_metrics = SANDBOX_EXTRA_METRICS
+
+    brainstorm_history: list[str] = []
+    conversations: Dict[str, List[Dict[str, str]]] = {}
+    offline_suggestions = bool(
+        getattr(args, "offline_suggestions", False)
+        or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
+    )
+    suggestion_cache: Dict[str, str] = {}
+    cache_path = getattr(args, "suggestion_cache", None) or os.getenv(
+        "SANDBOX_SUGGESTION_CACHE"
+    )
+    if cache_path:
+        try:
+            suggestion_cache = json.loads(Path(cache_path).read_text())
+        except Exception:
+            logger.exception("failed to load suggestion cache: %s", cache_path)
+            suggestion_cache = {}
+
+    return SandboxContext(
+        tmp=tmp,
+        repo=repo,
+        orig_cwd=orig_cwd,
+        data_dir=data_dir,
+        event_bus=event_bus,
+        policy=policy,
+        patch_db=patch_db,
+        patch_db_path=patch_db_path,
+        orchestrator=orchestrator,
+        improver=improver,
+        sandbox=sandbox,
+        tester=tester,
+        tracker=tracker,
+        meta_log=meta_log,
+        backups=backups,
+        env=env,
+        models=models,
+        module_counts=module_counts,
+        changed_modules=_changed_modules,
+        res_db=res_db,
+        pre_roi_bot=pre_roi_bot,
+        va_client=va_client,
+        gpt_client=gpt_client,
+        engine=engine,
+        dd_bot=dd_bot,
+        data_bot=data_bot,
+        plugins=plugins,
+        extra_metrics=extra_metrics,
+        cycles=cycles,
+        base_roi_tolerance=base_roi_tolerance,
+        roi_tolerance=roi_tolerance,
+        prev_roi=prev_roi,
+        predicted_roi=predicted_roi,
+        predicted_lucrativity=predicted_lucrativity,
+        brainstorm_interval=brainstorm_interval,
+        brainstorm_retries=brainstorm_retries,
+        sections=sections,
+        all_section_names=all_section_names,
+        roi_history_file=roi_history_file,
+        brainstorm_history=brainstorm_history,
+        conversations=conversations,
+        offline_suggestions=offline_suggestions,
+        suggestion_cache=suggestion_cache,
+    )
+
+
+def _sandbox_cleanup(ctx: SandboxContext) -> None:
+    os.chdir(ctx.orig_cwd)
+    ctx.policy.save()
+    for k, v in ctx.backups.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+    ctx.event_bus.close()
+    shutil.rmtree(ctx.tmp)
+
+
+def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
+    from menace.roi_tracker import ROITracker
+
+    global SANDBOX_ENV_PRESETS
+    logger.info("starting sandbox run", extra={"preset": preset})
+    ctx = _sandbox_init(preset, args)
+
+    def _cycle(
+        section: str | None,
+        snippet: str | None,
+        tracker: "ROITracker",
+        scenario: str | None = None,
+    ) -> None:
+        _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
+
+    switched = False
+    section_results: dict[str, dict[str, list]] = {}
+    for mod, sec_map in ctx.sections.items():
+        for name, lines in sec_map.items():
+            section_name = f"{mod}:{name}"
+            if section_name in ctx.meta_log.flagged_sections:
+                continue
+            logger.info("processing section", extra={"section": section_name})
+            snippet = "\n".join(lines[:5])
+            section_trackers: list[ROITracker] = []
+            for p_idx, env_preset in enumerate(SANDBOX_ENV_PRESETS):
+                env_updates = {
+                    k: v for k, v in env_preset.items() if k != "SANDBOX_ENV_PRESETS"
+                }
+                scenario = env_preset.get("SCENARIO_NAME", f"scenario_{p_idx}")
+                logger.info(
+                    "running scenario",
+                    extra={"section": section_name, "scenario": scenario},
+                )
+                backups_p = {k: os.environ.get(k) for k in env_updates}
+                os.environ.update({k: str(v) for k, v in env_updates.items()})
+                ctx.prev_roi = 0.0
+                ctx.predicted_roi = None
+                sec_tracker = ROITracker(resource_db=ctx.res_db)
+                _cycle(section_name, snippet, sec_tracker, scenario)
+                section_trackers.append(sec_tracker)
+                sec_res = section_results.setdefault(
+                    section_name, {"roi": [], "metrics": []}
+                )
+                sec_res["roi"].append(
+                    sec_tracker.roi_history[-1] if sec_tracker.roi_history else 0.0
+                )
+                sec_res["metrics"].append(
+                    {k: v[-1] for k, v in sec_tracker.metrics_history.items()}
+                )
+                for k, v in backups_p.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+                if ctx.meta_log.flagged_sections >= ctx.all_section_names:
+                    switched = True
+                    break
+            if section_trackers:
+                try:
+                    from menace.environment_generator import adapt_presets
+
+                    agg = ROITracker()
+                    for t in section_trackers:
+                        agg.roi_history.extend(t.roi_history)
+                        for m, vals in t.metrics_history.items():
+                            agg.metrics_history.setdefault(m, []).extend(vals)
+                    SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
+                except Exception:
+                    logger.exception("preset adaptation failed")
+            if switched:
+                break
+        if switched:
+            break
+
+    if ctx.meta_log.flagged_sections:
+        from statistics import mean
+
+        roi_sum = 0.0
+        metric_totals: dict[str, float] = {}
+        metric_counts: dict[str, int] = {}
+        for name in ctx.meta_log.flagged_sections:
+            res = section_results.get(name)
+            if not res:
+                continue
+            if res["roi"]:
+                roi_sum += mean(res["roi"])
+            for metric_dict in res["metrics"]:
+                for m, val in metric_dict.items():
+                    metric_totals[m] = metric_totals.get(m, 0.0) + float(val)
+                    metric_counts[m] = metric_counts.get(m, 0) + 1
+
+        avg_metrics = {
+            m: metric_totals[m] / metric_counts[m]
+            for m in metric_totals
+            if metric_counts.get(m)
+        }
+        synergy_history: list[dict[str, float]] = ctx.tracker.synergy_history
+        while True:
+            synergy_tracker = ROITracker(resource_db=ctx.res_db)
+            ctx.prev_roi = 0.0
+            ctx.predicted_roi = None
+            _cycle(None, None, synergy_tracker)
+            combined_roi = (
+                synergy_tracker.roi_history[-1] if synergy_tracker.roi_history else 0.0
+            )
+            combined_metrics = {
+                k: v[-1] for k, v in synergy_tracker.metrics_history.items()
+            }
+            synergy_metrics = {
+                f"synergy_{k}": combined_metrics.get(k, 0.0) - avg_metrics.get(k, 0.0)
+                for k in set(avg_metrics) | set(combined_metrics)
+            }
+            synergy_metrics["synergy_recovery_time"] = combined_metrics.get(
+                "recovery_time", 0.0
+            ) - avg_metrics.get("recovery_time", 0.0)
+            synergy_metrics["synergy_roi"] = combined_roi - roi_sum
+            synergy_metrics.setdefault(
+                "synergy_profitability", synergy_metrics["synergy_roi"]
+            )
+            synergy_metrics.setdefault(
+                "synergy_revenue", synergy_metrics["synergy_roi"]
+            )
+            synergy_metrics.setdefault(
+                "synergy_projected_lucrativity",
+                combined_metrics.get("projected_lucrativity", 0.0)
+                - avg_metrics.get("projected_lucrativity", 0.0),
+            )
+            synergy_metrics.setdefault(
+                "synergy_risk_index",
+                combined_metrics.get("risk_index", 0.0)
+                - avg_metrics.get("risk_index", 0.0),
+            )
+            for m in (
+                "maintainability",
+                "code_quality",
+                "network_latency",
+                "throughput",
+            ):
+                synergy_metrics.setdefault(
+                    f"synergy_{m}",
+                    combined_metrics.get(m, 0.0) - avg_metrics.get(m, 0.0),
+                )
+            for m in (
+                "shannon_entropy",
+                "flexibility",
+                "energy_consumption",
+                "efficiency",
+                "antifragility",
+                "resilience",
+                "safety_rating",
+                "security_score",
+            ):
+                synergy_metrics.setdefault(
+                    f"synergy_{m}",
+                    combined_metrics.get(m, 0.0) - avg_metrics.get(m, 0.0),
+                )
+            try:
+                predicted = ctx.tracker.predict_synergy()
+                logger.info(
+                    "synergy prediction",
+                    extra={
+                        "predicted_synergy_roi": predicted,
+                        "actual_synergy_roi": synergy_metrics.get("synergy_roi", 0.0),
+                    },
+                )
+            except Exception:
+                logger.exception("synergy prediction failed")
+            ctx.tracker.register_metrics(*synergy_metrics.keys())
+            for name, val in synergy_metrics.items():
+                try:
+                    pred, _ = ctx.tracker.forecast_metric(name)
+                    ctx.tracker.record_metric_prediction(name, pred, float(val))
+                except Exception:
+                    pass
+            ctx.tracker.update(
+                roi_sum,
+                combined_roi,
+                list(ctx.meta_log.flagged_sections),
+                synergy_metrics,
+            )
+            synergy_history.append(synergy_metrics)
+            ctx.best_roi = max(ctx.best_roi, combined_roi)
+            for k, v in synergy_metrics.items():
+                prev = ctx.best_synergy_metrics.get(k)
+                if prev is None or v > prev:
+                    ctx.best_synergy_metrics[k] = v
+            stall = False
+            reliability = ctx.tracker.reliability(metric="synergy_roi")
+            threshold = max(
+                ctx.tracker.diminishing() * (1.0 - reliability),
+                ctx.tracker.diminishing() * 0.1,
+            )
+            if len(synergy_history) >= 2:
+                prev = synergy_history[-2]
+                roi_delta = synergy_metrics.get("synergy_roi", 0.0) - prev.get(
+                    "synergy_roi", 0.0
+                )
+                metric_delta = max(
+                    synergy_metrics.get(k, 0.0) - prev.get(k, 0.0)
+                    for k in synergy_metrics
+                )
+                if reliability >= 0.8 and roi_delta <= threshold and metric_delta <= threshold:
+                    break
+                stall = (
+                    roi_delta <= threshold
+                    and metric_delta <= threshold
+                )
+                drop = synergy_metrics.get("synergy_roi", 0.0) < prev.get(
+                    "synergy_roi", 0.0
+                )
+                if not drop:
+                    for k, v in synergy_metrics.items():
+                        if v < prev.get(k, v):
+                            drop = True
+                            break
+                stall = stall or drop
+            if stall and ctx.gpt_client:
+                try:
+                    summary = "; ".join(
+                        f"{k}:{combined_metrics.get(k, 0.0)}"
+                        for k in sorted(combined_metrics)
+                    )
+                    prior = "; ".join(ctx.brainstorm_history[-3:])
+                    prompt = build_section_prompt(
+                        "overall",
+                        ctx.tracker,
+                        f"Brainstorm improvements. Current metrics: {summary}",
+                        prior=prior if prior else None,
+                        max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
+                    )
+                    hist = ctx.conversations.get("brainstorm", [])
+                    resp = ctx.gpt_client.ask(
+                        hist + [{"role": "user", "content": prompt}]
+                    )
+                    idea = (
+                        resp.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                        .strip()
+                    )
+                    hist = hist + [{"role": "user", "content": prompt}]
+                    if idea:
+                        ctx.brainstorm_history.append(idea)
+                        hist.append({"role": "assistant", "content": idea})
+                        logger.info("brainstorm", extra={"idea": idea})
+                    if len(hist) > 6:
+                        hist = hist[-6:]
+                    ctx.conversations["brainstorm"] = hist
+                except Exception:
+                    logger.exception("synergy brainstorming failed")
+            if stall or ctx.synergy_needed:
+                ctx.synergy_needed = False
+                continue
+            break
+
+    ctx.prev_roi = 0.0
+    ctx.predicted_roi = None
+    _cycle(None, None, ctx.tracker)
+
+    if not getattr(args, "no_workflow_run", False):
+        try:
+            run_workflow_simulations(
+                getattr(args, "workflow_db", "workflows.db"),
+                SANDBOX_ENV_PRESETS,
+                tracker=ctx.tracker,
+            )
+        except Exception:
+            logger.exception("workflow simulations failed")
+
+    ranking = ctx.meta_log.rankings()
+    flags = ctx.meta_log.diminishing()
+    if ranking:
+        logger.info("sandbox roi ranking", extra={"ranking": ranking})
+    if flags:
+        logger.info("sandbox diminishing", extra={"modules": flags})
+    try:
+        ctx.tracker.save_history(str(ctx.roi_history_file))
+    except Exception:
+        logger.exception("failed to save roi history")
+    logger.info("sandbox run complete")
+    logger.debug("sandbox cleanup starting")
+    _sandbox_cleanup(ctx)
+    return ctx.tracker
+
+
+__all__ = [
+    "load_modified_code",
+    "scan_repo_sections",
+    "build_section_prompt",
+    "simulate_execution_environment",
+    "simulate_full_environment",
+    "generate_sandbox_report",
+    "run_repo_section_simulations",
+    "run_workflow_simulations",
+    "_section_worker",
+    "_sandbox_cycle_runner",
+    "_SandboxMetaLogger",
+    "_sandbox_init",
+    "_sandbox_cleanup",
+    "_sandbox_main",
+    "_run_sandbox",
+    "rank_scenarios",
+    "main",
+]

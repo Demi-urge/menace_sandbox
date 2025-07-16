@@ -1,0 +1,6 @@
+{
+  "max_avg_risk_increase_pct": 20.0,
+  "max_reward_decrease_pct": 20.0,
+  "max_violation_increase": 5,
+  "max_bypass_increase": 1
+}

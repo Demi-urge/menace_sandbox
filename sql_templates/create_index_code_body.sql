@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_code_body ON code(code COLLATE NOCASE)

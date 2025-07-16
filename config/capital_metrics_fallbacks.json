@@ -1,0 +1,8 @@
+{
+  "capital": 0.0,
+  "profit_trend": 0.0,
+  "load": 0.5,
+  "success_rate": 0.8,
+  "deploy_efficiency": 0.7,
+  "failure_rate": 0.2
+}

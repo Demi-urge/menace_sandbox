@@ -1,0 +1,6 @@
+[
+  ["training model update accuracy 0.9", "learning"],
+  ["random noise generation entropy", "stochastic"],
+  ["schedule 9am daily run", "scheduled"],
+  ["static rule triggered", "rule-based"]
+]

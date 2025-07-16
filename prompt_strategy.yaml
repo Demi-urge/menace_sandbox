@@ -1,0 +1,6 @@
+heuristics:
+  add_unit_tests: 0.5
+  remove_recursion: 0.3
+  ask_type_hints: 0.2
+max_tokens: 256
+default_model: gpt-3.5-turbo

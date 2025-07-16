@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+"""Predict future error probabilities from telemetry metrics."""
+
+from typing import List, Tuple
+
+try:
+    import torch
+    from torch import nn
+except Exception:  # pragma: no cover - optional dependency
+    torch = None  # type: ignore
+    nn = None  # type: ignore
+
+import numpy as np
+import hashlib
+
+from .data_bot import MetricsDB
+from .knowledge_graph import KnowledgeGraph
+
+
+class ErrorForecaster:
+    """LSTM-based sequence model for error forecasting."""
+
+    def __init__(
+        self,
+        metrics_db: MetricsDB,
+        *,
+        seq_len: int = 5,
+        hidden: int = 32,
+        epochs: int = 5,
+        extra_features: bool = True,
+        dropout: float = 0.1,
+        model: str = "lstm",
+    ) -> None:
+        self.metrics_db = metrics_db
+        self.seq_len = seq_len
+        self.hidden = hidden
+        self.epochs = epochs
+        self.extra_features = extra_features
+        self.use_torch = torch is not None and nn is not None
+        self.model_type = model
+        self.default_rate = 0.0
+        self.transformer = None
+        self.lstm = None
+        if self.use_torch:
+            # features per timestep: errors, cpu, memory, ROI and extra signals
+            input_size = 7 + (2 if extra_features else 0)
+            self.dropout = nn.Dropout(dropout)
+            if model == "transformer":
+                layer = nn.TransformerEncoderLayer(d_model=input_size, nhead=1, dropout=dropout)
+                self.transformer = nn.TransformerEncoder(layer, num_layers=2)
+                self.fc = nn.Linear(input_size, 1)
+                params = list(self.transformer.parameters()) + list(self.fc.parameters())
+            else:
+                self.lstm = nn.LSTM(input_size, hidden, batch_first=True)
+                self.fc = nn.Linear(hidden, 1)
+                params = list(self.lstm.parameters()) + list(self.fc.parameters())
+            self.optim = torch.optim.Adam(params, lr=0.01)
+            self.loss = nn.BCEWithLogitsLoss()
+
+    # ------------------------------------------------------------------
+    def _dataset(self) -> List[Tuple[str, List[List[float]], float]]:
+        df = self.metrics_db.fetch(None)
+        data: List[Tuple[str, List[List[float]], float]] = []
+        if hasattr(df, "empty") and not getattr(df, "empty", True):
+            df = df.sort_values("ts")
+            for bot, group in df.groupby("bot"):
+                errs = group["errors"].tolist()
+                cpu = group["cpu"].tolist()
+                mem = group["memory"].tolist()
+                disk = group["disk_io"].tolist() if "disk_io" in group else [0.0] * len(cpu)
+                net = group["net_io"].tolist() if "net_io" in group else [0.0] * len(cpu)
+                roi = (group["revenue"] - group["expense"]).tolist()
+                wf_val = float(len(str(bot)))
+                bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
+                for i in range(len(errs) - self.seq_len):
+                    seq = []
+                    for j in range(i, i + self.seq_len):
+                        row = [
+                            float(errs[j]),
+                            float(cpu[j]),
+                            float(mem[j]),
+                            float(roi[j]),
+                            wf_val,
+                            float(disk[j] + net[j] - (disk[j - 1] + net[j - 1])) if j > 0 else 0.0,
+                            bot_id,
+                        ]
+                        if self.extra_features and j > 0:
+                            row.extend([
+                                float(cpu[j]) - float(cpu[j - 1]),
+                                float(mem[j]) - float(mem[j - 1]),
+                            ])
+                        elif self.extra_features:
+                            row.extend([0.0, 0.0])
+                        seq.append(row)
+                    target = 1.0 if errs[i + self.seq_len] > 0 else 0.0
+                    data.append((str(bot), seq, target))
+        elif isinstance(df, list):
+            df.sort(key=lambda r: r.get("ts", ""))
+            by_bot: dict[str, list] = {}
+            for row in df:
+                b = str(row.get("bot"))
+                by_bot.setdefault(b, []).append(row)
+                for bot, rows in by_bot.items():
+                    wf_val = float(len(str(bot)))
+                    bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
+                    disks = [float(r.get("disk_io", 0.0)) for r in rows]
+                    nets = [float(r.get("net_io", 0.0)) for r in rows]
+                    for i in range(len(rows) - self.seq_len):
+                        seq = []
+                        for j, r in enumerate(rows[i : i + self.seq_len]):
+                            row = [
+                                float(r.get("errors", 0.0)),
+                                float(r.get("cpu", 0.0)),
+                                float(r.get("memory", 0.0)),
+                                float(r.get("revenue", 0.0) - r.get("expense", 0.0)),
+                                wf_val,
+                                float(disks[i + j] + nets[i + j] - (disks[i + j - 1] + nets[i + j - 1])) if j > 0 else 0.0,
+                                bot_id,
+                            ]
+                            if self.extra_features and j > 0:
+                                prev = rows[i + j - 1]
+                                row.extend([
+                                    float(r.get("cpu", 0.0)) - float(prev.get("cpu", 0.0)),
+                                    float(r.get("memory", 0.0)) - float(prev.get("memory", 0.0)),
+                                ])
+                            elif self.extra_features:
+                                row.extend([0.0, 0.0])
+                            seq.append(row)
+                        target = (
+                            1.0 if float(rows[i + self.seq_len].get("errors", 0.0)) > 0 else 0.0
+                        )
+                        data.append((bot, seq, target))
+        return data
+
+    def train(self) -> bool:
+        data = self._dataset()
+        if not data:
+            return False
+        self.default_rate = float(sum(t for _, _, t in data)) / len(data)
+        if not self.use_torch:
+            return True
+        X = np.array([seq for _, seq, _ in data], dtype=np.float32)
+        y = np.array([target for _, _, target in data], dtype=np.float32)
+        x = torch.tensor(X, dtype=torch.float32)
+        t = torch.tensor(y, dtype=torch.float32).unsqueeze(1)
+        for _ in range(self.epochs):
+            if self.model_type == "transformer":
+                out = self.transformer(x.transpose(0, 1))  # seq_len x batch x feat
+                out = self.dropout(out)
+                last = out[-1]
+                logit = self.fc(last)
+            else:
+                out, _ = self.lstm(x)
+                out = self.dropout(out)
+                logit = self.fc(out[:, -1, :])
+            loss = self.loss(logit, t)
+            self.optim.zero_grad()
+            loss.backward()
+            self.optim.step()
+        return True
+
+    # ------------------------------------------------------------------
+    def _last_sequence(self, bot: str) -> List[List[float]]:
+        df = self.metrics_db.fetch(self.seq_len)
+        seq: List[List[float]] = []
+        if hasattr(df, "empty"):
+            group = df[df["bot"] == bot].sort_values("ts")
+            rows = group[["errors", "cpu", "memory", "disk_io", "net_io", "revenue", "expense"]].to_dict("records")
+            wf_val = float(len(str(bot)))
+            bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
+            seq = []
+            for idx, r in enumerate(rows[-self.seq_len :]):
+                row = [
+                    float(r["errors"]),
+                    float(r["cpu"]),
+                    float(r["memory"]),
+                    float(r["revenue"] - r["expense"]),
+                    wf_val,
+                    float(r["disk_io"] + r["net_io"] - (rows[-self.seq_len + idx - 1]["disk_io"] + rows[-self.seq_len + idx - 1]["net_io"])) if idx > 0 else 0.0,
+                    bot_id,
+                ]
+                if self.extra_features and idx > 0:
+                    prev = rows[-self.seq_len + idx - 1]
+                    row.extend([
+                        float(r["cpu"]) - float(prev["cpu"]),
+                        float(r["memory"]) - float(prev["memory"]),
+                    ])
+                elif self.extra_features:
+                    row.extend([0.0, 0.0])
+                seq.append(row)
+        elif isinstance(df, list):
+            rows = [r for r in df if r.get("bot") == bot]
+            rows.sort(key=lambda r: r.get("ts", ""))
+            wf_val = float(len(str(bot)))
+            bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
+            disks = [float(r.get("disk_io", 0.0)) for r in rows]
+            nets = [float(r.get("net_io", 0.0)) for r in rows]
+            seq = []
+            for idx, r in enumerate(rows[-self.seq_len :]):
+                row = [
+                    float(r.get("errors", 0.0)),
+                    float(r.get("cpu", 0.0)),
+                    float(r.get("memory", 0.0)),
+                    float(r.get("revenue", 0.0) - r.get("expense", 0.0)),
+                    wf_val,
+                    float(disks[-self.seq_len + idx] + nets[-self.seq_len + idx] - (disks[-self.seq_len + idx - 1] + nets[-self.seq_len + idx - 1])) if idx > 0 else 0.0,
+                    bot_id,
+                ]
+                if self.extra_features and idx > 0:
+                    prev = rows[-self.seq_len + idx - 1]
+                    row.extend([
+                        float(r.get("cpu", 0.0)) - float(prev.get("cpu", 0.0)),
+                        float(r.get("memory", 0.0)) - float(prev.get("memory", 0.0)),
+                    ])
+                elif self.extra_features:
+                    row.extend([0.0, 0.0])
+                seq.append(row)
+        if len(seq) < self.seq_len:
+            feat_len = 7 + (2 if self.extra_features else 0)
+            pad = [[0.0] * feat_len] * (self.seq_len - len(seq))
+            seq = pad + seq
+        return seq
+
+    def predict_error_prob(self, bot: str, steps: int = 1) -> List[float]:
+        """Return error probabilities for ``bot`` for the next ``steps`` time steps."""
+        if steps <= 0:
+            return []
+        seq = self._last_sequence(bot)
+        wf_val = float(len(str(bot)))
+        bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
+        preds: List[float] = []
+        for _ in range(steps):
+            if self.use_torch:
+                with torch.no_grad():
+                    x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0)
+                    if self.model_type == "transformer":
+                        out = self.transformer(x.transpose(0, 1))
+                        out = self.dropout(out)
+                        logit = self.fc(out[-1])
+                    else:
+                        out, _ = self.lstm(x)
+                        out = self.dropout(out)
+                        logit = self.fc(out[:, -1, :])
+                    prob = float(torch.sigmoid(logit)[0, 0].item())
+            else:
+                prob = self.default_rate
+            preds.append(prob)
+            pad = [prob, 0.0, 0.0, 0.0, wf_val, 0.0, bot_id]
+            if self.extra_features:
+                pad.extend([0.0, 0.0])
+            seq = seq[1:] + [pad]
+        return preds
+
+    def predict_failure_chain(
+        self, bot: str, graph: KnowledgeGraph, steps: int = 3
+    ) -> List[str]:
+        """Return module nodes likely affected by ``bot`` within ``steps`` hops."""
+        probs = self.predict_error_prob(bot, steps=steps)
+        if not any(p > 0.5 for p in probs):
+            return []
+        nodes = graph.cascading_effects(f"bot:{bot}", order=steps)
+        return [n for n in nodes if n.startswith("module:")]
+
+
+__all__ = ["ErrorForecaster"]

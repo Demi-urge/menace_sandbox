@@ -1,0 +1,45 @@
+{
+  "accounts": [
+    {
+      "id": "yt_account_1",
+      "platform": "YouTube",
+      "topics": ["tech", "gaming"],
+      "total_revenue": 0,
+      "monthly_revenue": {},
+      "last_payment_date": null,
+      "monetisation_status": "pending",
+      "status": "active",
+      "stats": []
+    },
+    {
+      "id": "insta_account_1",
+      "platform": "Instagram",
+      "topics": ["fashion"],
+      "total_revenue": 0,
+      "monthly_revenue": {},
+      "last_payment_date": null,
+      "monetisation_status": "pending",
+      "status": "active",
+      "stats": [
+        {
+          "date": "2025-06-01",
+          "views": 150,
+          "likes": 30,
+          "comments": 5
+        },
+        {
+          "date": "2025-06-02",
+          "views": 160,
+          "likes": 32,
+          "comments": 6
+        },
+        {
+          "date": "2025-06-03",
+          "views": 155,
+          "likes": 31,
+          "comments": 5
+        }
+      ]
+    }
+  ]
+}

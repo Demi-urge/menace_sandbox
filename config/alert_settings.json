@@ -1,0 +1,12 @@
+{
+  "discord_webhook": "https://example.com/webhook",
+  "email": {
+    "sender": "security@example.com",
+    "recipient": "operator@example.com",
+    "smtp_server": "smtp.example.com",
+    "smtp_port": 465,
+    "login": "security@example.com",
+    "password": "changeme"
+  },
+  "severity_threshold": 4
+}

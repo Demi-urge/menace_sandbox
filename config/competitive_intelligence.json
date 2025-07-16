@@ -1,0 +1,22 @@
+{
+  "positive": ["good", "great", "positive", "up", "profit", "success"],
+  "negative": ["bad", "poor", "negative", "down", "loss", "fail"],
+  "ai_keywords": ["ai", "machine learning", "automation", "gpt", "artificial intelligence"],
+  "entity_blacklist": ["The", "And", "But", "Or", "In", "On", "At", "Of"],
+  "retention_days": 365,
+  "sentiment_weights": {
+    "good": 0.5,
+    "great": 1.0,
+    "positive": 0.5,
+    "up": 0.4,
+    "profit": 1.0,
+    "success": 1.0,
+    "bad": -0.5,
+    "poor": -0.5,
+    "negative": -0.4,
+    "down": -0.4,
+    "loss": -1.0,
+    "fail": -1.0
+  },
+  "spacy_model": "en_core_web_sm"
+}

@@ -1,0 +1,545 @@
+import json
+import pytest
+import menace.roi_tracker as rt
+import types
+import sys
+
+
+def test_roi_tracker_basic():
+    tracker = rt.ROITracker(window=3, tolerance=0.01)
+    vertex, preds, stop = tracker.update(0.0, 0.1)
+    assert vertex is None
+    assert not stop
+
+    data = [0.2, 0.3, 0.2, 0.1, -0.05]
+    for d in data:
+        vertex, preds, stop = tracker.update(0.0, d)
+    assert vertex is not None
+    assert stop
+    assert len(preds) == len(tracker.roi_history)
+
+
+def test_new_synergy_metrics_present():
+    tracker = rt.ROITracker()
+    expected = {
+        "synergy_shannon_entropy",
+        "synergy_flexibility",
+        "synergy_energy_consumption",
+    }
+    for name in expected:
+        assert name in tracker.metrics_history
+        assert name in tracker.synergy_metrics_history
+
+
+def test_register_metrics_pads_synergy_series():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.0, metrics={})
+    tracker.register_metrics("profitability")
+    assert tracker.synergy_metrics_history["synergy_profitability"] == [0.0]
+
+
+def test_roi_forecast_linear_sequence():
+    tracker = rt.ROITracker()
+    for i in range(1, 6):
+        tracker.update(0.0, float(i))
+    pred, interval = tracker.forecast()
+    assert round(pred, 1) == 6.0
+    assert interval[0] <= pred <= interval[1]
+
+
+def test_forecast_metric():
+    tracker = rt.ROITracker()
+    for i in range(5):
+        tracker.update(0.0, 0.0, metrics={"loss": float(i)})
+    pred, interval = tracker.forecast_metric("loss")
+    assert round(pred, 1) == 5.0
+    assert interval[0] <= pred <= interval[1]
+
+
+def test_save_and_load_json(tmp_path):
+    tracker = rt.ROITracker()
+    for i in range(5):
+        tracker.update(0.0, float(i), [f"m{i}.py"], metrics={"metric": float(i)})
+    tracker.record_prediction(0.5, 0.6)
+    tracker.record_prediction(0.7, 0.8)
+    tracker.record_metric_prediction("metric", 1.0, 0.5)
+    tracker.synergy_history.append({"synergy_roi": 0.5})
+    path = tmp_path / "hist.json"
+    tracker.save_history(str(path))
+
+    new_tracker = rt.ROITracker()
+    new_tracker.load_history(str(path))
+    assert new_tracker.roi_history == tracker.roi_history
+    assert new_tracker.module_deltas == tracker.module_deltas
+    assert new_tracker.predicted_roi == tracker.predicted_roi
+    assert new_tracker.actual_roi == tracker.actual_roi
+    assert new_tracker.metrics_history == tracker.metrics_history
+    assert new_tracker.predicted_metrics == tracker.predicted_metrics
+    assert new_tracker.actual_metrics == tracker.actual_metrics
+    assert new_tracker.synergy_history == tracker.synergy_history
+
+
+def test_save_and_load_sqlite(tmp_path):
+    tracker = rt.ROITracker()
+    for i in range(3):
+        tracker.update(0.0, float(i), [f"x{i}.py"], metrics={"m": float(i)})
+    tracker.record_prediction(1.0, 0.9)
+    tracker.synergy_history.append({"synergy_roi": 0.2})
+    path = tmp_path / "hist.db"
+    tracker.save_history(str(path))
+
+    other = rt.ROITracker()
+    other.load_history(str(path))
+    assert other.roi_history == tracker.roi_history
+    assert other.module_deltas == tracker.module_deltas
+    assert other.predicted_roi == tracker.predicted_roi
+    assert other.actual_roi == tracker.actual_roi
+    assert other.metrics_history == tracker.metrics_history
+    assert other.synergy_history == tracker.synergy_history
+
+
+def test_roi_tracker_filters_outliers():
+    tracker = rt.ROITracker()
+    normal = [0.1, 0.2, 0.15, 0.18]
+    for v in normal:
+        tracker.update(0.0, v)
+    baseline = len(tracker.roi_history)
+    tracker.update(0.0, 5.0)
+    tracker.update(0.0, -3.0)
+    assert len(tracker.roi_history) == baseline
+
+
+def test_roi_tracker_filtering_disabled():
+    tracker = rt.ROITracker(filter_outliers=False)
+    values = [0.1, 0.2, 0.15, 0.18, 5.0]
+    for v in values:
+        tracker.update(0.0, v)
+    assert tracker.roi_history[-1] == 5.0
+
+
+def test_plot_history_creates_file(tmp_path):
+    tracker = rt.ROITracker()
+    for i in range(5):
+        tracker.update(0.0, float(i))
+    out = tmp_path / "plot.png"
+    tracker.plot_history(str(out))
+    assert out.exists()
+
+
+def test_cli_plot(tmp_path):
+    tracker = rt.ROITracker()
+    for i in range(3):
+        tracker.update(0.0, float(i))
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+
+    out = tmp_path / "out.png"
+    rt.cli(["plot", str(hist), str(out)])
+    assert out.exists()
+
+
+def test_cli_forecast(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    for i in range(1, 6):
+        tracker.update(0.0, float(i))
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+
+    rt.cli(["forecast", str(hist)])
+    out = capsys.readouterr().out
+    assert "Predicted ROI" in out
+    assert "6.000" in out
+
+
+def test_cli_rank(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.5, ["a.py", "b.py"])
+    tracker.update(0.5, 1.0, ["b.py"])
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+
+    rt.cli(["rank", str(hist)])
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out[0].startswith("b.py")
+    assert out[1].startswith("a.py")
+
+
+def test_module_deltas_tracked():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.5, ["a.py", "b.py"])
+    tracker.update(0.5, 1.0, ["b.py"])
+    assert tracker.module_deltas["a.py"] == [0.5]
+    assert tracker.module_deltas["b.py"] == [0.5, 0.5]
+
+
+def test_update_without_modules():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 1.0)
+    assert tracker.module_deltas == {}
+
+
+def test_arima_order_selection_cached(monkeypatch):
+    import sys, types
+
+    calls = []
+
+    class DummyARIMA:
+        def __init__(self, data, order, exog=None):
+            self.data = data
+            self.order = order
+            self.exog = exog
+            calls.append(order)
+
+        def fit(self):
+            self.aic = sum(self.order)
+            self.bic = self.aic + 0.5
+            return self
+
+        def get_forecast(self):
+            class _Res:
+                predicted_mean = [float(len(self.data) + 1)]
+
+                @staticmethod
+                def conf_int(alpha=0.05):
+                    return [[0.0, 1.0]]
+
+            return _Res()
+
+    mod = types.ModuleType("statsmodels.tsa.arima.model")
+    mod.ARIMA = DummyARIMA
+    sys.modules["statsmodels.tsa.arima.model"] = mod
+    sys.modules.setdefault("statsmodels.tsa.arima", types.ModuleType("arima")).model = (
+        mod
+    )
+    sys.modules.setdefault("statsmodels.tsa", types.ModuleType("tsa")).arima = (
+        sys.modules["statsmodels.tsa.arima"]
+    )
+    sys.modules.setdefault("statsmodels", types.ModuleType("statsmodels")).tsa = (
+        sys.modules["statsmodels.tsa"]
+    )
+
+    tracker = rt.ROITracker()
+    for i in range(4):
+        tracker.update(0.0, float(i + 1))
+
+    pred1, _ = tracker.forecast()
+    assert tracker._best_order is not None
+    pred2, _ = tracker.forecast()
+    assert tracker._best_order is not None
+    assert len(calls) == 5
+
+
+def test_weighted_averaging_triggers_stop():
+    tracker = rt.ROITracker(window=3, tolerance=0.05, weights=[0.1, 0.2, 0.7])
+    tracker.update(0.0, 0.1)
+    tracker.update(0.0, 0.1)
+    _, _, stop = tracker.update(0.0, -0.04)
+    assert stop
+
+
+def test_weight_length_mismatch_raises():
+    with pytest.raises(ValueError):
+        rt.ROITracker(window=3, weights=[1.0, 2.0])
+
+
+def test_update_with_resource_metrics():
+    tracker = rt.ROITracker()
+    tracker.update(
+        0.0,
+        1.0,
+        resources={"cpu": 1.0, "memory": 2.0, "disk": 3.0, "time": 4.0, "gpu": 5.0},
+    )
+    assert tracker.resource_metrics and tracker.resource_metrics[0][-1] == 5.0
+
+
+def test_forecast_with_resource_data(monkeypatch):
+    class DummyDB:
+        def history(self):
+            import pandas as pd
+
+            return pd.DataFrame(
+                {
+                    "cpu": [1, 2, 3, 4, 5],
+                    "memory": [2, 3, 4, 5, 6],
+                    "disk": [1, 1, 1, 1, 1],
+                    "time": [1, 1, 1, 1, 1],
+                    "gpu": [0, 0, 1, 1, 2],
+                }
+            )
+
+    tracker = rt.ROITracker(resource_db=DummyDB())
+    for i in range(1, 6):
+        tracker.update(0.0, float(i))
+    pred, _ = tracker.forecast()
+    assert isinstance(pred, float)
+
+
+def test_prediction_reliability(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    tracker.record_prediction(1.0, 1.5)
+    tracker.record_prediction(2.0, 1.0)
+    mae = tracker.rolling_mae()
+    assert mae == pytest.approx(0.75)
+    assert tracker.rolling_mae(window=1) == pytest.approx(1.0)
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    rt.cli(["reliability", str(hist)])
+    out = capsys.readouterr().out
+    assert "ROI MAE" in out and "0.75" in out
+
+
+def test_metric_prediction_reliability(tmp_path):
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("profit", 1.0, 1.5)
+    tracker.record_metric_prediction("profit", 2.0, 1.0)
+    mae = tracker.rolling_mae_metric("profit")
+    assert mae == pytest.approx(0.75)
+    assert tracker.rolling_mae_metric("profit", window=1) == pytest.approx(1.0)
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    other = rt.ROITracker()
+    other.load_history(str(hist))
+    assert other.predicted_metrics == tracker.predicted_metrics
+    assert other.actual_metrics == tracker.actual_metrics
+
+
+def test_metric_prediction_pairs_persist(tmp_path):
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("profit", 1.0, 1.5)
+    tracker.record_metric_prediction("profit", 2.0, 1.0)
+    path = tmp_path / "hist.json"
+    tracker.save_history(str(path))
+    data = json.loads(path.read_text())
+    assert data["metric_predictions"]["profit"] == [[1.0, 1.5], [2.0, 1.0]]
+    other = rt.ROITracker()
+    other.load_history(str(path))
+    assert other.predicted_metrics == tracker.predicted_metrics
+    assert other.actual_metrics == tracker.actual_metrics
+
+
+def test_cli_metric_reliability(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("profit", 1.0, 0.5)
+    tracker.record_metric_prediction("profit", 2.0, 2.5)
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    rt.cli(["reliability", str(hist), "--metric", "profit"])
+    out = capsys.readouterr().out
+    assert "profit MAE" in out
+
+
+def test_cli_synergy_metric_reliability(tmp_path, capsys):
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("synergy_projected_lucrativity", 1.0, 0.5)
+    tracker.record_metric_prediction("synergy_projected_lucrativity", 2.0, 2.5)
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    rt.cli(["reliability", str(hist), "--metric", "synergy_projected_lucrativity"])
+    out = capsys.readouterr().out
+    assert "synergy_projected_lucrativity MAE" in out
+
+
+def test_cv_reliability_roi():
+    tracker = rt.ROITracker()
+    for i in range(5):
+        tracker.record_prediction(float(i), float(i) + 0.1)
+    score = tracker.cv_reliability()
+    assert 0.9 <= score <= 1.0
+
+
+def test_cv_reliability_metric():
+    tracker = rt.ROITracker()
+    for i in range(5):
+        tracker.record_metric_prediction("profit", float(i), float(i) + 0.1)
+    score = tracker.cv_reliability(metric="profit")
+    assert 0.9 <= score <= 1.0
+
+
+class _DummyPredBot:
+    def __init__(self):
+        self.calls = []
+
+    def predict_metric(self, name, feats):
+        self.calls.append((name, feats))
+        return 3.0
+
+
+class _StubManager:
+    def __init__(self, bot):
+        self.registry = {"b": type("E", (), {"bot": bot})()}
+
+    def get_prediction_bots_for(self, _name):
+        return ["b"]
+
+    def assign_prediction_bots(self, _):
+        return ["b"]
+
+
+def test_predict_metric_with_manager_records():
+    bot = _DummyPredBot()
+    mgr = _StubManager(bot)
+    tracker = rt.ROITracker()
+    val = tracker.predict_metric_with_manager(mgr, "profit", [1.0], actual=2.0)
+    assert val == 3.0
+    assert bot.calls[0][0] == "profit"
+    assert tracker.predicted_metrics["profit"] == [3.0]
+    assert tracker.actual_metrics["profit"] == [2.0]
+
+
+def test_predict_all_metrics_records():
+    bot = _DummyPredBot()
+    mgr = _StubManager(bot)
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.0, metrics={"a": 1.0, "b": 2.0})
+    tracker.predict_all_metrics(mgr, [0.5])
+    assert tracker.predicted_metrics["a"] == [3.0]
+    assert tracker.actual_metrics["a"] == [1.0]
+    assert tracker.predicted_metrics["b"] == [3.0]
+    assert tracker.actual_metrics["b"] == [2.0]
+    assert len(bot.calls) == 2
+
+
+def test_predict_all_metrics_without_history():
+    bot = _DummyPredBot()
+    mgr = _StubManager(bot)
+    tracker = rt.ROITracker()
+    tracker.register_metrics("x")
+    result = tracker.predict_all_metrics(mgr, [0.1])
+    assert result == {"x": 3.0}
+    assert tracker.predicted_metrics["x"] == []
+    assert tracker.actual_metrics["x"] == []
+
+
+def test_cli_predict_metric(tmp_path, capsys, monkeypatch):
+    bot = _DummyPredBot()
+    mgr = _StubManager(bot)
+    mod = types.SimpleNamespace(PredictionManager=lambda: mgr)
+    monkeypatch.setitem(sys.modules, "menace.prediction_manager_bot", mod)
+    tracker = rt.ROITracker()
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    rt.cli(["predict-metric", str(hist), "profit", "--actual", "1.0"])
+    out = capsys.readouterr().out
+    assert "Predicted profit" in out
+
+
+def test_cli_synergy_predict_metric(tmp_path, capsys, monkeypatch):
+    tracker = rt.ROITracker()
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    monkeypatch.setattr(
+        rt.ROITracker, "predict_synergy_profitability", lambda self: 4.2
+    )
+    rt.cli(["predict-metric", str(hist), "synergy_profitability"])
+    out = capsys.readouterr().out
+    assert "Predicted synergy_profitability" in out
+
+
+def test_cli_synergy_revenue_metric(tmp_path, capsys, monkeypatch):
+    tracker = rt.ROITracker()
+    hist = tmp_path / "hist.json"
+    tracker.save_history(str(hist))
+    monkeypatch.setattr(rt.ROITracker, "predict_synergy_revenue", lambda self: 3.3)
+    rt.cli(["predict-metric", str(hist), "synergy_revenue"])
+    out = capsys.readouterr().out
+    assert "Predicted synergy_revenue" in out
+
+
+def test_rolling_mae_metric_window():
+    tracker = rt.ROITracker()
+    vals = [(0.0, 5.0), (0.0, 4.0), (0.0, 3.0), (0.0, 2.0), (0.0, 1.0)]
+    for p, a in vals:
+        tracker.record_metric_prediction("loss", p, a)
+    assert tracker.rolling_mae_metric("loss") == pytest.approx(3.0)
+    assert tracker.rolling_mae_metric("loss", window=2) == pytest.approx(1.5)
+
+
+def test_reliability_roi_scores():
+    tracker = rt.ROITracker()
+    tracker.record_prediction(1.0, 1.5)
+    tracker.record_prediction(2.0, 1.0)
+    mae = tracker.rolling_mae()
+    assert tracker.reliability() == pytest.approx(1.0 / (1.0 + mae))
+
+
+def test_reliability_metric_scores():
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("profit", 1.0, 2.0)
+    tracker.record_metric_prediction("profit", 2.0, 1.0)
+    mae = tracker.rolling_mae_metric("profit")
+    assert tracker.reliability(metric="profit") == pytest.approx(1.0 / (1.0 + mae))
+
+
+def test_reliability_cross_validation():
+    tracker = rt.ROITracker()
+    for i in range(4):
+        tracker.record_prediction(float(i), float(i))
+    score = tracker.reliability(cv=3)
+    assert 0.9 <= score <= 1.0
+
+
+class _NamedManager(_StubManager):
+    def __init__(self, bot):
+        super().__init__(bot)
+        self.names = []
+
+    def get_prediction_bots_for(self, name):
+        self.names.append(name)
+        return super().get_prediction_bots_for(name)
+
+
+def test_predict_all_metrics_features_and_name():
+    bot = _DummyPredBot()
+    mgr = _NamedManager(bot)
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.0, metrics={"x": 1.0})
+    tracker.predict_all_metrics(mgr, [0.2], bot_name="spec")
+    assert mgr.names == ["spec"]
+    assert bot.calls[0] == ("x", [0.2])
+
+
+def test_predict_synergy_metric_uses_manager():
+    bot = _DummyPredBot()
+    mgr = _StubManager(bot)
+    tracker = rt.ROITracker()
+    val = tracker.predict_synergy_metric("profitability", manager=mgr)
+    assert val == 3.0
+    assert bot.calls == [("synergy_profitability", [])]
+
+
+def test_forecast_uses_advanced_predictor(monkeypatch):
+    monkeypatch.setenv("ENABLE_ADVANCED_ROI_PREDICTOR", "1")
+    import menace.roi_predictor as rp
+
+    calls = []
+
+    def fake_forecast(self, history, exog=None):
+        calls.append(True)
+        return 9.0, (8.0, 10.0)
+
+    monkeypatch.setattr(rp.ROIPredictor, "forecast", fake_forecast)
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 1.0)
+    tracker.update(0.0, 2.0)
+    pred, interval = tracker.forecast()
+    assert pred == 9.0
+    assert interval == (8.0, 10.0)
+    assert calls
+
+
+def test_tracker_init_has_recovery_metric():
+    tracker = rt.ROITracker()
+    assert "recovery_time" in tracker.metrics_history
+    assert tracker.metrics_history["recovery_time"] == []
+
+
+def test_recovery_time_saved(tmp_path):
+    tracker = rt.ROITracker()
+    tracker.update(1.0, 0.5, metrics={"recovery_time": 0.0})
+    tracker.update(0.5, 1.0, metrics={"recovery_time": 2.5})
+    path = tmp_path / "hist.json"
+    tracker.save_history(str(path))
+
+    other = rt.ROITracker()
+    other.load_history(str(path))
+    assert other.metrics_history["recovery_time"][-1] == 2.5

@@ -1,0 +1,185 @@
+import json
+import os
+import importlib.util
+import importlib
+import sys
+from types import ModuleType
+from pathlib import Path
+import logging
+import pytest
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+stub = ModuleType("database_router")
+stub.DatabaseRouter = object
+sys.modules.setdefault("menace.database_router", stub)
+pkg_path = os.path.join(os.path.dirname(__file__), "..")
+pkg_spec = importlib.util.spec_from_file_location(
+    "menace", os.path.join(pkg_path, "__init__.py"), submodule_search_locations=[pkg_path]
+)
+menace_pkg = importlib.util.module_from_spec(pkg_spec)
+sys.modules["menace"] = menace_pkg
+pkg_spec.loader.exec_module(menace_pkg)
+bdb = importlib.import_module("menace.bot_development_bot")
+cfg_mod = importlib.import_module("menace.bot_dev_config")
+
+
+def _spec_dict():
+    return {
+        "name": "sample_bot",
+        "purpose": "demo",
+        "functions": ["run"],
+        "language": "python",
+        "dependencies": ["requests"],
+        "level": "L1",
+        "description": "Sample bot",
+        "function_docs": {"run": "Run the bot"},
+    }
+
+
+def _json():
+    return json.dumps(_spec_dict())
+
+
+def _yaml():
+    try:
+        import yaml
+    except Exception:
+        return _json()
+    return yaml.safe_dump(_spec_dict())
+
+
+def test_parse_plan_json():
+    bot = bdb.BotDevelopmentBot(repo_base="tmp")
+    specs = bot.parse_plan(_json())
+    assert specs[0].name == "sample_bot"
+    assert specs[0].level == "L1"
+    assert specs[0].description == "Sample bot"
+    assert specs[0].function_docs.get("run") == "Run the bot"
+
+
+def test_parse_plan_yaml():
+    bot = bdb.BotDevelopmentBot(repo_base="tmp")
+    specs = bot.parse_plan(_yaml())
+    assert specs[0].name == "sample_bot"
+    assert specs[0].level == "L1"
+    assert specs[0].description == "Sample bot"
+    assert specs[0].function_docs.get("run") == "Run the bot"
+
+
+def test_build_from_plan(tmp_path):
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    files = bot.build_from_plan(_json())
+    assert (tmp_path / "sample_bot" / "sample_bot.py") in files
+    assert (tmp_path / "sample_bot" / "sample_bot.py").exists()
+    req = tmp_path / "sample_bot" / "requirements.txt"
+    assert req.exists()
+    test_file = tmp_path / "sample_bot" / "tests" / "test_run.py"
+    assert test_file.exists()
+
+
+def test_config_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("BOT_DEV_REPO_BASE", str(tmp_path))
+    cfg = cfg_mod.BotDevConfig()
+    bot = bdb.BotDevelopmentBot(config=cfg)
+    assert bot.repo_base == tmp_path
+
+
+def test_build_prompt_with_docs(tmp_path):
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    spec = bdb.BotSpec(
+        name="doc_bot",
+        purpose="demo",
+        description="Module desc",
+        io_format="json",
+        level="L2",
+        functions=["run_task", "helper"],
+        function_docs={"run_task": "Run tasks", "helper": "Assist"},
+    )
+    prompt = bot._build_prompt(spec)
+    assert "INSTRUCTION MODE" in prompt
+    assert "Module desc" in prompt
+    assert "Level: L2" in prompt
+    assert "IO Format: json" in prompt
+    assert "- run_task: Run tasks" in prompt
+    assert "- helper: Assist" in prompt
+
+
+def test_prompt_includes_standards(tmp_path):
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    spec = bdb.BotSpec(name="std_bot", purpose="demo")
+    prompt = bot._build_prompt(spec)
+    assert "INSTRUCTION MODE" in prompt
+    assert "Coding Standards:" in prompt
+    assert "PEP8" in prompt
+    assert "Repository Layout:" in prompt
+    assert "Metadata:" in prompt
+    assert "meta.yaml" in prompt
+    assert "Version Control:" in prompt
+    assert "Testing:" in prompt
+    assert "setup_tests.sh" in prompt
+
+
+def test_prompt_includes_function_guidance(tmp_path):
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    spec = bdb.BotSpec(name="guide_bot", purpose="demo", functions=["click_target", "ocr_image"])
+    prompt = bot._build_prompt(spec)
+    assert "Function Guidance:" in prompt
+    assert "click_target:" in prompt
+    assert "ocr_image:" in prompt
+
+
+def test_visual_and_openai_failure_fallback(tmp_path, monkeypatch, caplog):
+    class DummyOpenAI:
+        class ChatCompletion:
+            @staticmethod
+            def create(*a, **k):
+                raise RuntimeError("bad")
+
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.setattr(bdb, "openai", DummyOpenAI)
+    monkeypatch.setattr(bdb, "Repo", None)
+
+    class FailVisual(bdb.BotDevelopmentBot):
+        def __init__(self, repo_base: Path) -> None:  # type: ignore[override]
+            super().__init__(repo_base=repo_base, openai_attempts=2)
+
+        def _visual_build(self, prompt: str, name: str) -> bool:  # type: ignore[override]
+            return False
+
+    dev = FailVisual(repo_base=tmp_path)
+    spec = bdb.BotSpec(name="fallback_bot", purpose="demo", functions=["run"])
+    caplog.set_level(logging.ERROR)
+    path = dev.build_bot(spec)
+    assert path.exists()
+    assert "openai fallback failed" in caplog.text
+
+
+def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
+    import concurrent.futures as cf
+
+    calls: dict[str, int] = {}
+
+    class DummyExec:
+        def __init__(self, max_workers: int) -> None:
+            calls["workers"] = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            pass
+
+        def map(self, func, iterable):
+            return [func(x) for x in iterable]
+
+    monkeypatch.setattr(cf, "ThreadPoolExecutor", DummyExec)
+    monkeypatch.setattr(bdb, "Repo", None)
+
+    cfg = cfg_mod.BotDevConfig(concurrency_workers=2)
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    spec2 = _spec_dict()
+    spec2["name"] = "sample_bot2"
+    plan = json.dumps([_spec_dict(), spec2])
+    paths = bot.build_from_plan(plan)
+    assert (tmp_path / "sample_bot" / "sample_bot.py") in paths
+    assert calls.get("workers") == 2

@@ -1,0 +1,453 @@
+import sys
+import pytest
+
+import environment_generator as eg
+import menace.roi_tracker as rt
+
+
+def test_generate_presets_count_and_keys():
+    presets = eg.generate_presets(4)
+    assert len(presets) == 4
+    required = {"CPU_LIMIT", "NETWORK_LATENCY_MS", "SECURITY_LEVEL"}
+    for preset in presets:
+        assert required <= preset.keys()
+
+
+def test_generate_presets_zero_count():
+    assert eg.generate_presets(0) == []
+
+
+def test_generate_presets_gpu_and_os(monkeypatch):
+    monkeypatch.setattr(eg.random, "random", lambda: 0.0)
+    presets = eg.generate_presets(1)
+    assert "GPU_LIMIT" in presets[0] and "OS_TYPE" in presets[0]
+
+
+def test_generate_presets_os_specific_fields(monkeypatch):
+    monkeypatch.setattr(eg.random, "random", lambda: 0.0)
+
+    orig_choice = eg.random.choice
+
+    def fake_choice(seq):
+        if seq is eg._ALT_OS_TYPES:
+            return "windows"
+        return orig_choice(seq)
+
+    monkeypatch.setattr(eg.random, "choice", fake_choice)
+
+    presets = eg.generate_presets(1)
+    p = presets[0]
+    assert p.get("OS_TYPE") == "windows"
+    assert p.get("CONTAINER_IMAGE")
+    assert p.get("VM_SETTINGS", {}).get("windows_image")
+
+
+def test_generate_presets_missing_optional(monkeypatch):
+    # Remove stubbed optional modules if present to simulate absent packages
+    for name in ["pulp", "pandas", "sqlalchemy"]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    presets = eg.generate_presets(1)
+    assert len(presets) == 1 and isinstance(presets[0], dict)
+
+
+def test_generate_presets_multiple_failures(monkeypatch):
+    monkeypatch.setattr(eg.random, "random", lambda: 0.0)
+    monkeypatch.setattr(eg.random, "randint", lambda a, b: 2)
+    monkeypatch.setattr(eg.random, "sample", lambda pop, k: pop[:k])
+    presets = eg.generate_presets(1)
+    fm = presets[0].get("FAILURE_MODES")
+    assert isinstance(fm, list) and len(fm) == 2
+
+
+class _DummyTracker:
+    def __init__(
+        self,
+        scores,
+        synergy_roi=None,
+        synergy_sec=None,
+        synergy_eff=None,
+        synergy_af=None,
+        synergy_res=None,
+        synergy_ent=None,
+        synergy_flex=None,
+        synergy_energy=None,
+        synergy_safe=None,
+        synergy_adapt=None,
+        synergy_risk=None,
+        synergy_recovery=None,
+        synergy_disc=None,
+        synergy_gpu=None,
+        synergy_cpu=None,
+        synergy_mem=None,
+        synergy_long_lucr=None,
+    ):
+        self.metrics_history = {"security_score": scores}
+        if synergy_roi is not None:
+            self.metrics_history["synergy_roi"] = synergy_roi
+        if synergy_sec is not None:
+            self.metrics_history["synergy_security_score"] = synergy_sec
+        if synergy_eff is not None:
+            self.metrics_history["synergy_efficiency"] = synergy_eff
+        if synergy_af is not None:
+            self.metrics_history["synergy_antifragility"] = synergy_af
+        if synergy_res is not None:
+            self.metrics_history["synergy_resilience"] = synergy_res
+        if synergy_ent is not None:
+            self.metrics_history["synergy_shannon_entropy"] = synergy_ent
+        if synergy_flex is not None:
+            self.metrics_history["synergy_flexibility"] = synergy_flex
+        if synergy_energy is not None:
+            self.metrics_history["synergy_energy_consumption"] = synergy_energy
+        if synergy_safe is not None:
+            self.metrics_history["synergy_safety_rating"] = synergy_safe
+        if synergy_adapt is not None:
+            self.metrics_history["synergy_adaptability"] = synergy_adapt
+        if synergy_risk is not None:
+            self.metrics_history["synergy_risk_index"] = synergy_risk
+        if synergy_recovery is not None:
+            self.metrics_history["synergy_recovery_time"] = synergy_recovery
+        if synergy_disc is not None:
+            self.metrics_history["synergy_discrepancy_count"] = synergy_disc
+        if synergy_gpu is not None:
+            self.metrics_history["synergy_gpu_usage"] = synergy_gpu
+        if synergy_cpu is not None:
+            self.metrics_history["synergy_cpu_usage"] = synergy_cpu
+        if synergy_mem is not None:
+            self.metrics_history["synergy_memory_usage"] = synergy_mem
+        if synergy_long_lucr is not None:
+            self.metrics_history["synergy_long_term_lucrativity"] = synergy_long_lucr
+
+
+class _ResourceTracker:
+    def __init__(self, roi, synergy=None, scores=None):
+        self.roi_history = roi
+        self.metrics_history = {"security_score": scores or [70, 70, 70]}
+        if synergy is not None:
+            self.metrics_history["synergy_roi"] = synergy
+
+    def diminishing(self):
+        return 0.01
+
+
+class _PredictTracker:
+    def __init__(self, *, roi_history=None, **preds):
+        self.metrics_history = {"security_score": [70, 70, 70]}
+        if roi_history is None:
+            self.roi_history = [0.0]
+        elif isinstance(roi_history, (list, tuple)):
+            self.roi_history = list(roi_history)
+        else:
+            self.roi_history = [float(roi_history)]
+        self._preds = preds
+
+    def predict_synergy(self):
+        return float(self._preds.get("roi", 0.0))
+
+    def predict_synergy_metric(self, name):
+        return float(self._preds.get(name, 0.0))
+
+    def diminishing(self):
+        return 0.01
+
+
+def test_adapt_presets_increase():
+    presets = [{"THREAT_INTENSITY": 30}, {"THREAT_INTENSITY": 30}]
+    tracker = _DummyTracker([85, 90, 88])
+    new = eg.adapt_presets(tracker, presets)
+    assert all(p["THREAT_INTENSITY"] > 30 for p in new)
+
+
+def test_adapt_presets_decrease():
+    presets = [{"THREAT_INTENSITY": 70}, {"THREAT_INTENSITY": 90}]
+    tracker = _DummyTracker([40, 45, 42])
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] < 70
+    assert new[1]["THREAT_INTENSITY"] < 90
+
+
+def test_synergy_roi_adjustments():
+    presets = [{"THREAT_INTENSITY": 30}, {"THREAT_INTENSITY": 30}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_roi=[0.2, 0.3, 0.25]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert all(p["THREAT_INTENSITY"] > 30 for p in new)
+
+
+def test_synergy_security_level():
+    presets = [{"SECURITY_LEVEL": 2}, {"SECURITY_LEVEL": 3}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_sec=[6.0, 5.5, 6.5]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["SECURITY_LEVEL"] > 2
+    assert new[1]["SECURITY_LEVEL"] > 3
+
+
+def test_synergy_risk_index_security_level():
+    presets = [{"SECURITY_LEVEL": 2}, {"SECURITY_LEVEL": 3}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_risk=[6.0, 5.5, 6.5]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["SECURITY_LEVEL"] > 2
+    assert new[1]["SECURITY_LEVEL"] > 3
+
+
+def test_synergy_low_values():
+    presets = [
+        {"THREAT_INTENSITY": 50, "SECURITY_LEVEL": 4},
+        {"THREAT_INTENSITY": 50, "SECURITY_LEVEL": 4},
+    ]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_roi=[-0.3, -0.2, -0.25], synergy_sec=[-6, -5, -7]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert all(p["THREAT_INTENSITY"] < 50 for p in new)
+    assert all(p["SECURITY_LEVEL"] < 4 for p in new)
+
+
+def test_resource_scaling_stagnation():
+    presets = [
+        {
+            "CPU_LIMIT": "1",
+            "MEMORY_LIMIT": "256Mi",
+            "BANDWIDTH_LIMIT": "5Mbps",
+            "MIN_BANDWIDTH": "1Mbps",
+            "MAX_BANDWIDTH": "10Mbps",
+        }
+    ]
+    tracker = _ResourceTracker([0.0, 0.05, 0.055, 0.056])
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["CPU_LIMIT"] != "1"
+    assert new[0]["MEMORY_LIMIT"] != "256Mi"
+    assert new[0]["BANDWIDTH_LIMIT"] != "5Mbps"
+
+
+def test_resource_scaling_improving():
+    presets = [
+        {
+            "CPU_LIMIT": "2",
+            "MEMORY_LIMIT": "512Mi",
+            "BANDWIDTH_LIMIT": "10Mbps",
+            "MIN_BANDWIDTH": "5Mbps",
+            "MAX_BANDWIDTH": "50Mbps",
+        }
+    ]
+    tracker = _ResourceTracker([0.0, 0.2, 0.35, 0.55])
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) < 2
+    assert new[0]["MEMORY_LIMIT"] == "256Mi"
+    assert new[0]["BANDWIDTH_LIMIT"] == "5Mbps"
+
+
+def test_synergy_network_adjustment():
+    presets = [{"NETWORK_LATENCY_MS": 100, "MAX_BANDWIDTH": "10Mbps"}]
+    tracker = _ResourceTracker([0.0, 0.0], synergy=[0.2, 0.3, 0.25])
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["NETWORK_LATENCY_MS"] < 100
+    assert new[0]["MAX_BANDWIDTH"] != "10Mbps"
+
+
+def test_synergy_efficiency_adjusts_resources():
+    presets = [{"CPU_LIMIT": "2", "MEMORY_LIMIT": "512Mi"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_eff=[0.1, 0.08, 0.09]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) < 2
+    assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_synergy_adaptability_adjusts_resources():
+    presets = [{"CPU_LIMIT": "2", "MEMORY_LIMIT": "512Mi"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_adapt=[0.06, 0.07, 0.05]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) < 2
+    assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_synergy_antifragility_adjusts_threat():
+    presets = [{"THREAT_INTENSITY": 30}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_af=[0.06, 0.07, 0.05]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+
+
+def test_synergy_safety_rating_adjusts_threat():
+    presets = [{"THREAT_INTENSITY": 30}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_safe=[6.0, 6.5, 6.2]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+
+
+def test_synergy_resilience_bandwidth():
+    presets = [
+        {
+            "BANDWIDTH_LIMIT": "5Mbps",
+            "MIN_BANDWIDTH": "1Mbps",
+            "MAX_BANDWIDTH": "10Mbps",
+        }
+    ]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_res=[0.07, 0.08, 0.09]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["BANDWIDTH_LIMIT"] != "5Mbps"
+    assert new[0]["MAX_BANDWIDTH"] != "10Mbps"
+
+
+def test_synergy_entropy_cpu_increase():
+    presets = [{"CPU_LIMIT": "1"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_ent=[0.1, 0.12, 0.09]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) > 1
+
+
+def test_synergy_flexibility_memory_reduce():
+    presets = [{"MEMORY_LIMIT": "512Mi"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_flex=[0.1, 0.1, 0.1]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_synergy_energy_consumption_bandwidth_reduce():
+    presets = [
+        {
+            "BANDWIDTH_LIMIT": "10Mbps",
+            "MIN_BANDWIDTH": "5Mbps",
+            "MAX_BANDWIDTH": "50Mbps",
+        }
+    ]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_energy=[0.1, 0.15, 0.12]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["BANDWIDTH_LIMIT"] != "10Mbps"
+
+
+def test_synergy_recovery_time_threat_decrease():
+    presets = [{"THREAT_INTENSITY": 50}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_recovery=[0.2, 0.15, 0.18]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] < 50
+
+
+def test_synergy_recovery_time_threat_increase():
+    presets = [{"THREAT_INTENSITY": 20}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_recovery=[-0.2, -0.25, -0.22]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 20
+
+
+def test_prediction_efficiency_adjusts_resources():
+    presets = [{"CPU_LIMIT": "2", "MEMORY_LIMIT": "512Mi"}]
+    tracker = _PredictTracker(efficiency=0.1)
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) < 2
+    assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_prediction_resilience_bandwidth():
+    presets = [
+        {
+            "BANDWIDTH_LIMIT": "5Mbps",
+            "MIN_BANDWIDTH": "1Mbps",
+            "MAX_BANDWIDTH": "10Mbps",
+        }
+    ]
+    tracker = _PredictTracker(resilience=0.1)
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["BANDWIDTH_LIMIT"] != "5Mbps"
+    assert new[0]["MAX_BANDWIDTH"] != "10Mbps"
+
+
+def test_prediction_synergy_roi_network():
+    presets = [{"NETWORK_LATENCY_MS": 100, "MAX_BANDWIDTH": "10Mbps"}]
+    tracker = _PredictTracker(roi=0.2)
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["NETWORK_LATENCY_MS"] < 100
+    assert new[0]["MAX_BANDWIDTH"] != "10Mbps"
+
+
+def test_adapt_presets_synergy_prediction_increases_threat(monkeypatch):
+    tracker = rt.ROITracker()
+    for r in [0.1, 0.2, 0.1]:
+        tracker.update(0.0, r, metrics={"security_score": 70, "synergy_roi": 0.5 * r})
+    monkeypatch.setattr(tracker, "forecast", lambda: (0.5, (0.0, 0.0)))
+
+    presets = [{"THREAT_INTENSITY": 30}]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+
+
+def test_adapt_presets_synergy_prediction_no_change(monkeypatch):
+    tracker = rt.ROITracker()
+    for r in [0.1, 0.2, 0.1]:
+        tracker.update(0.0, r, metrics={"security_score": 70, "synergy_roi": 0.5 * r})
+    monkeypatch.setattr(tracker, "forecast", lambda: (0.1, (0.0, 0.0)))
+
+    presets = [{"THREAT_INTENSITY": 30}]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] == 30
+
+
+def test_synergy_discrepancy_increases_threat():
+    presets = [{"THREAT_INTENSITY": 30}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_disc=[2, 3, 4]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+
+
+def test_synergy_gpu_usage_scales_gpu_limit():
+    presets = [{"GPU_LIMIT": "1"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_gpu=[0.1, 0.1, 0.1]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert int(new[0]["GPU_LIMIT"]) > 1
+
+
+def test_synergy_cpu_usage_scales_cpu_limit():
+    presets = [{"CPU_LIMIT": "1"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_cpu=[0.1, 0.1, 0.1]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert float(new[0]["CPU_LIMIT"]) > 1
+
+
+def test_synergy_memory_usage_scales_memory_limit():
+    presets = [{"MEMORY_LIMIT": "512Mi"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_mem=[0.1, 0.1, 0.1]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_synergy_long_term_lucrativity_scales_resources():
+    presets = [{"GPU_LIMIT": "1", "DISK_LIMIT": "512Mi"}]
+    tracker = _DummyTracker(
+        [70, 70, 70], synergy_long_lucr=[0.1, 0.1, 0.1]
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert int(new[0]["GPU_LIMIT"]) > 1
+    assert new[0]["DISK_LIMIT"] != "512Mi"
+

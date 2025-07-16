@@ -1,0 +1,3 @@
+extra_metrics:
+  code_quality: 0.0
+  maintainability: 0.0

@@ -1,0 +1,108 @@
+import os
+import logging
+import types
+import sys
+from dataclasses import dataclass
+
+from menace.evaluation_history_db import EvaluationHistoryDB
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+# stub modules required during import
+sys.modules.setdefault("numpy", types.ModuleType("numpy"))
+sk_mod = types.ModuleType("sklearn")
+sk_mod.linear_model = types.SimpleNamespace(LogisticRegression=object)
+sys.modules.setdefault("sklearn", sk_mod)
+sys.modules.setdefault("sklearn.linear_model", sk_mod.linear_model)
+pred_mod = types.ModuleType("menace.resource_prediction_bot")
+@dataclass
+class ResourceMetrics:
+    cpu: float
+    memory: float
+    disk: float
+    time: float
+pred_mod.ResourceMetrics = ResourceMetrics
+pred_mod.TemplateDB = object
+sys.modules["menace.resource_prediction_bot"] = pred_mod
+
+alloc_mod = types.ModuleType("menace.resource_allocation_bot")
+class ResourceAllocationBot:
+    def __init__(self, *a, **k):
+        pass
+    def allocate(self, metrics):
+        return [(name, True) for name in metrics]
+alloc_mod.ResourceAllocationBot = ResourceAllocationBot
+sys.modules["menace.resource_allocation_bot"] = alloc_mod
+
+import menace.niche_saturation_bot as ns
+from menace.menace_memory_manager import MenaceMemoryManager
+
+
+def test_saturate_logs_strategy_error(tmp_path, caplog):
+    class BadStrategy:
+        def receive_niche_info(self, info):
+            raise RuntimeError("boom")
+
+    alloc = ResourceAllocationBot()
+    bot = ns.NicheSaturationBot(
+        db=ns.NicheDB(tmp_path / "n.db"), alloc_bot=alloc, strategy_bot=BadStrategy()
+    )
+    caplog.set_level(logging.ERROR)
+    bot.saturate([ns.NicheCandidate("x", 1.0, 0.0)])
+    assert "strategy bot failed" in caplog.text
+
+
+def test_summary_logs_store_error(tmp_path, caplog):
+    mm = MenaceMemoryManager(tmp_path / "m.db", embedder=None)
+    mm.store("k", "one. two. three.")
+
+    def oops(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    mm.store = oops
+    caplog.set_level(logging.ERROR)
+    mm.summarise_memory("k")
+    assert "Failed to store summary" in caplog.text
+
+
+def test_ensure_config_logs_error(monkeypatch, caplog, tmp_path):
+    import menace.config_discovery as cd
+
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("fail")),
+    )
+    caplog.set_level(logging.ERROR)
+    cd.ensure_config(["X"], save_path=tmp_path / "cfg")
+    assert "Failed to save config" in caplog.text
+
+
+def test_evaluation_failure_logged(tmp_path, caplog):
+    import types, sys
+    sys.modules.setdefault("networkx", types.ModuleType("networkx"))
+    sys.modules.setdefault("pulp", types.ModuleType("pulp"))
+    sys.modules.setdefault("pandas", types.ModuleType("pandas"))
+    jinja_mod = types.ModuleType("jinja2")
+    jinja_mod.Template = lambda *a, **k: None
+    sys.modules.setdefault("jinja2", jinja_mod)
+    sys.modules.setdefault("yaml", types.ModuleType("yaml"))
+    sqlalchemy_mod = types.ModuleType("sqlalchemy")
+    engine_mod = types.ModuleType("sqlalchemy.engine")
+    engine_mod.Engine = object
+    sqlalchemy_mod.engine = engine_mod
+    sys.modules.setdefault("sqlalchemy", sqlalchemy_mod)
+    sys.modules.setdefault("sqlalchemy.engine", engine_mod)
+    sys.modules.setdefault("prometheus_client", types.ModuleType("prometheus_client"))
+    from menace.evaluation_manager import EvaluationManager
+
+    class BadEngine:
+        def evaluate(self):
+            raise RuntimeError("boom")
+
+    db = EvaluationHistoryDB(tmp_path / "hist.db")
+    mgr = EvaluationManager(learning_engine=BadEngine(), history_db=db)
+    caplog.set_level(logging.ERROR)
+    mgr.evaluate_all()
+    assert "evaluation failed for learning_engine" in caplog.text
+    hist = db.history("learning_engine")
+    assert hist and hist[0][2] == 0 and "boom" in hist[0][3]

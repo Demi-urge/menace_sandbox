@@ -1,0 +1,32 @@
+[
+  {
+    "ip": "203.0.113.1",
+    "port": 8000,
+    "username": "user1",
+    "password": "pass1",
+    "type": "packetstream",
+    "usage_history": [],
+    "failure_count": 0,
+    "status": "active"
+  },
+  {
+    "ip": "203.0.113.2",
+    "port": 8001,
+    "username": "user2",
+    "password": "pass2",
+    "type": "packetstream",
+    "usage_history": [],
+    "failure_count": 0,
+    "status": "active"
+  },
+  {
+    "ip": "203.0.113.3",
+    "port": 8002,
+    "username": "user3",
+    "password": "pass3",
+    "type": "mobile",
+    "usage_history": [],
+    "failure_count": 0,
+    "status": "active"
+  }
+]

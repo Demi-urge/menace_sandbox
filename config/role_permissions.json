@@ -1,0 +1,5 @@
+{
+  "read": ["read"],
+  "write": ["read", "write"],
+  "admin": ["read", "write", "admin"]
+}

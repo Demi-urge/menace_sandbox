@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+"""Automatic handler for escalation events."""
+
+import logging
+from typing import Iterable, Optional
+from .retry_utils import retry
+
+from .advanced_error_management import SelfHealingOrchestrator
+from .knowledge_graph import KnowledgeGraph
+from .automated_debugger import AutomatedDebugger
+from .self_coding_engine import SelfCodingEngine
+from .code_database import CodeDB
+from .menace_memory_manager import MenaceMemoryManager
+from .rollback_manager import RollbackManager
+from .error_bot import ErrorDB
+from .unified_event_bus import UnifiedEventBus
+
+
+class AutoEscalationManager:
+    """Analyse issues and initiate remediation without human input."""
+
+    def __init__(
+        self,
+        healer: SelfHealingOrchestrator | None = None,
+        debugger: AutomatedDebugger | None = None,
+        rollback_mgr: RollbackManager | None = None,
+        event_bus: UnifiedEventBus | None = None,
+        *,
+        publish_attempts: int = 1,
+    ) -> None:
+        self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
+        if debugger is None:
+            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            debugger = AutomatedDebugger(ErrorDB(), engine)
+        self.debugger = debugger
+        self.rollback_mgr = rollback_mgr
+        self.event_bus = event_bus
+        self.publish_attempts = max(1, publish_attempts)
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    # ------------------------------------------------------------------
+    def handle(self, message: str, attachments: Iterable[str] | None = None) -> None:
+        """Attempt automated recovery actions."""
+        try:
+            self.debugger.analyse_and_fix()
+        except Exception:
+            self.logger.exception("debugger failed")
+        try:
+            self.healer.probe_and_heal("menace")
+        except Exception:
+            self.logger.exception("healing failed")
+        if self.rollback_mgr:
+            try:
+                self.rollback_mgr.auto_rollback("latest", [])
+            except Exception:
+                self.logger.exception("rollback failed")
+        if self.event_bus:
+            @retry(Exception, attempts=self.publish_attempts, delay=0.1)
+            def _publish() -> None:
+                self.event_bus.publish("escalation:handled", {"message": message})
+
+            try:
+                _publish()
+            except Exception:
+                self.logger.exception("failed publishing escalation event")
+
+
+__all__ = ["AutoEscalationManager"]

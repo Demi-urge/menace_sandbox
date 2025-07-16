@@ -1,0 +1,11 @@
+{
+  "profit_margin": 0.1,
+  "min_profit_margin": 0.05,
+  "conserve_threshold": 0.3,
+  "aggressive_threshold": 0.7,
+  "risk_multipliers": {
+    "aggressive": 1.2,
+    "balanced": 1.0,
+    "conservative": 0.8
+  }
+}

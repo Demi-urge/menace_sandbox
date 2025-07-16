@@ -1,0 +1,1430 @@
+from __future__ import annotations
+
+"""Track ROI deltas across self-improvement iterations."""
+
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
+
+import json
+import os
+import sqlite3
+
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures
+
+if TYPE_CHECKING:  # pragma: no cover - for typing only
+    from .resources_bot import ROIHistoryDB
+    from .prediction_manager_bot import PredictionManager
+
+
+class ROITracker:
+    """Monitor ROI change and determine when improvements diminish."""
+
+    def __init__(
+        self,
+        window: int = 5,
+        tolerance: float = 0.01,
+        *,
+        filter_outliers: bool = True,
+        weights: Optional[List[float]] = None,
+        resource_db: "ROIHistoryDB" | None = None,
+    ) -> None:
+        """Create a tracker for monitoring ROI deltas.
+
+        Parameters
+        ----------
+        window:
+            Number of recent deltas considered when evaluating convergence.
+        tolerance:
+            Threshold below which the average delta is considered negligible.
+        filter_outliers:
+            Whether to discard extreme deltas when updating the history.
+        weights:
+            Optional weights applied to the most recent ``window`` deltas when
+            computing the stop criterion. Length must equal ``window`` and the
+            values must sum to a non-zero amount.
+        resource_db:
+            Optional :class:`ResourcesBot.ROIHistoryDB` providing historical
+            resource usage (CPU, memory, disk, time and GPU) to incorporate in
+            forecasts.
+        """
+        self.roi_history: List[float] = []
+        self.window = window
+        self.tolerance = tolerance
+        self.filter_outliers = filter_outliers
+        if weights is not None:
+            if len(weights) != window:
+                raise ValueError("len(weights) must equal window")
+            arr = np.array(weights, dtype=float)
+            if not arr.any():
+                raise ValueError("weights must not sum to zero")
+            self.weights = arr / arr.sum()
+        else:
+            self.weights = None
+        self._poly = PolynomialFeatures(degree=2)
+        self._model = LinearRegression()
+        self.module_deltas: Dict[str, List[float]] = {}
+        self.metrics_history: Dict[str, List[float]] = {
+            "recovery_time": [],
+            "synergy_adaptability": [],
+            "synergy_recovery_time": [],
+            "synergy_discrepancy_count": [],
+            "synergy_gpu_usage": [],
+            "synergy_cpu_usage": [],
+            "synergy_memory_usage": [],
+            "synergy_long_term_lucrativity": [],
+            "synergy_shannon_entropy": [],
+            "synergy_flexibility": [],
+            "synergy_energy_consumption": [],
+            "synergy_profitability": [],
+            "synergy_revenue": [],
+            "synergy_projected_lucrativity": [],
+            "synergy_maintainability": [],
+            "synergy_code_quality": [],
+            "synergy_network_latency": [],
+            "synergy_throughput": [],
+            "synergy_risk_index": [],
+            "synergy_safety_rating": [],
+            "synergy_efficiency": [],
+            "synergy_antifragility": [],
+            "synergy_resilience": [],
+            "synergy_security_score": [],
+        }
+        self.synergy_metrics_history: Dict[str, List[float]] = {
+            "synergy_adaptability": [],
+            "synergy_recovery_time": [],
+            "synergy_discrepancy_count": [],
+            "synergy_gpu_usage": [],
+            "synergy_cpu_usage": [],
+            "synergy_memory_usage": [],
+            "synergy_long_term_lucrativity": [],
+            "synergy_shannon_entropy": [],
+            "synergy_flexibility": [],
+            "synergy_energy_consumption": [],
+            "synergy_profitability": [],
+            "synergy_revenue": [],
+            "synergy_projected_lucrativity": [],
+            "synergy_maintainability": [],
+            "synergy_code_quality": [],
+            "synergy_network_latency": [],
+            "synergy_throughput": [],
+            "synergy_risk_index": [],
+            "synergy_safety_rating": [],
+            "synergy_efficiency": [],
+            "synergy_antifragility": [],
+            "synergy_resilience": [],
+            "synergy_security_score": [],
+        }
+        self.synergy_history: list[dict[str, float]] = []
+        self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
+        self._best_order: Optional[Tuple[int, int, int]] = None
+        self._order_history: Tuple[float, ...] = ()
+        self.resource_db = resource_db
+        self.resource_metrics: List[Tuple[float, float, float, float, float]] = []
+        self.predicted_roi: List[float] = []
+        self.actual_roi: List[float] = []
+        self.predicted_metrics: Dict[str, List[float]] = {}
+        self.actual_metrics: Dict[str, List[float]] = {}
+        self._next_prediction: float | None = None
+        if self.resource_db:
+            try:
+                df = self.resource_db.history()
+                cols = [
+                    c
+                    for c in ("cpu", "memory", "disk", "time", "gpu")
+                    if c in df.columns
+                ]
+                if cols:
+                    data = df[cols].values.tolist()
+                    for row in data:
+                        vals = [float(x) for x in row]
+                        if len(vals) < 5:
+                            vals.extend([0.0] * (5 - len(vals)))
+                        self.resource_metrics.append(tuple(vals[:5]))
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    def register_metrics(self, *names: str) -> None:
+        """Ensure ``metrics_history`` contains ``names`` padded to current length."""
+
+        for raw in names:
+            name = str(raw)
+            target = (
+                self.synergy_metrics_history
+                if name.startswith("synergy_")
+                else self.metrics_history
+            )
+            if name not in target:
+                target[name] = [0.0] * len(self.roi_history)
+            self.predicted_metrics.setdefault(name, [])
+            self.actual_metrics.setdefault(name, [])
+            pair_map = {
+                "safety_rating": "synergy_safety_rating",
+                "security_score": "synergy_security_score",
+                "discrepancy_count": "synergy_discrepancy_count",
+                "gpu_usage": "synergy_gpu_usage",
+                "cpu_usage": "synergy_cpu_usage",
+                "memory_usage": "synergy_memory_usage",
+                "long_term_lucrativity": "synergy_long_term_lucrativity",
+                "shannon_entropy": "synergy_shannon_entropy",
+                "flexibility": "synergy_flexibility",
+                "energy_consumption": "synergy_energy_consumption",
+                "profitability": "synergy_profitability",
+                "revenue": "synergy_revenue",
+                "projected_lucrativity": "synergy_projected_lucrativity",
+                "maintainability": "synergy_maintainability",
+                "code_quality": "synergy_code_quality",
+                "network_latency": "synergy_network_latency",
+                "throughput": "synergy_throughput",
+                "risk_index": "synergy_risk_index",
+                "recovery_time": "synergy_recovery_time",
+                "adaptability": "synergy_adaptability",
+                "efficiency": "synergy_efficiency",
+                "antifragility": "synergy_antifragility",
+                "resilience": "synergy_resilience",
+            }
+            syn_name = pair_map.get(name)
+            if syn_name and syn_name not in self.synergy_metrics_history:
+                self.synergy_metrics_history[syn_name] = [0.0] * len(self.roi_history)
+                self.predicted_metrics.setdefault(syn_name, [])
+                self.actual_metrics.setdefault(syn_name, [])
+
+    # ------------------------------------------------------------------
+    def diminishing(self) -> float:
+        """Return the ROI delta threshold considered negligible."""
+        return float(self.tolerance)
+
+    # ------------------------------------------------------------------
+    def _regression(self) -> Tuple[Optional[int], List[float]]:
+        """Return vertex index and predictions from quadratic regression."""
+        if len(self.roi_history) < 3:
+            return None, []
+        x = np.arange(len(self.roi_history)).reshape(-1, 1)
+        y = np.array(self.roi_history)
+        x_poly = self._poly.fit_transform(x)
+        self._model.fit(x_poly, y)
+        preds = self._model.predict(x_poly).tolist()
+        a = float(self._model.coef_[2])
+        b = float(self._model.coef_[1])
+        if abs(a) < 1e-9:
+            vertex = None
+        else:
+            vertex = int(round(-b / (2 * a)))
+        return vertex, preds
+
+    # ------------------------------------------------------------------
+    def _filter_value(self, delta: float) -> Optional[float]:
+        """Return ``delta`` unless it's an outlier based on IQR or z-score."""
+        if not self.filter_outliers:
+            return delta
+        if len(self.roi_history) < 4:
+            return delta
+        data = np.array(self.roi_history, dtype=float)
+        q1 = np.percentile(data, 25)
+        q3 = np.percentile(data, 75)
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        if delta < lower or delta > upper:
+            return None
+        return delta
+
+    # ------------------------------------------------------------------
+    def record_prediction(self, predicted: float, actual: float) -> None:
+        """Store ``predicted`` and ``actual`` ROI values for reliability stats."""
+        self.predicted_roi.append(float(predicted))
+        self.actual_roi.append(float(actual))
+
+    def record_metric_prediction(
+        self, metric: str, predicted: float, actual: float
+    ) -> None:
+        """Store ``predicted`` and ``actual`` values for ``metric``."""
+        name = str(metric)
+        self.predicted_metrics.setdefault(name, []).append(float(predicted))
+        self.actual_metrics.setdefault(name, []).append(float(actual))
+
+    # ------------------------------------------------------------------
+    def rolling_mae(self, window: int | None = None) -> float:
+        """Return mean absolute error for the last ``window`` predictions."""
+        if not self.predicted_roi:
+            return 0.0
+        preds = self.predicted_roi[-window:] if window else self.predicted_roi
+        acts = self.actual_roi[-len(preds) :]
+        arr = np.abs(np.array(preds) - np.array(acts))
+        return float(arr.mean()) if arr.size else 0.0
+
+    def rolling_mae_metric(self, metric: str, window: int | None = None) -> float:
+        """Return MAE for ``metric`` predictions over ``window`` samples."""
+        preds = self.predicted_metrics.get(metric, [])
+        if not preds:
+            return 0.0
+        preds = preds[-window:] if window else preds
+        acts = self.actual_metrics.get(metric, [])[-len(preds) :]
+        arr = np.abs(np.array(preds) - np.array(acts))
+        return float(arr.mean()) if arr.size else 0.0
+
+    # ------------------------------------------------------------------
+    def reliability(
+        self,
+        *,
+        metric: str | None = None,
+        window: int | None = None,
+        cv: int | None = None,
+    ) -> float:
+        """Return reliability score for predictions.
+
+        When ``cv`` is provided :meth:`cv_reliability` is returned. Otherwise the
+        rolling mean absolute error is converted to a 0-1 reliability using
+        ``1 / (1 + MAE)``.
+        """
+
+        if cv:
+            score = self.cv_reliability(metric, cv)
+            if np.isnan(score):
+                return 0.0
+            return max(0.0, min(1.0, score))
+        if metric is None:
+            mae = self.rolling_mae(window)
+        else:
+            mae = self.rolling_mae_metric(metric, window)
+        return 1.0 / (1.0 + abs(mae))
+
+    # ------------------------------------------------------------------
+    def cv_reliability(self, metric: str | None = None, cv: int = 3) -> float:
+        """Return cross-validated reliability score for predictions.
+
+        Parameters
+        ----------
+        metric:
+            Optional metric name. When omitted the ROI predictions are
+            evaluated.
+        cv:
+            Number of folds to use for K-fold cross-validation.
+        """
+
+        preds: List[float]
+        acts: List[float]
+        if metric is None:
+            preds = self.predicted_roi
+            acts = self.actual_roi
+        else:
+            preds = self.predicted_metrics.get(metric, [])
+            acts = self.actual_metrics.get(metric, [])
+
+        if len(preds) < 4 or len(acts) < 4:
+            return 0.0
+
+        X = np.array(preds, dtype=float).reshape(-1, 1)
+        y = np.array(acts, dtype=float)
+
+        try:
+            from sklearn.model_selection import KFold, cross_val_score
+
+            folds = min(cv, max(2, len(preds) // 2))
+            if folds < 2:
+                return 0.0
+            kf = KFold(n_splits=folds, shuffle=True, random_state=42)
+            scores = cross_val_score(LinearRegression(), X, y, cv=kf, scoring="r2")
+            return float(np.nanmean(scores))
+        except Exception:
+            try:
+                model = LinearRegression().fit(X, y)
+                return float(model.score(X, y))
+            except Exception:
+                return 0.0
+
+    # ------------------------------------------------------------------
+    def update(
+        self,
+        roi_before: float,
+        roi_after: float,
+        modules: Optional[List[str]] = None,
+        resources: Optional[Dict[str, float]] = None,
+        metrics: Optional[Dict[str, float]] = None,
+    ) -> Tuple[Optional[int], List[float], bool]:
+        """Record ROI delta and evaluate stopping criteria.
+
+        When ``modules`` is provided, track ROI contributions per module. When
+        ``resources`` is given, CPU, memory, disk, time and GPU metrics are stored for
+        use in forecasting. ``metrics`` allows arbitrary named metrics to be
+        recorded for later forecasting with :meth:`forecast_metric`.
+        """
+        if self._next_prediction is not None:
+            self.record_prediction(self._next_prediction, roi_after)
+            self._next_prediction = None
+
+        delta = roi_after - roi_before
+        filtered = self._filter_value(delta)
+        if filtered is not None:
+            self.roi_history.append(filtered)
+            if modules:
+                for m in modules:
+                    self.module_deltas.setdefault(m, []).append(filtered)
+            if resources:
+                try:
+                    self.resource_metrics.append(
+                        (
+                            float(resources.get("cpu", 0.0)),
+                            float(resources.get("memory", 0.0)),
+                            float(resources.get("disk", 0.0)),
+                            float(resources.get("time", 0.0)),
+                            float(resources.get("gpu", 0.0)),
+                        )
+                    )
+                except Exception:
+                    self.resource_metrics.append((0.0, 0.0, 0.0, 0.0, 0.0))
+            if metrics:
+                for name, value in metrics.items():
+                    try:
+                        val = float(value)
+                    except Exception:
+                        val = 0.0
+                    target = (
+                        self.synergy_metrics_history
+                        if str(name).startswith("synergy_")
+                        else self.metrics_history
+                    )
+                    target.setdefault(str(name), []).append(val)
+                    if str(name).startswith("synergy_"):
+                        self.metrics_history.setdefault(str(name), []).append(val)
+            for name in list(self.metrics_history):
+                if not metrics or name not in metrics:
+                    last = (
+                        self.metrics_history[name][-1]
+                        if self.metrics_history[name]
+                        else 0.0
+                    )
+                    self.metrics_history[name].append(last)
+            for name in list(self.synergy_metrics_history):
+                if not metrics or name not in metrics:
+                    last = (
+                        self.synergy_metrics_history[name][-1]
+                        if self.synergy_metrics_history[name]
+                        else 0.0
+                    )
+                    self.synergy_metrics_history[name].append(last)
+        iteration = len(self.roi_history) - 1
+        vertex, preds = self._regression()
+        stop = False
+        if vertex is not None and iteration >= vertex:
+            stop = True
+        if len(self.roi_history) >= self.window:
+            if self.weights is None:
+                avg = sum(self.roi_history[-self.window :]) / self.window
+            else:
+                data = np.array(self.roi_history[-self.window :], dtype=float)
+                avg = float(np.dot(data, self.weights))
+            if abs(avg) < self.tolerance:
+                stop = True
+        return vertex, preds, stop
+
+    # ------------------------------------------------------------------
+    def forecast(self) -> Tuple[float, Tuple[float, float]]:
+        """Return next ROI prediction and 95% confidence interval.
+
+        When ``statsmodels`` is available multiple ARIMA orders are evaluated
+        using ``aic`` and ``bic`` scores. The best order is cached until the
+        history changes. If ``statsmodels`` is missing or fitting fails, a
+        simple linear regression forecast is used instead.
+        """
+        if not self.roi_history:
+            self._next_prediction = 0.0
+            return 0.0, (0.0, 0.0)
+        if len(self.roi_history) < 2:
+            val = float(self.roi_history[-1])
+            self._next_prediction = val
+            return val, (val, val)
+        history_tuple = tuple(self.roi_history)
+        exog = None
+        if self.resource_metrics:
+            arr = np.array(self.resource_metrics, dtype=float)
+            if arr.ndim == 2 and arr.shape[0] >= len(self.roi_history):
+                exog = arr[-len(self.roi_history) :]
+
+        if os.getenv("ENABLE_ADVANCED_ROI_PREDICTOR") == "1":
+            try:
+                from .roi_predictor import ROIPredictor
+
+                predictor = ROIPredictor()
+                mean, (lower, upper) = predictor.forecast(self.roi_history, exog=exog)
+                self._next_prediction = mean
+                return mean, (lower, upper)
+            except Exception:
+                pass
+        try:
+            from statsmodels.tsa.arima.model import ARIMA  # type: ignore
+
+            if self._best_order is None or self._order_history != history_tuple:
+                candidates = [
+                    (1, 1, 1),
+                    (1, 0, 0),
+                    (0, 1, 1),
+                    (2, 1, 2),
+                ]
+                scores = []
+                for order in candidates:
+                    try:
+                        m = ARIMA(
+                            self.roi_history,
+                            exog=exog,
+                            order=order,
+                        ).fit()
+                        scores.append((m.aic, m.bic, order, m))
+                    except Exception:
+                        continue
+                if scores:
+                    scores.sort(key=lambda x: (x[0], x[1]))
+                    _, _, self._best_order, model = scores[0]
+                    self._order_history = history_tuple
+                else:
+                    model = ARIMA(self.roi_history, order=(1, 1, 1)).fit()
+                    self._best_order = (1, 1, 1)
+                    self._order_history = history_tuple
+            else:
+                model = ARIMA(
+                    self.roi_history,
+                    exog=exog,
+                    order=self._best_order,
+                ).fit()
+
+            next_exog = exog[-1:] if exog is not None else None
+            res = model.get_forecast(steps=1, exog=next_exog)
+            mean = float(res.predicted_mean)
+            conf = res.conf_int(alpha=0.05)[0]
+            lower, upper = float(conf[0]), float(conf[1])
+            self._next_prediction = mean
+            return mean, (lower, upper)
+        except Exception:
+            pass
+        try:
+            X = np.arange(len(self.roi_history)).reshape(-1, 1)
+            y = np.array(self.roi_history)
+            if exog is not None and exog.shape[0] >= len(self.roi_history):
+                X = np.hstack([X, exog[-len(self.roi_history) :]])
+                next_row = np.hstack([[len(y)], exog[-1]]).reshape(1, -1)
+            else:
+                next_row = [[len(y)]]
+            lr = LinearRegression().fit(X, y)
+            mean = float(lr.predict(next_row)[0])
+            # Standard error of residuals for naive confidence interval
+            resid = y - lr.predict(X)
+            if resid.size > 1:
+                se = float(resid.std(ddof=1))
+            else:
+                se = 0.0
+            delta = 1.96 * se
+            self._next_prediction = mean
+            return mean, (mean - delta, mean + delta)
+        except Exception:
+            val = float(self.roi_history[-1])
+            self._next_prediction = val
+            return val, (val, val)
+
+    # ------------------------------------------------------------------
+    def _forecast_generic(
+        self, history: List[float]
+    ) -> Tuple[float, Tuple[float, float]]:
+        """Internal helper to forecast the next value for ``history``."""
+        if not history:
+            return 0.0, (0.0, 0.0)
+        if len(history) < 2:
+            val = float(history[-1])
+            return val, (val, val)
+        try:
+            from statsmodels.tsa.arima.model import ARIMA  # type: ignore
+
+            model = ARIMA(history, order=(1, 1, 1)).fit()
+            res = model.get_forecast(steps=1)
+            mean = float(res.predicted_mean)
+            conf = res.conf_int(alpha=0.05)[0]
+            lower, upper = float(conf[0]), float(conf[1])
+            return mean, (lower, upper)
+        except Exception:
+            pass
+        try:
+            X = np.arange(len(history)).reshape(-1, 1)
+            y = np.array(history)
+            lr = LinearRegression().fit(X, y)
+            mean = float(lr.predict(np.array([[len(history)]]))[0])
+            resid = y - lr.predict(X)
+            if resid.size > 1:
+                se = float(resid.std(ddof=1))
+            else:
+                se = 0.0
+            delta = 1.96 * se
+            return mean, (mean - delta, mean + delta)
+        except Exception:
+            val = float(history[-1])
+            return val, (val, val)
+
+    # ------------------------------------------------------------------
+    def forecast_metric(self, metric_name: str) -> Tuple[float, Tuple[float, float]]:
+        """Return forecast for a recorded metric series.
+
+        ``metric_name`` may start with ``"synergy_"`` to access synergy metrics
+        generated by the sandbox. In this case the underlying series is looked
+        up by name without modification, falling back to the base metric when no
+        synergy history exists.
+        """
+
+        name = str(metric_name)
+        history = self.metrics_history.get(name)
+        if history is None and name.startswith("synergy_"):
+            history = self.synergy_metrics_history.get(name)
+            if history is None:
+                history = self.metrics_history.get(name[len("synergy_") :])
+        if history is None:
+            history = []
+        return self._forecast_generic(history)
+
+    # ------------------------------------------------------------------
+    def forecast_synergy(self) -> Tuple[float, Tuple[float, float]]:
+        """Return forecast for ``synergy_roi`` using recorded history."""
+
+        history = self.synergy_metrics_history.get("synergy_roi")
+        if history is None:
+            history = self.metrics_history.get("synergy_roi")
+        if history is None:
+            history = []
+        return self._forecast_generic(history)
+
+    def forecast_synergy_metric(self, name: str) -> Tuple[float, Tuple[float, float]]:
+        """Return forecast for ``synergy_<name>`` history."""
+
+        metric_name = (
+            f"synergy_{name}" if not str(name).startswith("synergy_") else str(name)
+        )
+        history = self.synergy_metrics_history.get(metric_name)
+        if history is None:
+            history = self.metrics_history.get(metric_name)
+        if history is None:
+            history = []
+        return self._forecast_generic(history)
+
+    # ------------------------------------------------------------------
+    def predict_metric_with_manager(
+        self,
+        manager: "PredictionManager",
+        metric: str,
+        features: Iterable[float] | None = None,
+        *,
+        actual: float | None = None,
+        bot_name: str | None = None,
+    ) -> float:
+        """Return averaged ``metric`` prediction from ``manager``.
+
+        When ``actual`` is provided the prediction is also recorded via
+        :meth:`record_metric_prediction`.
+        """
+
+        bots = manager.get_prediction_bots_for(bot_name or "roi_tracker")
+        if not bots:
+            try:
+                bots = manager.assign_prediction_bots(self)
+            except Exception:
+                bots = []
+
+        vec = list(features or [])
+        score = 0.0
+        count = 0
+        for bid in bots:
+            entry = manager.registry.get(bid)
+            if not entry or not entry.bot:
+                continue
+            pred = getattr(entry.bot, "predict_metric", None)
+            if not callable(pred):
+                continue
+            try:
+                val = pred(metric, vec)
+                if isinstance(val, (list, tuple)):
+                    val = val[0]
+                score += float(val)
+                count += 1
+            except Exception:
+                continue
+
+        pred_value = float(score / count) if count else 0.0
+        if actual is not None:
+            try:
+                self.record_metric_prediction(metric, pred_value, float(actual))
+            except Exception:
+                pass
+        return pred_value
+
+    # ------------------------------------------------------------------
+    def predict_all_metrics(
+        self,
+        manager: "PredictionManager",
+        features: Iterable[float] | None = None,
+        *,
+        bot_name: str | None = None,
+    ) -> Dict[str, float]:
+        """Predict all recorded metrics via ``manager`` and record results."""
+        if manager:
+            try:
+                manager.assign_prediction_bots(self)
+            except Exception:
+                pass
+
+        results: Dict[str, float] = {}
+        vec = list(features or [])
+        for name, history in list(self.metrics_history.items()):
+            actual = history[-1] if history else None
+            try:
+                pred = self.predict_metric_with_manager(
+                    manager,
+                    name,
+                    vec,
+                    actual=actual,
+                    bot_name=bot_name,
+                )
+            except Exception:
+                pred = 0.0
+            results[name] = float(pred)
+        return results
+
+    # ------------------------------------------------------------------
+    def predict_synergy(self, window: int = 5) -> float:
+        """Return forecast for ``synergy_roi`` using ROI and metric histories."""
+
+        history = self.metrics_history.get("synergy_roi")
+        if not history or len(history) < 2:
+            return 0.0
+
+        n = min(len(history), window, len(self.roi_history))
+        metrics = [m for m in self.metrics_history if not m.startswith("synergy_")]
+
+        X: list[list[float]] = []
+        y: list[float] = []
+        for i in range(-n, 0):
+            row = [float(self.roi_history[i])]
+            for m in metrics:
+                vals = self.metrics_history.get(m, [])
+                if len(vals) >= len(self.roi_history):
+                    row.append(float(vals[i]))
+                elif vals:
+                    row.append(float(vals[-1]))
+                else:
+                    row.append(0.0)
+            y.append(float(history[i]))
+            X.append(row)
+
+        if len(X) < 2:
+            return float(history[-1])
+
+        arr_X = np.array(X, dtype=float)
+        arr_y = np.array(y, dtype=float)
+
+        try:
+            from statsmodels.tsa.arima.model import ARIMA  # type: ignore
+
+            model = ARIMA(arr_y, exog=arr_X, order=(1, 1, 1)).fit()
+            roi_pred, _ = self.forecast()
+            next_row = [roi_pred]
+            for m in metrics:
+                pred, _ = self.forecast_metric(m)
+                next_row.append(pred)
+            res = model.get_forecast(steps=1, exog=np.array([next_row]))
+            return float(round(float(res.predicted_mean[0]), 4))
+        except Exception:
+            pass
+
+        try:
+            model = LinearRegression().fit(arr_X, arr_y)
+            roi_pred, _ = self.forecast()
+            next_row = [roi_pred]
+            for m in metrics:
+                pred, _ = self.forecast_metric(m)
+                next_row.append(pred)
+            return float(round(float(model.predict([next_row])[0]), 4))
+        except Exception:
+            return float(history[-1])
+
+    # ------------------------------------------------------------------
+    def predict_synergy_metric(
+        self,
+        name: str,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_<name>`` using ROI and metric histories.
+
+        When ``manager`` is provided the prediction bots registered with
+        :class:`PredictionManager` are consulted before falling back to the
+        internal statistical model.
+        """
+
+        metric_name = (
+            f"synergy_{name}" if not str(name).startswith("synergy_") else str(name)
+        )
+        history = self.synergy_metrics_history.get(metric_name)
+        if history is None:
+            history = self.metrics_history.get(metric_name)
+
+        if manager is not None:
+            try:
+                actual = history[-1] if history else None
+                val = self.predict_metric_with_manager(
+                    manager, metric_name, [], actual=actual
+                )
+                return float(val)
+            except Exception:
+                pass
+
+        if not history or len(history) < 2:
+            return 0.0
+
+        n = min(len(history), window, len(self.roi_history))
+        metrics = [m for m in self.metrics_history if not m.startswith("synergy_")]
+
+        X: list[list[float]] = []
+        y: list[float] = []
+        for i in range(-n, 0):
+            row = [float(self.roi_history[i])]
+            for m in metrics:
+                vals = self.metrics_history.get(m, [])
+                if len(vals) >= len(self.roi_history):
+                    row.append(float(vals[i]))
+                elif vals:
+                    row.append(float(vals[-1]))
+                else:
+                    row.append(0.0)
+            y.append(float(history[i]))
+            X.append(row)
+
+        if len(X) < 2:
+            return float(history[-1])
+
+        arr_X = np.array(X, dtype=float)
+        arr_y = np.array(y, dtype=float)
+
+        try:
+            from statsmodels.tsa.arima.model import ARIMA  # type: ignore
+
+            model = ARIMA(arr_y, exog=arr_X, order=(1, 1, 1)).fit()
+            roi_pred, _ = self.forecast()
+            next_row = [roi_pred]
+            for m in metrics:
+                pred, _ = self.forecast_metric(m)
+                next_row.append(pred)
+            res = model.get_forecast(steps=1, exog=np.array([next_row]))
+            return float(round(float(res.predicted_mean[0]), 4))
+        except Exception:
+            pass
+
+        try:
+            model = LinearRegression().fit(arr_X, arr_y)
+            roi_pred, _ = self.forecast()
+            next_row = [roi_pred]
+            for m in metrics:
+                pred, _ = self.forecast_metric(m)
+                next_row.append(pred)
+            return float(round(float(model.predict([next_row])[0]), 4))
+        except Exception:
+            return float(history[-1])
+
+    # ------------------------------------------------------------------
+    def predict_synergy_profitability(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_profitability``."""
+        return self.predict_synergy_metric("profitability", window, manager)
+
+    def predict_synergy_revenue(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_revenue``."""
+        return self.predict_synergy_metric("revenue", window, manager)
+
+    def predict_synergy_projected_lucrativity(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_projected_lucrativity``."""
+        return self.predict_synergy_metric("projected_lucrativity", window, manager)
+
+    def predict_synergy_maintainability(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_maintainability``."""
+        return self.predict_synergy_metric("maintainability", window, manager)
+
+    def predict_synergy_adaptability(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_adaptability``."""
+        return self.predict_synergy_metric("adaptability", window, manager)
+
+    def predict_synergy_code_quality(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_code_quality``."""
+        return self.predict_synergy_metric("code_quality", window, manager)
+
+    def predict_synergy_safety_rating(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_safety_rating``."""
+        return self.predict_synergy_metric("safety_rating", window, manager)
+
+    def predict_synergy_network_latency(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_network_latency``."""
+        return self.predict_synergy_metric("network_latency", window, manager)
+
+    def predict_synergy_throughput(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_throughput``."""
+        return self.predict_synergy_metric("throughput", window, manager)
+
+    def predict_synergy_risk_index(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_risk_index``."""
+        return self.predict_synergy_metric("risk_index", window, manager)
+
+    def predict_synergy_recovery_time(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_recovery_time``."""
+        return self.predict_synergy_metric("recovery_time", window, manager)
+
+    def predict_synergy_discrepancy_count(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_discrepancy_count``."""
+        return self.predict_synergy_metric("discrepancy_count", window, manager)
+
+    def predict_synergy_gpu_usage(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_gpu_usage``."""
+        return self.predict_synergy_metric("gpu_usage", window, manager)
+
+    def predict_synergy_cpu_usage(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_cpu_usage``."""
+        return self.predict_synergy_metric("cpu_usage", window, manager)
+
+    def predict_synergy_memory_usage(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_memory_usage``."""
+        return self.predict_synergy_metric("memory_usage", window, manager)
+
+    def predict_synergy_long_term_lucrativity(
+        self,
+        window: int = 5,
+        manager: "PredictionManager | None" = None,
+    ) -> float:
+        """Return forecast for ``synergy_long_term_lucrativity``."""
+        return self.predict_synergy_metric("long_term_lucrativity", window, manager)
+
+    # ------------------------------------------------------------------
+    def get_scenario_synergy(self, name: str) -> List[Dict[str, float]]:
+        """Return recorded synergy metrics for ``name`` scenario."""
+
+        return list(self.scenario_synergy.get(str(name), []))
+
+    # ------------------------------------------------------------------
+    def save_history(self, path: str) -> None:
+        """Persist ``roi_history`` and ``module_deltas`` to ``path``."""
+        if path.endswith(".json"):
+            metric_preds = {
+                m: [
+                    [float(p), float(a)]
+                    for p, a in zip(
+                        self.predicted_metrics.get(m, []),
+                        self.actual_metrics.get(m, []),
+                    )
+                ]
+                for m in set(self.predicted_metrics) | set(self.actual_metrics)
+            }
+            data = {
+                "roi_history": self.roi_history,
+                "module_deltas": self.module_deltas,
+                "predicted_roi": self.predicted_roi,
+                "actual_roi": self.actual_roi,
+                "metrics_history": self.metrics_history,
+                "synergy_metrics_history": self.synergy_metrics_history,
+                "synergy_history": self.synergy_history,
+                "scenario_synergy": self.scenario_synergy,
+                "predicted_metrics": self.predicted_metrics,
+                "actual_metrics": self.actual_metrics,
+                "metric_predictions": metric_preds,
+            }
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+            return
+        with sqlite3.connect(path) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS roi_history (delta REAL)")
+            conn.execute("DELETE FROM roi_history")
+            conn.executemany(
+                "INSERT INTO roi_history (delta) VALUES (?)",
+                [(float(d),) for d in self.roi_history],
+            )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS module_deltas (module TEXT, delta REAL)"
+            )
+            conn.execute("DELETE FROM module_deltas")
+            rows = [
+                (m, float(v)) for m, vals in self.module_deltas.items() for v in vals
+            ]
+            if rows:
+                conn.executemany(
+                    "INSERT INTO module_deltas (module, delta) VALUES (?, ?)",
+                    rows,
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS predictions (pred REAL, actual REAL)"
+            )
+            conn.execute("DELETE FROM predictions")
+            if self.predicted_roi:
+                conn.executemany(
+                    "INSERT INTO predictions (pred, actual) VALUES (?, ?)",
+                    [
+                        (float(p), float(a))
+                        for p, a in zip(self.predicted_roi, self.actual_roi)
+                    ],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS metric_predictions (metric TEXT, pred REAL, actual REAL)"
+            )
+            conn.execute("DELETE FROM metric_predictions")
+            metric_pred_rows = [
+                (m, float(p), float(a))
+                for m, preds in self.predicted_metrics.items()
+                for p, a in zip(preds, self.actual_metrics.get(m, []))
+            ]
+            if metric_pred_rows:
+                conn.executemany(
+                    "INSERT INTO metric_predictions (metric, pred, actual) VALUES (?, ?, ?)",
+                    metric_pred_rows,
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS metrics_history (metric TEXT, value REAL)"
+            )
+            conn.execute("DELETE FROM metrics_history")
+            metric_rows: list[tuple[str, float | None]] = []
+            all_metric_histories = {
+                **self.metrics_history,
+                **self.synergy_metrics_history,
+            }
+            for m, vals in all_metric_histories.items():
+                if vals:
+                    metric_rows.extend((m, float(v)) for v in vals)
+                else:
+                    metric_rows.append((m, None))
+            if metric_rows:
+                conn.executemany(
+                    "INSERT INTO metrics_history (metric, value) VALUES (?, ?)",
+                    metric_rows,
+                )
+            conn.execute("CREATE TABLE IF NOT EXISTS synergy_history (data TEXT)")
+            conn.execute("DELETE FROM synergy_history")
+            if self.synergy_history:
+                conn.executemany(
+                    "INSERT INTO synergy_history (data) VALUES (?)",
+                    [(json.dumps(d),) for d in self.synergy_history],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS scenario_synergy (scenario TEXT, data TEXT)"
+            )
+            conn.execute("DELETE FROM scenario_synergy")
+            scenario_rows = [
+                (scen, json.dumps(d))
+                for scen, lst in self.scenario_synergy.items()
+                for d in lst
+            ]
+            if scenario_rows:
+                conn.executemany(
+                    "INSERT INTO scenario_synergy (scenario, data) VALUES (?, ?)",
+                    scenario_rows,
+                )
+
+    # ------------------------------------------------------------------
+    def load_history(self, path: str) -> None:
+        """Populate ``roi_history`` and ``module_deltas`` from ``path``."""
+        if not os.path.exists(path):
+            return
+        if path.endswith(".json"):
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, list):
+                    self.roi_history = [float(x) for x in data]
+                    self.module_deltas = {}
+                    self.predicted_roi = []
+                    self.actual_roi = []
+                    self.metrics_history = {}
+                    self.predicted_metrics = {}
+                    self.actual_metrics = {}
+                    self.synergy_history = []
+                    self.scenario_synergy = {}
+                else:
+                    self.roi_history = [float(x) for x in data.get("roi_history", [])]
+                    self.module_deltas = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("module_deltas", {}).items()
+                    }
+                    self.predicted_roi = [
+                        float(x) for x in data.get("predicted_roi", [])
+                    ]
+                    self.actual_roi = [float(x) for x in data.get("actual_roi", [])]
+                    self.metrics_history = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("metrics_history", {}).items()
+                        if not str(m).startswith("synergy_")
+                    }
+                    self.synergy_metrics_history = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("synergy_metrics_history", {}).items()
+                    }
+                    self.synergy_history = [
+                        {
+                            str(k): float(v)
+                            for k, v in entry.items()
+                            if isinstance(entry, dict)
+                        }
+                        for entry in data.get("synergy_history", [])
+                        if isinstance(entry, dict)
+                    ]
+                    self.scenario_synergy = {
+                        str(n): [
+                            {
+                                str(k): float(v)
+                                for k, v in entry.items()
+                                if isinstance(entry, dict)
+                            }
+                            for entry in lst or []
+                            if isinstance(entry, dict)
+                        ]
+                        for n, lst in data.get("scenario_synergy", {}).items()
+                        if isinstance(lst, list)
+                    }
+                    if not self.synergy_metrics_history:
+                        for m, vals in data.get("metrics_history", {}).items():
+                            if str(m).startswith("synergy_"):
+                                self.synergy_metrics_history[str(m)] = [
+                                    float(v) for v in vals
+                                ]
+                    metric_preds = data.get("metric_predictions")
+                    if isinstance(metric_preds, dict):
+                        self.predicted_metrics = {}
+                        self.actual_metrics = {}
+                        for m, pairs in metric_preds.items():
+                            p_list, a_list = [], []
+                            for pair in pairs or []:
+                                try:
+                                    p, a = pair
+                                    p_list.append(float(p))
+                                    a_list.append(float(a))
+                                except Exception:
+                                    continue
+                            if p_list:
+                                self.predicted_metrics[str(m)] = p_list
+                            if a_list:
+                                self.actual_metrics[str(m)] = a_list
+                    else:
+                        self.predicted_metrics = {
+                            str(m): [float(v) for v in vals]
+                            for m, vals in data.get("predicted_metrics", {}).items()
+                        }
+                        self.actual_metrics = {
+                            str(m): [float(v) for v in vals]
+                            for m, vals in data.get("actual_metrics", {}).items()
+                        }
+                    for name in {
+                        **self.metrics_history,
+                        **self.synergy_metrics_history,
+                    }:
+                        self.predicted_metrics.setdefault(name, [])
+                        self.actual_metrics.setdefault(name, [])
+                    n = len(self.roi_history)
+                    self.metrics_history.setdefault("recovery_time", [0.0] * n)
+                    while len(self.metrics_history["recovery_time"]) < n:
+                        self.metrics_history["recovery_time"].append(0.0)
+                    self.predicted_metrics.setdefault("recovery_time", [])
+                    self.actual_metrics.setdefault("recovery_time", [])
+                    for key in (
+                        "synergy_discrepancy_count",
+                        "synergy_gpu_usage",
+                        "synergy_cpu_usage",
+                        "synergy_memory_usage",
+                        "synergy_revenue",
+                        "synergy_long_term_lucrativity",
+                    ):
+                        self.synergy_metrics_history.setdefault(key, [])
+                        self.predicted_metrics.setdefault(key, [])
+                        self.actual_metrics.setdefault(key, [])
+            except Exception:
+                self.roi_history = []
+                self.module_deltas = {}
+                self.metrics_history = {}
+                self.scenario_synergy = {}
+            return
+        try:
+            with sqlite3.connect(path) as conn:
+                rows = conn.execute(
+                    "SELECT delta FROM roi_history ORDER BY rowid"
+                ).fetchall()
+                mod_rows = conn.execute(
+                    "SELECT module, delta FROM module_deltas ORDER BY rowid"
+                ).fetchall()
+                pred_rows = conn.execute(
+                    "SELECT pred, actual FROM predictions ORDER BY rowid"
+                ).fetchall()
+                try:
+                    metric_rows = conn.execute(
+                        "SELECT metric, value FROM metrics_history ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    metric_rows = []
+                try:
+                    metric_pred_rows = conn.execute(
+                        "SELECT metric, pred, actual FROM metric_predictions ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    metric_pred_rows = []
+                try:
+                    synergy_rows = conn.execute(
+                        "SELECT data FROM synergy_history ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    synergy_rows = []
+                try:
+                    scenario_rows = conn.execute(
+                        "SELECT scenario, data FROM scenario_synergy ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    scenario_rows = []
+        except Exception:
+            self.roi_history = []
+            self.module_deltas = {}
+            self.predicted_roi = []
+            self.actual_roi = []
+            self.metrics_history = {}
+            self.predicted_metrics = {}
+            self.actual_metrics = {}
+            self.scenario_synergy = {}
+            return
+        self.roi_history = [float(r[0]) for r in rows]
+        self.module_deltas = {}
+        for mod, delta in mod_rows:
+            self.module_deltas.setdefault(str(mod), []).append(float(delta))
+        self.predicted_roi = [float(r[0]) for r in pred_rows]
+        self.actual_roi = [float(r[1]) for r in pred_rows]
+        self.metrics_history = {}
+        self.synergy_metrics_history = {}
+        for name, val in metric_rows:
+            target = (
+                self.synergy_metrics_history
+                if str(name).startswith("synergy_")
+                else self.metrics_history
+            )
+            if val is None:
+                target.setdefault(str(name), [])
+            else:
+                target.setdefault(str(name), []).append(float(val))
+        self.predicted_metrics = {}
+        self.actual_metrics = {}
+        for m, pred, act in metric_pred_rows:
+            self.predicted_metrics.setdefault(str(m), []).append(float(pred))
+            self.actual_metrics.setdefault(str(m), []).append(float(act))
+        self.synergy_history = []
+        for (json_data,) in synergy_rows:
+            try:
+                entry = json.loads(str(json_data))
+                if isinstance(entry, dict):
+                    self.synergy_history.append(
+                        {str(k): float(v) for k, v in entry.items()}
+                    )
+            except Exception:
+                continue
+        self.scenario_synergy = {}
+        for scen, json_data in scenario_rows:
+            try:
+                entry = json.loads(str(json_data))
+                if isinstance(entry, dict):
+                    self.scenario_synergy.setdefault(str(scen), []).append(
+                        {str(k): float(v) for k, v in entry.items()}
+                    )
+            except Exception:
+                continue
+        for name in {**self.metrics_history, **self.synergy_metrics_history}:
+            self.predicted_metrics.setdefault(name, [])
+            self.actual_metrics.setdefault(name, [])
+        n = len(self.roi_history)
+        self.metrics_history.setdefault("recovery_time", [0.0] * n)
+        while len(self.metrics_history["recovery_time"]) < n:
+            self.metrics_history["recovery_time"].append(0.0)
+        self.predicted_metrics.setdefault("recovery_time", [])
+        self.actual_metrics.setdefault("recovery_time", [])
+        for key in (
+            "synergy_discrepancy_count",
+            "synergy_gpu_usage",
+            "synergy_cpu_usage",
+            "synergy_memory_usage",
+            "synergy_long_term_lucrativity",
+        ):
+            self.synergy_metrics_history.setdefault(key, [])
+            self.predicted_metrics.setdefault(key, [])
+            self.actual_metrics.setdefault(key, [])
+
+    # ------------------------------------------------------------------
+    def plot_history(self, output_path: str) -> None:
+        """Plot recorded ROI deltas and fitted regression curve."""
+
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:  # pragma: no cover - matplotlib may be missing
+            return
+
+        if not self.roi_history:
+            plt.figure()
+            plt.savefig(output_path)
+            plt.close()
+            return
+
+        x = np.arange(len(self.roi_history))
+        y = np.array(self.roi_history)
+
+        vertex, preds = self._regression()
+
+        plt.figure()
+        plt.plot(x, y, "o", label="delta")
+        if preds:
+            plt.plot(x, preds, label="fit")
+        if vertex is not None:
+            plt.axvline(vertex, color="red", linestyle="--", label="vertex")
+        plt.xlabel("iteration")
+        plt.ylabel("ROI delta")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+    # ------------------------------------------------------------------
+    def rankings(self) -> List[Tuple[str, float]]:
+        """Return modules sorted by cumulative ROI contribution."""
+        totals = {m: sum(v) for m, v in self.module_deltas.items()}
+        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+
+def cli(argv: List[str] | None = None) -> None:
+    """Command line interface for ``ROITracker`` utilities."""
+
+    import argparse
+
+    parser = argparse.ArgumentParser(description="ROITracker utilities")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_plot = sub.add_parser("plot", help="plot ROI history")
+    p_plot.add_argument("history", help="history file (json or sqlite)")
+    p_plot.add_argument("output", help="output image path")
+
+    p_forecast = sub.add_parser("forecast", help="predict next ROI delta")
+    p_forecast.add_argument("history", help="history file (json or sqlite)")
+
+    p_rank = sub.add_parser("rank", help="show module rankings")
+    p_rank.add_argument("history", help="history file (json or sqlite)")
+
+    p_rel = sub.add_parser("reliability", help="show prediction MAE")
+    p_rel.add_argument("history", help="history file (json or sqlite)")
+    p_rel.add_argument("--window", type=int, default=None, help="rolling window")
+    p_rel.add_argument("--metric", help="metric name (defaults to ROI)")
+
+    p_pred = sub.add_parser(
+        "predict-metric", help="predict metric via prediction manager"
+    )
+    p_pred.add_argument("history", help="history file (json or sqlite)")
+    p_pred.add_argument("metric", help="metric name")
+    p_pred.add_argument(
+        "--actual", type=float, default=None, help="optional actual value"
+    )
+
+    args = parser.parse_args(argv)
+
+    tracker = ROITracker()
+    if args.cmd == "plot":
+        tracker.load_history(args.history)
+        tracker.plot_history(args.output)
+    elif args.cmd == "forecast":
+        tracker.load_history(args.history)
+        pred, (lo, hi) = tracker.forecast()
+        print(f"Predicted ROI: {pred:.3f} (CI {lo:.3f} - {hi:.3f})")
+    elif args.cmd == "rank":
+        tracker.load_history(args.history)
+        for mod, total in tracker.rankings():
+            print(f"{mod} {total:.3f}")
+    elif args.cmd == "reliability":
+        tracker.load_history(args.history)
+        if args.metric:
+            mae = tracker.rolling_mae_metric(args.metric, args.window)
+            print(f"{args.metric} MAE: {mae:.3f}")
+        else:
+            roi_mae = tracker.rolling_mae(args.window)
+            print(f"ROI MAE: {roi_mae:.3f}")
+            for name in sorted(tracker.metrics_history):
+                m_mae = tracker.rolling_mae_metric(name, args.window)
+                print(f"{name} MAE: {m_mae:.3f}")
+    elif args.cmd == "predict-metric":
+        tracker.load_history(args.history)
+        if args.metric == "synergy_profitability":
+            val = tracker.predict_synergy_profitability()
+            print(f"Predicted {args.metric}: {val:.3f}")
+        elif args.metric == "synergy_revenue":
+            val = tracker.predict_synergy_revenue()
+            print(f"Predicted {args.metric}: {val:.3f}")
+        elif args.metric == "synergy_projected_lucrativity":
+            val = tracker.predict_synergy_projected_lucrativity()
+            print(f"Predicted {args.metric}: {val:.3f}")
+        else:
+            from .prediction_manager_bot import PredictionManager
+
+            manager = PredictionManager()
+            val = tracker.predict_metric_with_manager(
+                manager, args.metric, actual=args.actual
+            )
+            print(f"Predicted {args.metric}: {val:.3f}")
+
+
+def main(argv: List[str] | None = None) -> None:
+    cli(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()

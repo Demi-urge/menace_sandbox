@@ -1,0 +1,83 @@
+[project]
+name = "menace"
+version = "0.1.0"
+description = "Automated video clipping and social media posting bots"
+readme = "README.md"
+authors = [{ name = "Cyberlolos Team", email = "team@example.com" }]
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "moviepy",
+    "pytube",
+    "selenium",
+    "pyautogui",
+    "pytesseract",
+    "requests",
+    "opencv-python",
+    "numpy",
+    "filelock",
+    "undetected-chromedriver",
+    "selenium-stealth",
+    "scikit-learn",
+    "beautifulsoup4",
+    "scipy",
+    "PyPDF2",
+    "gensim",
+    "SpeechRecognition",
+    "gTTS",
+    "SQLAlchemy",
+    "alembic",
+    "psycopg2-binary",
+    "pandas",
+    "fuzzywuzzy[speedup]",
+    "marshmallow",
+    "celery",
+    "pyzmq",
+    "pika",
+    "psutil",
+    "risky",
+    "networkx",
+    "pulp"
+    ,"Flask"
+    ,"PyYAML"
+    ,"GitPython"
+    ,"pymongo"
+    ,"elasticsearch"
+    ,"Faker"
+    ,"docker"
+    ,"boto3"
+    ,"prometheus-client"
+    ,"deap"
+    ,"simpy"
+    ,"matplotlib"
+    ,"Jinja2"
+    ,"playwright"
+    ,"fastapi"
+    ,"pydantic"
+    ,"pydantic-settings"
+    ,"redis"
+    ,"sentence-transformers"
+    ,"hdbscan"
+    ,"annoy"
+    ,"libcst"
+    ,"kafka-python"
+    ,"pyspark"
+    ,"stable-baselines3"
+    ,"sentry-sdk"
+    ,"cryptography"
+]
+
+[project.scripts]
+menace-master = "service_supervisor:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true

@@ -1,0 +1,184 @@
+import argparse
+from pathlib import Path
+
+import ast
+import logging
+from menace.code_database import CodeDB
+from menace.menace_memory_manager import MenaceMemoryManager
+from menace.self_coding_engine import SelfCodingEngine
+from menace.error_bot import ErrorDB
+from menace.self_debugger_sandbox import SelfDebuggerSandbox
+from menace.error_logger import ErrorLogger
+from menace.task_handoff_bot import TaskInfo
+from menace.bot_testing_bot import BotTestingBot
+from menace.deployment_bot import DeploymentBot, DeploymentSpec
+
+
+def _extract_functions(code: str) -> list[str]:
+    """Return a list of function names defined at module level."""
+
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return []
+    return [
+        n.name
+        for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+
+
+def _extract_docstrings(code: str) -> tuple[str, dict[str, str]]:
+    """Return the module docstring and a mapping of function docstrings."""
+
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return "", {}
+
+    module_doc = ast.get_docstring(tree) or ""
+    func_docs: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            doc = ast.get_docstring(node)
+            if doc:
+                func_docs[node.name] = doc
+    return module_doc, func_docs
+
+
+def _estimate_resources(code: str) -> dict[str, float]:
+    """Very rough CPU and memory estimation based on code length."""
+    lines = code.count("\n") + 1
+    cpu = max(0.1, round(lines / 1000, 2))
+    memory = max(128.0, float(lines * 2))
+    return {"cpu": cpu, "memory": memory}
+
+
+def _infer_schedule(doc: str) -> str:
+    """Derive a schedule hint from the module docstring."""
+    low = doc.lower()
+    if "hourly" in low:
+        return "hourly"
+    if "daily" in low:
+        return "daily"
+    return "once"
+
+
+def debug_and_deploy(repo: Path, *, jobs: int = 1) -> None:
+    """Run tests, apply fixes and deploy existing bots in *repo*."""
+
+    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+    error_db = ErrorDB()
+    tester = BotTestingBot()
+    # instantiate telemetry logger for completeness
+    _ = ErrorLogger(error_db)
+
+    class _TelemProxy:
+        def __init__(self, db: ErrorDB) -> None:
+            self.db = db
+
+        def recent_errors(self, limit: int = 5) -> list[str]:
+            cur = self.db.conn.execute(
+                "SELECT stack_trace FROM telemetry ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            return [str(r[0]) for r in cur.fetchall()]
+
+        def patterns(self) -> dict[str, int]:
+            cur = self.db.conn.execute(
+                "SELECT root_module, COUNT(*) FROM telemetry GROUP BY root_module"
+            )
+            return {str(r[0]): int(r[1]) for r in cur.fetchall()}
+
+    sandbox = SelfDebuggerSandbox(_TelemProxy(error_db), engine)
+    deployer = DeploymentBot()
+
+    # Collect modules from the entire repository tree so subpackages are
+    # included. ``module_paths`` holds the file paths while ``module_names``
+    # contains dotted import paths for the testing framework.
+    # Skip files under .git and other auxiliary directories so only valid
+    # source modules are processed by the pipeline
+    _non_source = {
+        ".git",
+        "logs",
+        "docs",
+        "scripts",
+        "tests",
+        "sql_templates",
+        "migrations",
+        "systemd",
+    }
+    module_paths = [
+        p
+        for p in repo.rglob("*.py")
+        if p.is_file() and not any(part in _non_source for part in p.parts)
+    ]
+    if not module_paths:
+        print("No Python modules found to test")
+        return
+
+    module_names = [".".join(p.with_suffix("").relative_to(repo).parts) for p in module_paths]
+
+    # 1) planning and optimisation -> development
+    tasks = []
+    for p in module_paths:
+        code = p.read_text(encoding="utf-8")
+        funcs = _extract_functions(code) or ["run"]
+        description, func_docs = _extract_docstrings(code)
+        res = _estimate_resources(code)
+        schedule = _infer_schedule(description)
+        context = " ".join((doc.splitlines()[0] for doc in func_docs.values()))
+        tasks.append(
+            TaskInfo(
+                name=p.stem,
+                dependencies=[],
+                resources=res,
+                schedule=schedule,
+                code=code,
+                metadata={
+                    "purpose": p.stem,
+                    "functions": funcs,
+                    "description": description,
+                    "function_docs": func_docs,
+                    "context": context,
+                },
+            )
+        )
+
+
+    # Run the unit tests first using the importable module names
+    tester.run_unit_tests(module_names)
+
+    # Apply telemetry-driven patches after the initial test run
+    sandbox.analyse_and_fix()
+
+    # Store aggregated telemetry patterns for future reference
+    for module, count in _TelemProxy(error_db).patterns().items():
+        try:
+            engine.memory_mgr.store(
+                f"telemetry:{module}",
+                {"errors": count},
+                tags="telemetry",
+            )
+        except Exception:
+            logging.getLogger(__name__).exception("memory store failed")
+
+    # Deployment specification built from static resource estimates
+    resources = {t.name: t.resources for t in tasks}
+    telem_counts = _TelemProxy(error_db).patterns()
+    spec = DeploymentSpec(name="menace", resources=resources, env={
+        f"ERR_{k.upper()}": str(v) for k, v in telem_counts.items()
+    })
+    deployer.deploy("menace", [p.stem for p in module_paths], spec)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Self-debug and deploy Menace")
+    parser.add_argument("repo", nargs="?", default=".", help="Path to repo")
+    parser.add_argument("--jobs", "-j", type=int, default=1, help="Parallel jobs")
+    args = parser.parse_args()
+    debug_and_deploy(Path(args.repo), jobs=args.jobs)
+
+
+if __name__ == "__main__":
+    main()

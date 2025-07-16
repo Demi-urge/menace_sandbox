@@ -1,0 +1,37 @@
+from tests.test_menace_master import _setup_mm_stubs
+import sandbox_runner
+
+
+def test_meta_logger_basic(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    from tests.test_menace_master import _stub_module, DummyBot
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+    log = sandbox_runner._SandboxMetaLogger(tmp_path / 'log.txt')
+    log.log_cycle(0, 1.0, ['a.py'], 'first')
+    log.log_cycle(1, 2.0, ['a.py', 'b.py'], 'second')
+    log.log_cycle(2, 2.1, ['b.py'], 'third')
+
+    ranking = dict(log.rankings())
+    assert ranking['a.py'] == 2.0
+    assert ranking['b.py'] == 1.1
+    assert log.diminishing() == []
+
+
+def test_meta_logger_consecutive_threshold(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    from tests.test_menace_master import _stub_module, DummyBot
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+
+    log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
+    threshold = 0.1
+    log.log_cycle(0, 0.0, ["x.py"], "first")
+    assert log.diminishing(threshold, consecutive=2) == []
+    log.log_cycle(1, 0.05, ["x.py"], "second")
+    assert log.diminishing(threshold, consecutive=2) == ["x.py"]
+    assert "x.py" in log.flagged_sections

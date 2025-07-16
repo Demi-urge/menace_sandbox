@@ -1,0 +1,13 @@
+{
+  "dangerous_imports": [
+    "os",
+    "subprocess",
+    "socket",
+    "requests",
+    "urllib",
+    "http",
+    "shutil"
+  ],
+  "reward_keywords": ["reward", "kpi", "dispatch"],
+  "severity_overrides": {}
+}

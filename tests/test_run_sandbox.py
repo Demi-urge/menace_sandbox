@@ -1,0 +1,645 @@
+import importlib.util
+import argparse
+import sys
+import os
+from pathlib import Path
+import asyncio
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+import types
+audit_mod = types.ModuleType("menace.audit_trail")
+class AuditTrail:
+    def __init__(self, *a, **k):
+        pass
+audit_mod.AuditTrail = AuditTrail
+sys.modules.setdefault("menace.audit_trail", audit_mod)
+jinja_mod = types.ModuleType("jinja2")
+jinja_mod.Template = lambda *a, **k: None
+sys.modules.setdefault("jinja2", jinja_mod)
+yaml_mod = types.ModuleType("yaml")
+yaml_mod.safe_load = lambda *a, **k: {}
+yaml_mod.safe_dump = lambda *a, **k: ""
+sys.modules.setdefault("yaml", yaml_mod)
+np_mod = types.ModuleType("numpy")
+np_mod.array = lambda *a, **k: []
+sys.modules.setdefault("numpy", np_mod)
+
+# stub modules used during sandbox_runner import
+meta_mod = types.ModuleType("menace.meta_logging")
+sys.modules.setdefault("menace.meta_logging", meta_mod)
+adv_mod = types.ModuleType("menace.advanced_error_management")
+class _ARM:
+    pass
+adv_mod.AutomatedRollbackManager = _ARM
+class FormalVerifier:
+    pass
+adv_mod.FormalVerifier = FormalVerifier
+sys.modules.setdefault("menace.advanced_error_management", adv_mod)
+
+class _Dummy:
+    def __init__(self, *a, **k):
+        pass
+
+for name, attr in {
+    "menace.unified_event_bus": "UnifiedEventBus",
+    "menace.menace_orchestrator": "MenaceOrchestrator",
+    "menace.self_improvement_policy": "SelfImprovementPolicy",
+    "menace.self_improvement_engine": "SelfImprovementEngine",
+    "menace.self_test_service": "SelfTestService",
+    "menace.code_database": ["PatchHistoryDB", "CodeDB"],
+    "menace.error_bot": ["ErrorBot", "ErrorDB"],
+    "menace.data_bot": ["MetricsDB", "DataBot"],
+    "menace.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics"],
+    "sandbox_runner.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics"],
+    "menace.discrepancy_detection_bot": "DiscrepancyDetectionBot",
+    "menace.pre_execution_roi_bot": "PreExecutionROIBot",
+    "menace.menace_memory_manager": "MenaceMemoryManager",
+}.items():
+    mod = types.ModuleType(name)
+    if isinstance(attr, list):
+        for a in attr:
+            if a == "load_metrics_plugins":
+                setattr(mod, a, lambda: [])
+            elif a == "collect_plugin_metrics":
+                setattr(mod, a, lambda *b, **k: {})
+            elif "DB" in a:
+                setattr(mod, a, lambda *b, **k: _Dummy())
+            else:
+                setattr(mod, a, _Dummy)
+    else:
+        setattr(mod, attr, _Dummy)
+    sys.modules.setdefault(name, mod)
+
+for mod_name in [
+    "menace.unified_event_bus",
+    "menace.menace_orchestrator",
+    "menace.self_improvement_policy",
+    "menace.self_improvement_engine",
+    "menace.self_test_service",
+    "menace.code_database",
+    "menace.error_bot",
+    "menace.data_bot",
+    "menace.metrics_plugins",
+    "sandbox_runner.metrics_plugins",
+    "menace.discrepancy_detection_bot",
+    "menace.pre_execution_roi_bot",
+    "menace.menace_memory_manager",
+]:
+    sys.modules.setdefault(mod_name, types.ModuleType(mod_name))
+
+from tests.test_menace_master import _setup_mm_stubs, DummyBot, _stub_module
+
+
+class _Policy:
+    def __init__(self, *a, **k):
+        pass
+
+    def save(self):
+        pass
+
+
+class _Audit:
+    def __init__(self, *a, **k):
+        pass
+
+    def record(self, *a, **k):
+        pass
+
+
+class _ROITracker:
+    instance = None
+
+    def __init__(self, *a, **k):
+        _ROITracker.instance = self
+        self.calls = []
+        self.module_deltas = {}
+        self.synergy_history = []
+        self.scenario_synergy = {}
+
+    def get_scenario_synergy(self, name):
+        return self.scenario_synergy.get(name, [])
+
+    def update(self, prev_roi, roi, modules=None, resources=None, metrics=None):
+        self.calls.append(metrics)
+        return 0.0, [], False
+
+    def forecast(self):
+        return 0.0, (0.0, 0.0)
+
+    def diminishing(self):
+        return 0.0
+
+    def record_prediction(self, predicted, actual):
+        pass
+
+    def rolling_mae(self, window=None):
+        return 0.0
+
+    def load_history(self, path):
+        pass
+
+    def save_history(self, path):
+        pass
+
+
+def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+
+    # Additional stubs required by _run_sandbox imports
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=_Audit)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    spec = importlib.util.spec_from_file_location("menace_master", path)
+    mm = importlib.util.module_from_spec(spec)
+    sys.modules["menace_master"] = mm
+    if "menace.error_bot" in sys.modules:
+        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorDB", lambda p: DummyBot(), raising=False)
+        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorBot", DummyBot, raising=False)
+    else:
+        _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+    spec.loader.exec_module(mm)
+    import sandbox_runner
+    import sandbox_runner
+
+
+    bus_paths = []
+
+    class DummyBus:
+        def __init__(self, persist_path=None, **kw):
+            bus_paths.append(persist_path)
+        def close(self):
+            bus_paths.append("closed")
+
+    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus)
+
+    def fake_run(cmd, check=False):
+        Path(cmd[-1]).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(sandbox_runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(sandbox_runner.shutil, "copy2", lambda *a, **k: None)
+
+    class DummyOrch:
+        def create_oversight(self, *a, **k):
+            pass
+        def run_cycle(self, *a, **k):
+            class R:
+                roi = None
+            return R()
+
+    class DummyImprover:
+        def run_cycle(self):
+            class Res:
+                roi = None
+            return Res()
+
+        def _policy_state(self):
+            return ()
+
+    class DummyTester:
+        def _run_once(self):
+            pass
+
+    class DummySandbox:
+        def __init__(self, *a, **k):
+            pass
+
+        def analyse_and_fix(self):
+            pass
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
+    monkeypatch.setattr(sandbox_runner, "SelfImprovementEngine", lambda *a, **k: DummyImprover())
+    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester)
+    monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
+    monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
+
+    orig_db = tmp_path / "orig.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{orig_db}")
+    monkeypatch.setenv("BOT_DB_PATH", str(tmp_path / "bots.db"))
+    monkeypatch.setenv("BOT_PERFORMANCE_DB", str(tmp_path / "perf.db"))
+    monkeypatch.setenv("MAINTENANCE_DB", str(tmp_path / "maint.db"))
+
+    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace())
+    sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
+    sandbox_runner._sandbox_cleanup(ctx)
+
+    assert os.environ["DATABASE_URL"] == f"sqlite:///{orig_db}"
+    assert os.environ["BOT_DB_PATH"] == str(tmp_path / "bots.db")
+    assert not orig_db.exists()
+    assert bus_paths and bus_paths[-1] == "closed"
+    assert "menace_sandbox_" in bus_paths[0]
+    assert isinstance(_ROITracker.instance.calls[0], dict)
+
+
+def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=_Audit)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+
+    path = Path(__file__).resolve().parents[1] / "menace_master.py"
+    spec = importlib.util.spec_from_file_location("menace_master", path)
+    mm = importlib.util.module_from_spec(spec)
+    sys.modules["menace_master"] = mm
+    if "menace.error_bot" in sys.modules:
+        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorDB", lambda p: DummyBot(), raising=False)
+        monkeypatch.setattr(sys.modules["menace.error_bot"], "ErrorBot", DummyBot, raising=False)
+    else:
+        _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+    spec.loader.exec_module(mm)
+
+
+    import shutil as real_shutil
+    orig_copy = real_shutil.copy2
+    def safe_copy(src, dst, *a, **k):
+        if Path(src).exists():
+            Path(dst).parent.mkdir(parents=True, exist_ok=True)
+            orig_copy(src, dst, *a, **k)
+
+    monkeypatch.setattr(sandbox_runner.shutil, "copy2", safe_copy)
+
+    monkeypatch.setattr(sandbox_runner.subprocess, "run", lambda cmd, check=False: Path(cmd[-1]).mkdir(parents=True, exist_ok=True))
+
+    class DummyBus:
+        def __init__(self, persist_path=None, **kw):
+            pass
+        def close(self):
+            pass
+
+    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus)
+
+    import json
+
+    class DummyImprover:
+        def __init__(self, *a, **kw):
+            self.db = kw.get("module_index")
+
+        def run_cycle(self):
+            if self.db:
+                self.db.get("new.py")
+            class Res:
+                roi = None
+            return Res()
+
+        def _policy_state(self):
+            return ()
+
+    class DummyOrch:
+        def create_oversight(self, *a, **k):
+            pass
+
+        def run_cycle(self, *a, **k):
+            class R:
+                roi = None
+            return R()
+
+    class DummyTester:
+        def _run_once(self):
+            pass
+
+    class DummySandbox:
+        def __init__(self, *a, **k):
+            pass
+
+        def analyse_and_fix(self):
+            pass
+
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
+    monkeypatch.setattr(sandbox_runner, "SelfImprovementEngine", lambda *a, **kw: DummyImprover(*a, **kw))
+    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester)
+    monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
+    monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot)
+
+    module_map = tmp_path / "module_map.json"
+    module_map.write_text("{\"old.py\": 42}")
+    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
+    sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
+    sandbox_runner._sandbox_cleanup(ctx)
+
+    assert module_map.exists()
+    assert isinstance(_ROITracker.instance.calls[0], dict)
+
+
+def test_section_short_circuit(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+
+    from tests.test_menace_master import _stub_module, DummyBot
+
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+
+    class DummyTracker:
+        def __init__(self, *a, **k):
+            self.module_deltas = {}
+
+        def update(self, *a, **k):
+            return 0.0, [], False
+
+        def forecast(self):
+            return 0.0, (0.0, 0.0)
+
+        def diminishing(self):
+            return 0.02
+
+        def record_prediction(self, *a, **k):
+            pass
+
+        def rolling_mae(self, window=None):
+            return 0.0
+
+        def load_history(self, path):
+            pass
+
+        def save_history(self, path):
+            pass
+
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+
+    class DummyImprover:
+        def __init__(self):
+            self.val = 0.0
+            self.calls = 0
+
+        def run_cycle(self):
+            self.val += 0.01
+            self.calls += 1
+            return types.SimpleNamespace(roi=types.SimpleNamespace(roi=self.val))
+
+        def _policy_state(self):
+            return ()
+
+    improver = DummyImprover()
+
+    class DummyBus:
+        def __init__(self, persist_path=None, **kw):
+            pass
+
+        def close(self):
+            pass
+
+    class DummySandbox:
+        def __init__(self, *a, **k):
+            pass
+
+        def analyse_and_fix(self):
+            pass
+
+    class DummyTester:
+        def _run_once(self):
+            pass
+
+    class DummyOrch:
+        def create_oversight(self, *a, **k):
+            pass
+
+        def run_cycle(self, *a, **k):
+            class R:
+                roi = None
+
+            return R()
+
+    monkeypatch.setattr(sandbox_runner, "UnifiedEventBus", DummyBus)
+    monkeypatch.setattr(sandbox_runner.subprocess, "run", lambda cmd, check=False: Path(cmd[-1]).mkdir(parents=True, exist_ok=True))
+    monkeypatch.setattr(sandbox_runner.shutil, "copy2", lambda *a, **k: None)
+
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
+    monkeypatch.setattr(sandbox_runner, "SelfImprovementEngine", lambda *a, **k: improver)
+    monkeypatch.setattr(sandbox_runner, "SelfTestService", DummyTester)
+    monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox, raising=False)
+    monkeypatch.setattr(sys.modules["menace.data_bot"], "MetricsDB", DummyBot, raising=False)
+
+    class TrackLogger(sandbox_runner._SandboxMetaLogger):
+        instance = None
+
+        def __init__(self, path):
+            super().__init__(path)
+            TrackLogger.instance = self
+
+    monkeypatch.setattr(sandbox_runner, "_SandboxMetaLogger", TrackLogger)
+    monkeypatch.setattr(sandbox_runner, "scan_repo_sections", lambda path: {"mod.py": {"sec": ["pass"]}})
+
+    monkeypatch.setenv("SANDBOX_CYCLES", "5")
+    ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))
+    sandbox_runner._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
+    sandbox_runner._sandbox_cleanup(ctx)
+
+    assert improver.calls < 5
+    assert "mod.py:sec" in TrackLogger.instance.flagged_sections
+
+
+def test_failure_modes_timeout(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    import sandbox_runner
+
+    res, _ = asyncio.run(
+        sandbox_runner._section_worker(
+            "import time; time.sleep(1)",
+            {"FAILURE_MODES": "timeout"},
+            0.0,
+        )
+    )
+
+    assert res["exit_code"] != 0
+
+
+def test_failure_modes_disk_corruption(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    import sandbox_runner
+
+    code = "with open('f','w') as f: f.write('ok')\nprint(open('f').read())"
+    res, _ = asyncio.run(
+        sandbox_runner._section_worker(
+            code,
+            {"FAILURE_MODES": ["disk_corruption"]},
+            0.0,
+        )
+    )
+
+    assert "CORRUPTED" in res["stdout"]
+
+
+def test_failure_modes_network(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    import sandbox_runner
+
+    code = "import socket; s=socket.socket(); s.connect(('example.com',80))"
+    res, _ = asyncio.run(
+        sandbox_runner._section_worker(
+            code,
+            {"FAILURE_MODES": "network"},
+            0.0,
+        )
+    )
+
+    assert res["exit_code"] != 0
+
+
+def test_workflow_run_called(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    class DummyTracker:
+        def __init__(self, **kw):
+            self.updated = []
+            self.roi_history = []
+            self.metrics_history = {}
+        def update(self, prev, roi, modules=None, resources=None, metrics=None):
+            self.updated.append(modules)
+            self.roi_history.append(roi)
+            return 0, [], False
+        def forecast(self):
+            return 0.0, (0.0, 0.0)
+        def diminishing(self):
+            return 0.0
+        def record_prediction(self, *a, **k):
+            pass
+        def register_metrics(self, *a, **k):
+            pass
+        def save_history(self, *a, **k):
+            pass
+
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    import importlib.util
+    import sys
+    import argparse
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
+
+    tracker = DummyTracker()
+
+
+    class DummyMeta:
+        def __init__(self):
+            self.flagged_sections = set()
+        def rankings(self):
+            return {}
+        def diminishing(self, threshold=None):
+            return []
+
+    class DummyCtx:
+        def __init__(self):
+            self.sections = {"m.py": {"sec": ["pass"]}}
+            self.all_section_names = {"m.py:sec"}
+            self.meta_log = DummyMeta()
+            self.tracker = tracker
+            self.res_db = None
+            self.prev_roi = 0.0
+            self.predicted_roi = None
+            self.roi_history_file = tmp_path / "roi.json"
+            self.synergy_needed = False
+            self.best_roi = 0.0
+            self.best_synergy_metrics = {}
+
+    monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
+    monkeypatch.setattr(
+        sandbox_runner,
+        "_sandbox_cycle_runner",
+        lambda ctx, sec, snip, t, scenario=None: t.update(0.0, 0.1, modules=[sec] if sec else []),
+    )
+
+    calls = []
+
+    def fake_run(db, presets=None, *, return_details=False, tracker=None):
+        calls.append(tracker)
+        if tracker:
+            tracker.update(0.0, 0.2, modules=["workflow"])
+        return tracker
+
+    monkeypatch.setattr(sandbox_runner, "run_workflow_simulations", fake_run)
+
+    args = argparse.Namespace(
+        workflow_db=str(tmp_path / "wf.db"),
+        sandbox_data_dir=str(tmp_path),
+        no_workflow_run=False,
+    )
+
+    result = sandbox_runner._sandbox_main({}, args)
+    assert calls and calls[0] is result
+
+
+def test_no_workflow_run_option(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    class DummyTracker:
+        def __init__(self):
+            self.updated = []
+            self.roi_history = []
+            self.metrics_history = {}
+        def update(self, prev, roi, modules=None, resources=None, metrics=None):
+            self.updated.append(modules)
+            self.roi_history.append(roi)
+            return 0, [], False
+        def forecast(self):
+            return 0.0, (0.0, 0.0)
+        def diminishing(self):
+            return 0.0
+        def record_prediction(self, *a, **k):
+            pass
+        def register_metrics(self, *a, **k):
+            pass
+        def save_history(self, *a, **k):
+            pass
+
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    import importlib.util
+    import sys
+    import argparse
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
+
+    class DummyCtx:
+        def __init__(self):
+            self.sections = {}
+            self.all_section_names = set()
+            self.meta_log = type("M", (), {"flagged_sections": set(), "rankings": lambda self: {}, "diminishing": lambda self, threshold=None: []})()
+            self.tracker = DummyTracker()
+            self.res_db = None
+            self.prev_roi = 0.0
+            self.predicted_roi = None
+            self.roi_history_file = tmp_path / "roi.json"
+            self.synergy_needed = False
+            self.best_roi = 0.0
+            self.best_synergy_metrics = {}
+
+    monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cycle_runner", lambda *a, **k: None)
+
+    called = []
+    monkeypatch.setattr(sandbox_runner, "run_workflow_simulations", lambda *a, **k: called.append(None))
+
+    args = argparse.Namespace(
+        workflow_db=str(tmp_path / "wf.db"),
+        sandbox_data_dir=str(tmp_path),
+        no_workflow_run=True,
+    )
+
+    sandbox_runner._sandbox_main({}, args)
+    assert not called

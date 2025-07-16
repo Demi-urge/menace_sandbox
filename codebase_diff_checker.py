@@ -1,0 +1,127 @@
+"""Utilities for diffing two Menace codebase snapshots."""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import difflib
+from typing import Dict, List, Tuple
+
+
+_KEYWORDS = {"reward", "self_improve", "security_ai", "dispatch", "monitor", "override"}
+
+
+def _list_py_files(root: str) -> List[str]:
+    """Return sorted list of python file paths under ``root``."""
+    paths = []
+    for base, _, files in os.walk(root):
+        for name in files:
+            if name.endswith(".py"):
+                full = os.path.join(base, name)
+                paths.append(os.path.relpath(full, root))
+    return sorted(paths)
+
+
+def _read_lines(path: str) -> List[str]:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read().splitlines()
+
+
+def _extract_sections(path: str) -> Dict[str, List[str]]:
+    """Return mapping of top-level section name to its source lines."""
+    source_lines = _read_lines(path)
+    try:
+        tree = ast.parse("\n".join(source_lines))
+    except SyntaxError:
+        return {"__file__": source_lines}
+    sections = {}
+    used = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            start = node.lineno - 1
+            end = node.end_lineno
+            sections[node.name] = source_lines[start:end]
+            used.update(range(start, end))
+    toplevel = [line for i, line in enumerate(source_lines) if i not in used]
+    if toplevel:
+        sections["__toplevel__"] = toplevel
+    return sections
+
+
+def _diff_lines(a: List[str], b: List[str]) -> List[str]:
+    return list(difflib.unified_diff(a, b, lineterm=""))
+
+
+def _sections_diff(before: Dict[str, List[str]], after: Dict[str, List[str]]) -> Dict[str, Dict[str, List[str]]]:
+    result = {"added": {}, "removed": {}, "modified": {}}
+    keys = set(before) | set(after)
+    for key in keys:
+        if key not in before:
+            result["added"][key] = _diff_lines([], after[key])
+        elif key not in after:
+            result["removed"][key] = _diff_lines(before[key], [])
+        else:
+            if [l.rstrip() for l in before[key]] != [l.rstrip() for l in after[key]]:
+                result["modified"][key] = _diff_lines(before[key], after[key])
+    return result
+
+
+def generate_code_diff(before_dir: str, after_dir: str) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+    """Compare two directories of python files and return structured diff."""
+    before_files = _list_py_files(before_dir)
+    after_files = _list_py_files(after_dir)
+    diff = {}
+    all_files = set(before_files) | set(after_files)
+    for rel in sorted(all_files):
+        before_path = os.path.join(before_dir, rel)
+        after_path = os.path.join(after_dir, rel)
+        if not os.path.exists(before_path):
+            sections_after = _extract_sections(after_path)
+            diff[rel] = {
+                "status": "added",
+                "changes": _sections_diff({}, sections_after),
+            }
+        elif not os.path.exists(after_path):
+            sections_before = _extract_sections(before_path)
+            diff[rel] = {
+                "status": "removed",
+                "changes": _sections_diff(sections_before, {}),
+            }
+        else:
+            sections_before = _extract_sections(before_path)
+            sections_after = _extract_sections(after_path)
+            changes = _sections_diff(sections_before, sections_after)
+            if any(changes[c] for c in changes):
+                diff[rel] = {"status": "modified", "changes": changes}
+    return diff
+
+
+def save_diff_report(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]], output_path: str) -> None:
+    """Save ``diff_data`` as JSON to ``output_path``."""
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(diff_data, f, indent=2)
+
+
+def flag_risky_changes(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]]) -> List[str]:
+    """Return a list of locations where sensitive keywords appear in diffs."""
+    flagged = []
+    for path, info in diff_data.items():
+        for change_type, sections in info.get("changes", {}).items():
+            for name, lines in sections.items():
+                for line in lines:
+                    if line.startswith("+") or line.startswith("-"):
+                        text = line[1:].lower()
+                        for key in _KEYWORDS:
+                            if key in text:
+                                location = f"{path}:{name}: {line}"
+                                flagged.append(location)
+                                break
+    return flagged
+
+
+__all__ = [
+    "generate_code_diff",
+    "save_diff_report",
+    "flag_risky_changes",
+]

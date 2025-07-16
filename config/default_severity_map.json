@@ -1,0 +1,18 @@
+{
+  "dangerous_import": "MEDIUM",
+  "import_from_dangerous": "MEDIUM",
+  "wildcard_import": "LOW",
+  "filesystem_process_call": "MEDIUM",
+  "network_call": "MEDIUM",
+  "dangerous_builtin_open": "MEDIUM",
+  "dangerous_builtin_eval": "HIGH",
+  "dangerous_builtin_exec": "HIGH",
+  "dangerous_builtin_compile": "MEDIUM",
+  "subprocess_shell_true": "HIGH",
+  "eval_on_input": "HIGH",
+  "bare_except": "LOW",
+  "infinite_while": "MEDIUM",
+  "file_open_in_with": "LOW",
+  "suspicious_identifier": "LOW",
+  "suspicious_attribute": "LOW"
+}

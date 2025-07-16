@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS code_bots(code_id INTEGER REFERENCES code(id), bot_id INTEGER)

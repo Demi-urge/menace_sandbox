@@ -1,0 +1,446 @@
+"""Pre-Execution ROI Bot for forecasting deployment costs and returns."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Dict, List, Callable, Optional, Any
+import logging
+
+try:
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    pd = None  # type: ignore
+import sqlite3
+try:
+    import requests  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    requests = None  # type: ignore
+
+from .data_bot import DataBot
+from .task_handoff_bot import TaskHandoffBot, TaskInfo, TaskPackage
+from .implementation_optimiser_bot import ImplementationOptimiserBot
+from .chatgpt_enhancement_bot import EnhancementDB
+from .task_handoff_bot import WorkflowDB
+from .database_manager import DB_PATH, update_model, init_db
+from .prediction_manager_bot import PredictionManager
+from .unified_event_bus import UnifiedEventBus
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BuildTask:
+    """Minimal representation of a planned task."""
+
+    name: str
+    complexity: float
+    frequency: float
+    expected_income: float
+    resources: Dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class ROIResult:
+    """Combined cost, time and ROI projection."""
+
+    income: float
+    cost: float
+    time: float
+    roi: float
+    margin: float
+
+
+class ROIHistoryDB:
+    """Store and fetch historical cost and time data."""
+
+    def __init__(self, path: Path | str = Path("roi_history.csv")) -> None:
+        self.path = Path(path)
+        if pd is None:
+            self.df = None
+            return
+        if self.path.exists():
+            try:
+                self.df = pd.read_csv(self.path)
+            except Exception:
+                self.df = pd.DataFrame(
+                    columns=["compute", "storage", "api", "supervision", "income", "time"]
+                )
+        else:
+            self.df = pd.DataFrame(
+                columns=["compute", "storage", "api", "supervision", "income", "time"]
+            )
+
+    def add(
+        self,
+        compute: float,
+        storage: float,
+        api: float,
+        supervision: float,
+        income: float,
+        time: float,
+    ) -> None:
+        row = {
+            "compute": compute,
+            "storage": storage,
+            "api": api,
+            "supervision": supervision,
+            "income": income,
+            "time": time,
+        }
+        if self.df is not None and pd is not None:
+            self.df = pd.concat([self.df, pd.DataFrame([row])], ignore_index=True)
+
+    def save(self) -> None:
+        if self.df is not None and pd is not None:
+            self.df.to_csv(self.path, index=False)
+
+    def averages(self) -> Dict[str, float]:
+        if self.df is None or self.df.empty:
+            return {k: 1.0 for k in ["compute", "storage", "api", "supervision", "time"]}
+        return {
+            "compute": float(self.df["compute"].mean()),
+            "storage": float(self.df["storage"].mean()),
+            "api": float(self.df["api"].mean()),
+            "supervision": float(self.df["supervision"].mean()),
+            "time": float(self.df["time"].mean()),
+        }
+
+
+class PreExecutionROIBot:
+    """Predict costs, timelines and return on investment."""
+
+    prediction_profile = {"scope": ["roi"], "risk": ["medium"]}
+
+    def __init__(
+        self,
+        history: ROIHistoryDB | None = None,
+        *,
+        models_db: Path | str = DB_PATH,
+        workflows_db: Path | str = "workflows.db",
+        enhancements_db: Path | str = "enhancements.db",
+        data_bot: Optional[DataBot] = None,
+        handoff: Optional[TaskHandoffBot] = None,
+        prediction_manager: "PredictionManager" | None = None,
+        event_bus: UnifiedEventBus | None = None,
+    ) -> None:
+        self.history = history or ROIHistoryDB()
+        self.models_db = Path(models_db)
+        self.workflows_db = Path(workflows_db)
+        self.enhancements_db = Path(enhancements_db)
+        self.data_bot = data_bot or DataBot()
+        self.handoff = handoff or TaskHandoffBot(event_bus=event_bus)
+        self.event_bus = event_bus
+        if prediction_manager is None:
+            try:
+                from .prediction_manager_bot import PredictionManager
+
+                prediction_manager = PredictionManager(
+                    data_bot=self.data_bot,
+                )
+            except Exception:
+                prediction_manager = None
+        self.prediction_manager = prediction_manager
+        self.assigned_prediction_bots = []
+        if self.prediction_manager:
+            try:
+                self.assigned_prediction_bots = self.prediction_manager.assign_prediction_bots(self)
+            except Exception as exc:
+                logger.exception("Failed to assign prediction bots: %s", exc)
+
+    def _apply_prediction_bots(self, base: float, feats: Iterable[float]) -> float:
+        """Combine predictions from assigned bots."""
+        if not self.prediction_manager:
+            return base
+        score = base
+        count = 1
+        for bid in self.assigned_prediction_bots:
+            entry = self.prediction_manager.registry.get(bid)
+            if not entry or not entry.bot:
+                continue
+            pred = getattr(entry.bot, "predict", None)
+            if not callable(pred):
+                continue
+            try:
+                val = pred(list(feats))
+                if isinstance(val, (list, tuple)):
+                    val = val[0]
+                score += float(val)
+                count += 1
+            except Exception:
+                continue
+        return float(score / count)
+
+    def predict_metric(self, metric: str, feats: Iterable[float]) -> float:
+        """Return averaged ``metric`` prediction from assigned bots."""
+        if not self.prediction_manager:
+            return 0.0
+        score = 0.0
+        count = 0
+        vec = list(feats)
+        for bid in self.assigned_prediction_bots:
+            entry = self.prediction_manager.registry.get(bid)
+            if not entry or not entry.bot:
+                continue
+            pred = getattr(entry.bot, "predict_metric", None)
+            if not callable(pred):
+                continue
+            try:
+                val = pred(metric, vec)
+                if isinstance(val, (list, tuple)):
+                    val = val[0]
+                score += float(val)
+                count += 1
+            except Exception:
+                logger.exception(
+                    "prediction bot %s metric %s failed",
+                    entry.bot.__class__.__name__ if entry else "unknown",
+                    metric,
+                )
+                continue
+        return float(score / count) if count else 0.0
+
+    # ------------------------------------------------------------------
+    def _avg_model_roi(self, name: str) -> float:
+        try:
+            with sqlite3.connect(self.models_db) as conn:
+                try:
+                    init_db(conn)
+                except Exception:
+                    pass
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT current_roi FROM models WHERE name LIKE ?",
+                    (f"%{name}%",),
+                ).fetchall()
+            if rows:
+                return float(sum(r["current_roi"] or 0.0 for r in rows) / len(rows))
+        except Exception as exc:
+            logger.warning("_avg_model_roi failure: %s", exc)
+        return 0.0
+
+    def _avg_workflow_profit(self) -> float:
+        try:
+            wf_db = WorkflowDB(Path(self.workflows_db), event_bus=self.event_bus)
+            recs = wf_db.fetch()
+            if recs:
+                return float(
+                    sum(r.estimated_profit_per_bot for r in recs) / len(recs)
+                )
+        except Exception as exc:
+            logger.warning("_avg_workflow_profit failure: %s", exc)
+        return 0.0
+
+    def _avg_enhancement_score(self) -> float:
+        try:
+            enh_db = EnhancementDB(Path(self.enhancements_db))
+            enhs = enh_db.fetch()
+            if enhs:
+                return float(sum(e.score for e in enhs) / len(enhs))
+        except Exception as exc:
+            logger.warning("_avg_enhancement_score failure: %s", exc)
+        return 0.0
+
+    def _data_complexity(self) -> float:
+        try:
+            df = self.data_bot.db.fetch(20)
+            return self.data_bot.complexity_score(df)
+        except Exception:
+            return 0.0
+
+    def _scrape_bonus(self) -> float:
+        if requests is None:
+            return 0.0
+        try:
+            from bs4 import BeautifulSoup
+        except Exception:
+            return 0.0
+        urls = [
+            "https://www.python.org",
+            "https://pypi.org",
+            "https://planetpython.org",
+        ]
+        pos_words = [
+            "release",
+            "success",
+            "growth",
+            "improvement",
+            "stable",
+            "up",
+        ]
+        neg_words = [
+            "error",
+            "deprecated",
+            "warning",
+            "downtime",
+            "failure",
+            "bug",
+        ]
+        pos = neg = total_text = 0
+        for url in urls:
+            try:
+                resp = requests.get(url, timeout=3)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+                text = soup.get_text(" ", strip=True).lower()
+                total_text += len(text.split())
+                pos += sum(text.count(w) for w in pos_words)
+                neg += sum(text.count(w) for w in neg_words)
+            except Exception:
+                continue
+        total = pos + neg
+        if total == 0 or total_text == 0:
+            return 0.0
+        sentiment = (pos - neg) / (total + 1)
+        volume = min(total_text / 10000.0, 1.0)
+        return float(sentiment * volume)
+
+    def estimate_cost(self, tasks: Iterable[BuildTask]) -> float:
+        avgs = self.history.averages()
+        cost = 0.0
+        for t in tasks:
+            compute = t.resources.get("compute", 1.0) * avgs["compute"]
+            storage = t.resources.get("storage", 1.0) * avgs["storage"]
+            api = t.resources.get("api", 0.0) * avgs["api"]
+            supervision = t.resources.get("supervision", 0.5) * avgs["supervision"]
+            cost += compute + storage + api + supervision
+        return cost
+
+    def estimate_time(self, tasks: Iterable[BuildTask]) -> float:
+        avgs = self.history.averages()
+        base = sum(t.complexity * t.frequency for t in tasks)
+        return base + avgs["time"]
+
+    def forecast_roi(self, tasks: Iterable[BuildTask], projected_income: float) -> ROIResult:
+        data = list(tasks)
+        cost = self.estimate_cost(data)
+        time = self.estimate_time(data)
+        income = projected_income / (1 + len(data) / 10)
+        roi = income - cost
+        margin = abs(roi) * 0.1
+        return ROIResult(income=income, cost=cost, time=time, roi=roi, margin=margin)
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _diminishing_factor(amount: float, k: float = 0.0001) -> float:
+        """Return a diminishing factor for a given spend."""
+        import math
+
+        return 1.0 - math.exp(-k * amount)
+
+    def forecast_roi_diminishing(self, tasks: Iterable[BuildTask], projected_income: float) -> ROIResult:
+        """Forecast ROI with diminishing returns as funding increases."""
+        base = self.forecast_roi(tasks, projected_income)
+        factor = self._diminishing_factor(projected_income)
+        income = base.income * factor
+        roi = income - base.cost
+        return ROIResult(income=income, cost=base.cost, time=base.time, roi=roi, margin=abs(roi) * 0.1)
+
+    def predict_model_roi(self, model: str, tasks: Iterable[BuildTask]) -> ROIResult:
+        result = self.forecast_roi(tasks, sum(t.expected_income for t in tasks))
+        profit = (
+            self._avg_model_roi(model)
+            + self._avg_workflow_profit()
+            + self._avg_enhancement_score()
+            + self._scrape_bonus()
+        )
+        complexity = self._data_complexity()
+        final_income = result.income + profit - complexity
+        final_roi = final_income - result.cost
+        final_roi = self._apply_prediction_bots(final_roi, [profit, complexity])
+        final = ROIResult(
+            income=final_income,
+            cost=result.cost,
+            time=result.time,
+            roi=final_roi,
+            margin=abs(final_roi) * 0.1,
+        )
+        try:
+            with sqlite3.connect(self.models_db) as conn:
+                try:
+                    init_db(conn)
+                except Exception:
+                    pass
+                row = conn.execute(
+                    "SELECT id FROM models WHERE name LIKE ? ORDER BY id DESC LIMIT 1",
+                    (f"%{model}%",),
+                ).fetchone()
+                if row:
+                    update_model(row[0], db_path=Path(self.models_db), final_roi_prediction=final.roi)
+        except Exception as exc:
+            logger.warning("Failed to record ROI to database: %s", exc)
+        return final
+
+    def run_scenario(
+        self,
+        tasks: Iterable[BuildTask],
+        modifier: Callable[[List[BuildTask]], List[BuildTask]] | None = None,
+    ) -> ROIResult:
+        data = [BuildTask(**vars(t)) for t in tasks]
+        if modifier:
+            data = modifier(data)
+        income = sum(t.expected_income * t.frequency for t in data)
+        return self.forecast_roi(data, income)
+
+    # ------------------------------------------------------------------
+    def handoff_to_implementation(
+        self,
+        tasks: Iterable[BuildTask],
+        optimiser: ImplementationOptimiserBot,
+        *,
+        title: str = "",
+        description: str = "",
+    ) -> TaskPackage:
+        """Compile tasks and send them to the implementation optimiser."""
+        infos = [
+            TaskInfo(
+                name=t.name,
+                dependencies=[],
+                resources=t.resources,
+                schedule="once",
+                code="# plan",
+                metadata={},
+            )
+            for t in tasks
+        ]
+        package = self.handoff.compile(infos)
+        try:
+            self.handoff.store_plan(infos, title=title, description=description)
+            self.handoff.send_package(package)
+        except Exception as exc:
+            logger.warning("handoff_to_implementation failure: %s", exc)
+        optimiser.process(package)
+        return package
+
+
+class PreExecutionROIBotStub:
+    """Fallback no-op implementation used when dependencies are missing."""
+
+    prediction_profile = {"scope": ["roi"], "risk": ["medium"]}
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        logger.info("PreExecutionROIBotStub active")
+
+    def forecast_roi(self, *args: Any, **kwargs: Any) -> ROIResult:
+        return ROIResult(income=0.0, cost=0.0, time=0.0, roi=0.0, margin=0.0)
+
+    def forecast_roi_diminishing(self, *a: Any, **kw: Any) -> ROIResult:
+        return self.forecast_roi()
+
+    def predict_model_roi(self, *a: Any, **kw: Any) -> ROIResult:
+        return self.forecast_roi()
+
+    def run_scenario(self, *a: Any, **kw: Any) -> ROIResult:
+        return self.forecast_roi()
+
+    def handoff_to_implementation(self, *a: Any, **kw: Any) -> TaskPackage:
+        return TaskPackage(tasks=[])
+
+
+__all__ = [
+    "BuildTask",
+    "ROIResult",
+    "ROIHistoryDB",
+    "PreExecutionROIBot",
+    "PreExecutionROIBotStub",
+]

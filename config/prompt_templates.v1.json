@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "templates": {
+    "coding_standards": [
+      "- Follow PEP8 style guidelines with 4 space indents and lines under 79 characters.",
+      "- Provide Google style docstrings for modules, classes and functions.",
+      "- Include inline comments explaining complex logic."
+    ],
+    "repository_layout": [
+      "- Place source code in {name}.py at the repository root.",
+      "- List dependencies in requirements.txt.",
+      "- Include tests in the tests/ directory with filenames matching test_*.py.",
+      "- Add a README.md summarising usage and setup steps."
+    ],
+    "metadata": [
+      "- Save the bot specification to meta.yaml using _write_meta."
+    ],
+    "version_control": [
+      "- Commit all generated files to git using descriptive messages."
+    ],
+    "testing": [
+      "- Run scripts/setup_tests.sh then use pytest and ensure all tests pass.",
+      "- Include at least one test per function and output coverage with 'pytest --cov'."
+    ]
+  }
+}

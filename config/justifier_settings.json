@@ -1,0 +1,5 @@
+{
+    "llm_mode": false,
+    "model_path": "./models/justifier_model"
+}
+

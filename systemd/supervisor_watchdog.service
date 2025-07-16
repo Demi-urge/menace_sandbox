@@ -1,0 +1,12 @@
+[Unit]
+Description=Menace Service Supervisor Watchdog
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/menace
+ExecStart=/usr/bin/python -m menace.supervisor_watchdog
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+{
+  "log_paths": {
+    "events": "./logs/events.log"
+  },
+  "risk_thresholds": {
+    "low": 0.2,
+    "high": 0.8
+  },
+  "forbidden_domains": [
+    "example.com"
+  ],
+  "domain_risk_map": {
+    "example.com": 1.0
+  },
+  "reward_penalties": {
+    "bypass_attempt": -5
+  },
+  "override_flags": {
+    "feature_x_enabled": false
+  },
+  "stripe_enabled": false
+}

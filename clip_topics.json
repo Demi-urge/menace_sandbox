@@ -1,0 +1,5 @@
+{
+  "tech": {"cumulative_revenue": 0, "profitability_score": 0},
+  "gaming": {"cumulative_revenue": 0, "profitability_score": 0},
+  "fashion": {"cumulative_revenue": 0, "profitability_score": 0}
+}
