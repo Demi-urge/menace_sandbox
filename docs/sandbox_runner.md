@@ -379,6 +379,49 @@ Example:
 VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python sandbox_runner.py full-autonomous-run
 ```
 
+## Visual Agent Prompt Format
+
+`build_visual_agent_prompt` assembles a structured message for the
+`VisualAgentClient`. When `VA_PROMPT_TEMPLATE` is not provided the sandbox emits
+a descriptive block with labelled sections. Each prompt begins with an
+"Introduction" that explains the helper to create, followed by subsections for
+functions, dependencies and coding standards. Repository layout, metadata and
+the snippet context are included so the agent has full background information.
+Use `VA_PROMPT_PREFIX` to prepend extra text and `VA_PROMPT_TEMPLATE` to supply
+a custom template.
+
+Example of the default format:
+
+```text
+### Introduction
+Add a Python helper to `helper.py` that print hello.
+
+### Functions
+- `auto_print_hello(*args, **kwargs)`
+
+### Dependencies
+standard library
+
+### Coding standards
+Follow PEP8 with 4-space indents and <79 character lines. Use Google style docstrings and inline comments for complex logic.
+
+### Repository layout
+helper.py
+
+### Metadata
+description: print hello
+
+### Version control
+commit changes to git
+
+### Testing
+run existing tests
+
+### Snippet context
+def hello():
+    pass
+```
+
 ## Discrepancy Detection
 
 After each iteration the sandbox calls `DiscrepancyDetectionBot.scan()` to
