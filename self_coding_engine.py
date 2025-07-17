@@ -212,7 +212,10 @@ class SelfCodingEngine:
                 "commit changes to git",
                 "",
                 "### Testing",
-                "run existing tests",
+                (
+                    "Run `scripts/setup_tests.sh` then execute `pytest --cov`. "
+                    "Report any failures."
+                ),
                 "",
                 "### Snippet context",
                 context.strip(),

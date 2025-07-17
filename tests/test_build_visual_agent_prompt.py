@@ -83,6 +83,9 @@ def test_build_visual_agent_prompt_sections():
     for sec in sections:
         assert sec in prompt
     assert snippet in prompt
+    assert "scripts/setup_tests.sh" in prompt
+    assert "pytest --cov" in prompt
+    assert "Report any failures" in prompt
 
 
 def test_build_visual_agent_prompt_layout(monkeypatch):
