@@ -124,7 +124,10 @@ visual agent is contacted. The most relevant are:
 - `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
 - `VA_REPO_LAYOUT_LINES` – number of repository layout lines to include.
 - `VA_MESSAGE_PREFIX` – overrides the hard-coded prefix used by
-  `VisualAgentClient` when forwarding messages.
+  `VisualAgentClient` when forwarding messages. By default, the client
+  prepends "Improve Menace by enhancing error handling and modifying
+  existing bots." (see `DEFAULT_MESSAGE_PREFIX` in
+  `visual_agent_client.py`).
 
 ## Prompt customisation
 
