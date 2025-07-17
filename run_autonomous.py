@@ -115,6 +115,12 @@ def main(argv: List[str] | None = None) -> None:
         default=3,
         help="cycles below threshold before synergy convergence",
     )
+    parser.add_argument(
+        "--preset-file",
+        action="append",
+        dest="preset_files",
+        help="JSON file defining environment presets; can be repeated",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
@@ -163,7 +169,13 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
-        presets = generate_presets(args.preset_count)
+        if args.preset_files:
+            pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
+            with open(pf, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            presets = [data] if isinstance(data, dict) else list(data)
+        else:
+            presets = generate_presets(args.preset_count)
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
