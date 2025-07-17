@@ -83,3 +83,14 @@ def test_build_visual_agent_prompt_sections():
     for sec in sections:
         assert sec in prompt
     assert snippet in prompt
+
+
+def test_build_visual_agent_prompt_layout(monkeypatch):
+    monkeypatch.setenv("VA_REPO_LAYOUT_LINES", "2")
+    import importlib
+    importlib.reload(sce)
+    eng = sce.SelfCodingEngine(None, None)
+    expected = eng._get_repo_layout(2)
+    prompt = eng.build_visual_agent_prompt("a.py", "desc", "ctx")
+    for line in expected.splitlines():
+        assert line in prompt

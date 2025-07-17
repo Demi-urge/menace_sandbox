@@ -365,13 +365,14 @@ any extracted code snippet. Set `GPT_SECTION_PROMPT_MAX_LENGTH` to limit the
 size of the rendered prompt – snippet and metric text are truncated when this
 value is exceeded.
 
-`SelfCodingEngine.build_visual_agent_prompt` can also be customised via two
+`SelfCodingEngine.build_visual_agent_prompt` can also be customised via three
 environment variables:
 
 - `VA_PROMPT_TEMPLATE` – path to a template (or inline template string) used to
   build the visual agent prompt. The template receives `{path}`, `{description}`,
   `{context}` and `{func}` placeholders.
 - `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
+- `VA_REPO_LAYOUT_LINES` – number of repository layout lines to include.
 
 Example:
 
