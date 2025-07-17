@@ -112,6 +112,23 @@ visual agent is contacted. The most relevant are:
   headless mode.
 - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
   launching a local visual agent when none is reachable.
+- `VA_PROMPT_TEMPLATE` – path to a template (or inline template string) used to
+  build the visual agent prompt. The template receives `{path}`,
+  `{description}`, `{context}` and `{func}` placeholders.
+- `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
+
+## Prompt customisation
+
+`VA_PROMPT_PREFIX` adds extra text to the start of the prompt while
+`VA_PROMPT_TEMPLATE` replaces the default layout entirely. The template receives
+`{path}`, `{description}`, `{context}` and `{func}` so you can insert snippet
+metadata wherever desired.
+
+Example:
+
+```bash
+VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python sandbox_runner.py full-autonomous-run
+```
 
 ## Sample prompt
 
