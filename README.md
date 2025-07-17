@@ -399,6 +399,16 @@ To execute multiple runs sequentially and launch the metrics dashboard run:
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```
 
+To optimise across distinct scenarios supply preset files explicitly. The
+runner cycles through them when ``--preset-file`` is repeated:
+
+```
+python run_autonomous.py --runs 3 \
+  --preset-file presets/dev.json \
+  --preset-file presets/prod.json \
+  --preset-file presets/chaos.json
+```
+
 This prints messages such as ``Starting autonomous run 1/2`` followed by the
 standard module rankings once each run finishes. Metrics from all runs are
 written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
