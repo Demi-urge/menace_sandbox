@@ -444,6 +444,7 @@ class SandboxContext:
     predicted_lucrativity: float | None
     brainstorm_interval: int
     brainstorm_retries: int
+    patch_retries: int
     sections: Dict[str, Dict[str, List[str]]]
     all_section_names: set[str]
     roi_history_file: Path
@@ -661,6 +662,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     cycles = int(env.get("SANDBOX_CYCLES", "5"))
     brainstorm_interval = int(env.get("SANDBOX_BRAINSTORM_INTERVAL", "0"))
     brainstorm_retries = int(env.get("SANDBOX_BRAINSTORM_RETRIES", "3"))
+    patch_retries = int(env.get("SANDBOX_PATCH_RETRIES", "3"))
 
     sections = scan_repo_sections(str(repo))
     all_section_names: set[str] = set()
@@ -733,6 +735,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         predicted_lucrativity=predicted_lucrativity,
         brainstorm_interval=brainstorm_interval,
         brainstorm_retries=brainstorm_retries,
+        patch_retries=patch_retries,
         sections=sections,
         all_section_names=all_section_names,
         roi_history_file=roi_history_file,

@@ -79,6 +79,8 @@ Network behaviour can be tuned with:
   preset generator for future bandwidth throttling.
 - `SECURITY_LEVEL` and `THREAT_INTENSITY` – adjust the simulated security
   posture.
+- `SANDBOX_PATCH_RETRIES` – number of patch attempts `SelfDebuggerSandbox`
+  performs before giving up (default `3`).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
@@ -196,6 +198,13 @@ are stored via `predict_metric_with_manager`.
 ## Adaptive ROI Tolerance
 
 `_sandbox_main` calls `ROITracker.reliability()` every cycle and scales `roi_tolerance` based on the returned score. Reliable forecasts lower the threshold so the run ends sooner, while noisy predictions increase it.
+
+## Patch Verification Loop
+
+`SelfDebuggerSandbox.analyse_and_fix` retries failed patches. After each
+attempt the generated tests are executed again. If the tests still fail the
+debugger fetches new telemetry and tries again up to `SANDBOX_PATCH_RETRIES`
+times.
 
 ## Metrics Plugins
 
