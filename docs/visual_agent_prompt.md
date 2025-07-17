@@ -116,6 +116,7 @@ visual agent is contacted. The most relevant are:
   build the visual agent prompt. The template receives `{path}`,
   `{description}`, `{context}` and `{func}` placeholders.
 - `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
+- `VA_REPO_LAYOUT_LINES` – number of repository layout lines to include.
 
 ## Prompt customisation
 

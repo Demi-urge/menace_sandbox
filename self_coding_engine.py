@@ -31,6 +31,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
 # Allow overriding the visual agent prompt through environment variables
 VA_PROMPT_TEMPLATE = os.getenv("VA_PROMPT_TEMPLATE")
 VA_PROMPT_PREFIX = os.getenv("VA_PROMPT_PREFIX", "")
+VA_REPO_LAYOUT_LINES = int(os.getenv("VA_REPO_LAYOUT_LINES", "20"))
 
 
 class SelfCodingEngine:
@@ -150,8 +151,22 @@ class SelfCodingEngine:
                 lines.extend(text.splitlines())
         return lines
 
+    @staticmethod
+    def _get_repo_layout(limit: int) -> str:
+        """Return a short list of top-level Python files in the repo."""
+        root = Path(__file__).resolve().parent
+        files = sorted(p.name for p in root.glob("*.py"))
+        lines = files[:limit]
+        if len(files) > limit:
+            lines.append("...")
+        return "\n".join(lines)
+
     def build_visual_agent_prompt(
-        self, path: str | None, description: str, context: str
+        self,
+        path: str | None,
+        description: str,
+        context: str,
+        repo_layout: str | None = None,
     ) -> str:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
         func = f"auto_{description.replace(' ', '_')}"
@@ -188,7 +203,7 @@ class SelfCodingEngine:
                 ),
                 "",
                 "### Repository layout",
-                path or "",
+                repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES),
                 "",
                 "### Metadata",
                 f"description: {description}",
@@ -263,10 +278,12 @@ class SelfCodingEngine:
 
         if not self.llm_client:
             return _fallback()
+        repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         prompt = self.build_visual_agent_prompt(
             str(path) if path else None,
             description,
             context,
+            repo_layout=repo_layout,
         )
         try:
             data = self.llm_client.ask([{"role": "user", "content": prompt}])
