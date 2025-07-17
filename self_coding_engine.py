@@ -213,7 +213,7 @@ class SelfCodingEngine:
                 f"description: {description}",
                 "",
                 "### Version control",
-                "commit changes to git",
+                "commit all changes to git using descriptive commit messages",
                 "",
                 "### Testing",
                 (

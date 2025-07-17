@@ -18,7 +18,7 @@ complete, testable repository. The list below summarises the required headings:
 6. **Environment** – includes the Python version used by the sandbox.
 7. **Metadata** – `_write_meta` saves the bot specification to a `meta.yaml`
    file in the repository root.
-8. **Version control** – commit all generated files to git using descriptive
+8. **Version control** – commit all changes to git using descriptive commit
    messages.
 9. **Testing** – run `scripts/setup_tests.sh` then execute `pytest --cov`,
    ensuring at least one test per function and reporting any failures.
@@ -80,8 +80,8 @@ generated code accordingly. Example:
 the repository was generated.
 
 ### Version control
-The agent should commit the repository to git using descriptive commit
-messages once the files are created.
+The agent should commit all changes to git using descriptive commit messages
+once the files are created.
 
 ### Testing
 Run `scripts/setup_tests.sh` and then execute `pytest --cov`. Ensure at least
