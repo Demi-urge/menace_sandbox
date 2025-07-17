@@ -10,6 +10,8 @@ import shutil
 from pathlib import Path
 from typing import List
 import sys
+import subprocess
+import time
 
 # Default to test mode when using the bundled SQLite database.
 if (
@@ -131,6 +133,22 @@ def main(argv: List[str] | None = None) -> None:
             daemon=True,
         ).start()
 
+    agent_proc = None
+    autostart = os.getenv("VISUAL_AGENT_AUTOSTART", "1") != "0"
+    if autostart:
+        try:
+            import requests  # type: ignore
+            base = (
+                os.getenv("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")
+            ).split(";")[0]
+            resp = requests.get(f"{base}/status", timeout=3)
+            if resp.status_code != 200:
+                raise RuntimeError(resp.text)
+        except Exception:
+            cmd = [sys.executable, str(_pkg_dir / "menace_visual_agent_2.py")]
+            agent_proc = subprocess.Popen(cmd)
+            time.sleep(2)
+
     for idx in range(args.runs):
         logger.info("Starting autonomous run %d/%d", idx + 1, args.runs)
         presets = generate_presets(args.preset_count)
@@ -142,6 +160,13 @@ def main(argv: List[str] | None = None) -> None:
             full_autonomous_run(args)
         finally:
             sandbox_runner._sandbox_main = recovery.sandbox_main
+            if agent_proc:
+                agent_proc.terminate()
+                try:
+                    agent_proc.wait(timeout=5)
+                except Exception:
+                    agent_proc.kill()
+                agent_proc = None
 
 
 if __name__ == "__main__":
