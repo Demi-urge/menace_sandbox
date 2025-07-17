@@ -35,3 +35,16 @@ def test_build_visual_agent_prompt_basic():
     assert "helper.py" in prompt
     assert "print hello" in prompt
     assert "def hello()" in prompt
+
+
+def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
+    tpl = tmp_path / "va.tmpl"
+    tpl.write_text("FUNC {func} DESC {description} CONT {context} PATH {path}\n")
+    monkeypatch.setenv("VA_PROMPT_TEMPLATE", str(tpl))
+    monkeypatch.setenv("VA_PROMPT_PREFIX", "NOTE: ")
+    prompt = sce.SelfCodingEngine(None, None).build_visual_agent_prompt(
+        "a.py", "do things", "ctx"
+    )
+    assert prompt.startswith("NOTE: ")
+    assert "do things" in prompt
+    assert "ctx" in prompt

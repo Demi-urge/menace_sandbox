@@ -28,6 +28,10 @@ if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
     from .data_bot import DataBot
 
+# Allow overriding the visual agent prompt through environment variables
+VA_PROMPT_TEMPLATE = os.getenv("VA_PROMPT_TEMPLATE")
+VA_PROMPT_PREFIX = os.getenv("VA_PROMPT_PREFIX", "")
+
 
 class SelfCodingEngine:
     """Generate new helper code based on existing snippets."""
@@ -150,40 +154,63 @@ class SelfCodingEngine:
         self, path: str | None, description: str, context: str
     ) -> str:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
-
         func = f"auto_{description.replace(' ', '_')}"
-        lines = [
-            "### Introduction",
-            f"Add a Python helper to `{path or 'unknown file'}` that {description}.",
-            "",
-            "### Functions",
-            f"- `{func}(*args, **kwargs)`",
-            "",
-            "### Dependencies",
-            "standard library",
-            "",
-            "### Coding standards",
-            (
-                "Follow PEP8 with 4-space indents and <79 character lines. "
-                "Use Google style docstrings and inline comments for complex logic."
-            ),
-            "",
-            "### Repository layout",
-            path or "",
-            "",
-            "### Metadata",
-            f"description: {description}",
-            "",
-            "### Version control",
-            "commit changes to git",
-            "",
-            "### Testing",
-            "run existing tests",
-            "",
-            "### Snippet context",
-            context.strip(),
-        ]
-        return "\n".join(lines).strip() + "\n"
+
+        if VA_PROMPT_TEMPLATE:
+            try:
+                text = Path(VA_PROMPT_TEMPLATE).read_text()
+            except Exception:
+                text = VA_PROMPT_TEMPLATE
+            try:
+                body = text.format(
+                    path=path or "unknown file",
+                    description=description,
+                    context=context.strip(),
+                    func=func,
+                )
+            except Exception:
+                body = text
+        else:
+            lines = [
+                "### Introduction",
+                f"Add a Python helper to `{path or 'unknown file'}` that {description}.",
+                "",
+                "### Functions",
+                f"- `{func}(*args, **kwargs)`",
+                "",
+                "### Dependencies",
+                "standard library",
+                "",
+                "### Coding standards",
+                (
+                    "Follow PEP8 with 4-space indents and <79 character lines. "
+                    "Use Google style docstrings and inline comments for complex logic."
+                ),
+                "",
+                "### Repository layout",
+                path or "",
+                "",
+                "### Metadata",
+                f"description: {description}",
+                "",
+                "### Version control",
+                "commit changes to git",
+                "",
+                "### Testing",
+                "run existing tests",
+                "",
+                "### Snippet context",
+                context.strip(),
+            ]
+            body = "\n".join(lines).strip() + "\n"
+
+        prefix = VA_PROMPT_PREFIX
+        if prefix:
+            if not prefix.endswith("\n"):
+                prefix += "\n"
+            body = prefix + body
+
+        return body
 
     def generate_helper(self, description: str, *, path: Path | None = None) -> str:
         """Create helper text by asking an LLM using snippet context."""
