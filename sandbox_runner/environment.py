@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import re
+
 try:
     import resource
 except Exception:  # pragma: no cover - not available on some platforms
@@ -853,7 +854,7 @@ def run_repo_section_simulations(
     env_presets: List[Dict[str, Any]] | None = None,
     *,
     return_details: bool = False,
-    ) -> "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]:
+) -> "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]:
     """Analyse sections and simulate execution environment per section."""
     from menace.roi_tracker import ROITracker
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
@@ -923,6 +924,7 @@ def run_repo_section_simulations(
         )
         workers_gpu = max(1, int(total_gpu / max_gpu)) if max_gpu else workers_cpu
         max_workers = min(workers_cpu, workers_mem, workers_gpu, len(sections)) or 1
+        sem = asyncio.Semaphore(max_workers)
 
         all_diminished = True
 
@@ -940,7 +942,10 @@ def run_repo_section_simulations(
                         for p_idx, preset in enumerate(env_presets):
                             scenario = scenario_names[p_idx]
                             logger.info(
-                                "simulate %s:%s under scenario %s", module, sec_name, scenario
+                                "simulate %s:%s under scenario %s",
+                                module,
+                                sec_name,
+                                scenario,
                             )
                             for stub in input_stubs:
                                 env_input = dict(preset)
@@ -954,13 +959,22 @@ def run_repo_section_simulations(
                                         break
                                     debugger.analyse_and_fix()
 
-                                fut = asyncio.create_task(
-                                    _section_worker(
-                                        code_str,
-                                        env_input,
-                                        tracker.diminishing(),
-                                    )
-                                )
+                                await sem.acquire()
+
+                                async def _task() -> tuple[
+                                    Dict[str, Any],
+                                    list[tuple[float, float, Dict[str, float]]],
+                                ]:
+                                    try:
+                                        return await _section_worker(
+                                            code_str,
+                                            env_input,
+                                            tracker.diminishing(),
+                                        )
+                                    finally:
+                                        sem.release()
+
+                                fut = asyncio.create_task(_task())
                                 tasks.append(
                                     (
                                         index,
@@ -976,12 +990,18 @@ def run_repo_section_simulations(
                 finally:
                     shutil.rmtree(tmp_dir, ignore_errors=True)
 
-            for _, fut, module, sec_name, scenario, preset, stub in sorted(
-                tasks, key=lambda x: x[0]
-            ):
-                res, updates = await fut
+            sorted_tasks = sorted(tasks, key=lambda x: x[0])
+            results = await asyncio.gather(*(t[1] for t in sorted_tasks))
+            for (_, _fut, module, sec_name, scenario, preset, stub), (
+                res,
+                updates,
+            ) in zip(sorted_tasks, results):
                 logger.info(
-                    "result %s:%s scenario %s exit=%s", module, sec_name, scenario, res.get("exit_code")
+                    "result %s:%s scenario %s exit=%s",
+                    module,
+                    sec_name,
+                    scenario,
+                    res.get("exit_code"),
                 )
                 for prev, actual, metrics in updates:
                     scenario_metrics = {
@@ -1087,9 +1107,13 @@ def run_repo_section_simulations(
                             modules=all_modules + [scenario],
                             metrics=synergy_metrics,
                         )
-                        scenario_synergy.setdefault(scenario, []).append(synergy_metrics)
+                        scenario_synergy.setdefault(scenario, []).append(
+                            synergy_metrics
+                        )
                         if hasattr(tracker, "scenario_synergy"):
-                            tracker.scenario_synergy.setdefault(scenario, []).append(synergy_metrics)
+                            tracker.scenario_synergy.setdefault(scenario, []).append(
+                                synergy_metrics
+                            )
                     if return_details:
                         details.setdefault("_combined", {}).setdefault(
                             "all", []
