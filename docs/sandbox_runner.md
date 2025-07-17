@@ -463,11 +463,15 @@ This will invoke `full_autonomous_run` with the provided presets and also launch
 `MetricsDashboard` when `--dashboard-port` is specified.
 
 The `run_autonomous.py` helper exposes the same functionality while verifying
-dependencies first. It also supports executing multiple runs sequentially:
+dependencies first. It keeps launching new runs until ROI improvements fade for
+all modules and workflows. `--roi-cycles` and `--synergy-cycles` cap how many
+consecutive below-threshold cycles trigger convergence. The optional `--runs`
+argument acts as an upper bound:
 
 ```bash
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```
-
-You will see a message like `Starting autonomous run 1/2` for each run and the
-dashboard remains available throughout to monitor aggregated metrics.
+Each iteration prints a `Starting autonomous run` message. The loop ends early
+whenever ROI deltas remain below the tracker threshold for the configured
+number of cycles. The dashboard remains available throughout to monitor
+aggregated metrics.
