@@ -11,6 +11,16 @@ from pathlib import Path
 from typing import List
 import sys
 
+# Default to test mode when using the bundled SQLite database.
+if (
+    os.getenv("MENACE_MODE", "test").lower() == "production"
+    and os.getenv("DATABASE_URL", "").startswith("sqlite")
+):
+    logging.warning(
+        "MENACE_MODE=production with SQLite database; switching to test mode"
+    )
+    os.environ["MENACE_MODE"] = "test"
+
 # allow execution directly from the package directory
 _pkg_dir = Path(__file__).resolve().parent
 if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
