@@ -413,7 +413,7 @@ helper.py
 description: print hello
 
 ### Version control
-commit changes to git
+commit all changes to git using descriptive commit messages
 
 ### Testing
 run existing tests
