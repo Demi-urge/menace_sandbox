@@ -591,7 +591,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         state_getter=improver._policy_state,
     )
-    tester = SelfTestService()
+    tester = SelfTestService(telem_db)
     from menace.roi_tracker import ROITracker
 
     try:

@@ -7,13 +7,16 @@ import subprocess
 from threading import Event
 
 from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
+from .error_bot import ErrorDB
+from .error_logger import ErrorLogger
 
 
 class SelfTestService:
     """Periodically execute the test suite to validate core bots."""
 
-    def __init__(self) -> None:
+    def __init__(self, db: ErrorDB | None = None) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.error_logger = ErrorLogger(db)
         self.scheduler: object | None = None
 
     # ------------------------------------------------------------------
@@ -22,6 +25,10 @@ class SelfTestService:
             subprocess.run(["pytest", "-q"], check=True)
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.error("self tests failed: %s", exc)
+            try:
+                self.error_logger.log(exc, "self_tests", "sandbox")
+            except Exception:
+                self.logger.exception("error logging failed")
 
     # ------------------------------------------------------------------
     def run_continuous(self, interval: float = 86400.0, *, stop_event: Event | None = None) -> None:

@@ -9,6 +9,8 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+import menace.error_bot as eb
+import subprocess
 
 
 def test_scheduler_start(monkeypatch):
@@ -23,4 +25,16 @@ def test_scheduler_start(monkeypatch):
     svc = mod.SelfTestService()
     svc.run_continuous(interval=10)
     assert recorded['id'] == 'self_test'
+
+
+def test_failure_logs_telemetry(tmp_path, monkeypatch):
+    db = eb.ErrorDB(tmp_path / "e.db")
+    svc = mod.SelfTestService(db)
+    def fail(cmd, check=True):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(mod.subprocess, "run", fail)
+    svc._run_once()
+    cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
+    assert cur.fetchone()[0] == 1
 

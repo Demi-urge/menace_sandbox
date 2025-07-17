@@ -76,6 +76,9 @@ def test_sandbox_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(sys.modules["menace.self_debugger_sandbox"], "SelfDebuggerSandbox", DummySandbox)
 
     class DummyTester:
+        def __init__(self, *a, **k):
+            pass
+
         def _run_once(self):
             pass
     monkeypatch.setattr(mm, "SelfTestService", DummyTester)
