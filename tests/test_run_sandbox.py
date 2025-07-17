@@ -200,6 +200,9 @@ def test_run_sandbox_uses_temporary_env(monkeypatch, tmp_path):
             return ()
 
     class DummyTester:
+        def __init__(self, *a, **k):
+            pass
+
         def _run_once(self):
             pass
 
@@ -300,6 +303,9 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
             return R()
 
     class DummyTester:
+        def __init__(self, *a, **k):
+            pass
+
         def _run_once(self):
             pass
 
@@ -396,6 +402,9 @@ def test_section_short_circuit(monkeypatch, tmp_path):
             pass
 
     class DummyTester:
+        def __init__(self, *a, **k):
+            pass
+
         def _run_once(self):
             pass
 

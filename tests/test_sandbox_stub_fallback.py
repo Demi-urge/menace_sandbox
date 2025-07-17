@@ -53,6 +53,9 @@ class DummySandbox:
 
 
 class DummyTester:
+    def __init__(self, *a, **k):
+        pass
+
     def _run_once(self):
         pass
 
