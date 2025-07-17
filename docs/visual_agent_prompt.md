@@ -117,9 +117,12 @@ visual agent is contacted. The most relevant are:
   `{description}`, `{context}` and `{func}` placeholders.
 - `VA_PROMPT_PREFIX` – additional text prepended before the generated prompt.
 - `VA_REPO_LAYOUT_LINES` – number of repository layout lines to include.
+- `VA_MESSAGE_PREFIX` – overrides the hard-coded prefix used by
+  `VisualAgentClient` when forwarding messages.
 
 ## Prompt customisation
 
+`VA_MESSAGE_PREFIX` overrides the instructions prepended before each message.
 `VA_PROMPT_PREFIX` adds extra text to the start of the prompt while
 `VA_PROMPT_TEMPLATE` replaces the default layout entirely. The template receives
 `{path}`, `{description}`, `{context}` and `{func}` so you can insert snippet
