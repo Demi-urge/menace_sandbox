@@ -51,7 +51,7 @@ def _sandbox_cycle_runner(
         ctx.orchestrator.run_cycle(ctx.models)
         result = ctx.improver.run_cycle()
         ctx.tester._run_once()
-        ctx.sandbox.analyse_and_fix()
+        ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
         roi = result.roi.roi if result.roi else 0.0
         if ctx.predicted_roi is not None:
             logger.info(
