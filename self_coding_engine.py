@@ -146,7 +146,46 @@ class SelfCodingEngine:
                 lines.extend(text.splitlines())
         return lines
 
-    def generate_helper(self, description: str) -> str:
+    def build_visual_agent_prompt(
+        self, path: str | None, description: str, context: str
+    ) -> str:
+        """Return a prompt formatted for :class:`VisualAgentClient`."""
+
+        func = f"auto_{description.replace(' ', '_')}"
+        lines = [
+            "### Introduction",
+            f"Add a Python helper to `{path or 'unknown file'}` that {description}.",
+            "",
+            "### Functions",
+            f"- `{func}(*args, **kwargs)`",
+            "",
+            "### Dependencies",
+            "standard library",
+            "",
+            "### Coding standards",
+            (
+                "Follow PEP8 with 4-space indents and <79 character lines. "
+                "Use Google style docstrings and inline comments for complex logic."
+            ),
+            "",
+            "### Repository layout",
+            path or "",
+            "",
+            "### Metadata",
+            f"description: {description}",
+            "",
+            "### Version control",
+            "commit changes to git",
+            "",
+            "### Testing",
+            "run existing tests",
+            "",
+            "### Snippet context",
+            context.strip(),
+        ]
+        return "\n".join(lines).strip() + "\n"
+
+    def generate_helper(self, description: str, *, path: Path | None = None) -> str:
         """Create helper text by asking an LLM using snippet context."""
         snippets = self.suggest_snippets(description, limit=3)
         context = "\n\n".join(s.code for s in snippets)
@@ -197,9 +236,10 @@ class SelfCodingEngine:
 
         if not self.llm_client:
             return _fallback()
-        prompt = (
-            f"Write a Python function named auto_{description.replace(' ', '_')} "
-            f"that {description}. Use these snippets as reference:\n{context}\n"
+        prompt = self.build_visual_agent_prompt(
+            str(path) if path else None,
+            description,
+            context,
         )
         try:
             data = self.llm_client.ask([{"role": "user", "content": prompt}])
@@ -217,7 +257,7 @@ class SelfCodingEngine:
 
     def patch_file(self, path: Path, description: str) -> None:
         """Append a generated helper to the given file."""
-        code = self.generate_helper(description)
+        code = self.generate_helper(description, path=path)
         self.logger.info("patch file", extra={"path": str(path), "description": description})
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("\n" + code)
