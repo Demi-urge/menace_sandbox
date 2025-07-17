@@ -409,6 +409,9 @@ Follow PEP8 with 4-space indents and <79 character lines. Use Google style docst
 ### Repository layout
 helper.py
 
+### Environment
+3.11.12
+
 ### Metadata
 description: print hello
 
@@ -416,7 +419,7 @@ description: print hello
 commit all changes to git using descriptive commit messages
 
 ### Testing
-run existing tests
+Run `scripts/setup_tests.sh` then execute `pytest --cov`. Report any failures.
 
 ### Snippet context
 def hello():
