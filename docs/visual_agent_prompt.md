@@ -137,7 +137,18 @@ visual agent is contacted. The most relevant are:
 `{path}`, `{description}`, `{context}` and `{func}` so you can insert snippet
 metadata wherever desired.
 
-Example:
+A minimal template might look like:
+
+```text
+### Introduction
+Add {func} to {path}. It should {description}.
+
+### Snippet context
+{context}
+```
+
+Save this file as `va.tmpl` and pass it to the sandbox with
+`VA_PROMPT_TEMPLATE=va.tmpl`:
 
 ```bash
 VA_PROMPT_PREFIX="[internal]" VA_PROMPT_TEMPLATE=va.tmpl python sandbox_runner.py full-autonomous-run
