@@ -45,6 +45,8 @@ def test_build_visual_agent_prompt_basic():
     assert "helper.py" in prompt
     assert "print hello" in prompt
     assert "def hello()" in prompt
+    assert "### Environment" in prompt
+    assert sys.version.split()[0] in prompt
 
 
 def test_build_visual_agent_prompt_env(monkeypatch, tmp_path):
@@ -75,6 +77,7 @@ def test_build_visual_agent_prompt_sections():
         "### Dependencies",
         "### Coding standards",
         "### Repository layout",
+        "### Environment",
         "### Metadata",
         "### Version control",
         "### Testing",

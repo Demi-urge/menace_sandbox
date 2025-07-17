@@ -15,13 +15,14 @@ complete, testable repository. The list below summarises the required headings:
 5. **Repository layout** – the main module is `<bot_name>.py`, a
    `requirements.txt` lists dependencies, tests live under `tests/` with
    `test_*.py` filenames and a `README.md` summarises usage.
-6. **Metadata** – `_write_meta` saves the bot specification to a `meta.yaml`
+6. **Environment** – includes the Python version used by the sandbox.
+7. **Metadata** – `_write_meta` saves the bot specification to a `meta.yaml`
    file in the repository root.
-7. **Version control** – commit all generated files to git using descriptive
+8. **Version control** – commit all generated files to git using descriptive
    messages.
-8. **Testing** – run `scripts/setup_tests.sh` then execute `pytest --cov`,
+9. **Testing** – run `scripts/setup_tests.sh` then execute `pytest --cov`,
    ensuring at least one test per function and reporting any failures.
-9. **Snippet context** – relevant code lines added by the sandbox.
+10. **Snippet context** – relevant code lines added by the sandbox.
 
 This structure helps the agent produce consistent, testable starter
 repositories. The sections must appear in the order listed above so that the
@@ -64,6 +65,15 @@ Lists the files that must exist. The main module is named after the bot and is
 placed at the repository root. Dependencies belong in `requirements.txt`.
 Tests live in `tests/` with filenames matching `test_*.py`. A `README.md`
 describes usage and setup steps.
+
+### Environment
+Lists the Python version running in the sandbox so the agent can tailor
+generated code accordingly. Example:
+
+```
+### Environment
+3.11.12
+```
 
 ### Metadata
 `_write_meta` saves the specification to `meta.yaml` so future tools know how
@@ -175,6 +185,9 @@ image_filter_bot.py
 requirements.txt
 README.md
 tests/test_image_filter_bot.py
+
+### Environment
+3.11.12
 
 ### Testing
 Run `pytest --cov`. Report any failures in the final message.

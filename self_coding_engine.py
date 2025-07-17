@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Dict
 import subprocess
 import os
+import sys
 import json
 import base64
 import logging
@@ -204,6 +205,9 @@ class SelfCodingEngine:
                 "",
                 "### Repository layout",
                 repo_layout or self._get_repo_layout(VA_REPO_LAYOUT_LINES),
+                "",
+                "### Environment",
+                sys.version.split()[0],
                 "",
                 "### Metadata",
                 f"description: {description}",
