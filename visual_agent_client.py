@@ -17,9 +17,14 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
-SELF_IMPROVEMENT_PREFIX = (
+# Default instructions prepended before messages sent to the visual agent.
+DEFAULT_MESSAGE_PREFIX = (
     "Improve Menace by enhancing error handling and modifying existing bots."
 )
+
+# Allow overriding the default via environment variable for easier testing
+# and custom deployments.
+SELF_IMPROVEMENT_PREFIX = os.getenv("VA_MESSAGE_PREFIX", DEFAULT_MESSAGE_PREFIX)
 
 
 class VisualAgentClient:
