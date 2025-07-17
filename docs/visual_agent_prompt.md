@@ -21,6 +21,7 @@ complete, testable repository. The list below summarises the required headings:
    messages.
 8. **Testing** – run `scripts/setup_tests.sh` then execute `pytest --cov`,
    ensuring at least one test per function and reporting any failures.
+9. **Snippet context** – relevant code lines added by the sandbox.
 
 This structure helps the agent produce consistent, testable starter
 repositories. The sections must appear in the order listed above so that the
@@ -81,6 +82,11 @@ one test per function. Example output:
 tests/test_example_bot.py::test_basic PASSED [100%]
 =================== 1 passed in 0.01s ===================
 ```
+
+### Snippet context
+`SelfCodingEngine` appends snippet lines here. Each snippet starts with the file
+path and line numbers followed by the code itself so the agent can reuse or
+modify existing logic.
 
 ## Example repository structure
 
@@ -158,4 +164,9 @@ tests/test_image_filter_bot.py
 
 ### Testing
 Run `pytest --cov`. Report any failures in the final message.
+
+### Snippet context
+image_filter_bot.py:10-12
+def helper():
+    pass
 ```
