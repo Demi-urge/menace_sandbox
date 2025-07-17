@@ -56,6 +56,7 @@ class MetricRecord:
     shannon_entropy: float = 0.0
     efficiency: float = 0.0
     flexibility: float = 0.0
+    gpu_usage: float = 0.0
     projected_lucrativity: float = 0.0
     profitability: float = 0.0
     patch_complexity: float = 0.0
@@ -64,6 +65,8 @@ class MetricRecord:
     network_latency: float = 0.0
     throughput: float = 0.0
     risk_index: float = 0.0
+    maintainability: float = 0.0
+    code_quality: float = 0.0
     ts: str = datetime.utcnow().isoformat()
 
 
@@ -93,6 +96,7 @@ class MetricsDB:
                 shannon_entropy REAL DEFAULT 0,
                 efficiency REAL DEFAULT 0,
                 flexibility REAL DEFAULT 0,
+                gpu_usage REAL DEFAULT 0,
                 projected_lucrativity REAL DEFAULT 0,
                 profitability REAL DEFAULT 0,
                 patch_complexity REAL DEFAULT 0,
@@ -101,6 +105,8 @@ class MetricsDB:
                 network_latency REAL DEFAULT 0,
                 throughput REAL DEFAULT 0,
                 risk_index REAL DEFAULT 0,
+                maintainability REAL DEFAULT 0,
+                code_quality REAL DEFAULT 0,
                 ts TEXT
             )
             """
@@ -137,6 +143,8 @@ class MetricsDB:
                 conn.execute("ALTER TABLE metrics ADD COLUMN efficiency REAL DEFAULT 0")
             if "flexibility" not in cols:
                 conn.execute("ALTER TABLE metrics ADD COLUMN flexibility REAL DEFAULT 0")
+            if "gpu_usage" not in cols:
+                conn.execute("ALTER TABLE metrics ADD COLUMN gpu_usage REAL DEFAULT 0")
             if "projected_lucrativity" not in cols:
                 conn.execute(
                     "ALTER TABLE metrics ADD COLUMN projected_lucrativity REAL DEFAULT 0"
@@ -169,6 +177,14 @@ class MetricsDB:
                 conn.execute(
                     "ALTER TABLE metrics ADD COLUMN risk_index REAL DEFAULT 0"
                 )
+            if "maintainability" not in cols:
+                conn.execute(
+                    "ALTER TABLE metrics ADD COLUMN maintainability REAL DEFAULT 0"
+                )
+            if "code_quality" not in cols:
+                conn.execute(
+                    "ALTER TABLE metrics ADD COLUMN code_quality REAL DEFAULT 0"
+                )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_bot ON metrics(bot)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_ts ON metrics(ts)")
             conn.commit()
@@ -185,10 +201,11 @@ class MetricsDB:
                 revenue, expense,
                 security_score, safety_rating, adaptability,
                 antifragility, shannon_entropy, efficiency,
-                flexibility, projected_lucrativity,
+                flexibility, gpu_usage, projected_lucrativity,
                 profitability, patch_complexity, energy_consumption,
-                resilience, network_latency, throughput, risk_index, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                resilience, network_latency, throughput, risk_index,
+                maintainability, code_quality, ts)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     rec.bot,
@@ -207,6 +224,7 @@ class MetricsDB:
                     rec.shannon_entropy,
                     rec.efficiency,
                     rec.flexibility,
+                    rec.gpu_usage,
                     rec.projected_lucrativity,
                     rec.profitability,
                     rec.patch_complexity,
@@ -215,6 +233,8 @@ class MetricsDB:
                     rec.network_latency,
                     rec.throughput,
                     rec.risk_index,
+                    rec.maintainability,
+                    rec.code_quality,
                     rec.ts,
                 ),
             )
@@ -253,10 +273,10 @@ class MetricsDB:
         query = (
             "SELECT bot, cpu, memory, response_time, disk_io, net_io, errors,"
             " revenue, expense, security_score, safety_rating, adaptability,"
-            " antifragility, shannon_entropy, efficiency, flexibility,"
+            " antifragility, shannon_entropy, efficiency, flexibility, gpu_usage,"
             " projected_lucrativity, profitability, patch_complexity,"
             " energy_consumption, resilience, network_latency, throughput,"
-            " risk_index, ts FROM metrics"
+            " risk_index, maintainability, code_quality, ts FROM metrics"
         )
         params = []
         clauses = []
@@ -353,6 +373,9 @@ class DataBot:
                 "flexibility": Gauge(
                     "bot_flexibility", "Flexibility", ["bot"], registry=self.registry
                 ),
+                "gpu_usage": Gauge(
+                    "bot_gpu_usage", "GPU usage", ["bot"], registry=self.registry
+                ),
                 "projected_lucrativity": Gauge(
                     "bot_projected_lucrativity",
                     "Projected lucrativity",
@@ -401,6 +424,18 @@ class DataBot:
                     ["bot"],
                     registry=self.registry,
                 ),
+                "maintainability": Gauge(
+                    "bot_maintainability",
+                    "Maintainability",
+                    ["bot"],
+                    registry=self.registry,
+                ),
+                "code_quality": Gauge(
+                    "bot_code_quality",
+                    "Code quality",
+                    ["bot"],
+                    registry=self.registry,
+                ),
             }
             if start_server or os.getenv("METRICS_PORT"):
                 from .metrics_exporter import start_metrics_server
@@ -423,6 +458,7 @@ class DataBot:
         shannon_entropy: float = 0.0,
         efficiency: float | None = None,
         flexibility: float = 0.0,
+        gpu_usage: float = 0.0,
         projected_lucrativity: float = 0.0,
         profitability: float | None = None,
         patch_complexity: float = 0.0,
@@ -431,6 +467,8 @@ class DataBot:
         network_latency: float = 0.0,
         throughput: float = 0.0,
         risk_index: float = 0.0,
+        maintainability: float = 0.0,
+        code_quality: float = 0.0,
         bottleneck: float | None = None,
     ) -> MetricRecord:
         if psutil:
@@ -517,6 +555,7 @@ class DataBot:
             shannon_entropy=shannon_entropy,
             efficiency=efficiency,
             flexibility=flexibility,
+            gpu_usage=gpu_usage,
             projected_lucrativity=projected_lucrativity,
             profitability=profitability,
             patch_complexity=patch_complexity,
@@ -525,6 +564,8 @@ class DataBot:
             network_latency=network_latency,
             throughput=throughput,
             risk_index=risk_index,
+            maintainability=maintainability,
+            code_quality=code_quality,
         )
         self.db.add(rec)
         # compute efficiency/bottleneck metrics if not explicitly provided
