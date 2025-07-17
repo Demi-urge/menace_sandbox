@@ -5,6 +5,16 @@ import logging
 import os
 import sys
 
+# If production mode is used with the default SQLite database, fall back to test
+if (
+    os.getenv("MENACE_MODE", "test").lower() == "production"
+    and os.getenv("DATABASE_URL", "").startswith("sqlite")
+):
+    logging.warning(
+        "MENACE_MODE=production with SQLite database; switching to test mode"
+    )
+    os.environ["MENACE_MODE"] = "test"
+
 from . import menace_db as _menace_db
 
 sys.modules.setdefault("menace.menace", _menace_db)
