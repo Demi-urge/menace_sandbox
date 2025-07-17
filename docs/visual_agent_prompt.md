@@ -189,8 +189,14 @@ tests/test_image_filter_bot.py
 ### Environment
 3.11.12
 
+### Metadata
+description: filter low-quality images from a directory
+
+### Version control
+commit all changes to git using descriptive commit messages
+
 ### Testing
-Run `pytest --cov`. Report any failures in the final message.
+Run `scripts/setup_tests.sh` then execute `pytest --cov`. Report any failures in the final message.
 
 ### Snippet context
 image_filter_bot.py:10-12
