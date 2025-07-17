@@ -37,7 +37,8 @@ elif "menace" not in sys.modules:
 
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies
-from sandbox_runner.cli import full_autonomous_run
+from sandbox_runner.cli import full_autonomous_run, _diminishing_modules
+from menace.roi_tracker import ROITracker
 from sandbox_recovery_manager import SandboxRecoveryManager
 import sandbox_runner
 
@@ -95,7 +96,7 @@ def main(argv: List[str] | None = None) -> None:
         "--runs",
         type=int,
         default=1,
-        help="number of full sandbox runs to execute sequentially",
+        help="maximum number of full sandbox runs to execute",
     )
     parser.add_argument(
         "--dashboard-port",
@@ -149,8 +150,19 @@ def main(argv: List[str] | None = None) -> None:
             agent_proc = subprocess.Popen(cmd)
             time.sleep(2)
 
-    for idx in range(args.runs):
-        logger.info("Starting autonomous run %d/%d", idx + 1, args.runs)
+    module_history: dict[str, list[float]] = {}
+    flagged: set[str] = set()
+    synergy_streak = 0
+    last_tracker = None
+
+    run_idx = 0
+    while args.runs is None or run_idx < args.runs:
+        run_idx += 1
+        logger.info(
+            "Starting autonomous run %d/%s",
+            run_idx,
+            args.runs if args.runs is not None else "?",
+        )
         presets = generate_presets(args.preset_count)
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
 
@@ -160,13 +172,52 @@ def main(argv: List[str] | None = None) -> None:
             full_autonomous_run(args)
         finally:
             sandbox_runner._sandbox_main = recovery.sandbox_main
-            if agent_proc:
-                agent_proc.terminate()
-                try:
-                    agent_proc.wait(timeout=5)
-                except Exception:
-                    agent_proc.kill()
-                agent_proc = None
+
+        hist_file = Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
+        tracker = ROITracker()
+        try:
+            tracker.load_history(str(hist_file))
+            last_tracker = tracker
+        except Exception:
+            logger.exception("failed to load tracker history: %s", hist_file)
+            continue
+
+        for mod, vals in tracker.module_deltas.items():
+            module_history.setdefault(mod, []).extend(vals)
+
+        syn_vals = {
+            k: v[-1]
+            for k, v in tracker.metrics_history.items()
+            if k.startswith("synergy_") and v
+        }
+        if syn_vals:
+            max_syn = max(abs(v) for v in syn_vals.values())
+            if max_syn <= tracker.diminishing():
+                synergy_streak += 1
+            else:
+                synergy_streak = 0
+
+        new_flags = _diminishing_modules(
+            module_history,
+            flagged,
+            tracker.diminishing(),
+            consecutive=args.roi_cycles,
+        )
+        flagged.update(new_flags)
+
+        if module_history and set(module_history) <= flagged and synergy_streak >= args.synergy_cycles:
+            logger.info(
+                "convergence reached", extra={"run": run_idx, "streak": synergy_streak}
+            )
+            break
+
+    if agent_proc:
+        agent_proc.terminate()
+        try:
+            agent_proc.wait(timeout=5)
+        except Exception:
+            agent_proc.kill()
+        agent_proc = None
 
 
 if __name__ == "__main__":
