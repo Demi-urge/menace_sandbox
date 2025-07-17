@@ -110,6 +110,8 @@ visual agent is contacted. The most relevant are:
 - `VISUAL_AGENT_TOKEN` – authentication token passed to the agent service.
 - `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
   headless mode.
+- `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
+  launching a local visual agent when none is reachable.
 
 ## Sample prompt
 
