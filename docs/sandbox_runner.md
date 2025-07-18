@@ -103,6 +103,8 @@ When no `input_stubs` argument is given the function calls `generate_input_stubs
 
 Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a GPT‑4 brainstorming request if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.
 
+`_SandboxMetaLogger.diminishing()` evaluates these ROI deltas using a rolling mean and standard deviation over the last `consecutive` cycles. A module is flagged when the mean is within the given threshold and the standard deviation falls below a small epsilon, preventing sporadic fluctuations from triggering improvements.
+
 ## Workflow Simulations
 
 `run_workflow_simulations(workflows_db, env_presets=None)` replays stored

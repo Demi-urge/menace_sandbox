@@ -34,14 +34,20 @@ class _SandboxMetaLogger:
     def diminishing(self, threshold: float | None = None, consecutive: int = 3) -> list[str]:
         flags = []
         thr = 0.0 if threshold is None else float(threshold)
+        eps = 1e-3
         for m, vals in self.module_deltas.items():
             if m in self.flagged_sections:
                 continue
-            if len(vals) >= consecutive and all(abs(v) <= thr for v in vals[-consecutive:]):
-                flags.append(m)
-                self.flagged_sections.add(m)
+            if len(vals) < consecutive:
                 continue
-            if len(vals) >= 3 and (vals[-1] <= thr or abs(vals[-1]) < abs(vals[0]) * 0.1):
+            window = vals[-consecutive:]
+            mean = sum(window) / consecutive
+            if len(window) > 1:
+                var = sum((v - mean) ** 2 for v in window) / len(window)
+                std = var ** 0.5
+            else:
+                std = 0.0
+            if abs(mean) <= thr and std < eps:
                 flags.append(m)
                 self.flagged_sections.add(m)
         return flags

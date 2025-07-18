@@ -33,5 +33,7 @@ def test_meta_logger_consecutive_threshold(monkeypatch, tmp_path):
     log.log_cycle(0, 0.0, ["x.py"], "first")
     assert log.diminishing(threshold, consecutive=2) == []
     log.log_cycle(1, 0.05, ["x.py"], "second")
+    assert log.diminishing(threshold, consecutive=2) == []
+    log.log_cycle(2, 0.1, ["x.py"], "third")
     assert log.diminishing(threshold, consecutive=2) == ["x.py"]
     assert "x.py" in log.flagged_sections
