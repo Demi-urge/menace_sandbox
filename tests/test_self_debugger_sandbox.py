@@ -204,3 +204,32 @@ def test_coverage_drop_reverts(monkeypatch, tmp_path):
 
     assert engine.rollback_mgr.calls == ["1"]
     assert any("reverted" in r for r in trail.records)
+
+
+def test_select_best_patch(monkeypatch, tmp_path):
+    class ScoreEngine(DummyEngine):
+        def __init__(self):
+            super().__init__()
+            self.deltas = [0.1, 0.5, 0.5]
+            self.calls = []
+
+        def apply_patch(self, path: Path, desc: str):
+            delta = self.deltas.pop(0)
+            self.calls.append(delta)
+            return len(self.calls), False, delta
+
+        def rollback_patch(self, pid: str) -> None:
+            pass
+
+    engine = ScoreEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def a():\n    pass\n", "def b():\n    pass\n"])
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+
+    cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
+    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: cov_vals.pop(0))
+
+    dbg.analyse_and_fix()
+
+    assert engine.calls[-1] == 0.5

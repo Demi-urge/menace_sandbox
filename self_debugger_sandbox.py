@@ -61,6 +61,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         result: str,
         before_cov: float | None = None,
         after_cov: float | None = None,
+        *,
+        coverage_delta: float | None = None,
+        error_delta: float | None = None,
+        roi_delta: float | None = None,
     ) -> None:
         if not self.audit_trail:
             return
@@ -73,6 +77,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "result": result,
                     "coverage_before": before_cov,
                     "coverage_after": after_cov,
+                    "coverage_delta": coverage_delta,
+                    "error_delta": error_delta,
+                    "roi_delta": roi_delta,
                 },
                 sort_keys=True,
             )
@@ -91,7 +98,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             if not logs:
                 return
             tests = self._generate_tests(logs)
-            patched = False
+            best: dict[str, object] | None = None
             for code in tests:
                 with tempfile.TemporaryDirectory() as tmp:
                     tdir = Path(tmp)
@@ -139,41 +146,108 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     root_test.write_text(code)
                     result = "failed"
                     before_cov = after_cov = None
+                    coverage_delta = 0.0
+                    error_delta = 0.0
+                    roi_delta = 0.0
+                    pid = None
                     try:
                         before_cov = self._coverage_percent(root_test)
                         before_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                        pid, reverted, delta = self.engine.apply_patch(root_test, "auto_debug")
-                        if self.policy:
-                            try:
-                                state = self.state_getter() if self.state_getter else ()
-                                self.policy.update(state, delta)
-                            except Exception as exc:
-                                self.logger.exception("policy patch update failed", exc)
+                        pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
                         after_cov = self._coverage_percent(root_test)
+                        after_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                        coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
+                        error_delta = before_err - after_err
                         result = "reverted" if reverted else "success"
                         if (
                             not reverted
                             and pid is not None
                             and getattr(self.engine, "rollback_mgr", None)
-                            and (
-                                after_cov < (before_cov or 0)
-                                or getattr(self.engine, "_current_errors", lambda: 0)() > before_err
-                            )
+                            and (coverage_delta < 0 or error_delta < 0)
                         ):
                             try:
                                 self.engine.rollback_mgr.rollback(str(pid))
                             except Exception:
                                 self.logger.exception("rollback failed")
                             result = "reverted"
-                        else:
-                            patched = not reverted and after_cov >= (before_cov or 0)
+                            reverted = True
+                        score = coverage_delta + error_delta + roi_delta if not reverted else float("-inf")
                     except Exception:
                         self.logger.exception("patch failed")
+                        score = float("-inf")
                     finally:
-                        self._log_patch("auto_debug", result, before_cov, after_cov)
+                        self._log_patch(
+                            "auto_debug_candidate",
+                            result,
+                            before_cov,
+                            after_cov,
+                            coverage_delta=coverage_delta,
+                            error_delta=error_delta,
+                            roi_delta=roi_delta,
+                        )
+                        if pid is not None and result != "reverted":
+                            try:
+                                self.engine.rollback_patch(str(pid))
+                            except Exception:
+                                self.logger.exception("candidate rollback failed")
                         root_test.unlink(missing_ok=True)
-                if patched:
-                    break
+
+                if score > (best["score"] if best else float("-inf")):
+                    best = {"score": score, "code": code}
+
+            if not best:
+                continue
+
+            code = best["code"]
+            root_test = Path("test_auto.py")
+            root_test.write_text(code)
+            result = "failed"
+            before_cov = after_cov = None
+            coverage_delta = 0.0
+            error_delta = 0.0
+            roi_delta = 0.0
+            patched = False
+            try:
+                before_cov = self._coverage_percent(root_test)
+                before_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
+                if self.policy:
+                    try:
+                        state = self.state_getter() if self.state_getter else ()
+                        self.policy.update(state, roi_delta)
+                    except Exception as exc:
+                        self.logger.exception("policy patch update failed", exc)
+                after_cov = self._coverage_percent(root_test)
+                after_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
+                error_delta = before_err - after_err
+                result = "reverted" if reverted else "success"
+                if (
+                    not reverted
+                    and pid is not None
+                    and getattr(self.engine, "rollback_mgr", None)
+                    and (coverage_delta < 0 or error_delta < 0)
+                ):
+                    try:
+                        self.engine.rollback_mgr.rollback(str(pid))
+                    except Exception:
+                        self.logger.exception("rollback failed")
+                    result = "reverted"
+                else:
+                    patched = not reverted and coverage_delta >= 0
+            except Exception:
+                self.logger.exception("patch failed")
+            finally:
+                self._log_patch(
+                    "auto_debug",
+                    result,
+                    before_cov,
+                    after_cov,
+                    coverage_delta=coverage_delta,
+                    error_delta=error_delta,
+                    roi_delta=roi_delta,
+                )
+                root_test.unlink(missing_ok=True)
             if patched:
                 break
 
