@@ -17,6 +17,10 @@ from .metrics_plugins import (
     load_metrics_plugins,
     collect_plugin_metrics,
 )
+from .stub_providers import (
+    discover_stub_providers,
+    load_stub_providers,
+)
 
 __all__ = [
     "simulate_execution_environment",
@@ -35,4 +39,6 @@ __all__ = [
     "discover_metrics_plugins",
     "load_metrics_plugins",
     "collect_plugin_metrics",
+    "discover_stub_providers",
+    "load_stub_providers",
 ]

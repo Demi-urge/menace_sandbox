@@ -99,7 +99,7 @@ recorded and returned in a `runtime_metrics` dictionary.
 
 `run_repo_section_simulations(repo_path, input_stubs=None, env_presets=None)` analyses each Python file with `_extract_sections` and simulates execution for every section. A `ROITracker` records risk flags per module and section so trends can be ranked. Pass custom input stubs to exercise different code paths and provide multiple environment presets to compare behaviour across configurations. Set `return_details=True` to receive raw results grouped by preset.
 
-When no `input_stubs` argument is given the function calls `generate_input_stubs()` from `environment.py`. This helper reads `SANDBOX_INPUT_STUBS` for a JSON specification and falls back to random stub dictionaries containing fields such as `mode` and `level`.
+When no `input_stubs` argument is given the function calls `generate_input_stubs()` from `environment.py`. This helper reads `SANDBOX_INPUT_STUBS` for a JSON specification. When unset the generator can load templates from `SANDBOX_INPUT_TEMPLATES_FILE`, sample from `SANDBOX_INPUT_HISTORY` or rely on configurable random values. Additional stub providers can be specified through the `SANDBOX_STUB_PLUGINS` environment variable.
 
 Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a GPT‑4 brainstorming request if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.
 
