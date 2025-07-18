@@ -6,7 +6,10 @@ import json
 import os
 import re
 import difflib
+import logging
 from typing import Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Sensitive KPI-related keywords that must not be altered
 _KPI_KEYWORDS = {
@@ -32,8 +35,8 @@ def scan_for_kpi_keywords(file_path: str) -> List[Tuple[int, str]]:
             for lineno, line in enumerate(fh, 1):
                 if _KPI_RE.search(line):
                     results.append((lineno, line.rstrip("\n")))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("failed to scan %s: %s", file_path, exc)
     return results
 
 
