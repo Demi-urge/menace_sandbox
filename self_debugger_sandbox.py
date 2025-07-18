@@ -10,6 +10,8 @@ import tempfile
 from pathlib import Path
 from datetime import datetime
 import json
+import io
+from coverage import Coverage
 
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
@@ -37,7 +39,29 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._bad_hashes: set[str] = set()
 
     # ------------------------------------------------------------------
-    def _log_patch(self, description: str, result: str) -> None:
+    def _coverage_percent(self, path: Path, env: dict[str, str] | None = None) -> float:
+        """Run tests for *path* under coverage and return the percentage."""
+        cov = Coverage()
+        buf = io.StringIO()
+        cov.start()
+        try:
+            subprocess.run(["pytest", "-q", str(path)], check=True, env=env)
+        finally:
+            cov.stop()
+        try:
+            percent = cov.report(include=[str(path)], file=buf)
+        except Exception:
+            percent = 0.0
+        return float(percent or 0.0)
+
+    # ------------------------------------------------------------------
+    def _log_patch(
+        self,
+        description: str,
+        result: str,
+        before_cov: float | None = None,
+        after_cov: float | None = None,
+    ) -> None:
         if not self.audit_trail:
             return
         try:
@@ -47,6 +71,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "action": "sandbox_patch",
                     "description": description,
                     "result": result,
+                    "coverage_before": before_cov,
+                    "coverage_after": after_cov,
                 },
                 sort_keys=True,
             )
@@ -112,7 +138,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     root_test = Path("test_auto.py")
                     root_test.write_text(code)
                     result = "failed"
+                    before_cov = after_cov = None
                     try:
+                        before_cov = self._coverage_percent(root_test)
                         before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         pid, reverted, delta = self.engine.apply_patch(root_test, "auto_debug")
                         if self.policy:
@@ -121,26 +149,28 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.policy.update(state, delta)
                             except Exception as exc:
                                 self.logger.exception("policy patch update failed", exc)
+                        after_cov = self._coverage_percent(root_test)
                         result = "reverted" if reverted else "success"
                         if (
                             not reverted
                             and pid is not None
                             and getattr(self.engine, "rollback_mgr", None)
-                            and getattr(self.engine, "_current_errors", lambda: 0)() > before_err
+                            and (
+                                after_cov < (before_cov or 0)
+                                or getattr(self.engine, "_current_errors", lambda: 0)() > before_err
+                            )
                         ):
                             try:
                                 self.engine.rollback_mgr.rollback(str(pid))
                             except Exception:
                                 self.logger.exception("rollback failed")
-                        try:
-                            subprocess.run(["pytest", "-q", str(root_test)], check=True)
-                            patched = True
-                        except Exception:
-                            self.logger.exception("tests failed after patch")
+                            result = "reverted"
+                        else:
+                            patched = not reverted and after_cov >= (before_cov or 0)
                     except Exception:
                         self.logger.exception("patch failed")
                     finally:
-                        self._log_patch("auto_debug", result)
+                        self._log_patch("auto_debug", result, before_cov, after_cov)
                         root_test.unlink(missing_ok=True)
                 if patched:
                     break
