@@ -821,30 +821,124 @@ try:
 except Exception:
     SANDBOX_INPUT_STUBS = []
 
+from .stub_providers import discover_stub_providers, StubProvider
 
-def generate_input_stubs(count: int | None = None) -> List[Dict[str, Any]]:
+
+def _load_templates(path: str | None) -> List[Dict[str, Any]]:
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        logger.exception("failed to load input templates: %s", p)
+        return []
+    if isinstance(data, dict):
+        data = data.get("templates", [])
+    if isinstance(data, list):
+        return [dict(d) for d in data if isinstance(d, dict)]
+    return []
+
+
+def _load_history(path: str | None) -> List[Dict[str, Any]]:
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        return []
+    records: List[Dict[str, Any]] = []
+    try:
+        if p.suffix.lower() in {".json", ".jsn"}:
+            with open(p, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, list):
+                records.extend(dict(r) for r in data if isinstance(r, dict))
+        else:
+            with open(p, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        obj = json.loads(line.strip())
+                        if isinstance(obj, dict):
+                            records.append(dict(obj))
+                    except Exception:
+                        continue
+    except Exception:
+        logger.exception("failed to load input history: %s", p)
+    return records
+
+
+def _random_strategy(count: int, conf: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+    conf = conf or {}
+    modes = conf.get("modes", ["default", "alt", "stress"])
+    level_range = conf.get("level_range", [1, 5])
+    flags = conf.get("flags", ["A", "B", "C"])
+    flag_prob = float(conf.get("flag_prob", 0.3))
+    stubs: List[Dict[str, Any]] = []
+    for _ in range(count):
+        stub = {
+            "mode": random.choice(modes),
+            "level": random.randint(int(level_range[0]), int(level_range[1])),
+        }
+        if random.random() < flag_prob and flags:
+            stub["flag"] = random.choice(flags)
+        stubs.append(stub)
+    return stubs
+
+
+def generate_input_stubs(
+    count: int | None = None,
+    *,
+    strategy: str | None = None,
+    providers: List[StubProvider] | None = None,
+) -> List[Dict[str, Any]]:
     """Return example input dictionaries.
 
-    If ``SANDBOX_INPUT_STUBS`` provides JSON data it is parsed and returned.
-    Otherwise ``count`` random stubs are created with simple ``mode`` and
-    ``level`` keys.
+    ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
+    generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
+    The built-in strategies ``templates``, ``history`` and ``random`` can be
+    selected via ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment
+    variable.
     """
 
     if SANDBOX_INPUT_STUBS:
         return [dict(s) for s in SANDBOX_INPUT_STUBS]
 
     num = 2 if count is None else max(0, count)
-    modes = ["default", "alt", "stress"]
-    stubs: List[Dict[str, Any]] = []
-    for _ in range(num):
-        stub = {
-            "mode": random.choice(modes),
-            "level": random.randint(1, 5),
-        }
-        if random.random() < 0.3:
-            stub["flag"] = random.choice(["A", "B", "C"])
-        stubs.append(stub)
-    return stubs or [{}]
+
+    providers = providers or discover_stub_providers()
+    for prov in providers:
+        try:
+            stubs = prov(num, {"strategy": strategy})
+            if stubs:
+                return [dict(s) for s in stubs if isinstance(s, dict)]
+        except Exception:
+            logger.exception("stub provider %s failed", getattr(prov, "__name__", "?"))
+
+    strat = strategy or os.getenv("SANDBOX_STUB_STRATEGY", "templates")
+    if strat == "history":
+        history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
+        if history:
+            return [dict(random.choice(history)) for _ in range(num)]
+
+    if strat in {"templates", "history"}:  # fall through to templates when history empty
+        templates = _load_templates(
+            os.getenv(
+                "SANDBOX_INPUT_TEMPLATES_FILE",
+                str(ROOT / "sandbox_data" / "input_stub_templates.json"),
+            )
+        )
+        if templates:
+            return [dict(random.choice(templates)) for _ in range(num)]
+
+    conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
+    try:
+        conf = json.loads(conf_env) if conf_env else {}
+    except Exception:
+        conf = {}
+    return _random_strategy(num, conf) or [{}]
 
 
 # ----------------------------------------------------------------------
