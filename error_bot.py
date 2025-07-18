@@ -139,6 +139,16 @@ class ErrorDB:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS test_results(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                passed INTEGER,
+                failed INTEGER,
+                ts TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     def _publish(self, topic: str, payload: object) -> None:
@@ -326,6 +336,14 @@ class ErrorDB:
                 "deploy_id": event.deploy_id,
             },
         )
+
+    def add_test_result(self, passed: int, failed: int) -> None:
+        """Record test suite execution results."""
+        self.conn.execute(
+            "INSERT INTO test_results(passed, failed, ts) VALUES(?,?,?)",
+            (passed, failed, datetime.utcnow().isoformat()),
+        )
+        self.conn.commit()
 
 
 class ErrorBot(AdminBotBase):
