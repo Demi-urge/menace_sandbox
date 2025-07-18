@@ -56,8 +56,8 @@ def _log_diagnostic(issue: str, success: bool) -> None:
         _DIAGNOSTIC.log.add(ResolutionRecord(issue, "retry", success))
         if not success:
             _DIAGNOSTIC.error_bot.handle_error(issue)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("diagnostic logging failed: %s", exc)
 
 
 # ----------------------------------------------------------------------
@@ -170,15 +170,15 @@ def _execute_in_container(
                     if cpu:
                         sec = int(float(cpu)) * 10
                         resource.setrlimit(resource.RLIMIT_CPU, (sec, sec))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to set CPU limit: %s", exc)
                 try:
                     if mem:
                         size = _parse_size(mem)
                         if size:
                             resource.setrlimit(resource.RLIMIT_AS, (size, size))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to set memory limit: %s", exc)
 
             start = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
             try:
@@ -278,8 +278,8 @@ def _execute_in_container(
                 if cpu:
                     try:
                         kwargs["cpu_quota"] = int(float(cpu) * 100000)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("invalid CPU limit %s: %s", cpu, exc)
 
                 disk = env.get("DISK_LIMIT")
                 if disk:
@@ -293,8 +293,8 @@ def _execute_in_container(
                         kwargs["device_requests"] = [
                             DeviceRequest(count=int(float(gpu)), capabilities=[["gpu"]])
                         ]
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("GPU limit ignored: %s", exc)
 
                 if workdir:
                     kwargs["working_dir"] = workdir
@@ -606,15 +606,15 @@ async def _section_worker(
                     if cpu:
                         sec = int(float(cpu)) * 10
                         resource.setrlimit(resource.RLIMIT_CPU, (sec, sec))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to set CPU limit: %s", exc)
                 try:
                     if mem:
                         size = _parse_size(mem)
                         if size:
                             resource.setrlimit(resource.RLIMIT_AS, (size, size))
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("failed to set memory limit: %s", exc)
 
             def _run_psutil() -> Dict[str, Any]:
                 proc = subprocess.Popen(
@@ -657,7 +657,7 @@ async def _section_worker(
                                 proc.kill()
                                 break
                     except Exception:
-                        pass
+                        logger.warning("psutil metrics collection failed", exc_info=True)
                     time.sleep(0.1)
                 out, err = proc.communicate()
                 if reason == "timeout":
