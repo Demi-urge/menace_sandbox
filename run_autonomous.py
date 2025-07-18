@@ -56,10 +56,13 @@ logger = logging.getLogger(__name__)
 
 
 def _check_dependencies() -> None:
-    """Log missing optional runtime dependencies."""
+    """Install missing project dependencies and warn about binaries."""
     missing: List[str] = []
 
     if shutil.which("docker") is None:
+        logger.warning(
+            "Docker not found. Install using: sudo apt-get install docker.io"
+        )
         missing.append("docker")
     try:  # pragma: no cover - optional
         import docker  # type: ignore
@@ -67,9 +70,17 @@ def _check_dependencies() -> None:
         missing.append("docker python package")
 
     if shutil.which("qemu-system-x86_64") is None:
+        logger.warning(
+            "qemu-system-x86_64 not found. Install using: sudo apt-get install qemu-system-x86"
+        )
         missing.append("qemu-system-x86_64")
 
     missing_pkgs = verify_project_dependencies()
+    for pkg in missing_pkgs:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+        except Exception:  # pragma: no cover - pip failures shouldn't abort tests
+            logger.exception("Failed to install %s", pkg)
     if missing_pkgs:
         missing.extend(missing_pkgs)
 
