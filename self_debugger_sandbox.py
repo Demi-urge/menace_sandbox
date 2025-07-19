@@ -6,6 +6,8 @@ import logging
 import os
 import shutil
 import subprocess
+import asyncio
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -47,36 +49,71 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     # ------------------------------------------------------------------
     def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
-        """Run tests for *paths* under coverage using parallel workers."""
-        cov = Coverage()
-        buf = io.StringIO()
-        xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
-        xml_tmp.close()
-        cov.start()
-        try:
-            subprocess.run([
-                "pytest",
-                "-q",
-                "-n",
-                "auto",
-                *[str(p) for p in paths],
-            ], check=True, env=env)
-        finally:
-            cov.stop()
+        """Run tests for *paths* under coverage using parallel workers asynchronously."""
+
+        async def run_sets(path_sets: list[list[Path]]) -> float:
+            tmp_dir = Path(tempfile.mkdtemp())
+            coverage_files: list[Path] = []
+            procs = []
+            for idx, set_paths in enumerate(path_sets):
+                data_file = tmp_dir / f".coverage.{idx}"
+                coverage_files.append(data_file)
+                p_env = dict(env or os.environ)
+                p_env["COVERAGE_FILE"] = str(data_file)
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "coverage",
+                    "run",
+                    "--parallel-mode",
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-n",
+                    "auto",
+                    *[str(p) for p in set_paths],
+                ]
+                proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        env=p_env,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                )
+                procs.append((proc, cmd))
+
+            for proc, cmd in procs:
+                await proc.wait()
+                if proc.returncode != 0:
+                    self.logger.error("test run failed", extra={"cmd": cmd, "rc": proc.returncode})
+
+            cov = Coverage(data_file=str(tmp_dir / ".coverage"))
+            cov.combine([str(f) for f in coverage_files])
+            buf = io.StringIO()
+            xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
+            xml_tmp.close()
             try:
-                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for p in paths])
+                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for paths in path_sets for p in paths])
             except Exception:
                 pass
-        try:
-            percent = cov.report(include=[str(p) for p in paths], file=buf)
-        except Exception:
-            percent = 0.0
-        finally:
             try:
-                os.unlink(xml_tmp.name)
+                percent = cov.report(include=[str(p) for paths in path_sets for p in paths], file=buf)
             except Exception:
-                pass
-        return float(percent or 0.0)
+                percent = 0.0
+            finally:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                try:
+                    os.unlink(xml_tmp.name)
+                except Exception:
+                    pass
+            return float(percent or 0.0)
+
+        # Support a list of paths treated as individual test sets
+        if paths and isinstance(paths[0], (list, tuple)):
+            sets = [list(p) for p in paths]  # type: ignore[list-item]
+        else:
+            sets = [[p] for p in paths]
+
+        return asyncio.run(run_sets(sets))
 
     # ------------------------------------------------------------------
     def _run_tests(self, path: Path, env: dict[str, str] | None = None) -> tuple[float, float]:
