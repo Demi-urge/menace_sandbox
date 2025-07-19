@@ -19,6 +19,7 @@ import multiprocessing
 import time
 import inspect
 import random
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
@@ -266,6 +267,34 @@ except Exception as exc:  # pragma: no cover - docker may be unavailable
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
+_WARMUP_THREADS: Dict[str, threading.Thread] = {}
+
+
+def _ensure_pool_size_async(image: str) -> None:
+    """Warm up pool for ``image`` asynchronously."""
+    if _DOCKER_CLIENT is None:
+        return
+    pool = _CONTAINER_POOLS.setdefault(image, [])
+    if len(pool) >= _CONTAINER_POOL_SIZE:
+        return
+    t = _WARMUP_THREADS.get(image)
+    if t and t.is_alive():
+        return
+
+    def _worker() -> None:
+        try:
+            needed = _CONTAINER_POOL_SIZE - len(pool)
+            for _ in range(needed):
+                c, _ = _create_pool_container(image)
+                pool.append(c)
+        except Exception as exc:
+            logger.warning("container warm up failed: %s", exc)
+        finally:
+            _WARMUP_THREADS.pop(image, None)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    _WARMUP_THREADS[image] = thread
+    thread.start()
 
 def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity``."""
@@ -287,20 +316,42 @@ def _get_pooled_container(image: str) -> tuple[Any, str]:
     pool = _CONTAINER_POOLS.setdefault(image, [])
     if pool:
         c = pool.pop()
+        _ensure_pool_size_async(image)
         return c, _CONTAINER_DIRS[c.id]
     container, td = _create_pool_container(image)
+    _ensure_pool_size_async(image)
     return container, td
 
 
 def _release_container(image: str, container: Any) -> None:
     """Return ``container`` to the pool for ``image``."""
-    _CONTAINER_POOLS.setdefault(image, []).append(container)
+    try:
+        container.reload()
+        if getattr(container, "status", "running") != "running":
+            raise RuntimeError("container not running")
+        _CONTAINER_POOLS.setdefault(image, []).append(container)
+    except Exception:
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
+        td = _CONTAINER_DIRS.pop(getattr(container, "id", ""), None)
+        if td:
+            shutil.rmtree(td, ignore_errors=True)
+    finally:
+        _ensure_pool_size_async(image)
 
 
 def _cleanup_pools() -> None:
     """Stop and remove pooled containers."""
     if _DOCKER_CLIENT is None:
         return
+    for t in list(_WARMUP_THREADS.values()):
+        try:
+            t.join(timeout=0)
+        except Exception:
+            pass
+    _WARMUP_THREADS.clear()
     for pool in list(_CONTAINER_POOLS.values()):
         for c in list(pool):
             try:
@@ -308,7 +359,7 @@ def _cleanup_pools() -> None:
             except Exception:
                 pass
             try:
-                c.remove()
+                c.remove(force=True)
             except Exception:
                 pass
             td = _CONTAINER_DIRS.pop(c.id, None)
@@ -320,13 +371,7 @@ import atexit
 
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
-    for _ in range(_CONTAINER_POOL_SIZE):
-        try:
-            c, _ = _create_pool_container(default_img)
-            _release_container(default_img, c)
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.warning("failed to pre-pull container: %s", exc)
-            break
+    _ensure_pool_size_async(default_img)
     atexit.register(_cleanup_pools)
 
 
@@ -616,6 +661,7 @@ def _execute_in_container(
 
             stats = container.stats(stream=False)
             _release_container(image, container)
+            _ensure_pool_size_async(image)
 
             blk = (
                 stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])

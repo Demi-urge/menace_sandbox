@@ -1,4 +1,5 @@
 """Support modules for sandbox_runner wrapper."""
+import os
 from .environment import (
     simulate_execution_environment,
     generate_sandbox_report,
@@ -11,7 +12,17 @@ from .environment import (
     SANDBOX_ENV_PRESETS,
 )
 from .cycle import _sandbox_cycle_runner
-from .cli import _run_sandbox, rank_scenarios, main
+if os.getenv("MENACE_LIGHT_IMPORTS"):
+    def _run_sandbox(*_a, **_k):
+        raise RuntimeError("CLI disabled in light import mode")
+
+    def rank_scenarios(*_a, **_k):
+        raise RuntimeError("CLI disabled in light import mode")
+
+    def main(*_a, **_k):
+        raise RuntimeError("CLI disabled in light import mode")
+else:
+    from .cli import _run_sandbox, rank_scenarios, main
 from .metrics_plugins import (
     discover_metrics_plugins,
     load_metrics_plugins,
