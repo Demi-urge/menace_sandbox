@@ -163,6 +163,12 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         default=os.getenv("MENACE_FIRST_RUN_FILE", ".menace_first_run"),
         help="Path to the first run sentinel file",
     )
+    parser.add_argument(
+        "--skip-install",
+        action="store_true",
+        default=False,
+        help="Skip automatic dependency installation",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -479,7 +485,11 @@ def main(argv: Iterable[str] | None = None) -> None:
     _config_store = UnifiedConfigStore(args.env_file)
     _config_store.load()
     _config_store.start_auto_refresh()
-    self_check()
+    if not args.skip_install:
+        try:
+            self_check()
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("dependency installation failed: %s", exc)
 
     watchdog_thread = _start_dependency_watchdog()
     if os.getenv("AUTO_BOOTSTRAP", "1").lower() not in {"0", "false", "no"}:

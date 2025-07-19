@@ -7,11 +7,31 @@ import subprocess
 from pathlib import Path
 from typing import Iterable
 import logging
+import sys
 
 from .dependency_verifier import verify_dependencies
 
 
 logger = logging.getLogger(__name__)
+
+INSTALL_CACHE = Path.home() / ".menace" / "install_cache.json"
+
+
+def _load_cache() -> dict[str, str]:
+    try:
+        with open(INSTALL_CACHE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _write_cache(cache: dict[str, str]) -> None:
+    try:
+        INSTALL_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        with open(INSTALL_CACHE, "w", encoding="utf-8") as fh:
+            json.dump(cache, fh)
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.debug("failed to write install cache: %s", exc)
 
 
 def _parse_pyproject(path: str = "pyproject.toml") -> dict[str, str]:
@@ -36,14 +56,24 @@ def _parse_pyproject(path: str = "pyproject.toml") -> dict[str, str]:
 
 
 def install_missing(packages: dict[str, str]) -> None:
+    cache = _load_cache()
+    updated = False
     for pkg, ver in packages.items():
+        if pkg in cache and (cache[pkg] == ver or not ver):
+            logger.debug("skipping cached install for %s", pkg)
+            continue
         spec = importlib.util.find_spec(pkg)
         if spec is None:
             target = f"{pkg}=={ver}" if ver else pkg
             try:
-                subprocess.check_call(["pip", "install", target])
+                subprocess.check_call([sys.executable, "-m", "pip", "install", target])
             except Exception as exc:  # pragma: no cover - best effort
                 logger.error("failed to install %s: %s", target, exc)
+                continue
+            cache[pkg] = ver
+            updated = True
+    if updated:
+        _write_cache(cache)
 
 
 def self_check(requirements: Iterable[str] | None = None) -> None:
