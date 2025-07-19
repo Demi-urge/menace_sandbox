@@ -42,6 +42,12 @@ class DummyDataBot:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _patch_suggestion(monkeypatch):
+    _stub_module(monkeypatch, "menace.patch_suggestion_db", PatchSuggestionDB=DummyBot)
+    yield
+
+
 class DummyTracker:
     instance = None
 
@@ -193,7 +199,18 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
     mod.MetricsDB = DummyBot
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
 
-    import sandbox_runner
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[
+            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+        ],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
     monkeypatch.setattr(sandbox_runner, "scan_repo_sections", lambda p: {"m.py": {"sec": ["pass"]}}, raising=False)
 
     code = "def a():\n    pass\n\ndef b():\n    pass\n"
@@ -467,7 +484,18 @@ def test_section_worker_netem(monkeypatch):
     mod.MetricsDB = DummyBot
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
 
-    import sandbox_runner
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[
+            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+        ],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
 
     calls = []
 
@@ -555,13 +583,35 @@ def test_auto_prompt_selection(monkeypatch):
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
     _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
+    _stub_module(monkeypatch, "menace.patch_suggestion_db", PatchSuggestionDB=DummyBot)
+    jinja_mod = types.ModuleType("jinja2")
+    class DummyTemplate:
+        def __init__(self, *a, **k):
+            self.text = a[0] if a else ""
+
+        def render(self, *a, **k):
+            return self.text
+
+    jinja_mod.Template = DummyTemplate
+    monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
     mod = types.ModuleType("menace.data_bot")
     mod.DataBot = DummyDataBot
     mod.MetricsDB = DummyBot
     mod.MetricsDB = DummyBot
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
 
-    import sandbox_runner
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[
+            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+        ],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
 
     class T:
         def __init__(self, sec_drop=False, eff_drop=False):
@@ -575,15 +625,18 @@ def test_auto_prompt_selection(monkeypatch):
         def diminishing(self):
             return 0.01
 
-    monkeypatch.setattr(sandbox_runner.random, "choice", lambda seq: seq[0])
     importlib.reload(sandbox_runner)
     prompt = sandbox_runner.build_section_prompt("a", T(sec_drop=True))
     assert "SECURITY FOCUS" in prompt
     assert len(sandbox_runner._AUTO_TEMPLATES) >= 3
+    cached = sandbox_runner._AUTO_TEMPLATES
 
-    importlib.reload(sandbox_runner)
     prompt = sandbox_runner.build_section_prompt("a", T(eff_drop=True))
     assert "EFFICIENCY FOCUS" in prompt
+    assert sandbox_runner._AUTO_TEMPLATES is cached
+
+    prompt = sandbox_runner.build_section_prompt("a", T())
+    assert "ROI IMPROVEMENT" in prompt
 
 
 def test_prompt_truncation_and_metrics(monkeypatch):

@@ -9,7 +9,6 @@ import subprocess
 import tempfile
 import concurrent.futures
 import multiprocessing
-import random
 import asyncio
 import time
 import textwrap
@@ -57,8 +56,8 @@ _TPL_PATH = Path(
 )
 _TPL: Template | None = None
 _AUTO_PROMPTS_DIR = ROOT / "templates" / "auto_prompts"
-_AUTO_TEMPLATES: list[tuple[str, Template]] = []
-_AUTO_LOADED = False
+# Loaded auto templates cached globally to avoid repeated disk reads
+_AUTO_TEMPLATES: list[tuple[str, Template]] | None = None
 _prompt_len = os.getenv("GPT_SECTION_PROMPT_MAX_LENGTH")
 try:
     GPT_SECTION_PROMPT_MAX_LENGTH: int | None = (
@@ -158,16 +157,17 @@ def build_section_prompt(
     max_prompt_length: int | None = GPT_SECTION_PROMPT_MAX_LENGTH,
     summary_depth: int = GPT_SECTION_SUMMARY_DEPTH,
 ) -> str:
-    global _TPL, _AUTO_LOADED
+    global _TPL, _AUTO_TEMPLATES
 
-    if not _AUTO_LOADED:
-        _AUTO_LOADED = True
+    if _AUTO_TEMPLATES is None:
+        templates: list[tuple[str, Template]] = []
         if _AUTO_PROMPTS_DIR.exists():
             for p in sorted(_AUTO_PROMPTS_DIR.glob("*.j2")):
                 try:
-                    _AUTO_TEMPLATES.append((p.stem, Template(p.read_text())))
+                    templates.append((p.stem, Template(p.read_text())))
                 except Exception:
                     continue
+        _AUTO_TEMPLATES = templates
 
     if _TPL is None:
         try:
@@ -253,24 +253,34 @@ def build_section_prompt(
     eff_hist = tracker.metrics_history.get("efficiency", [])
 
     if _AUTO_TEMPLATES:
-        chosen = None
-        if _delta(sec_hist) < 0:
-            for name, t in _AUTO_TEMPLATES:
-                if "security" in name:
-                    chosen = t
-                    break
-        elif _delta(eff_hist) < 0:
-            for name, t in _AUTO_TEMPLATES:
-                if "efficiency" in name:
-                    chosen = t
-                    break
-        elif _delta(tracker.roi_history) < -tracker.diminishing():
-            for name, t in _AUTO_TEMPLATES:
-                if "roi" in name:
-                    chosen = t
-                    break
-        if not chosen:
-            chosen = random.choice([t for _, t in _AUTO_TEMPLATES])
+        sec_drop = max(0.0, -_delta(sec_hist))
+        eff_drop = max(0.0, -_delta(eff_hist))
+        roi_drop = max(0.0, -_delta(tracker.roi_history))
+        syn_deltas = [
+            _delta(v) for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v
+        ]
+        synergy_drop = max(0.0, -sum(syn_deltas) / len(syn_deltas)) if syn_deltas else 0.0
+
+        weights = {
+            "security": 1.0,
+            "efficiency": 1.0,
+            "roi": 1.0,
+            "synergy": 0.5,
+        }
+
+        best_score = float("-inf")
+        chosen = tpl
+        for name, t in _AUTO_TEMPLATES:
+            score = weights["synergy"] * synergy_drop
+            if "security" in name:
+                score += weights["security"] * sec_drop
+            if "efficiency" in name:
+                score += weights["efficiency"] * eff_drop
+            if "roi" in name:
+                score += weights["roi"] * roi_drop
+            if score > best_score:
+                best_score = score
+                chosen = t
         tpl = chosen
 
     prompt = tpl.render(
