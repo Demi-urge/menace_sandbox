@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 from .environment import SANDBOX_ENV_PRESETS
 
 
+def _choose_suggestion(ctx: Any, module: str) -> str:
+    """Return an offline patch suggestion for *module*."""
+    try:
+        if ctx.suggestion_db:
+            sugg = ctx.suggestion_db.best_match(module)
+            if sugg:
+                return sugg
+    except Exception:
+        logger.exception("suggestion db lookup failed for %s", module)
+    return ctx.suggestion_cache.get(module, "refactor for clarity")
+
+
 def _sandbox_cycle_runner(
     ctx: Any,
     section: str | None,
@@ -416,7 +428,7 @@ def _sandbox_cycle_runner(
                 if not suggestion:
                     continue
                 try:
-                    target_path = ctx.repo / mod.split(":", 1)[0]
+                    target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
                     logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
                 except Exception:
@@ -528,9 +540,10 @@ def _sandbox_cycle_runner(
             for mod in flagged:
                 if section and mod != section:
                     continue
-                suggestion = ctx.suggestion_cache.get(mod.split(":", 1)[0], "refactor for clarity")
+                module_name = mod.split(":", 1)[0]
+                suggestion = _choose_suggestion(ctx, module_name)
                 try:
-                    target_path = ctx.repo / mod.split(":", 1)[0]
+                    target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
                     logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
                 except Exception:

@@ -23,6 +23,7 @@ from .chatgpt_idea_bot import ChatGPTClient
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
+from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
@@ -52,6 +53,7 @@ class SelfCodingEngine:
         llm_client: Optional[ChatGPTClient] = None,
         rollback_mgr: Optional[RollbackManager] = None,
         formal_verifier: Optional[FormalVerifier] = None,
+        patch_suggestion_db: "PatchSuggestionDB" | None = None,
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
@@ -90,6 +92,7 @@ class SelfCodingEngine:
         self.audit_trail = AuditTrail(path, priv)
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
+        self.patch_suggestion_db = patch_suggestion_db
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -572,6 +575,17 @@ class SelfCodingEngine:
         elif patch_id is not None and self.rollback_mgr:
             self.logger.info("patch result", extra={"path": str(path), "patch_id": patch_id, "reverted": reverted, "roi_delta": roi_delta})
             self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+        if (
+            self.patch_suggestion_db
+            and not reverted
+            and roi_delta > 0
+        ):
+            try:
+                self.patch_suggestion_db.add(
+                    SuggestionRecord(module=Path(path).name, description=description)
+                )
+            except Exception:
+                self.logger.exception("failed storing suggestion")
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:

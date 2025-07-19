@@ -26,6 +26,7 @@ from menace.self_improvement_policy import SelfImprovementPolicy
 from menace.self_improvement_engine import SelfImprovementEngine
 from menace.self_test_service import SelfTestService
 from menace.code_database import PatchHistoryDB, CodeDB
+from menace.patch_suggestion_db import PatchSuggestionDB
 from menace.audit_trail import AuditTrail
 from menace.error_bot import ErrorBot, ErrorDB
 from menace.data_bot import MetricsDB, DataBot
@@ -454,6 +455,7 @@ class SandboxContext:
     conversations: Dict[str, List[Dict[str, str]]]
     offline_suggestions: bool = False
     suggestion_cache: Dict[str, str] = field(default_factory=dict)
+    suggestion_db: PatchSuggestionDB | None = None
     synergy_needed: bool = False
     best_roi: float = 0.0
     best_synergy_metrics: Dict[str, float] = field(default_factory=dict)
@@ -578,7 +580,12 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 logger.info("using VisualAgentClientStub due to failure")
             except Exception:
                 va_client = None
-    engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager(), llm_client=va_client)
+    engine = SelfCodingEngine(
+        CodeDB(),
+        MenaceMemoryManager(),
+        llm_client=va_client,
+        patch_suggestion_db=suggestion_db,
+    )
     gpt_client = None
     if os.getenv("OPENAI_API_KEY"):
         try:
@@ -695,10 +702,15 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     if cache_path:
         try:
-            suggestion_cache = json.loads(Path(cache_path).read_text())
+            cache_data = json.loads(Path(cache_path).read_text())
+            if isinstance(cache_data, dict):
+                suggestion_cache = cache_data
         except Exception:
             logger.exception("failed to load suggestion cache: %s", cache_path)
             suggestion_cache = {}
+    suggestion_db = PatchSuggestionDB(
+        suggestion_cache.get("db", str(data_dir / "module_suggestions.db"))
+    )
 
     return SandboxContext(
         tmp=tmp,
@@ -745,6 +757,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         conversations=conversations,
         offline_suggestions=offline_suggestions,
         suggestion_cache=suggestion_cache,
+        suggestion_db=suggestion_db,
     )
 
 
