@@ -3,6 +3,7 @@ from __future__ import annotations
 """Generate sandbox environment presets for scenario testing."""
 
 import random
+import os
 from typing import Any, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -109,12 +110,64 @@ __all__ = ["generate_presets"]
 def adapt_presets(
     tracker: "ROITracker", presets: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Return ``presets`` adjusted based on ``tracker`` metrics.
+"""Return ``presets`` adjusted based on ``tracker`` metrics.
 
     When the recent average ``security_score`` is high, the next higher
     ``THREAT_INTENSITY`` level is selected to further stress security
     mechanisms. Low scores decrease the intensity accordingly.
     """
+
+    rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
+    if rl_path:
+        try:
+            agent = getattr(adapt_presets, "_rl_agent", None)
+            if agent is None or getattr(getattr(agent, "policy", None), "path", None) != rl_path:
+                from .preset_rl_agent import PresetRLAgent
+                agent = PresetRLAgent(rl_path)
+                adapt_presets._rl_agent = agent
+
+            actions = agent.decide(tracker)
+
+            def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
+                lookup = [str(x) for x in seq]
+                try:
+                    idx = lookup.index(str(cur))
+                except ValueError:
+                    idx = 0
+                idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
+                return seq[idx]
+
+            for p in presets:
+                if actions.get("cpu"):
+                    p["CPU_LIMIT"] = _nxt(_CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), actions["cpu"] > 0)
+                if actions.get("memory"):
+                    mem = str(p.get("MEMORY_LIMIT", _MEMORY_LIMITS[0]))
+                    p["MEMORY_LIMIT"] = _nxt(_MEMORY_LIMITS, mem, actions["memory"] > 0)
+                if actions.get("bandwidth"):
+                    bw = str(p.get("BANDWIDTH_LIMIT", _BANDWIDTHS[0]))
+                    p["BANDWIDTH_LIMIT"] = _nxt(_BANDWIDTHS, bw, actions["bandwidth"] > 0)
+                    p["MAX_BANDWIDTH"] = _nxt(_BANDWIDTHS, str(p.get("MAX_BANDWIDTH", bw)), actions["bandwidth"] > 0)
+                    p["MIN_BANDWIDTH"] = _nxt(_BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), actions["bandwidth"] > 0)
+                if actions.get("threat"):
+                    cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
+
+                    def _lvl(val: int, up: bool) -> int:
+                        levels = _THREAT_INTENSITIES
+                        if up:
+                            for lvl in levels:
+                                if lvl > val:
+                                    return lvl
+                            return levels[-1]
+                        for lvl in reversed(levels):
+                            if lvl < val:
+                                return lvl
+                        return levels[0]
+
+                    p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
+            agent.save()
+            return presets
+        except Exception:
+            pass
 
     sec_vals = tracker.metrics_history.get("security_score", [])
     if not sec_vals:
