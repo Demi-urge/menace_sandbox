@@ -197,7 +197,7 @@ def test_policy_state_with_patch_metrics(tmp_path):
     hist.add(eh.EvolutionEvent(action="self_improvement", before_metric=2.0, after_metric=3.0, roi=1.5, efficiency=90.0))
 
     state = engine._policy_state()
-    assert len(state) == 15
+    assert len(state) == sie.POLICY_STATE_LEN
 
 
 def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
@@ -251,4 +251,36 @@ def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
     eng_low.run_cycle()
 
     assert pipe_high.energy > pipe_low.energy
+
+
+def test_policy_state_includes_synergy(tmp_path):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=None)
+
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+    )
+
+    class DummyTracker:
+        def __init__(self) -> None:
+            self.metrics_history = {
+                "synergy_roi": [0.25],
+                "synergy_efficiency": [0.35],
+                "synergy_resilience": [-0.15],
+                "synergy_antifragility": [0.12],
+            }
+
+    engine.tracker = DummyTracker()
+    state = engine._policy_state()
+    assert len(state) == sie.POLICY_STATE_LEN
+    assert state[-4:] == (2, 4, -2, 1)
 

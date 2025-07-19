@@ -25,6 +25,8 @@ from .self_improvement_policy import SelfImprovementPolicy
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 
+POLICY_STATE_LEN = 19
+
 
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
@@ -102,7 +104,7 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to subscribe to self_improve events: %s", exc)
 
     # ------------------------------------------------------------------
-    def _policy_state(self) -> tuple[int, int, int, int, int, int, int, int, int, int, int, int, int, int, int]:
+    def _policy_state(self) -> tuple[int, ...]:
         """Return the state tuple used by :class:`SelfImprovementPolicy`."""
         energy = 0.0
         if self.capital_bot:
@@ -156,6 +158,33 @@ class SelfImprovementEngine:
         module_idx = 0
         module_trend = 0.0
         dim_flag = 0
+        tracker = getattr(self, "tracker", None)
+        syn_roi = syn_eff = syn_res = syn_af = 0.0
+        if tracker is not None:
+            try:
+                vals = tracker.metrics_history.get("synergy_roi", [])
+                if vals:
+                    syn_roi = float(vals[-1])
+            except Exception:
+                syn_roi = 0.0
+            try:
+                eff_vals = tracker.metrics_history.get("synergy_efficiency", [])
+                if eff_vals:
+                    syn_eff = float(eff_vals[-1])
+            except Exception:
+                syn_eff = 0.0
+            try:
+                res_vals = tracker.metrics_history.get("synergy_resilience", [])
+                if res_vals:
+                    syn_res = float(res_vals[-1])
+            except Exception:
+                syn_res = 0.0
+            try:
+                af_vals = tracker.metrics_history.get("synergy_antifragility", [])
+                if af_vals:
+                    syn_af = float(af_vals[-1])
+            except Exception:
+                syn_af = 0.0
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
         if pdb:
             try:
@@ -222,6 +251,10 @@ class SelfImprovementEngine:
             int(kw_recent),
             int(round(avg_roi_delta * 10)),
             int(round(avg_eff)),
+            int(round(syn_roi * 10)),
+            int(round(syn_eff * 10)),
+            int(round(syn_res * 10)),
+            int(round(syn_af * 10)),
         )
 
     # ------------------------------------------------------------------
@@ -356,7 +389,7 @@ class SelfImprovementEngine:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
         try:
-            state = self._policy_state() if self.policy else (0,) * 15
+            state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
             predicted = self.policy.score(state) if self.policy else 0.0
             self.logger.info(
                 "cycle start",
