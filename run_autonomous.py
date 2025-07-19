@@ -38,11 +38,8 @@ elif "menace" not in sys.modules:
 
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies, _parse_requirement
-from sandbox_runner.cli import (
-    full_autonomous_run,
-    _diminishing_modules,
-    _synergy_converged,
-)
+import sandbox_runner.cli as cli
+from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
 from sandbox_recovery_manager import SandboxRecoveryManager
 import sandbox_runner
@@ -180,6 +177,11 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy convergence",
     )
     parser.add_argument(
+        "--auto-thresholds",
+        action="store_true",
+        help="compute convergence thresholds adaptively",
+    )
+    parser.add_argument(
         "--preset-file",
         action="append",
         dest="preset_files",
@@ -223,6 +225,8 @@ def main(argv: List[str] | None = None) -> None:
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     synergy_history: list[dict[str, float]] = []
+    roi_ma_history: list[float] = []
+    synergy_ma_history: list[dict[str, float]] = []
     roi_threshold = args.roi_threshold
     env_val = os.getenv("ROI_THRESHOLD")
     if roi_threshold is None and env_val is not None:
@@ -296,10 +300,24 @@ def main(argv: List[str] | None = None) -> None:
         }
         if syn_vals:
             synergy_history.append(syn_vals)
+            ma_entry: dict[str, float] = {}
+            for k in syn_vals:
+                vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles:]]
+                ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
+                ma_entry[k] = ema
+            synergy_ma_history.append(ma_entry)
+        history = getattr(tracker, "roi_history", [])
+        if history:
+            ema, _ = cli._ema(history[-args.roi_cycles:])
+            roi_ma_history.append(ema)
 
-        if roi_threshold is None:
+        if getattr(args, "auto_thresholds", False):
+            roi_threshold = cli._adaptive_threshold(
+                tracker.roi_history, args.roi_cycles
+            )
+        elif roi_threshold is None:
             roi_threshold = tracker.diminishing()
-        new_flags, _ = _diminishing_modules(
+        new_flags, _ = cli._diminishing_modules(
             module_history,
             flagged,
             roi_threshold,
@@ -308,9 +326,13 @@ def main(argv: List[str] | None = None) -> None:
         )
         flagged.update(new_flags)
 
-        if synergy_threshold is None:
+        if getattr(args, "auto_thresholds", False):
+            synergy_threshold = cli._adaptive_synergy_threshold(
+                synergy_history, args.synergy_cycles
+            )
+        elif synergy_threshold is None:
             synergy_threshold = tracker.diminishing()
-        converged, ema_val, _ = _synergy_converged(
+        converged, ema_val, _ = cli._synergy_converged(
             synergy_history,
             args.synergy_cycles,
             synergy_threshold,

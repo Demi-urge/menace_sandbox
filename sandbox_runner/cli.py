@@ -139,9 +139,35 @@ def _ema(values: list[float]) -> tuple[float, float]:
         ema = alpha * v + (1 - alpha) * ema
         ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
     var = ema_sq - ema ** 2
-    if var < 0:
+    if var < 1e-12:
         var = 0.0
     return ema, var ** 0.5
+
+
+def _adaptive_threshold(values: list[float], window: int, factor: float = 2.0) -> float:
+    """Return adaptive threshold based on recent variance.
+
+    ``window`` specifies how many recent values to consider. ``factor`` scales
+    the exponentially weighted standard deviation.
+    """
+    if not values:
+        return 0.0
+    vals = values[-window:]
+    _, std = _ema(vals)
+    return float(std * factor)
+
+
+def _adaptive_synergy_threshold(
+    history: list[dict[str, float]], window: int, factor: float = 2.0
+) -> float:
+    """Return adaptive threshold for synergy metrics."""
+    metrics: list[float] = []
+    for entry in history[-window:]:
+        metrics.extend(float(v) for v in entry.values())
+    if not metrics:
+        return 0.0
+    _, std = _ema(metrics)
+    return float(std * factor)
 
 
 def _diminishing_modules(
@@ -223,6 +249,8 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     synergy_history: list[dict[str, float]] = []
+    roi_ma_history: list[float] = []
+    synergy_ma_history: list[dict[str, float]] = []
     roi_threshold = getattr(args, "roi_threshold", None)
     env_val = os.getenv("ROI_THRESHOLD")
     if roi_threshold is None and env_val is not None:
@@ -283,8 +311,23 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             }
             if syn_vals:
                 synergy_history.append(syn_vals)
+                # record moving average for synergy metrics
+                ma_entry: dict[str, float] = {}
+                for k in syn_vals:
+                    vals = [h.get(k, 0.0) for h in synergy_history[-synergy_cycles:]]
+                    ema, _ = _ema(vals) if vals else (0.0, 0.0)
+                    ma_entry[k] = ema
+                synergy_ma_history.append(ma_entry)
+            history = getattr(tracker, "roi_history", [])
+            if history:
+                ema, _ = _ema(history[-roi_cycles:])
+                roi_ma_history.append(ema)
         if last_tracker:
-            if roi_threshold is None:
+            if getattr(args, "auto_thresholds", False):
+                roi_threshold = _adaptive_threshold(
+                    last_tracker.roi_history, roi_cycles
+                )
+            elif roi_threshold is None:
                 roi_threshold = last_tracker.diminishing()
             new_flags, _ = _diminishing_modules(
                 module_history,
@@ -294,7 +337,11 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 confidence=roi_confidence or 0.95,
             )
             flagged.update(new_flags)
-        if last_tracker and synergy_threshold is None:
+        if last_tracker and getattr(args, "auto_thresholds", False):
+            synergy_threshold = _adaptive_synergy_threshold(
+                synergy_history, synergy_cycles
+            )
+        elif last_tracker and synergy_threshold is None:
             synergy_threshold = last_tracker.diminishing()
         if synergy_threshold is not None:
             converged, ema_val, _ = _synergy_converged(
@@ -433,6 +480,11 @@ def main(argv: List[str] | None = None) -> None:
         type=float,
         help="confidence level for synergy convergence",
     )
+    p_autorun.add_argument(
+        "--auto-thresholds",
+        action="store_true",
+        help="compute convergence thresholds adaptively",
+    )
 
     p_complete = sub.add_parser(
         "run-complete",
@@ -480,6 +532,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-confidence",
         type=float,
         help="confidence level for synergy convergence",
+    )
+    p_complete.add_argument(
+        "--auto-thresholds",
+        action="store_true",
+        help="compute convergence thresholds adaptively",
     )
 
     args = parser.parse_args(argv)
