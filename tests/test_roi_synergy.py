@@ -77,3 +77,26 @@ def test_predict_synergy_safety_rating(monkeypatch):
 
     pred = tracker.predict_synergy_safety_rating()
     assert pred == pytest.approx(0.4 * 5.0 + 0.2 * 12.0, rel=0.2)
+
+
+def test_predict_synergy_metric_constant(monkeypatch):
+    tracker = rt.ROITracker()
+    for i in range(4):
+        tracker.update(0.0, float(i), metrics={"m": i * 2, "synergy_m": 0.1})
+
+    monkeypatch.setattr(tracker, "forecast", lambda: (3.0, (0.0, 0.0)))
+    monkeypatch.setattr(tracker, "forecast_metric", lambda name: (6.0, (0.0, 0.0)))
+
+    assert tracker.predict_synergy_metric("m") == pytest.approx(0.1)
+
+
+def test_predict_synergy_metric_negative(monkeypatch):
+    tracker = rt.ROITracker()
+    data = [-0.1, -0.15, -0.2]
+    for i, val in enumerate(data, 1):
+        tracker.update(0.0, 0.2 * i, metrics={"m": 0.5 * i, "synergy_m": val})
+
+    monkeypatch.setattr(tracker, "forecast", lambda: (1.0, (0.0, 0.0)))
+    monkeypatch.setattr(tracker, "forecast_metric", lambda name: (0.5, (0.0, 0.0)))
+
+    assert tracker.predict_synergy_metric("m") < 0

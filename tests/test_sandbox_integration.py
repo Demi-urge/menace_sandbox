@@ -2,6 +2,8 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+import environment_generator as eg
+import roi_tracker as rt
 import sandbox_runner
 
 from tests.test_menace_master import _setup_mm_stubs, DummyBot, _stub_module
@@ -189,3 +191,37 @@ def test_sandbox_error_no_flag(monkeypatch, tmp_path):
     mm.main([])
 
     assert not flag.exists()
+
+
+def _history_tracker(metric_name, values):
+    tracker = rt.ROITracker()
+    for v in values:
+        tracker.update(0.0, 0.1, metrics={"security_score": 70, metric_name: v})
+    return tracker
+
+
+def test_adapt_presets_synergy_roi_history(monkeypatch):
+    tracker = _history_tracker("synergy_roi", [0.15, 0.2, 0.18])
+    presets = [
+        {"THREAT_INTENSITY": 30, "NETWORK_LATENCY_MS": 100, "MAX_BANDWIDTH": "10Mbps"}
+    ]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+    assert new[0]["NETWORK_LATENCY_MS"] < 100
+    assert new[0]["MAX_BANDWIDTH"] != "10Mbps"
+
+
+def test_adapt_presets_synergy_resilience_history(monkeypatch):
+    tracker = _history_tracker("synergy_resilience", [-0.07, -0.06, -0.08])
+    presets = [
+        {
+            "BANDWIDTH_LIMIT": "50Mbps",
+            "MIN_BANDWIDTH": "10Mbps",
+            "MAX_BANDWIDTH": "100Mbps",
+        }
+    ]
+    new = eg.adapt_presets(tracker, presets)
+    bw = eg._BANDWIDTHS
+    assert bw.index(new[0]["BANDWIDTH_LIMIT"]) < bw.index("50Mbps")
+    assert bw.index(new[0]["MAX_BANDWIDTH"]) < bw.index("100Mbps")
+    assert bw.index(new[0]["MIN_BANDWIDTH"]) < bw.index("10Mbps")
