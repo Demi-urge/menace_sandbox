@@ -9,9 +9,6 @@ import json
 import tempfile
 import asyncio
 import sys
-from threading import Event
-
-from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _AsyncScheduler
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
 
@@ -28,7 +25,6 @@ class SelfTestService:
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
-        self.scheduler: object | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._async_stop: asyncio.Event | None = None
@@ -120,52 +116,32 @@ class SelfTestService:
         self,
         interval: float = 86400.0,
         *,
-        stop_event: Event | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
-    ) -> None:
-        if self.scheduler or self._task:
-            return
-        if loop is not None:
-            self._loop = loop
-            self._async_stop = asyncio.Event()
-            self._task = loop.create_task(self._schedule_loop(interval))
-            return
-        use_async = os.getenv("USE_ASYNC_SCHEDULER")
-        if use_async:
-            sched = _AsyncScheduler()
-            sched.add_job(self._run_once, interval, "self_test")
-            self.scheduler = sched
-        elif BackgroundScheduler:
-            sched = BackgroundScheduler()
-            sched.add_job(lambda: asyncio.run(self._run_once()), "interval", seconds=interval, id="self_test")
-            sched.start()
-            self.scheduler = sched
-        else:
-            sched = _SimpleScheduler()
-            sched.add_job(lambda: asyncio.run(self._run_once()), interval, "self_test")
-            self.scheduler = sched
-        self._stop = stop_event or Event()
+    ) -> asyncio.Task:
+        """Start the background schedule loop on *loop*."""
+
+        if self._task:
+            return self._task
+        self._loop = loop or asyncio.get_event_loop()
+        self._async_stop = asyncio.Event()
+        self._task = self._loop.create_task(self._schedule_loop(interval))
+        return self._task
 
     # ------------------------------------------------------------------
     async def stop(self) -> None:
-        if self._task:
-            assert self._async_stop is not None
-            self._async_stop.set()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+        """Stop the schedule loop and wait for completion."""
+
+        if not self._task:
+            return
+        assert self._async_stop is not None
+        self._async_stop.set()
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        finally:
             self._task = None
-            return
-        if not self.scheduler:
-            return
-        if hasattr(self, "_stop") and self._stop:
-            self._stop.set()
-        if BackgroundScheduler and isinstance(self.scheduler, BackgroundScheduler):
-            self.scheduler.shutdown(wait=False)
-        else:
-            self.scheduler.shutdown()
-        self.scheduler = None
 
 
 __all__ = ["SelfTestService"]

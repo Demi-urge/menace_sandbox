@@ -39,7 +39,7 @@ def test_async_scheduler_run_and_shutdown(monkeypatch):
     def job():
         called.append(True)
     sched.add_job(job, interval=1, id='j')
-    sched._next_runs['j'] = 0.0
+    sched._next_runs['j'] = cms.time.time()
     with pytest.raises(SystemExit):
         asyncio.run(sched._run())
     assert called == [True]
@@ -47,26 +47,25 @@ def test_async_scheduler_run_and_shutdown(monkeypatch):
 
 
 def test_self_test_async_records(monkeypatch):
-    os.environ['USE_ASYNC_SCHEDULER'] = '1'
-    monkeypatch.setattr(sts, 'BackgroundScheduler', None)
-    recorded = {}
-    class DummyScheduler:
-        def add_job(self, func, interval, id):
-            recorded['func'] = func
-            recorded['interval'] = interval
-            recorded['id'] = id
-        def shutdown(self):
-            pass
-    monkeypatch.setattr(sts, '_AsyncScheduler', DummyScheduler)
     class DummyDB:
         def __init__(self):
             self.results = []
         def add_test_result(self, p, f):
             self.results.append((p, f))
+
     db = DummyDB()
     svc = sts.SelfTestService(db=db)
-    monkeypatch.setattr(svc, '_run_once', lambda: svc.error_logger.db.add_test_result(1,0))
-    svc.run_continuous(interval=5)
-    assert recorded['id'] == 'self_test'
-    recorded['func']()
-    assert db.results == [(1,0)]
+
+    async def fake_run_once():
+        db.add_test_result(1, 0)
+
+    monkeypatch.setattr(svc, '_run_once', fake_run_once)
+
+    async def runner():
+        loop = asyncio.get_running_loop()
+        svc.run_continuous(interval=0.01, loop=loop)
+        await asyncio.sleep(0.03)
+        await svc.stop()
+
+    asyncio.run(runner())
+    assert db.results

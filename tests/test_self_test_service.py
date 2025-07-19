@@ -51,17 +51,22 @@ import types
 
 
 def test_scheduler_start(monkeypatch):
-    monkeypatch.setattr(mod, 'BackgroundScheduler', None)
-    recorded = {}
+    calls: list[None] = []
 
-    def fake_add_job(self, func, interval, id):
-        recorded['id'] = id
-        recorded['func'] = func
+    async def fake_run_once():
+        calls.append(None)
 
-    monkeypatch.setattr(mod._SimpleScheduler, 'add_job', fake_add_job)
     svc = mod.SelfTestService()
-    svc.run_continuous(interval=10)
-    assert recorded['id'] == 'self_test'
+    monkeypatch.setattr(svc, '_run_once', fake_run_once)
+
+    async def runner():
+        loop = asyncio.get_running_loop()
+        svc.run_continuous(interval=0.01, loop=loop)
+        await asyncio.sleep(0.03)
+        await svc.stop()
+
+    asyncio.run(runner())
+    assert calls
 
 
 def test_failure_logs_telemetry(tmp_path, monkeypatch):
