@@ -165,45 +165,50 @@ def _adaptive_synergy_threshold(
     factor: float = 2.0,
     weight: float = 1.0,
     confidence: float = 0.95,
+    predictions: list[dict[str, float]] | None = None,
 ) -> float:
-    """Return adaptive threshold for synergy metrics using confidence bounds.
+    """Return adaptive threshold for synergy metrics using weighted EMA.
 
     ``window`` specifies how many recent entries to include. ``factor`` scales
     the resulting bound. ``weight`` controls exponential weighting of newer
-    samples (``1.0`` means no weighting). ``confidence`` is the desired
-    confidence interval level.
+    samples (``1.0`` means no weighting). ``predictions`` should contain the
+    corresponding predicted synergy values (with the same metric names) when
+    available. ``confidence`` is retained for backward compatibility but is no
+    longer used.
     """
 
-    metrics: list[float] = []
-    for entry in history[-window:]:
-        metrics.extend(float(v) for v in entry.values())
+    recent = history[-window:]
+    pred = predictions[-window:] if predictions else []
 
-    if not metrics:
+    diffs: list[float] = []
+    for idx, entry in enumerate(recent):
+        pred_entry = pred[idx] if idx < len(pred) else {}
+        for k, v in entry.items():
+            if not k.startswith("synergy_"):
+                continue
+            if k.startswith("pred_"):
+                continue
+            pred_val = pred_entry.get(k)
+            if pred_val is None:
+                pred_val = entry.get(f"pred_{k}")
+            if pred_val is not None:
+                diffs.append(float(v) - float(pred_val))
+            else:
+                diffs.append(float(v))
+
+    if not diffs:
         return 0.0
 
     if weight != 1.0:
-        w = [weight ** i for i in range(len(metrics) - 1, -1, -1)]
-        mean = sum(v * w_i for v, w_i in zip(metrics, w)) / sum(w)
-        var = sum(w_i * (v - mean) ** 2 for v, w_i in zip(metrics, w)) / sum(w)
+        w = [weight ** i for i in range(len(diffs) - 1, -1, -1)]
+        ema = sum(d * w_i for d, w_i in zip(diffs, w)) / sum(w)
+        var = sum(w_i * (d - ema) ** 2 for d, w_i in zip(diffs, w)) / sum(w)
     else:
-        mean = sum(metrics) / len(metrics)
-        var = sum((v - mean) ** 2 for v in metrics) / len(metrics)
+        ema = sum(diffs) / len(diffs)
+        var = sum((d - ema) ** 2 for d in diffs) / len(diffs)
 
     std = var ** 0.5
-    n = len(metrics)
-    if n <= 1 or std == 0:
-        return 0.0
-
-    try:  # pragma: no cover - optional dependency
-        from scipy.stats import t
-
-        t_val = t.ppf(1 - (1 - confidence) / 2.0, n - 1)
-    except Exception:
-        t_val = 1.96  # fallback for ~95%% CI
-
-    se = std / math.sqrt(n)
-    ci = t_val * se
-    return float(ci * factor)
+    return float(std * factor)
 
 
 def _diminishing_modules(
@@ -320,6 +325,7 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     synergy_history: list[dict[str, float]] = []
+    synergy_pred_history: list[dict[str, float]] = []
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = []
     roi_threshold = getattr(args, "roi_threshold", None)
@@ -416,8 +422,14 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 for k, v in tracker.metrics_history.items()
                 if k.startswith("synergy_") and v
             }
+            pred_vals = {
+                k[len("pred_"):]: v[-1]
+                for k, v in tracker.metrics_history.items()
+                if k.startswith("pred_synergy_") and v
+            }
             if syn_vals:
                 synergy_history.append(syn_vals)
+                synergy_pred_history.append(pred_vals)
                 # record moving average for synergy metrics
                 ma_entry: dict[str, float] = {}
                 for k in syn_vals:
@@ -450,6 +462,7 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 synergy_threshold_window,
                 weight=synergy_threshold_weight,
                 confidence=synergy_confidence or 0.95,
+                predictions=synergy_pred_history,
             )
         elif last_tracker and synergy_threshold is None:
             synergy_threshold = last_tracker.diminishing()
@@ -590,12 +603,12 @@ def main(argv: List[str] | None = None) -> None:
     p_autorun.add_argument(
         "--synergy-threshold-window",
         type=int,
-        help="window size for adaptive synergy threshold",
+        help="number of recent synergy values/predictions used for the EMA",
     )
     p_autorun.add_argument(
         "--synergy-threshold-weight",
         type=float,
-        help="exponential weight for adaptive synergy threshold",
+        help="exponential weight applied to newer synergy samples",
     )
     p_autorun.add_argument(
         "--synergy-confidence",
@@ -663,12 +676,12 @@ def main(argv: List[str] | None = None) -> None:
     p_complete.add_argument(
         "--synergy-threshold-window",
         type=int,
-        help="window size for adaptive synergy threshold",
+        help="number of recent synergy values/predictions used for the EMA",
     )
     p_complete.add_argument(
         "--synergy-threshold-weight",
         type=float,
-        help="exponential weight for adaptive synergy threshold",
+        help="exponential weight applied to newer synergy samples",
     )
     p_complete.add_argument(
         "--synergy-confidence",
