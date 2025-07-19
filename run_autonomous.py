@@ -177,6 +177,16 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy convergence",
     )
     parser.add_argument(
+        "--synergy-ma-window",
+        type=int,
+        help="window size for synergy moving average",
+    )
+    parser.add_argument(
+        "--synergy-stationarity-confidence",
+        type=float,
+        help="confidence level for synergy stationarity test",
+    )
+    parser.add_argument(
         "--auto-thresholds",
         action="store_true",
         help="compute convergence thresholds adaptively",
@@ -255,6 +265,24 @@ def main(argv: List[str] | None = None) -> None:
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
+    synergy_ma_window = args.synergy_ma_window
+    env_val = os.getenv("SYNERGY_MA_WINDOW")
+    if synergy_ma_window is None and env_val is not None:
+        try:
+            synergy_ma_window = int(env_val)
+        except Exception:
+            synergy_ma_window = None
+    synergy_stationarity_confidence = args.synergy_stationarity_confidence
+    env_val = os.getenv("SYNERGY_STATIONARITY_CONFIDENCE")
+    if synergy_stationarity_confidence is None and env_val is not None:
+        try:
+            synergy_stationarity_confidence = float(env_val)
+        except Exception:
+            synergy_stationarity_confidence = None
+    if synergy_ma_window is None:
+        synergy_ma_window = args.synergy_cycles
+    if synergy_stationarity_confidence is None:
+        synergy_stationarity_confidence = synergy_confidence or 0.95
     last_tracker = None
 
     run_idx = 0
@@ -336,7 +364,9 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history,
             args.synergy_cycles,
             synergy_threshold,
+            ma_window=synergy_ma_window if synergy_ma_window is not None else args.synergy_cycles,
             confidence=synergy_confidence or 0.95,
+            stationarity_confidence=synergy_stationarity_confidence or (synergy_confidence or 0.95),
         )
 
         if module_history and set(module_history) <= flagged and converged:
