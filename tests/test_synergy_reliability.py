@@ -104,8 +104,7 @@ class DummyTracker:
         return 0.0
 
 
-@pytest.mark.parametrize("reliability", [0.9, 0.1])
-def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
+def _run_sandbox_loop(monkeypatch, tmp_path, reliability):
     _setup_mm_stubs(monkeypatch)
     _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
     _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
@@ -115,8 +114,16 @@ def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, "menace.patch_suggestion_db", PatchSuggestionDB=DummyBot)
+
+    cli_stub = types.ModuleType("sandbox_runner.cli")
+    cli_stub._run_sandbox = lambda *a, **k: None
+    cli_stub.rank_scenarios = lambda *a, **k: None
+    cli_stub.main = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
 
     import argparse
+
     spec = importlib.util.spec_from_file_location(
         "sandbox_runner",
         str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
@@ -127,7 +134,6 @@ def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
     spec.loader.exec_module(sandbox_runner)
 
     DummyTracker.reliability_value = reliability
-
     call_count = {"n": 0}
 
     def fake_cycle(ctx, sec, snip, tracker, scenario=None):
@@ -165,6 +171,7 @@ def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
             self.gpt_client = None
             self.brainstorm_interval = 0
             self.brainstorm_retries = 0
+            self.adapt_presets = False
 
     monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
     monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)
@@ -172,8 +179,28 @@ def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
     args = argparse.Namespace(workflow_db=str(tmp_path / "wf.db"), sandbox_data_dir=str(tmp_path), no_workflow_run=True)
 
     sandbox_runner._sandbox_main({}, args)
+    return call_count["n"]
 
+
+@pytest.mark.parametrize("reliability", [0.9, 0.1])
+def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
+    count = _run_sandbox_loop(monkeypatch, tmp_path, reliability)
     if reliability > 0.8:
-        assert call_count["n"] == 2
+        assert count == 2
     else:
-        assert call_count["n"] == 3
+        assert count == 3
+
+
+@pytest.mark.parametrize(
+    "reliability,expected",
+    [
+        (1.0, 2),
+        (0.95, 2),
+        (0.81, 2),
+        (0.8, 2),
+        (0.3, 3),
+    ],
+)
+def test_varied_reliability_levels(monkeypatch, tmp_path, reliability, expected):
+    count = _run_sandbox_loop(monkeypatch, tmp_path, reliability)
+    assert count == expected
