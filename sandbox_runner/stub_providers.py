@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Plugin hooks for input stub generation."""
+"""Plugin hooks for input stub generation.
+
+Plugins must expose a ``generate_stubs`` function matching ``StubProvider``.
+The callback receives the current list of stubs and a context dictionary and
+should return a new list. Returning ``None`` leaves the stubs unchanged.
+"""
 
 import importlib
 import logging
@@ -10,7 +15,7 @@ from typing import Callable, Dict, List, Sequence, Any
 logger = logging.getLogger(__name__)
 
 # Callback type for stub provider
-StubProvider = Callable[[int | None, dict], List[Dict[str, Any]]]
+StubProvider = Callable[[List[Dict[str, Any]], dict], List[Dict[str, Any]]]
 
 
 def load_stub_providers(names: Sequence[str]) -> List[StubProvider]:
