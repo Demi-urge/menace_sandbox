@@ -150,6 +150,21 @@ class _PredictTracker:
         return 0.01
 
 
+class _EdgeTracker:
+    def __init__(self, *, metrics=None, preds=None):
+        self.metrics_history = {"security_score": [70, 70, 70]}
+        if metrics:
+            self.metrics_history.update(metrics)
+        self._preds = preds or {}
+        self.roi_history = [0.0]
+
+    def predict_synergy_metric(self, name):
+        return float(self._preds.get(name, 0.0))
+
+    def diminishing(self):
+        return 0.01
+
+
 def test_adapt_presets_increase():
     presets = [{"THREAT_INTENSITY": 30}, {"THREAT_INTENSITY": 30}]
     tracker = _DummyTracker([85, 90, 88])
@@ -450,4 +465,55 @@ def test_synergy_long_term_lucrativity_scales_resources():
     new = eg.adapt_presets(tracker, presets)
     assert int(new[0]["GPU_LIMIT"]) > 1
     assert new[0]["DISK_LIMIT"] != "512Mi"
+
+
+def test_synergy_maintainability_prediction_conflict_cpu_down():
+    presets = [{"CPU_LIMIT": "2"}]
+    tracker = _EdgeTracker(
+        metrics={"synergy_maintainability": [-0.1, -0.1, -0.2]},
+        preds={"maintainability": 0.7},
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["CPU_LIMIT"] == "1"
+
+
+def test_synergy_revenue_prediction_conflict_memory_up():
+    presets = [{"MEMORY_LIMIT": "256Mi"}]
+    tracker = _EdgeTracker(
+        metrics={"synergy_revenue": [-0.1, -0.1, -0.1]},
+        preds={"revenue": 0.9},
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["MEMORY_LIMIT"] == "512Mi"
+
+
+def test_synergy_throughput_prediction_overrides_history():
+    presets = [{"MAX_BANDWIDTH": "10Mbps", "MIN_BANDWIDTH": "5Mbps"}]
+    tracker = _EdgeTracker(
+        metrics={"synergy_throughput": [-6, -6, -6]},
+        preds={"throughput": 40},
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["MAX_BANDWIDTH"] == "50Mbps"
+    assert new[0]["MIN_BANDWIDTH"] == "10Mbps"
+
+
+def test_synergy_code_quality_prediction_overrides_history():
+    presets = [{"THREAT_INTENSITY": 50}]
+    tracker = _EdgeTracker(
+        metrics={"synergy_code_quality": [-0.3, -0.3, -0.3]},
+        preds={"code_quality": 1.2},
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 50
+
+
+def test_synergy_network_latency_prediction_cancels_increase():
+    presets = [{"NETWORK_LATENCY_MS": 100}]
+    tracker = _EdgeTracker(
+        metrics={"synergy_network_latency": [2, 2, 2]},
+        preds={"network_latency": -5},
+    )
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["NETWORK_LATENCY_MS"] == 100
 
