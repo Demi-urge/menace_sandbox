@@ -3,6 +3,7 @@ import logging
 import sys
 import types
 import importlib
+import json
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -122,6 +123,8 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"])
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 50.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     def run_fail(cmd, cwd=None, check=False, env=None):
         raise RuntimeError("fail")
@@ -138,6 +141,8 @@ def test_sandbox_success(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
     dbg.analyse_and_fix()
     assert engine.applied
@@ -156,6 +161,8 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n   assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
     dbg.analyse_and_fix()
     assert not engine.applied
     assert any("failed" in r for r in trail.records)
@@ -170,6 +177,28 @@ def test_log_patch_logs_audit_error(caplog):
     caplog.set_level(logging.ERROR)
     dbg._log_patch("desc", "res")
     assert "audit trail logging failed" in caplog.text
+
+
+def test_log_patch_records_extra_fields():
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg._log_patch(
+        "desc",
+        "success",
+        1.0,
+        1.0,
+        coverage_delta=0.1,
+        error_delta=0.0,
+        roi_delta=0.0,
+        score=0.9,
+        flakiness=0.2,
+        runtime_impact=0.05,
+        complexity=1.0,
+    )
+    rec = json.loads(trail.records[-1])
+    assert rec["flakiness"] == 0.2
+    assert rec["runtime_impact"] == 0.05
+    assert rec["complexity"] == 1.0
 
 
 def test_coverage_drop_reverts(monkeypatch, tmp_path):
@@ -235,6 +264,8 @@ def test_select_best_patch(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def a():\n    pass\n", "def b():\n    pass\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: cov_vals.pop(0))

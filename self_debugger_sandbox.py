@@ -7,10 +7,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from datetime import datetime
 import json
 import io
+import math
 from coverage import Coverage
 
 from .automated_debugger import AutomatedDebugger
@@ -32,7 +34,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         *,
-        score_threshold: float = 0.0,
+        score_threshold: float = 0.5,
         score_weights: tuple[float, float, float] | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
@@ -77,6 +79,60 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return float(percent or 0.0)
 
     # ------------------------------------------------------------------
+    def _run_tests(self, path: Path, env: dict[str, str] | None = None) -> tuple[float, float]:
+        """Return coverage percentage and runtime for tests at *path*."""
+        start = time.perf_counter()
+        cov = self._coverage_percent(path, env)
+        runtime = time.perf_counter() - start
+        return cov, runtime
+
+    # ------------------------------------------------------------------
+    def _test_flakiness(self, path: Path, env: dict[str, str] | None = None) -> float:
+        """Return a naive flakiness metric for tests at *path*."""
+        cov1, _ = self._run_tests(path, env)
+        cov2, _ = self._run_tests(path, env)
+        return abs(cov1 - cov2)
+
+    # ------------------------------------------------------------------
+    def _code_complexity(self, path: Path) -> float:
+        """Estimate code complexity for *path* using radon when available."""
+        try:
+            from radon.complexity import cc_visit  # type: ignore
+        except Exception:
+            return 0.0
+        try:
+            code = path.read_text()
+            blocks = cc_visit(code)
+            scores = [b.complexity for b in blocks if hasattr(b, "complexity")]
+            return float(sum(scores) / len(scores)) if scores else 0.0
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    def _composite_score(
+        self,
+        coverage_delta: float,
+        error_delta: float,
+        roi_delta: float,
+        flakiness: float,
+        runtime_delta: float,
+        complexity: float,
+    ) -> float:
+        """Return a composite score from multiple metrics."""
+        x = (
+            self.score_weights[0] * coverage_delta
+            + self.score_weights[1] * error_delta
+            + self.score_weights[2] * roi_delta
+            - flakiness
+            - runtime_delta
+            - complexity
+        )
+        try:
+            return 1.0 / (1.0 + math.exp(-x))
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
     def _log_patch(
         self,
         description: str,
@@ -89,6 +145,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         roi_delta: float | None = None,
         score: float | None = None,
         reason: str | None = None,
+        flakiness: float | None = None,
+        runtime_impact: float | None = None,
+        complexity: float | None = None,
     ) -> None:
         if not self.audit_trail:
             return
@@ -106,6 +165,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "roi_delta": roi_delta,
                     "score": score,
                     "reason": reason,
+                    "flakiness": flakiness,
+                    "runtime_impact": runtime_impact,
+                    "complexity": complexity,
                 },
                 sort_keys=True,
             )
@@ -172,18 +234,26 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     root_test.write_text(code)
                     result = "failed"
                     before_cov = after_cov = None
+                    before_runtime = after_runtime = 0.0
                     coverage_delta = 0.0
                     error_delta = 0.0
                     roi_delta = 0.0
+                    flakiness = 0.0
+                    complexity = 0.0
                     pid = None
+                    runtime_delta = 0.0
+                    reason = None
                     try:
-                        before_cov = self._coverage_percent(root_test)
+                        before_cov, before_runtime = self._run_tests(root_test)
                         before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
-                        after_cov = self._coverage_percent(root_test)
+                        after_cov, after_runtime = self._run_tests(root_test)
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                         error_delta = before_err - after_err
+                        flakiness = self._test_flakiness(root_test)
+                        complexity = self._code_complexity(root_test)
+                        runtime_delta = after_runtime - before_runtime
                         result = "reverted" if reverted else "success"
                         if (
                             not reverted
@@ -198,11 +268,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             result = "reverted"
                             reverted = True
                         if not reverted:
-                            w_cov, w_err, w_roi = self.score_weights
-                            score = (
-                                w_cov * coverage_delta
-                                + w_err * error_delta
-                                + w_roi * roi_delta
+                            score = self._composite_score(
+                                coverage_delta,
+                                error_delta,
+                                roi_delta,
+                                flakiness,
+                                runtime_delta,
+                                complexity,
                             )
                         else:
                             score = float("-inf")
@@ -219,6 +291,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             error_delta=error_delta,
                             roi_delta=roi_delta,
                             score=score,
+                            flakiness=flakiness,
+                            runtime_impact=runtime_delta,
+                            complexity=complexity,
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -238,12 +313,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             root_test.write_text(code)
             result = "failed"
             before_cov = after_cov = None
+            before_runtime = after_runtime = 0.0
             coverage_delta = 0.0
             error_delta = 0.0
             roi_delta = 0.0
             patched = False
+            runtime_delta = 0.0
+            reason = None
             try:
-                before_cov = self._coverage_percent(root_test)
+                before_cov, before_runtime = self._run_tests(root_test)
                 before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
                 if self.policy:
@@ -252,12 +330,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         self.policy.update(state, roi_delta)
                     except Exception as exc:
                         self.logger.exception("policy patch update failed", exc)
-                after_cov = self._coverage_percent(root_test)
+                after_cov, after_runtime = self._run_tests(root_test)
                 after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                 error_delta = before_err - after_err
-                w_cov, w_err, w_roi = self.score_weights
-                patch_score = w_cov * coverage_delta + w_err * error_delta + w_roi * roi_delta
+                flakiness = self._test_flakiness(root_test)
+                complexity = self._code_complexity(root_test)
+                runtime_delta = after_runtime - before_runtime
+                patch_score = self._composite_score(
+                    coverage_delta,
+                    error_delta,
+                    roi_delta,
+                    flakiness,
+                    runtime_delta,
+                    complexity,
+                )
                 result = "reverted" if reverted else "success"
                 reason = None
                 if patch_score < self.score_threshold:
@@ -293,6 +380,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     error_delta=error_delta,
                     roi_delta=roi_delta,
                     score=patch_score if 'patch_score' in locals() else None,
+                    flakiness=flakiness if 'flakiness' in locals() else None,
+                    runtime_impact=runtime_delta if 'runtime_delta' in locals() else None,
+                    complexity=complexity if 'complexity' in locals() else None,
                     reason=reason,
                 )
                 root_test.unlink(missing_ok=True)
