@@ -159,16 +159,51 @@ def _adaptive_threshold(values: list[float], window: int, factor: float = 2.0) -
 
 
 def _adaptive_synergy_threshold(
-    history: list[dict[str, float]], window: int, factor: float = 2.0
+    history: list[dict[str, float]],
+    window: int,
+    *,
+    factor: float = 2.0,
+    weight: float = 1.0,
+    confidence: float = 0.95,
 ) -> float:
-    """Return adaptive threshold for synergy metrics."""
+    """Return adaptive threshold for synergy metrics using confidence bounds.
+
+    ``window`` specifies how many recent entries to include. ``factor`` scales
+    the resulting bound. ``weight`` controls exponential weighting of newer
+    samples (``1.0`` means no weighting). ``confidence`` is the desired
+    confidence interval level.
+    """
+
     metrics: list[float] = []
     for entry in history[-window:]:
         metrics.extend(float(v) for v in entry.values())
+
     if not metrics:
         return 0.0
-    _, std = _ema(metrics)
-    return float(std * factor)
+
+    if weight != 1.0:
+        w = [weight ** i for i in range(len(metrics) - 1, -1, -1)]
+        mean = sum(v * w_i for v, w_i in zip(metrics, w)) / sum(w)
+        var = sum(w_i * (v - mean) ** 2 for v, w_i in zip(metrics, w)) / sum(w)
+    else:
+        mean = sum(metrics) / len(metrics)
+        var = sum((v - mean) ** 2 for v in metrics) / len(metrics)
+
+    std = var ** 0.5
+    n = len(metrics)
+    if n <= 1 or std == 0:
+        return 0.0
+
+    try:  # pragma: no cover - optional dependency
+        from scipy.stats import t
+
+        t_val = t.ppf(1 - (1 - confidence) / 2.0, n - 1)
+    except Exception:
+        t_val = 1.96  # fallback for ~95%% CI
+
+    se = std / math.sqrt(n)
+    ci = t_val * se
+    return float(ci * factor)
 
 
 def _diminishing_modules(
@@ -315,6 +350,20 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
+    synergy_threshold_window = getattr(args, "synergy_threshold_window", None)
+    env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
+    if synergy_threshold_window is None and env_val is not None:
+        try:
+            synergy_threshold_window = int(env_val)
+        except Exception:
+            synergy_threshold_window = None
+    synergy_threshold_weight = getattr(args, "synergy_threshold_weight", None)
+    env_val = os.getenv("SYNERGY_THRESHOLD_WEIGHT")
+    if synergy_threshold_weight is None and env_val is not None:
+        try:
+            synergy_threshold_weight = float(env_val)
+        except Exception:
+            synergy_threshold_weight = None
     synergy_ma_window = getattr(args, "synergy_ma_window", None)
     env_val = os.getenv("SYNERGY_MA_WINDOW")
     if synergy_ma_window is None and env_val is not None:
@@ -333,6 +382,10 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
     synergy_cycles = getattr(args, "synergy_cycles", 3)
+    if synergy_threshold_window is None:
+        synergy_threshold_window = synergy_cycles
+    if synergy_threshold_weight is None:
+        synergy_threshold_weight = 1.0
     if synergy_ma_window is None:
         synergy_ma_window = synergy_cycles
     if synergy_stationarity_confidence is None:
@@ -393,7 +446,10 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             flagged.update(new_flags)
         if last_tracker and getattr(args, "auto_thresholds", False):
             synergy_threshold = _adaptive_synergy_threshold(
-                synergy_history, synergy_cycles
+                synergy_history,
+                synergy_threshold_window,
+                weight=synergy_threshold_weight,
+                confidence=synergy_confidence or 0.95,
             )
         elif last_tracker and synergy_threshold is None:
             synergy_threshold = last_tracker.diminishing()
@@ -532,6 +588,16 @@ def main(argv: List[str] | None = None) -> None:
         help="override synergy threshold",
     )
     p_autorun.add_argument(
+        "--synergy-threshold-window",
+        type=int,
+        help="window size for adaptive synergy threshold",
+    )
+    p_autorun.add_argument(
+        "--synergy-threshold-weight",
+        type=float,
+        help="exponential weight for adaptive synergy threshold",
+    )
+    p_autorun.add_argument(
         "--synergy-confidence",
         type=float,
         help="confidence level for synergy convergence",
@@ -593,6 +659,16 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    p_complete.add_argument(
+        "--synergy-threshold-window",
+        type=int,
+        help="window size for adaptive synergy threshold",
+    )
+    p_complete.add_argument(
+        "--synergy-threshold-weight",
+        type=float,
+        help="exponential weight for adaptive synergy threshold",
     )
     p_complete.add_argument(
         "--synergy-confidence",

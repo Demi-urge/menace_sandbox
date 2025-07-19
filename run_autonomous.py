@@ -172,6 +172,16 @@ def main(argv: List[str] | None = None) -> None:
         help="override synergy threshold",
     )
     parser.add_argument(
+        "--synergy-threshold-window",
+        type=int,
+        help="window size for adaptive synergy threshold",
+    )
+    parser.add_argument(
+        "--synergy-threshold-weight",
+        type=float,
+        help="exponential weight for adaptive synergy threshold",
+    )
+    parser.add_argument(
         "--synergy-confidence",
         type=float,
         help="confidence level for synergy convergence",
@@ -265,6 +275,20 @@ def main(argv: List[str] | None = None) -> None:
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
+    synergy_threshold_window = args.synergy_threshold_window
+    env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
+    if synergy_threshold_window is None and env_val is not None:
+        try:
+            synergy_threshold_window = int(env_val)
+        except Exception:
+            synergy_threshold_window = None
+    synergy_threshold_weight = args.synergy_threshold_weight
+    env_val = os.getenv("SYNERGY_THRESHOLD_WEIGHT")
+    if synergy_threshold_weight is None and env_val is not None:
+        try:
+            synergy_threshold_weight = float(env_val)
+        except Exception:
+            synergy_threshold_weight = None
     synergy_ma_window = args.synergy_ma_window
     env_val = os.getenv("SYNERGY_MA_WINDOW")
     if synergy_ma_window is None and env_val is not None:
@@ -279,6 +303,10 @@ def main(argv: List[str] | None = None) -> None:
             synergy_stationarity_confidence = float(env_val)
         except Exception:
             synergy_stationarity_confidence = None
+    if synergy_threshold_window is None:
+        synergy_threshold_window = args.synergy_cycles
+    if synergy_threshold_weight is None:
+        synergy_threshold_weight = 1.0
     if synergy_ma_window is None:
         synergy_ma_window = args.synergy_cycles
     if synergy_stationarity_confidence is None:
@@ -356,7 +384,10 @@ def main(argv: List[str] | None = None) -> None:
 
         if getattr(args, "auto_thresholds", False):
             synergy_threshold = cli._adaptive_synergy_threshold(
-                synergy_history, args.synergy_cycles
+                synergy_history,
+                synergy_threshold_window,
+                weight=synergy_threshold_weight,
+                confidence=synergy_confidence or 0.95,
             )
         elif synergy_threshold is None:
             synergy_threshold = tracker.diminishing()
