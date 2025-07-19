@@ -118,6 +118,7 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"])
+    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 50.0)
 
     def run_fail(cmd, cwd=None, check=False, env=None):
         raise RuntimeError("fail")
@@ -134,6 +135,7 @@ def test_sandbox_success(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
     dbg.analyse_and_fix()
     assert engine.applied
     assert any("success" in r for r in trail.records)
@@ -150,6 +152,7 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n   assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
     dbg.analyse_and_fix()
     assert not engine.applied
     assert any("failed" in r for r in trail.records)
@@ -197,6 +200,9 @@ def test_coverage_drop_reverts(monkeypatch, tmp_path):
 
         def report(self, include=None, file=None):
             return coverage_vals.pop(0)
+
+        def xml_report(self, outfile=None, include=None):
+            return 0
 
     monkeypatch.setattr(sds, "Coverage", lambda *a, **k: FakeCov())
 
