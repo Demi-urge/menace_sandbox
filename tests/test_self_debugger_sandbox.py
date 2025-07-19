@@ -363,3 +363,75 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
 
     assert len(called.get("paths", [])) == 2
     assert any("telemetry" in p.name for p in called["paths"])
+
+
+def _stub_proc():
+    class P:
+        returncode = 0
+
+        async def wait(self):
+            return None
+
+    return P()
+
+
+def test_coverage_xml_report_failure(monkeypatch, caplog):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    caplog.set_level(logging.ERROR)
+
+    async def fake_exec(*a, **k):
+        return _stub_proc()
+
+    monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    class Cov:
+        def __init__(self, *a, **k):
+            pass
+
+        def combine(self, files):
+            pass
+
+        def xml_report(self, outfile=None, include=None):
+            raise RuntimeError("boom")
+
+        def report(self, include=None, file=None):
+            return 100.0
+
+    monkeypatch.setattr(sds, "Coverage", Cov)
+
+    cov = dbg._coverage_percent([Path("dummy.py")])
+    assert cov == 0.0
+    assert "coverage generation failed" in caplog.text
+
+
+def test_coverage_report_failure(monkeypatch, caplog):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    caplog.set_level(logging.ERROR)
+
+    async def fake_exec(*a, **k):
+        return _stub_proc()
+
+    monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    class Cov:
+        def __init__(self, *a, **k):
+            pass
+
+        def combine(self, files):
+            pass
+
+        def xml_report(self, outfile=None, include=None):
+            return 0
+
+        def report(self, include=None, file=None):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(sds, "Coverage", Cov)
+
+    cov = dbg._coverage_percent([Path("dummy.py")])
+    assert cov == 0.0
+    assert "coverage generation failed" in caplog.text
