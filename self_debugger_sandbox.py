@@ -31,27 +31,49 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
+        *,
+        score_threshold: float = 0.0,
+        score_weights: tuple[float, float, float] | None = None,
     ) -> None:
         super().__init__(telemetry_db, engine)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter
         self._bad_hashes: set[str] = set()
+        self.score_threshold = score_threshold
+        self.score_weights = score_weights or (1.0, 1.0, 1.0)
 
     # ------------------------------------------------------------------
     def _coverage_percent(self, path: Path, env: dict[str, str] | None = None) -> float:
-        """Run tests for *path* under coverage and return the percentage."""
+        """Run tests for *path* under coverage using parallel workers."""
         cov = Coverage()
         buf = io.StringIO()
+        xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
+        xml_tmp.close()
         cov.start()
         try:
-            subprocess.run(["pytest", "-q", str(path)], check=True, env=env)
+            subprocess.run([
+                "pytest",
+                "-q",
+                "-n",
+                "auto",
+                str(path),
+            ], check=True, env=env)
         finally:
             cov.stop()
+            try:
+                cov.xml_report(outfile=xml_tmp.name, include=[str(path)])
+            except Exception:
+                pass
         try:
             percent = cov.report(include=[str(path)], file=buf)
         except Exception:
             percent = 0.0
+        finally:
+            try:
+                os.unlink(xml_tmp.name)
+            except Exception:
+                pass
         return float(percent or 0.0)
 
     # ------------------------------------------------------------------
@@ -65,6 +87,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         coverage_delta: float | None = None,
         error_delta: float | None = None,
         roi_delta: float | None = None,
+        score: float | None = None,
+        reason: str | None = None,
     ) -> None:
         if not self.audit_trail:
             return
@@ -80,6 +104,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "coverage_delta": coverage_delta,
                     "error_delta": error_delta,
                     "roi_delta": roi_delta,
+                    "score": score,
+                    "reason": reason,
                 },
                 sort_keys=True,
             )
@@ -171,7 +197,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.logger.exception("rollback failed")
                             result = "reverted"
                             reverted = True
-                        score = coverage_delta + error_delta + roi_delta if not reverted else float("-inf")
+                        if not reverted:
+                            w_cov, w_err, w_roi = self.score_weights
+                            score = (
+                                w_cov * coverage_delta
+                                + w_err * error_delta
+                                + w_roi * roi_delta
+                            )
+                        else:
+                            score = float("-inf")
                     except Exception:
                         self.logger.exception("patch failed")
                         score = float("-inf")
@@ -184,6 +218,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             coverage_delta=coverage_delta,
                             error_delta=error_delta,
                             roi_delta=roi_delta,
+                            score=score,
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -221,8 +256,19 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                 error_delta = before_err - after_err
+                w_cov, w_err, w_roi = self.score_weights
+                patch_score = w_cov * coverage_delta + w_err * error_delta + w_roi * roi_delta
                 result = "reverted" if reverted else "success"
-                if (
+                reason = None
+                if patch_score < self.score_threshold:
+                    if pid is not None and getattr(self.engine, "rollback_mgr", None):
+                        try:
+                            self.engine.rollback_mgr.rollback(str(pid))
+                        except Exception:
+                            self.logger.exception("rollback failed")
+                    result = "reverted"
+                    reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
+                elif (
                     not reverted
                     and pid is not None
                     and getattr(self.engine, "rollback_mgr", None)
@@ -234,7 +280,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         self.logger.exception("rollback failed")
                     result = "reverted"
                 else:
-                    patched = not reverted and coverage_delta >= 0
+                    patched = not reverted and patch_score >= self.score_threshold
             except Exception:
                 self.logger.exception("patch failed")
             finally:
@@ -246,6 +292,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     coverage_delta=coverage_delta,
                     error_delta=error_delta,
                     roi_delta=roi_delta,
+                    score=patch_score if 'patch_score' in locals() else None,
+                    reason=reason,
                 )
                 root_test.unlink(missing_ok=True)
             if patched:
