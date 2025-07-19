@@ -273,3 +273,27 @@ def test_select_best_patch(monkeypatch, tmp_path):
     dbg.analyse_and_fix()
 
     assert engine.calls[-1] == 0.5
+
+
+def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    monkeypatch.chdir(tmp_path)
+
+    base = Path("test_base.py")
+    base.write_text("def test_base():\n    assert True\n")
+
+    called = {}
+
+    def fake_cov(paths, env=None):
+        called["paths"] = [Path(p) for p in paths]
+        return 100.0
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
+    monkeypatch.setattr(dbg, "_recent_logs", lambda limit=5: ["dummy"])
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_extra():\n    pass\n"])
+
+    dbg._run_tests(base)
+
+    assert len(called.get("paths", [])) == 2
+    assert any("telemetry" in p.name for p in called["paths"])

@@ -46,8 +46,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.score_weights = score_weights or (1.0, 1.0, 1.0)
 
     # ------------------------------------------------------------------
-    def _coverage_percent(self, path: Path, env: dict[str, str] | None = None) -> float:
-        """Run tests for *path* under coverage using parallel workers."""
+    def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
+        """Run tests for *paths* under coverage using parallel workers."""
         cov = Coverage()
         buf = io.StringIO()
         xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
@@ -59,16 +59,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 "-q",
                 "-n",
                 "auto",
-                str(path),
+                *[str(p) for p in paths],
             ], check=True, env=env)
         finally:
             cov.stop()
             try:
-                cov.xml_report(outfile=xml_tmp.name, include=[str(path)])
+                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for p in paths])
             except Exception:
                 pass
         try:
-            percent = cov.report(include=[str(path)], file=buf)
+            percent = cov.report(include=[str(p) for p in paths], file=buf)
         except Exception:
             percent = 0.0
         finally:
@@ -80,10 +80,25 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     # ------------------------------------------------------------------
     def _run_tests(self, path: Path, env: dict[str, str] | None = None) -> tuple[float, float]:
-        """Return coverage percentage and runtime for tests at *path*."""
+        """Return coverage percentage and runtime for tests at *path* with telemetry tests."""
+        test_paths = [path]
+        tmp: Path | None = None
+        try:
+            logs = list(self._recent_logs())
+            tests = self._generate_tests(logs)
+            if tests:
+                tf = tempfile.NamedTemporaryFile(delete=False, suffix="_telemetry.py")
+                tf.write("\n\n".join(tests).encode("utf-8"))
+                tf.close()
+                tmp = Path(tf.name)
+                test_paths.append(tmp)
+        except Exception:
+            self.logger.exception("failed to create telemetry tests")
         start = time.perf_counter()
-        cov = self._coverage_percent(path, env)
+        cov = self._coverage_percent(test_paths, env)
         runtime = time.perf_counter() - start
+        if tmp:
+            tmp.unlink(missing_ok=True)
         return cov, runtime
 
     # ------------------------------------------------------------------
