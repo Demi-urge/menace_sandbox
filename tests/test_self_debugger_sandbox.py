@@ -3,6 +3,7 @@ import logging
 import sys
 import types
 import importlib
+import pytest
 import json
 import asyncio
 import asyncio
@@ -453,3 +454,44 @@ def test_flakiness_variable(monkeypatch):
     monkeypatch.setattr(dbg, "_run_tests", fake_run)
     flakiness = dbg._test_flakiness(Path("dummy.py"))
     assert abs(flakiness - 14.142) < 0.001
+
+
+def test_score_weights_evolve_from_audit():
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+
+    dbg._log_patch(
+        "p1",
+        "success",
+        coverage_delta=0.1,
+        error_delta=0.0,
+        roi_delta=0.3,
+    )
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    first = dbg.score_weights
+
+    dbg._log_patch(
+        "p2",
+        "success",
+        coverage_delta=0.2,
+        error_delta=0.1,
+        roi_delta=0.1,
+    )
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    second = dbg.score_weights
+
+    dbg._log_patch(
+        "p3",
+        "success",
+        coverage_delta=0.0,
+        error_delta=0.2,
+        roi_delta=0.2,
+    )
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    third = dbg.score_weights
+
+    assert first != second
+    assert second != third
+    assert abs(third[0] - 0.75) < 1e-6
+    assert abs(third[1] - 0.75) < 1e-6
+    assert abs(third[2] - 1.5) < 1e-6

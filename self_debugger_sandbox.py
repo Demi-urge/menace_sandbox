@@ -55,6 +55,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.score_threshold = score_threshold
         self.score_weights = score_weights or (1.0, 1.0, 1.0)
         self.flakiness_runs = max(1, int(flakiness_runs))
+        self._score_db: PatchHistoryDB | None = None
 
     # ------------------------------------------------------------------
     def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
@@ -183,6 +184,68 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return 0.0
 
     # ------------------------------------------------------------------
+    def _update_score_weights(
+        self, patch_db: PatchHistoryDB | None = None, limit: int = 10
+    ) -> None:
+        """Adjust ``score_weights`` using recent patch metrics."""
+
+        records: list[tuple[float, float, float]] = []
+
+        if patch_db:
+            try:
+                patches = patch_db.filter()
+                patches.sort(key=lambda r: r.ts)
+                for rec in patches[-limit:]:
+                    records.append(
+                        (
+                            0.0,
+                            float(rec.errors_before - rec.errors_after),
+                            float(rec.roi_delta),
+                        )
+                    )
+            except Exception:
+                self.logger.exception("score weight update failed from patch DB")
+
+        if not records and self.audit_trail:
+            try:
+                if hasattr(self.audit_trail, "records"):
+                    lines = list(self.audit_trail.records)[-limit:]
+                else:
+                    with open(self.audit_trail.path, "r", encoding="utf-8") as fh:
+                        lines = fh.readlines()[-limit:]
+                for line in lines:
+                    try:
+                        msg = line
+                        if msg and msg[0] != "{":
+                            msg = msg.split(" ", 1)[1]
+                        rec = json.loads(msg)
+                    except Exception:
+                        continue
+                    records.append(
+                        (
+                            float(rec.get("coverage_delta") or 0.0),
+                            float(rec.get("error_delta") or 0.0),
+                            float(rec.get("roi_delta") or 0.0),
+                        )
+                    )
+            except Exception:
+                self.logger.exception("score weight update failed from audit trail")
+
+        if not records:
+            return
+
+        avg_cov = sum(abs(r[0]) for r in records) / len(records)
+        avg_err = sum(abs(r[1]) for r in records) / len(records)
+        avg_roi = sum(abs(r[2]) for r in records) / len(records)
+        total = avg_cov + avg_err + avg_roi
+        if total > 0:
+            self.score_weights = (
+                avg_cov / total * 3.0,
+                avg_err / total * 3.0,
+                avg_roi / total * 3.0,
+            )
+
+    # ------------------------------------------------------------------
     def _composite_score(
         self,
         coverage_delta: float,
@@ -193,6 +256,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         complexity: float,
     ) -> float:
         """Return a composite score from multiple metrics."""
+        self._update_score_weights(self._score_db)
         x = (
             self.score_weights[0] * coverage_delta
             + self.score_weights[1] * error_delta
@@ -255,6 +319,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> None:  # type: ignore[override]
         """Analyse telemetry and attempt fixes with retries."""
 
+        self._score_db = patch_db
         for _ in range(max(1, int(limit))):
             logs = list(self._recent_logs())
             if not logs:
