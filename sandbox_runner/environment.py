@@ -34,6 +34,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - optional dependency
     from pyroute2 import IPRoute, NSPopen, netns
 except Exception as exc:
@@ -54,11 +56,21 @@ except Exception:  # pragma: no cover - optional dependency
 
 _FAKER = Faker() if Faker is not None else None
 
-logger = logging.getLogger(__name__)
-
 from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
+from .input_history_db import InputHistoryDB
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_INPUT_HISTORY_DB: InputHistoryDB | None = None
+
+
+def _get_history_db() -> InputHistoryDB:
+    """Return cached :class:`InputHistoryDB` instance."""
+    global _INPUT_HISTORY_DB
+    if _INPUT_HISTORY_DB is None:
+        path = os.getenv("SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db"))
+        _INPUT_HISTORY_DB = InputHistoryDB(path)
+    return _INPUT_HISTORY_DB
 
 if DiagnosticManager is not None:
     try:
@@ -833,6 +845,12 @@ async def _section_worker(
 ) -> tuple[Dict[str, Any], list[tuple[float, float, Dict[str, float]]]]:
     """Execute ``snippet`` with resource limits and return results."""
 
+    if env_input:
+        try:
+            _get_history_db().add(env_input)
+        except Exception:
+            logger.exception("failed to record input history")
+
     def _run_snippet() -> Dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="run_") as td:
             path = Path(td) / "snippet.py"
@@ -1284,6 +1302,9 @@ def _load_history(path: str | None) -> List[Dict[str, Any]]:
         return []
     records: List[Dict[str, Any]] = []
     try:
+        if p.suffix.lower() == ".db":
+            db = InputHistoryDB(p)
+            return db.sample(50)
         if p.suffix.lower() in {".json", ".jsn"}:
             with open(p, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -1424,39 +1445,36 @@ def generate_input_stubs(
     providers = providers or discover_stub_providers()
     stubs: List[Dict[str, Any]] | None = None
 
+    history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
     strat = strategy or os.getenv("SANDBOX_STUB_STRATEGY", "templates")
-    if strat == "history":
-        history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
-        if history:
-            stubs = [dict(random.choice(history)) for _ in range(num)]
-        else:
-            stubs = None
-
-    if strat in {"smart", "synthetic"} and target is not None:
-        base = _stub_from_signature(target, smart=True)
-        stubs = [dict(base) for _ in range(num)]
-
-    if strat in {"templates", "history"}:
-        templates = _load_templates(
-            os.getenv(
-                "SANDBOX_INPUT_TEMPLATES_FILE",
-                str(ROOT / "sandbox_data" / "input_stub_templates.json"),
-            )
-        )
-        if templates:
-            stubs = [dict(random.choice(templates)) for _ in range(num)]
-
-    if stubs is None:
-        if target is not None:
-            base = _stub_from_signature(target, smart=strat in {"smart", "synthetic"})
+    if history:
+        stubs = [dict(random.choice(history)) for _ in range(num)]
+    else:
+        if strat in {"smart", "synthetic"} and target is not None:
+            base = _stub_from_signature(target, smart=True)
             stubs = [dict(base) for _ in range(num)]
-        else:
-            conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
-            try:
-                conf = json.loads(conf_env) if conf_env else {}
-            except Exception:
-                conf = {}
-            stubs = _random_strategy(num, conf) or [{}]
+
+        if strat in {"templates", "history"}:
+            templates = _load_templates(
+                os.getenv(
+                    "SANDBOX_INPUT_TEMPLATES_FILE",
+                    str(ROOT / "sandbox_data" / "input_stub_templates.json"),
+                )
+            )
+            if templates:
+                stubs = [dict(random.choice(templates)) for _ in range(num)]
+
+        if stubs is None:
+            if target is not None:
+                base = _stub_from_signature(target, smart=strat in {"smart", "synthetic"})
+                stubs = [dict(base) for _ in range(num)]
+            else:
+                conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
+                try:
+                    conf = json.loads(conf_env) if conf_env else {}
+                except Exception:
+                    conf = {}
+                stubs = _random_strategy(num, conf) or [{}]
 
     for prov in providers:
         try:
