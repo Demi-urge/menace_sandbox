@@ -100,3 +100,49 @@ def test_generate_input_stubs_smart_no_faker(monkeypatch):
     assert stub["a"] == 0
     assert stub["name"] == ""
 
+
+def test_generate_input_stubs_synthetic_plugin(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "synthetic")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    monkeypatch.setenv(
+        "SANDBOX_STUB_PLUGINS", "sandbox_runner.generative_stub_provider"
+    )
+    import importlib
+    import sandbox_runner.generative_stub_provider as gsp
+
+    class DummyGen:
+        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            return [{"generated_text": "{\"foo\": 7}"}]
+
+    monkeypatch.setattr(gsp, "_load_generator", lambda: DummyGen())
+    importlib.reload(env)
+
+    def target(foo: int) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    assert stubs == [{"foo": 7}]
+
+
+def test_generate_input_stubs_synthetic_fallback(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "synthetic")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    monkeypatch.setenv(
+        "SANDBOX_STUB_PLUGINS", "sandbox_runner.generative_stub_provider"
+    )
+    import importlib
+    import sandbox_runner.generative_stub_provider as gsp
+    monkeypatch.setattr(gsp, "_load_generator", lambda: None)
+    monkeypatch.setattr(env, "_FAKER", None)
+    importlib.reload(env)
+
+    def target(a: int) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    assert stubs == [{"a": 0}]
+
