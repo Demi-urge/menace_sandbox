@@ -234,6 +234,84 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
+# Docker container pooling support
+try:  # pragma: no cover - optional dependency
+    import docker  # type: ignore
+    _DOCKER_CLIENT = docker.from_env()
+except Exception as exc:  # pragma: no cover - docker may be unavailable
+    logger.warning("docker import failed: %s", exc)
+    docker = None  # type: ignore
+    _DOCKER_CLIENT = None
+
+_CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
+_CONTAINER_POOLS: Dict[str, List[Any]] = {}
+_CONTAINER_DIRS: Dict[str, str] = {}
+
+def _create_pool_container(image: str) -> tuple[Any, str]:
+    """Create a long-lived container running ``sleep infinity``."""
+    assert _DOCKER_CLIENT is not None
+    td = tempfile.mkdtemp(prefix="pool_")
+    container = _DOCKER_CLIENT.containers.run(
+        image,
+        ["sleep", "infinity"],
+        detach=True,
+        network_disabled=True,
+        volumes={td: {"bind": "/code", "mode": "rw"}},
+    )
+    _CONTAINER_DIRS[container.id] = td
+    return container, td
+
+
+def _get_pooled_container(image: str) -> tuple[Any, str]:
+    """Return a container for ``image`` from the pool, creating if needed."""
+    pool = _CONTAINER_POOLS.setdefault(image, [])
+    if pool:
+        c = pool.pop()
+        return c, _CONTAINER_DIRS[c.id]
+    container, td = _create_pool_container(image)
+    return container, td
+
+
+def _release_container(image: str, container: Any) -> None:
+    """Return ``container`` to the pool for ``image``."""
+    _CONTAINER_POOLS.setdefault(image, []).append(container)
+
+
+def _cleanup_pools() -> None:
+    """Stop and remove pooled containers."""
+    if _DOCKER_CLIENT is None:
+        return
+    for pool in list(_CONTAINER_POOLS.values()):
+        for c in list(pool):
+            try:
+                c.stop(timeout=0)
+            except Exception:
+                pass
+            try:
+                c.remove()
+            except Exception:
+                pass
+            td = _CONTAINER_DIRS.pop(c.id, None)
+            if td:
+                shutil.rmtree(td, ignore_errors=True)
+    _CONTAINER_POOLS.clear()
+
+import atexit
+
+if _DOCKER_CLIENT is not None:
+    default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
+    for _ in range(_CONTAINER_POOL_SIZE):
+        try:
+            c, _ = _create_pool_container(default_img)
+            _release_container(default_img, c)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed to pre-pull container: %s", exc)
+            break
+    atexit.register(_cleanup_pools)
+
+
+
+# ----------------------------------------------------------------------
 def _execute_in_container(
     code_str: str,
     env: Dict[str, Any],
@@ -338,94 +416,174 @@ def _execute_in_container(
         logger.warning("docker import failed: %s", exc)
         return _execute_locally()
 
+    client = _DOCKER_CLIENT or docker.from_env()
+    if _DOCKER_CLIENT is None:
+        _globals = globals()
+        _globals["_DOCKER_CLIENT"] = client
+
+    def _run_ephemeral() -> Dict[str, float]:
+        """Run snippet using a one-off container (legacy behaviour)."""
+        nonlocal client
+        attempt = 0
+        delay = 0.5
+        while True:
+            try:
+                with tempfile.TemporaryDirectory(prefix="sim_cont_") as td:
+                    path = Path(td) / "snippet.py"
+                    path.write_text(code_str, encoding="utf-8")
+
+                    image = env.get("CONTAINER_IMAGE")
+                    if not image:
+                        image = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
+                        os_type = env.get("OS_TYPE")
+                        if os_type:
+                            image = os.getenv(
+                                f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
+                            )
+
+                    volumes = {td: {"bind": "/code", "mode": "rw"}}
+                    if mounts:
+                        for host, dest in mounts.items():
+                            volumes[host] = {"bind": dest, "mode": "rw"}
+
+                    kwargs: Dict[str, Any] = {
+                        "volumes": volumes,
+                        "environment": {k: str(v) for k, v in env.items()},
+                        "detach": True,
+                        "network_disabled": network_disabled,
+                    }
+
+                    mem = env.get("MEMORY_LIMIT")
+                    if mem:
+                        kwargs["mem_limit"] = str(mem)
+
+                    cpu = env.get("CPU_LIMIT")
+                    if cpu:
+                        try:
+                            kwargs["cpu_quota"] = int(float(cpu) * 100000)
+                        except Exception as exc:
+                            logger.warning("invalid CPU limit %s: %s", cpu, exc)
+
+                    disk = env.get("DISK_LIMIT")
+                    if disk:
+                        kwargs["storage_opt"] = {"size": str(disk)}
+
+                    gpu = env.get("GPU_LIMIT")
+                    if gpu:
+                        try:
+                            from docker.types import DeviceRequest
+
+                            kwargs["device_requests"] = [
+                                DeviceRequest(count=int(float(gpu)), capabilities=[["gpu"]])
+                            ]
+                        except Exception as exc:
+                            logger.warning("GPU limit ignored: %s", exc)
+
+                    if workdir:
+                        kwargs["working_dir"] = workdir
+
+                    container = client.containers.run(
+                        image,
+                        ["python", "/code/snippet.py"],
+                        **kwargs,
+                    )
+
+                    result = container.wait()
+                    stats = container.stats(stream=False)
+                    container.remove()
+
+                    blk = (
+                        stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
+                    )
+                    disk_io = float(sum(x.get("value", 0) for x in blk))
+
+                    cpu_total = float(
+                        stats.get("cpu_stats", {})
+                        .get("cpu_usage", {})
+                        .get("total_usage", 0)
+                    )
+                    mem_usage = float(stats.get("memory_stats", {}).get("max_usage", 0))
+
+                    if attempt:
+                        _log_diagnostic("container_failure", True)
+
+                    return {
+                        "exit_code": float(result.get("StatusCode", 0)),
+                        "cpu": cpu_total,
+                        "memory": mem_usage,
+                        "disk_io": disk_io,
+                    }
+            except Exception as exc:  # pragma: no cover - runtime failures
+                logger.exception("container execution failed: %s", exc)
+                _log_diagnostic(str(exc), False)
+                if attempt >= 2:
+                    logger.warning(
+                        "docker repeatedly failed; falling back to local execution"
+                    )
+                    return _execute_locally()
+                attempt += 1
+                time.sleep(delay)
+                delay *= 2
+
+    # use legacy container mode when advanced features are requested
+    if (
+        mounts
+        or not network_disabled
+        or workdir
+        or any(k in env for k in ("CPU_LIMIT", "MEMORY_LIMIT", "DISK_LIMIT", "GPU_LIMIT"))
+    ):
+        return _run_ephemeral()
+
+    # pooled execution path
     attempt = 0
     delay = 0.5
     while True:
         try:
-            with tempfile.TemporaryDirectory(prefix="sim_cont_") as td:
-                path = Path(td) / "snippet.py"
-                path.write_text(code_str, encoding="utf-8")
+            image = env.get("CONTAINER_IMAGE")
+            if not image:
+                image = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
+                os_type = env.get("OS_TYPE")
+                if os_type:
+                    image = os.getenv(
+                        f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
+                    )
 
-                image = env.get("CONTAINER_IMAGE")
-                if not image:
-                    image = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
-                    os_type = env.get("OS_TYPE")
-                    if os_type:
-                        image = os.getenv(
-                            f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
-                        )
-                client = docker.from_env()
+            container, td = _get_pooled_container(image)
+            path = Path(td) / "snippet.py"
+            path.write_text(code_str, encoding="utf-8")
 
-                volumes = {td: {"bind": "/code", "mode": "rw"}}
-                if mounts:
-                    for host, dest in mounts.items():
-                        volumes[host] = {"bind": dest, "mode": "rw"}
+            result = container.exec_run(
+                ["python", "/code/snippet.py"],
+                environment={k: str(v) for k, v in env.items()},
+                workdir=workdir,
+            )
 
-                kwargs: Dict[str, Any] = {
-                    "volumes": volumes,
-                    "environment": {k: str(v) for k, v in env.items()},
-                    "detach": True,
-                    "network_disabled": network_disabled,
-                }
+            stats = container.stats(stream=False)
+            _release_container(image, container)
 
-                mem = env.get("MEMORY_LIMIT")
-                if mem:
-                    kwargs["mem_limit"] = str(mem)
+            blk = (
+                stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
+            )
+            disk_io = float(sum(x.get("value", 0) for x in blk))
 
-                cpu = env.get("CPU_LIMIT")
-                if cpu:
-                    try:
-                        kwargs["cpu_quota"] = int(float(cpu) * 100000)
-                    except Exception as exc:
-                        logger.warning("invalid CPU limit %s: %s", cpu, exc)
+            cpu_total = float(
+                stats.get("cpu_stats", {}).get("cpu_usage", {}).get("total_usage", 0)
+            )
+            mem_usage = float(stats.get("memory_stats", {}).get("max_usage", 0))
 
-                disk = env.get("DISK_LIMIT")
-                if disk:
-                    kwargs["storage_opt"] = {"size": str(disk)}
+            if attempt:
+                _log_diagnostic("container_failure", True)
 
-                gpu = env.get("GPU_LIMIT")
-                if gpu:
-                    try:
-                        from docker.types import DeviceRequest
+            exit_code = getattr(result, "exit_code", 0)
+            if isinstance(result, tuple):
+                exit_code = result[0]
 
-                        kwargs["device_requests"] = [
-                            DeviceRequest(count=int(float(gpu)), capabilities=[["gpu"]])
-                        ]
-                    except Exception as exc:
-                        logger.warning("GPU limit ignored: %s", exc)
-
-                if workdir:
-                    kwargs["working_dir"] = workdir
-
-                container = client.containers.run(
-                    image,
-                    ["python", "/code/snippet.py"],
-                    **kwargs,
-                )
-
-                result = container.wait()
-                stats = container.stats(stream=False)
-                container.remove()
-
-                blk = stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
-                disk_io = float(sum(x.get("value", 0) for x in blk))
-
-                cpu_total = float(
-                    stats.get("cpu_stats", {})
-                    .get("cpu_usage", {})
-                    .get("total_usage", 0)
-                )
-                mem_usage = float(stats.get("memory_stats", {}).get("max_usage", 0))
-
-                if attempt:
-                    _log_diagnostic("container_failure", True)
-
-                return {
-                    "exit_code": float(result.get("StatusCode", 0)),
-                    "cpu": cpu_total,
-                    "memory": mem_usage,
-                    "disk_io": disk_io,
-                }
+            return {
+                "exit_code": float(exit_code),
+                "cpu": cpu_total,
+                "memory": mem_usage,
+                "disk_io": disk_io,
+            }
         except Exception as exc:  # pragma: no cover - runtime failures
             logger.exception("container execution failed: %s", exc)
             _log_diagnostic(str(exc), False)
