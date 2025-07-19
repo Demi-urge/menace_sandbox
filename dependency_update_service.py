@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .dependency_update_bot import DependencyUpdater
 from typing import Optional
-from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
+from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _AsyncScheduler
 
 
 class DependencyUpdateService:
@@ -80,7 +80,12 @@ class DependencyUpdateService:
 
         if self.scheduler:
             return
-        if BackgroundScheduler:
+        use_async = os.getenv("USE_ASYNC_SCHEDULER")
+        if use_async:
+            sched = _AsyncScheduler()
+            sched.add_job(self._run_once, interval, "dep_update")
+            self.scheduler = sched
+        elif BackgroundScheduler:
             sched = BackgroundScheduler()
             sched.add_job(self._run_once, "interval", seconds=interval, id="dep_update")
             sched.start()
