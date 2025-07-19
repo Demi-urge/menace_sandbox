@@ -38,3 +38,37 @@ def test_policy_action_selection():
     for _ in range(50):
         counts[policy.select_action(state)] += 1
     assert counts[0] > 0 and counts[1] > 0
+
+
+def test_q_lambda_strategy():
+    policy = sip.SelfImprovementPolicy(strategy="q_lambda")
+    state = (3,) * 15
+    before = policy.score(state)
+    policy.update(state, 1.0)
+    assert policy.score(state) > before
+
+
+def test_actor_critic_strategy():
+    policy = sip.SelfImprovementPolicy(strategy="actor_critic")
+    state = (4,) * 15
+    before = policy.score(state)
+    policy.update(state, 1.0)
+    assert policy.score(state) > before
+
+
+def test_exploration_schedule():
+    def decay(ep, value):
+        return value * 0.9
+
+    policy = sip.SelfImprovementPolicy(epsilon=1.0, epsilon_schedule=decay)
+    state = (5,) * 15
+    policy.update(state, 1.0)
+    assert policy.epsilon < 1.0
+
+
+def test_default_schedule_unchanged():
+    policy = sip.SelfImprovementPolicy(epsilon=0.5)
+    state = (6,) * 15
+    policy.update(state, 1.0)
+    policy.update(state, 1.0)
+    assert policy.epsilon == 0.5
