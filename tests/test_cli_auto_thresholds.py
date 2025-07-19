@@ -10,7 +10,6 @@ sys.modules.setdefault("menace", menace_stub)
 sys.modules.setdefault("menace.metrics_dashboard", metrics_stub)
 
 import sandbox_runner.cli as cli
-from scipy.stats import t
 
 def test_adaptive_threshold():
     values = [1.0, 2.0, 3.0]
@@ -19,18 +18,39 @@ def test_adaptive_threshold():
 
 
 def test_adaptive_synergy_threshold():
-    hist = [{"a": 1.0}, {"a": 2.0}, {"a": 3.0}]
-    thr = cli._adaptive_synergy_threshold(hist, 3, factor=1.0, weight=1.0)
-    vals = [1.0, 2.0, 3.0]
-    mean = sum(vals) / len(vals)
-    var = sum((v - mean) ** 2 for v in vals) / len(vals)
-    std = var ** 0.5
-    expected = t.ppf(0.975, len(vals) - 1) * std / len(vals) ** 0.5
+    hist = [
+        {"synergy_a": 1.0},
+        {"synergy_a": 2.0},
+        {"synergy_a": 3.0},
+    ]
+    preds = [
+        {"synergy_a": 0.9},
+        {"synergy_a": 2.1},
+        {"synergy_a": 2.9},
+    ]
+    thr = cli._adaptive_synergy_threshold(
+        hist, 3, factor=1.0, weight=1.0, predictions=preds
+    )
+    diffs = [1.0 - 0.9, 2.0 - 2.1, 3.0 - 2.9]
+    mean = sum(diffs) / len(diffs)
+    var = sum((d - mean) ** 2 for d in diffs) / len(diffs)
+    expected = (var ** 0.5) * 1.0
     assert abs(thr - expected) < 1e-6
 
 
 def test_synergy_threshold_weighting():
-    hist = [{"a": 1.0}, {"a": 2.0}, {"a": 3.0}, {"a": 4.0}]
-    thr1 = cli._adaptive_synergy_threshold(hist, 4, weight=1.0)
-    thr2 = cli._adaptive_synergy_threshold(hist, 4, weight=0.5)
+    hist = [
+        {"synergy_a": 1.0},
+        {"synergy_a": 2.0},
+        {"synergy_a": 3.0},
+        {"synergy_a": 4.0},
+    ]
+    preds = [
+        {"synergy_a": 0.9},
+        {"synergy_a": 1.9},
+        {"synergy_a": 3.1},
+        {"synergy_a": 4.1},
+    ]
+    thr1 = cli._adaptive_synergy_threshold(hist, 4, weight=1.0, predictions=preds)
+    thr2 = cli._adaptive_synergy_threshold(hist, 4, weight=0.5, predictions=preds)
     assert thr2 < thr1

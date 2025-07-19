@@ -546,6 +546,11 @@ ensure improvements are not simply trending upward or downward. Confidence
 levels are derived from a dynamic t-distribution, providing more reliable
 bounds for small sample sizes.
 
+Adaptive synergy thresholds rely on a weighted EMA of the difference between
+predicted and actual synergy metrics. ``--synergy-threshold-window`` controls
+how many recent values feed into the EMA while ``--synergy-threshold-weight``
+adjusts how strongly newer samples influence the result.
+
 ```bash
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```
