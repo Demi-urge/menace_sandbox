@@ -214,8 +214,10 @@ def _synergy_converged(
     window: int,
     threshold: float,
     std_threshold: float = 1e-3,
+    ma_window: int | None = None,
     *,
     confidence: float = 0.95,
+    stationarity_confidence: float = 0.95,
 ) -> tuple[bool, float, float]:
     """Return whether synergy metrics have converged.
 
@@ -231,9 +233,11 @@ def _synergy_converged(
             metrics.setdefault(k, []).append(float(v))
     max_abs = 0.0
     min_conf = 1.0
+    ma_window = ma_window or window
     for vals in metrics.values():
-        ema, std = _ema(vals)
-        n = len(vals)
+        series = vals[-window:]
+        ema, std = _ema(series[-ma_window:])
+        n = len(series[-ma_window:])
         max_abs = max(max_abs, abs(ema))
         if std == 0:
             conf = 1.0 if abs(ema) <= threshold else 0.0
@@ -242,15 +246,29 @@ def _synergy_converged(
             t_stat = abs(ema) / se
             p = 2 * (1 - t.cdf(t_stat, n - 1))
             conf = 1 - p
-        min_conf = min(min_conf, conf)
+        stat_conf = conf
+        try:  # pragma: no cover - optional dependency
+            from statsmodels.tsa.stattools import adfuller
+
+            ma_series: list[float] = []
+            for i in range(len(series)):
+                start = max(0, i - ma_window + 1)
+                window_vals = series[start : i + 1]
+                ma_series.append(sum(window_vals) / len(window_vals))
+            adf_p = adfuller(ma_series)[1]
+            stat_conf = 1.0 - float(adf_p)
+        except Exception:
+            pass
+        min_conf = min(min_conf, conf, stat_conf)
         corr = 0.0
         if n > 1 and std > 0:
             idx = list(range(n))
-            corr, _ = pearsonr(idx, vals)
+            corr, _ = pearsonr(idx, series[-n:])
         if (
             abs(ema) > threshold
             or std > std_threshold
             or conf < confidence
+            or stat_conf < stationarity_confidence
             or abs(corr) > 0.3
         ):
             return False, max_abs, min_conf
@@ -297,10 +315,28 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
+    synergy_ma_window = getattr(args, "synergy_ma_window", None)
+    env_val = os.getenv("SYNERGY_MA_WINDOW")
+    if synergy_ma_window is None and env_val is not None:
+        try:
+            synergy_ma_window = int(env_val)
+        except Exception:
+            synergy_ma_window = None
+    synergy_stationarity_confidence = getattr(args, "synergy_stationarity_confidence", None)
+    env_val = os.getenv("SYNERGY_STATIONARITY_CONFIDENCE")
+    if synergy_stationarity_confidence is None and env_val is not None:
+        try:
+            synergy_stationarity_confidence = float(env_val)
+        except Exception:
+            synergy_stationarity_confidence = None
     last_tracker = None
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
     synergy_cycles = getattr(args, "synergy_cycles", 3)
+    if synergy_ma_window is None:
+        synergy_ma_window = synergy_cycles
+    if synergy_stationarity_confidence is None:
+        synergy_stationarity_confidence = synergy_confidence or 0.95
 
     while args.max_iterations is None or iteration < args.max_iterations:
         iteration += 1
@@ -366,7 +402,9 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 synergy_history,
                 synergy_cycles,
                 synergy_threshold,
+                ma_window=synergy_ma_window,
                 confidence=synergy_confidence or 0.95,
+                stationarity_confidence=synergy_stationarity_confidence or (synergy_confidence or 0.95),
             )
         else:
             converged, ema_val, _ = False, 0.0, 0.0
@@ -499,6 +537,16 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy convergence",
     )
     p_autorun.add_argument(
+        "--synergy-ma-window",
+        type=int,
+        help="window size for synergy moving average",
+    )
+    p_autorun.add_argument(
+        "--synergy-stationarity-confidence",
+        type=float,
+        help="confidence level for synergy stationarity test",
+    )
+    p_autorun.add_argument(
         "--auto-thresholds",
         action="store_true",
         help="compute convergence thresholds adaptively",
@@ -550,6 +598,16 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-confidence",
         type=float,
         help="confidence level for synergy convergence",
+    )
+    p_complete.add_argument(
+        "--synergy-ma-window",
+        type=int,
+        help="window size for synergy moving average",
+    )
+    p_complete.add_argument(
+        "--synergy-stationarity-confidence",
+        type=float,
+        help="confidence level for synergy stationarity test",
     )
     p_complete.add_argument(
         "--auto-thresholds",
