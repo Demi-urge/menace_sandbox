@@ -9,6 +9,7 @@ from typing import Any, List
 import tempfile
 import shutil
 import math
+from scipy.stats import pearsonr, t
 from threading import Thread
 
 from menace.metrics_dashboard import MetricsDashboard
@@ -216,7 +217,12 @@ def _synergy_converged(
     *,
     confidence: float = 0.95,
 ) -> tuple[bool, float, float]:
-    """Return whether synergy metrics have converged using EMA and z-score."""
+    """Return whether synergy metrics have converged.
+
+    The check now also considers the correlation between the metric values and
+    their sequence index and computes the confidence using the t-distribution
+    when possible.
+    """
     if len(history) < window:
         return False, 0.0, 0.0
     metrics: dict[str, list[float]] = {}
@@ -227,14 +233,26 @@ def _synergy_converged(
     min_conf = 1.0
     for vals in metrics.values():
         ema, std = _ema(vals)
+        n = len(vals)
         max_abs = max(max_abs, abs(ema))
         if std == 0:
             conf = 1.0 if abs(ema) <= threshold else 0.0
         else:
-            z = abs(ema) / (std / math.sqrt(len(vals)))
-            conf = math.erfc(z / math.sqrt(2))
+            se = std / math.sqrt(n)
+            t_stat = abs(ema) / se
+            p = 2 * (1 - t.cdf(t_stat, n - 1))
+            conf = 1 - p
         min_conf = min(min_conf, conf)
-        if abs(ema) > threshold or std > std_threshold or conf < confidence:
+        corr = 0.0
+        if n > 1 and std > 0:
+            idx = list(range(n))
+            corr, _ = pearsonr(idx, vals)
+        if (
+            abs(ema) > threshold
+            or std > std_threshold
+            or conf < confidence
+            or abs(corr) > 0.3
+        ):
             return False, max_abs, min_conf
     return True, max_abs, min_conf
 
