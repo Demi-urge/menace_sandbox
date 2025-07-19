@@ -54,6 +54,43 @@ class QLearningStrategy(RLStrategy):
         return q
 
 
+class QLambdaStrategy(RLStrategy):
+    """Q(lambda) update using eligibility traces."""
+
+    def __init__(self, lam: float = 0.9) -> None:
+        self.lam = lam
+        self.eligibility: Dict[Tuple[int, ...], Dict[int, float]] = {}
+
+    def update(
+        self,
+        table: Dict[Tuple[int, ...], Dict[int, float]],
+        state: Tuple[int, ...],
+        action: int,
+        reward: float,
+        next_state: Tuple[int, ...] | None,
+        alpha: float,
+        gamma: float,
+    ) -> float:
+        state_table = table.setdefault(state, {})
+        q = state_table.get(action, 0.0)
+        next_best = 0.0
+        if next_state is not None:
+            next_best = max(table.get(next_state, {}).values(), default=0.0)
+        delta = reward + gamma * next_best - q
+        self.eligibility.setdefault(state, {})
+        self.eligibility[state][action] = self.eligibility[state].get(action, 0.0) + 1.0
+        for s, acts in list(self.eligibility.items()):
+            for a, e in list(acts.items()):
+                table.setdefault(s, {})
+                table[s][a] = table[s].get(a, 0.0) + alpha * delta * e
+                acts[a] = gamma * self.lam * e
+                if acts[a] < 1e-6:
+                    del acts[a]
+            if not acts:
+                del self.eligibility[s]
+        return table[state][action]
+
+
 class SarsaStrategy(RLStrategy):
     """SARSA update."""
 
@@ -77,6 +114,32 @@ class SarsaStrategy(RLStrategy):
         return q
 
 
+class ActorCriticStrategy(RLStrategy):
+    """Simplified actor-critic update."""
+
+    def __init__(self) -> None:
+        self.state_values: Dict[Tuple[int, ...], float] = {}
+
+    def update(
+        self,
+        table: Dict[Tuple[int, ...], Dict[int, float]],
+        state: Tuple[int, ...],
+        action: int,
+        reward: float,
+        next_state: Tuple[int, ...] | None,
+        alpha: float,
+        gamma: float,
+    ) -> float:
+        state_table = table.setdefault(state, {})
+        q = state_table.get(action, 0.0)
+        v = self.state_values.get(state, 0.0)
+        next_v = self.state_values.get(next_state, 0.0) if next_state is not None else 0.0
+        td_error = reward + gamma * next_v - v
+        self.state_values[state] = v + alpha * td_error
+        state_table[action] = q + alpha * td_error
+        return state_table[action]
+
+
 class SelfImprovementPolicy:
     """Tiny reinforcement learning helper for the self-improvement engine."""
 
@@ -91,6 +154,8 @@ class SelfImprovementPolicy:
         epsilon: float = 0.1,
         temperature: float = 1.0,
         adaptive: bool = False,
+        epsilon_schedule: Optional[Callable[[int, float], float]] = None,
+        temperature_schedule: Optional[Callable[[int, float], float]] = None,
     ) -> None:
         self.alpha = alpha
         self.gamma = gamma
@@ -98,9 +163,15 @@ class SelfImprovementPolicy:
         self.epsilon = epsilon
         self.temperature = temperature
         self.exploration = exploration
+        self.epsilon_schedule = epsilon_schedule
+        self.temperature_schedule = temperature_schedule
         if isinstance(strategy, str):
             if strategy.lower() == "sarsa":
                 self.strategy = SarsaStrategy()
+            elif strategy.lower() in {"q_lambda", "qlambda"}:
+                self.strategy = QLambdaStrategy()
+            elif strategy.lower() in {"actor_critic", "actor-critic"}:
+                self.strategy = ActorCriticStrategy()
             else:
                 self.strategy = QLearningStrategy()
         else:
@@ -139,6 +210,10 @@ class SelfImprovementPolicy:
             if len(self.rewards) > 1:
                 var = statistics.pvariance(self.rewards)
                 self.gamma = max(0.5, min(0.99, 0.9 / (1 + var)))
+        if self.epsilon_schedule:
+            self.epsilon = self.epsilon_schedule(self.episodes, self.epsilon)
+        if self.temperature_schedule:
+            self.temperature = self.temperature_schedule(self.episodes, self.temperature)
         if self.path:
             self.save(self.path)
         return q
@@ -202,6 +277,8 @@ class SelfImprovementPolicy:
 __all__ = [
     "RLStrategy",
     "QLearningStrategy",
+    "QLambdaStrategy",
     "SarsaStrategy",
+    "ActorCriticStrategy",
     "SelfImprovementPolicy",
 ]
