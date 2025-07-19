@@ -357,6 +357,7 @@ def _execute_in_container(
                     logger.warning("failed to set memory limit: %s", exc)
 
             start = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
+            net_start = psutil.net_io_counters() if psutil else None
             try:
                 proc = subprocess.Popen(
                     ["python", str(path)],
@@ -374,6 +375,7 @@ def _execute_in_container(
                 proc.kill()
                 exit_code = -1
             end = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
+            net_end = psutil.net_io_counters() if psutil else None
 
             if p:
                 try:
@@ -403,11 +405,31 @@ def _execute_in_container(
                     mem_usage = 0.0
                     disk_io = 0.0
 
+            if net_start and net_end:
+                net_io = float(
+                    (net_end.bytes_recv - net_start.bytes_recv)
+                    + (net_end.bytes_sent - net_start.bytes_sent)
+                )
+            else:
+                net_io = 0.0
+
+            gpu_usage = 0.0
+            try:
+                import GPUtil  # type: ignore
+
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu_usage = sum(g.load for g in gpus) / len(gpus)
+            except Exception:
+                gpu_usage = 0.0
+
             return {
                 "exit_code": float(exit_code),
                 "cpu": float(cpu_total),
                 "memory": float(mem_usage),
                 "disk_io": float(disk_io),
+                "net_io": float(net_io),
+                "gpu_usage": float(gpu_usage),
             }
 
     try:
@@ -504,6 +526,18 @@ def _execute_in_container(
                     )
                     mem_usage = float(stats.get("memory_stats", {}).get("max_usage", 0))
 
+                    net = stats.get("networks", {})
+                    net_io = float(
+                        sum(v.get("rx_bytes", 0) + v.get("tx_bytes", 0) for v in net.values())
+                    )
+
+                    gstats = stats.get("gpu_stats") or stats.get("accelerator_stats") or []
+                    gpu_usage = 0.0
+                    if isinstance(gstats, list) and gstats:
+                        gpu_usage = float(
+                            sum(float(g.get("utilization_gpu", 0) or g.get("gpu_utilization", 0)) for g in gstats)
+                        )
+
                     if attempt:
                         _log_diagnostic("container_failure", True)
 
@@ -512,6 +546,8 @@ def _execute_in_container(
                         "cpu": cpu_total,
                         "memory": mem_usage,
                         "disk_io": disk_io,
+                        "net_io": net_io,
+                        "gpu_usage": gpu_usage,
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
                 logger.exception("container execution failed: %s", exc)
@@ -571,6 +607,18 @@ def _execute_in_container(
             )
             mem_usage = float(stats.get("memory_stats", {}).get("max_usage", 0))
 
+            net = stats.get("networks", {})
+            net_io = float(
+                sum(v.get("rx_bytes", 0) + v.get("tx_bytes", 0) for v in net.values())
+            )
+
+            gstats = stats.get("gpu_stats") or stats.get("accelerator_stats") or []
+            gpu_usage = 0.0
+            if isinstance(gstats, list) and gstats:
+                gpu_usage = float(
+                    sum(float(g.get("utilization_gpu", 0) or g.get("gpu_utilization", 0)) for g in gstats)
+                )
+
             if attempt:
                 _log_diagnostic("container_failure", True)
 
@@ -583,6 +631,8 @@ def _execute_in_container(
                 "cpu": cpu_total,
                 "memory": mem_usage,
                 "disk_io": disk_io,
+                "net_io": net_io,
+                "gpu_usage": gpu_usage,
             }
         except Exception as exc:  # pragma: no cover - runtime failures
             logger.exception("container execution failed: %s", exc)
@@ -881,6 +931,7 @@ async def _section_worker(
                     env=env,
                 )
                 p = psutil.Process(proc.pid) if psutil else None
+                net_start = psutil.net_io_counters() if psutil else None
                 cpu_lim = (
                     int(float(env_input.get("CPU_LIMIT", 0))) * 10
                     if env_input.get("CPU_LIMIT")
@@ -916,6 +967,35 @@ async def _section_worker(
                         logger.warning("psutil metrics collection failed", exc_info=True)
                     time.sleep(0.1)
                 out, err = proc.communicate()
+                net_end = psutil.net_io_counters() if psutil else None
+                if p is not None:
+                    try:
+                        cpu_total = p.cpu_times().user + p.cpu_times().system
+                        mem_usage = p.memory_info().rss
+                        io = p.io_counters()
+                        disk_io = io.read_bytes + io.write_bytes
+                    except Exception:
+                        cpu_total = mem_usage = disk_io = 0.0
+                else:
+                    cpu_total = mem_usage = disk_io = 0.0
+
+                if net_start and net_end:
+                    net_io = float(
+                        (net_end.bytes_recv - net_start.bytes_recv)
+                        + (net_end.bytes_sent - net_start.bytes_sent)
+                    )
+                else:
+                    net_io = 0.0
+
+                gpu_usage = 0.0
+                try:
+                    import GPUtil  # type: ignore
+
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu_usage = sum(g.load for g in gpus) / len(gpus)
+                except Exception:
+                    gpu_usage = 0.0
                 if reason == "timeout":
                     err = err or "timeout"
                     code = -1
@@ -923,7 +1003,16 @@ async def _section_worker(
                     code = -1
                 else:
                     code = proc.returncode
-                return {"stdout": out, "stderr": err, "exit_code": code}
+                return {
+                    "stdout": out,
+                    "stderr": err,
+                    "exit_code": code,
+                    "cpu": cpu_total,
+                    "memory": mem_usage,
+                    "disk_io": disk_io,
+                    "net_io": net_io,
+                    "gpu_usage": gpu_usage,
+                }
 
             try:
                 if rlimit_ok:
@@ -939,6 +1028,11 @@ async def _section_worker(
                         "stdout": proc.stdout,
                         "stderr": proc.stderr,
                         "exit_code": proc.returncode,
+                        "cpu": 0.0,
+                        "memory": 0.0,
+                        "disk_io": 0.0,
+                        "net_io": 0.0,
+                        "gpu_usage": 0.0,
                     }
                 if psutil is not None:
                     return _run_psutil()
@@ -953,6 +1047,11 @@ async def _section_worker(
                     "stdout": "",
                     "stderr": "",
                     "exit_code": int(metrics.get("exit_code", 0)),
+                    "cpu": float(metrics.get("cpu", 0.0)),
+                    "memory": float(metrics.get("memory", 0.0)),
+                    "disk_io": float(metrics.get("disk_io", 0.0)),
+                    "net_io": float(metrics.get("net_io", 0.0)),
+                    "gpu_usage": float(metrics.get("gpu_usage", 0.0)),
                 }
             except subprocess.TimeoutExpired as exc:
                 return {
@@ -1007,6 +1106,11 @@ async def _section_worker(
             "exit_code": float(result.get("exit_code", 0)),
             "stdout_len": float(len(result.get("stdout", ""))),
             "stderr_len": float(len(result.get("stderr", ""))),
+            "cpu": float(result.get("cpu", 0.0)),
+            "memory": float(result.get("memory", 0.0)),
+            "disk_io": float(result.get("disk_io", 0.0)),
+            "net_io": float(result.get("net_io", 0.0)),
+            "gpu_usage": float(result.get("gpu_usage", 0.0)),
         }
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
