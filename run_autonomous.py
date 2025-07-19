@@ -159,6 +159,11 @@ def main(argv: List[str] | None = None) -> None:
         help="override ROI delta threshold",
     )
     parser.add_argument(
+        "--roi-confidence",
+        type=float,
+        help="confidence level for ROI convergence",
+    )
+    parser.add_argument(
         "--synergy-cycles",
         type=int,
         default=3,
@@ -168,6 +173,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    parser.add_argument(
+        "--synergy-confidence",
+        type=float,
+        help="confidence level for synergy convergence",
     )
     parser.add_argument(
         "--preset-file",
@@ -227,6 +237,20 @@ def main(argv: List[str] | None = None) -> None:
             synergy_threshold = float(env_val)
         except Exception:
             synergy_threshold = None
+    roi_confidence = args.roi_confidence
+    env_val = os.getenv("ROI_CONFIDENCE")
+    if roi_confidence is None and env_val is not None:
+        try:
+            roi_confidence = float(env_val)
+        except Exception:
+            roi_confidence = None
+    synergy_confidence = args.synergy_confidence
+    env_val = os.getenv("SYNERGY_CONFIDENCE")
+    if synergy_confidence is None and env_val is not None:
+        try:
+            synergy_confidence = float(env_val)
+        except Exception:
+            synergy_confidence = None
     last_tracker = None
 
     run_idx = 0
@@ -275,18 +299,22 @@ def main(argv: List[str] | None = None) -> None:
 
         if roi_threshold is None:
             roi_threshold = tracker.diminishing()
-        new_flags = _diminishing_modules(
+        new_flags, _ = _diminishing_modules(
             module_history,
             flagged,
             roi_threshold,
             consecutive=args.roi_cycles,
+            confidence=roi_confidence or 0.95,
         )
         flagged.update(new_flags)
 
         if synergy_threshold is None:
             synergy_threshold = tracker.diminishing()
-        converged, ema_val = _synergy_converged(
-            synergy_history, args.synergy_cycles, synergy_threshold
+        converged, ema_val, _ = _synergy_converged(
+            synergy_history,
+            args.synergy_cycles,
+            synergy_threshold,
+            confidence=synergy_confidence or 0.95,
         )
 
         if module_history and set(module_history) <= flagged and converged:
