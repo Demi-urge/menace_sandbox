@@ -3,6 +3,7 @@ from __future__ import annotations
 """Automatic environment setup utilities."""
 
 import os
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Iterable
@@ -48,6 +49,36 @@ def ensure_env(path: str = ".env") -> None:
             if line.strip() and "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
                 existing[k.strip()] = v.strip()
+
+    # merge defaults file when provided
+    defaults_path = os.getenv("MENACE_DEFAULTS_FILE") or existing.get("MENACE_DEFAULTS_FILE")
+    if defaults_path:
+        try:
+            for line in Path(defaults_path).read_text().splitlines():
+                if line.strip() and "=" in line:
+                    k, v = line.split("=", 1)
+                    existing.setdefault(k.strip(), v.strip())
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("failed to read defaults file %s: %s", defaults_path, exc)
+
+    # pull values from previous sandbox runs
+    data_dir = Path(existing.get("SANDBOX_DATA_DIR", DEFAULT_VARS["SANDBOX_DATA_DIR"]))
+    if data_dir.exists():
+        hist_file = data_dir / "roi_history.json"
+        try:
+            if hist_file.exists():
+                hist = json.loads(hist_file.read_text())
+                if isinstance(hist, list) and hist:
+                    existing.setdefault("ROI_THRESHOLD", str(hist[-1]))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("failed to load ROI history %s: %s", hist_file, exc)
+        try:
+            preset_files = sorted(data_dir.glob("*preset*.json"))
+            if preset_files:
+                data = json.loads(preset_files[-1].read_text())
+                existing.setdefault("SANDBOX_ENV_PRESETS", json.dumps(data))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("failed to load preset file from %s: %s", data_dir, exc)
 
     secrets = SecretsManager()
     vault: VaultSecretProvider | None = None

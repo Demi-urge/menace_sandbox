@@ -4,6 +4,7 @@ from pathlib import Path
 from menace.auto_env_setup import ensure_env, DEFAULT_VARS, interactive_setup
 from menace.secrets_manager import SecretsManager
 import menace.config_discovery as cd
+import json
 
 
 def test_ensure_env(tmp_path, monkeypatch):
@@ -85,4 +86,30 @@ def test_interactive_setup_defaults(tmp_path):
     interactive_setup(["A", "B"], secrets=mgr, defaults_file=str(defaults))
     assert os.environ["B"] == "foo"
     assert mgr.secrets["b"] == "foo"
+
+
+def test_defaults_file_merge(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    defaults = tmp_path / "def.env"
+    defaults.write_text("FOO=bar\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MENACE_DEFAULTS_FILE", str(defaults))
+    ensure_env(str(env))
+    text = env.read_text()
+    assert "FOO=bar" in text
+    assert os.environ["FOO"] == "bar"
+
+
+def test_history_and_presets(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "roi_history.json").write_text("[0.1, 0.2]")
+    (data_dir / "presets.json").write_text('[{"CPU_LIMIT":"2"}]')
+    monkeypatch.chdir(tmp_path)
+    ensure_env(str(env))
+    text = env.read_text()
+    assert "ROI_THRESHOLD=0.2" in text
+    presets = json.loads(os.environ["SANDBOX_ENV_PRESETS"])
+    assert presets[0]["CPU_LIMIT"] == "2"
 
