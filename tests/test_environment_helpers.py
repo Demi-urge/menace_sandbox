@@ -10,6 +10,10 @@ if "sqlalchemy" not in sys.modules:
     sa.engine = engine_mod
     sys.modules["sqlalchemy"] = sa
     sys.modules["sqlalchemy.engine"] = engine_mod
+if "pyroute2" not in sys.modules:
+    pr2 = types.ModuleType("pyroute2")
+    pr2.IPRoute = pr2.NSPopen = pr2.netns = object
+    sys.modules["pyroute2"] = pr2
 import sandbox_runner.environment as env
 
 
@@ -113,10 +117,15 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch):
     import sandbox_runner.generative_stub_provider as gsp
 
     class DummyGen:
+        def __init__(self):
+            self.prompts = []
+
         def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            self.prompts.append(prompt)
             return [{"generated_text": "{\"foo\": 7}"}]
 
-    monkeypatch.setattr(gsp, "_load_generator", lambda: DummyGen())
+    dummy = DummyGen()
+    monkeypatch.setattr(gsp, "_load_generator", lambda: dummy)
     importlib.reload(env)
 
     def target(foo: int) -> None:
@@ -124,6 +133,30 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch):
 
     stubs = env.generate_input_stubs(1, target=target)
     assert stubs == [{"foo": 7}]
+    assert any("foo=" in p and "target" in p for p in dummy.prompts)
+
+
+def test_generative_load_default(monkeypatch):
+    monkeypatch.delenv("SANDBOX_STUB_MODEL", raising=False)
+    import sandbox_runner.generative_stub_provider as gsp
+
+    called = {}
+
+    def dummy_pipeline(task, model):
+        called["task"] = task
+        called["model"] = model
+
+        class Gen:
+            pass
+
+        return Gen()
+
+    monkeypatch.setattr(gsp, "pipeline", dummy_pipeline)
+    monkeypatch.setattr(gsp, "_GENERATOR", None)
+    gen = gsp._load_generator()
+    assert called["task"] == "text-generation"
+    assert called["model"] == "gpt2-large"
+    assert gen is not None
 
 
 def test_generate_input_stubs_synthetic_fallback(monkeypatch):
@@ -137,8 +170,8 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch):
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
     monkeypatch.setattr(gsp, "_load_generator", lambda: None)
-    monkeypatch.setattr(env, "_FAKER", None)
     importlib.reload(env)
+    monkeypatch.setattr(env, "_FAKER", None)
 
     def target(a: int) -> None:
         pass
