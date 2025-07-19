@@ -1399,4 +1399,30 @@ def test_synergy_adaptability_preset_adjust(monkeypatch):
     assert new[0]["MEMORY_LIMIT"] != "512Mi"
 
 
+def test_synergy_converged_confidence_levels(monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    _stub_module(monkeypatch, "menace.metrics_dashboard", MetricsDashboard=lambda *a, **k: None)
+
+    import importlib, sys
+
+    sys.modules.pop("sandbox_runner.cli", None)
+    cli = importlib.import_module("sandbox_runner.cli")
+
+    hist = [
+        {"synergy_roi": 0.0015},
+        {"synergy_roi": 0.0},
+        {"synergy_roi": 0.002},
+        {"synergy_roi": 0.001},
+        {"synergy_roi": 0.0005},
+    ]
+
+    ok, ema, conf = cli._synergy_converged(hist, 5, 0.01, confidence=0.95)
+    assert ok is True
+    assert conf >= 0.95
+
+    ok, ema, conf = cli._synergy_converged(hist, 5, 0.01, confidence=0.99)
+    assert ok is False
+    assert conf < 0.99
+
+
 
