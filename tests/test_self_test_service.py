@@ -68,7 +68,7 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e.db")
     svc = mod.SelfTestService(db)
 
-    async def fail_exec(*cmd):
+    async def fail_exec(*cmd, **kwargs):
         path = None
         for i, a in enumerate(cmd):
             s = str(a)
@@ -96,7 +96,7 @@ def test_success_logs_results(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e2.db")
     svc = mod.SelfTestService(db)
 
-    async def succeed_exec(*cmd):
+    async def succeed_exec(*cmd, **kwargs):
         path = None
         for i, a in enumerate(cmd):
             s = str(a)
@@ -123,7 +123,7 @@ def test_success_logs_results(tmp_path, monkeypatch):
 def test_custom_args(monkeypatch):
     recorded = {}
 
-    async def fake_exec(*cmd):
+    async def fake_exec(*cmd, **kwargs):
         recorded['cmd'] = cmd
         path = None
         for i, a in enumerate(cmd):
@@ -144,4 +144,32 @@ def test_custom_args(monkeypatch):
     svc = mod.SelfTestService(pytest_args="-k pattern")
     asyncio.run(svc._run_once())
     assert any("-k" in str(x) for x in recorded['cmd']) and any("pattern" in str(x) for x in recorded['cmd'])
+
+
+def test_parallel_workers(monkeypatch):
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(cmd)
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+        class P:
+            returncode = 0
+            async def wait(self):
+                return None
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    svc = mod.SelfTestService(pytest_args="path1 path2", workers=2)
+    asyncio.run(svc._run_once())
+    assert len(calls) == 2
+    for cmd in calls:
+        assert "-n" in cmd and "2" in cmd
 
