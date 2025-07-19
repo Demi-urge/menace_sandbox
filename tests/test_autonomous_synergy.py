@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+import pytest
 
 os.environ["MENACE_LIGHT_IMPORTS"] = "1"
 
@@ -132,4 +133,5 @@ def test_autonomous_synergy_converges(monkeypatch):
     assert len(calls) == 6
     assert tracker.module_deltas["mod"] == [0.1, 0.1, 0.02, 0.02, 0.005, 0.005]
     assert tracker.metrics_history["synergy_roi"] == [0.1, 0.1, 0.02, 0.02, 0.005, 0.005]
-    assert ("synergy convergence reached", {"iteration": 3, "streak": 2}) in log_calls
+    msg = ("synergy convergence reached", {"iteration": 3, "ema": pytest.approx(0.005)})
+    assert msg in log_calls

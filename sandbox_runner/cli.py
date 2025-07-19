@@ -129,6 +129,20 @@ def _capture_run(preset: dict[str, str], args: argparse.Namespace):
     return holder.get("tracker")
 
 
+def _ema(values: list[float]) -> tuple[float, float]:
+    """Return exponential moving average and std deviation for ``values``."""
+    alpha = 2.0 / (len(values) + 1)
+    ema = values[0]
+    ema_sq = values[0] ** 2
+    for v in values[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+        ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
+    var = ema_sq - ema ** 2
+    if var < 0:
+        var = 0.0
+    return ema, var ** 0.5
+
+
 def _diminishing_modules(
     history: dict[str, list[float]],
     flagged: set[str],
@@ -151,20 +165,33 @@ def _diminishing_modules(
             continue
 
         window = vals[-consecutive:]
-        alpha = 2.0 / (len(window) + 1)
-        ema = window[0]
-        ema_sq = window[0] ** 2
-        for v in window[1:]:
-            ema = alpha * v + (1 - alpha) * ema
-            ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
-        var = ema_sq - ema ** 2
-        if var < 0:
-            var = 0.0
-        std = var ** 0.5
+        ema, std = _ema(window)
         if abs(ema) <= thr and std <= std_threshold:
             flags.append(mod)
 
     return flags
+
+
+def _synergy_converged(
+    history: list[dict[str, float]],
+    window: int,
+    threshold: float,
+    std_threshold: float = 1e-3,
+) -> tuple[bool, float]:
+    """Return whether synergy metrics have converged using EMA."""
+    if len(history) < window:
+        return False, 0.0
+    metrics: dict[str, list[float]] = {}
+    for entry in history[-window:]:
+        for k, v in entry.items():
+            metrics.setdefault(k, []).append(float(v))
+    max_abs = 0.0
+    for vals in metrics.values():
+        ema, std = _ema(vals)
+        max_abs = max(max_abs, abs(ema))
+        if abs(ema) > threshold or std > std_threshold:
+            return False, max_abs
+    return True, max_abs
 
 
 def full_autonomous_run(args: argparse.Namespace) -> None:
@@ -177,7 +204,20 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     synergy_history: list[dict[str, float]] = []
-    synergy_streak = 0
+    roi_threshold = getattr(args, "roi_threshold", None)
+    env_val = os.getenv("ROI_THRESHOLD")
+    if roi_threshold is None and env_val is not None:
+        try:
+            roi_threshold = float(env_val)
+        except Exception:
+            roi_threshold = None
+    synergy_threshold = getattr(args, "synergy_threshold", None)
+    env_val = os.getenv("SYNERGY_THRESHOLD")
+    if synergy_threshold is None and env_val is not None:
+        try:
+            synergy_threshold = float(env_val)
+        except Exception:
+            synergy_threshold = None
     last_tracker = None
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
@@ -210,20 +250,25 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             }
             if syn_vals:
                 synergy_history.append(syn_vals)
-                max_syn = max(abs(v) for v in syn_vals.values())
-                if max_syn <= tracker.diminishing():
-                    synergy_streak += 1
-                else:
-                    synergy_streak = 0
         if last_tracker:
+            if roi_threshold is None:
+                roi_threshold = last_tracker.diminishing()
             new_flags = _diminishing_modules(
-                module_history, flagged, last_tracker.diminishing(), consecutive=roi_cycles
+                module_history, flagged, roi_threshold, consecutive=roi_cycles
             )
             flagged.update(new_flags)
-        if module_history and set(module_history) <= flagged and synergy_streak >= synergy_cycles:
+        if last_tracker and synergy_threshold is None:
+            synergy_threshold = last_tracker.diminishing()
+        if synergy_threshold is not None:
+            converged, ema_val = _synergy_converged(
+                synergy_history, synergy_cycles, synergy_threshold
+            )
+        else:
+            converged, ema_val = False, 0.0
+        if module_history and set(module_history) <= flagged and converged:
             logger.info(
                 "synergy convergence reached",
-                extra={"iteration": iteration, "streak": synergy_streak},
+                extra={"iteration": iteration, "ema": ema_val},
             )
             break
 
@@ -318,10 +363,20 @@ def main(argv: List[str] | None = None) -> None:
         help="cycles below threshold before module convergence",
     )
     p_autorun.add_argument(
+        "--roi-threshold",
+        type=float,
+        help="override ROI delta threshold",
+    )
+    p_autorun.add_argument(
         "--synergy-cycles",
         type=int,
         default=3,
         help="cycles below threshold before synergy convergence",
+    )
+    p_autorun.add_argument(
+        "--synergy-threshold",
+        type=float,
+        help="override synergy threshold",
     )
 
     p_complete = sub.add_parser(
@@ -346,10 +401,20 @@ def main(argv: List[str] | None = None) -> None:
         help="cycles below threshold before module convergence",
     )
     p_complete.add_argument(
+        "--roi-threshold",
+        type=float,
+        help="override ROI delta threshold",
+    )
+    p_complete.add_argument(
         "--synergy-cycles",
         type=int,
         default=3,
         help="cycles below threshold before synergy convergence",
+    )
+    p_complete.add_argument(
+        "--synergy-threshold",
+        type=float,
+        help="override synergy threshold",
     )
 
     args = parser.parse_args(argv)
