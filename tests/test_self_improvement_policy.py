@@ -72,3 +72,13 @@ def test_default_schedule_unchanged():
     policy.update(state, 1.0)
     policy.update(state, 1.0)
     assert policy.epsilon == 0.5
+
+
+def test_reward_includes_synergy():
+    policy = sip.SelfImprovementPolicy()
+    state = (0,) * 15 + (5, 5, 0, 0)
+    next_state = (0,) * 15 + (6, 7, 0, 0)
+    before = policy.score(state)
+    policy.update(state, 0.0, next_state)
+    after = policy.score(state)
+    assert after > before
