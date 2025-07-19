@@ -17,10 +17,11 @@ import textwrap
 import logging
 import multiprocessing
 import time
+import inspect
 import random
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Callable, get_origin, get_args
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -973,9 +974,43 @@ def _random_strategy(count: int, conf: Dict[str, Any] | None = None) -> List[Dic
     return stubs
 
 
+def _stub_from_signature(func: Callable[..., Any]) -> Dict[str, Any]:
+    """Return an input stub derived from ``func`` signature."""
+    stub: Dict[str, Any] = {}
+    try:
+        sig = inspect.signature(func)
+    except Exception:
+        return stub
+    for name, param in sig.parameters.items():
+        if param.default is not inspect._empty:
+            stub[name] = param.default
+            continue
+        hint = param.annotation
+        val: Any = None
+        if hint is not inspect._empty:
+            origin = get_origin(hint)
+            if origin is list or hint is list:
+                val = []
+            elif origin is dict or hint is dict:
+                val = {}
+            elif origin is tuple or hint is tuple:
+                val = []
+            elif origin is set or hint is set:
+                val = set()
+            elif hint in (int, float):
+                val = 0
+            elif hint is bool:
+                val = False
+            elif hint is str:
+                val = ""
+        stub[name] = val
+    return stub
+
+
 def generate_input_stubs(
     count: int | None = None,
     *,
+    target: Callable[..., Any] | None = None,
     strategy: str | None = None,
     providers: List[StubProvider] | None = None,
 ) -> List[Dict[str, Any]]:
@@ -989,26 +1024,33 @@ def generate_input_stubs(
     """
 
     if SANDBOX_INPUT_STUBS:
-        return [dict(s) for s in SANDBOX_INPUT_STUBS]
+        stubs = [dict(s) for s in SANDBOX_INPUT_STUBS]
+        providers = providers or discover_stub_providers()
+        for prov in providers:
+            try:
+                new = prov(stubs, {"strategy": "env", "target": target})
+                if new:
+                    stubs = [dict(s) for s in new if isinstance(s, dict)]
+            except Exception:
+                logger.exception(
+                    "stub provider %s failed", getattr(prov, "__name__", "?")
+                )
+        return stubs
 
     num = 2 if count is None else max(0, count)
 
     providers = providers or discover_stub_providers()
-    for prov in providers:
-        try:
-            stubs = prov(num, {"strategy": strategy})
-            if stubs:
-                return [dict(s) for s in stubs if isinstance(s, dict)]
-        except Exception:
-            logger.exception("stub provider %s failed", getattr(prov, "__name__", "?"))
+    stubs: List[Dict[str, Any]] | None = None
 
     strat = strategy or os.getenv("SANDBOX_STUB_STRATEGY", "templates")
     if strat == "history":
         history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
         if history:
-            return [dict(random.choice(history)) for _ in range(num)]
-
-    if strat in {"templates", "history"}:  # fall through to templates when history empty
+            stubs = [dict(random.choice(history)) for _ in range(num)]
+        else:
+            stubs = None
+    
+    if strat in {"templates", "history"}:
         templates = _load_templates(
             os.getenv(
                 "SANDBOX_INPUT_TEMPLATES_FILE",
@@ -1016,14 +1058,29 @@ def generate_input_stubs(
             )
         )
         if templates:
-            return [dict(random.choice(templates)) for _ in range(num)]
+            stubs = [dict(random.choice(templates)) for _ in range(num)]
 
-    conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
-    try:
-        conf = json.loads(conf_env) if conf_env else {}
-    except Exception:
-        conf = {}
-    return _random_strategy(num, conf) or [{}]
+    if stubs is None:
+        if target is not None:
+            base = _stub_from_signature(target)
+            stubs = [dict(base) for _ in range(num)]
+        else:
+            conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
+            try:
+                conf = json.loads(conf_env) if conf_env else {}
+            except Exception:
+                conf = {}
+            stubs = _random_strategy(num, conf) or [{}]
+
+    for prov in providers:
+        try:
+            new = prov(stubs, {"strategy": strat, "target": target})
+            if new:
+                stubs = [dict(s) for s in new if isinstance(s, dict)]
+        except Exception:
+            logger.exception("stub provider %s failed", getattr(prov, "__name__", "?"))
+
+    return stubs
 
 
 # ----------------------------------------------------------------------
