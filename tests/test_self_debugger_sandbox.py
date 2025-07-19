@@ -126,7 +126,10 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"])
-    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 50.0)
+    async def fake_cov(p, env=None):
+        return 50.0
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
@@ -207,7 +210,10 @@ def test_sandbox_success(monkeypatch, tmp_path):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
-    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
+    async def fake_cov_ok(p, env=None):
+        return 80.0
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
     dbg.analyse_and_fix()
     assert engine.applied
     assert any("success" in r for r in trail.records)
@@ -224,7 +230,10 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n   assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
-    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
+    async def fake_cov_ok(p, env=None):
+        return 80.0
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov_ok)
     monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
     dbg.analyse_and_fix()
@@ -335,7 +344,11 @@ def test_select_best_patch(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
-    monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: cov_vals.pop(0))
+
+    async def fake_cov(p, env=None):
+        return cov_vals.pop(0)
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
 
     dbg.analyse_and_fix()
 
@@ -352,7 +365,7 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_cov(paths, env=None):
+    async def fake_cov(paths, env=None):
         called["paths"] = [Path(p) for p in paths]
         return 100.0
 
@@ -402,7 +415,7 @@ def test_coverage_xml_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    cov = dbg._coverage_percent([Path("dummy.py")])
+    cov = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
     assert cov == 0.0
     assert "coverage generation failed" in caplog.text
 
@@ -433,7 +446,7 @@ def test_coverage_report_failure(monkeypatch, caplog):
 
     monkeypatch.setattr(sds, "Coverage", Cov)
 
-    cov = dbg._coverage_percent([Path("dummy.py")])
+    cov = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
     assert cov == 0.0
     assert "coverage generation failed" in caplog.text
 
