@@ -1324,10 +1324,12 @@ def generate_input_stubs(
 
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
-    The built-in strategies ``templates``, ``history``, ``random`` and ``smart``
-    can be selected via ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment
-    variable. The ``smart`` strategy attempts to generate realistic values using
-    ``faker`` or ``hypothesis`` when available.
+    The built-in strategies ``templates``, ``history``, ``random``, ``smart`` and
+    ``synthetic`` can be selected via ``strategy`` or the
+    ``SANDBOX_STUB_STRATEGY`` environment variable. The ``smart`` strategy
+    attempts to generate realistic values using ``faker`` or ``hypothesis`` when
+    available. The ``synthetic`` strategy mirrors ``smart`` but is intended for
+    language model based stub providers.
     """
 
     if SANDBOX_INPUT_STUBS:
@@ -1357,7 +1359,7 @@ def generate_input_stubs(
         else:
             stubs = None
 
-    if strat == "smart" and target is not None:
+    if strat in {"smart", "synthetic"} and target is not None:
         base = _stub_from_signature(target, smart=True)
         stubs = [dict(base) for _ in range(num)]
 
@@ -1373,7 +1375,7 @@ def generate_input_stubs(
 
     if stubs is None:
         if target is not None:
-            base = _stub_from_signature(target, smart=strat == "smart")
+            base = _stub_from_signature(target, smart=strat in {"smart", "synthetic"})
             stubs = [dict(base) for _ in range(num)]
         else:
             conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
