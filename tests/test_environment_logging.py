@@ -51,7 +51,14 @@ class DummyDiag:
 
 
 def _stub_docker(image_holder):
+    class DummyExec:
+        def __init__(self, code=0):
+            self.exit_code = code
+
     class DummyContainer:
+        id = "dummy"
+        def exec_run(self, *a, **k):
+            return DummyExec(0)
         def wait(self):
             return {"StatusCode": 0}
         def stats(self, stream=False):
@@ -62,6 +69,8 @@ def _stub_docker(image_holder):
             }
         def remove(self):
             image_holder.append("removed")
+        def stop(self, timeout=0):
+            pass
     class DummyContainers:
         def run(self, image, cmd, **kwargs):
             image_holder.append(image)

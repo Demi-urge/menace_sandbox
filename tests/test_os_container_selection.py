@@ -15,7 +15,15 @@ import sandbox_runner.environment as env
 
 
 def _stub_docker(image_holder):
+    class DummyExec:
+        def __init__(self, code=0):
+            self.exit_code = code
+
     class DummyContainer:
+        id = "dummy"
+        def exec_run(self, *a, **k):
+            return DummyExec(0)
+
         def wait(self):
             return {"StatusCode": 0}
 
@@ -28,6 +36,9 @@ def _stub_docker(image_holder):
 
         def remove(self):
             image_holder.append("removed")
+
+        def stop(self, timeout=0):
+            pass
 
     class DummyContainers:
         def run(self, image, cmd, **kwargs):
@@ -45,6 +56,9 @@ def _stub_docker(image_holder):
 def test_execute_in_container_windows(monkeypatch):
     calls = []
     _stub_docker(calls)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._DOCKER_CLIENT = None
     monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE_WINDOWS", "win-img")
     res = env._execute_in_container("print('hi')", {"OS_TYPE": "windows"})
     assert calls[0] == "win-img" and res["exit_code"] == 0.0
@@ -53,6 +67,9 @@ def test_execute_in_container_windows(monkeypatch):
 def test_execute_in_container_override(monkeypatch):
     calls = []
     _stub_docker(calls)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._DOCKER_CLIENT = None
     res = env._execute_in_container(
         "print('x')", {"OS_TYPE": "macos", "CONTAINER_IMAGE": "custom"}
     )
@@ -67,6 +84,7 @@ def test_execute_in_container_retry(monkeypatch):
             self.called = 0
 
         class DummyContainer:
+            id = "dummy"
             def wait(self):
                 return {"StatusCode": 0}
 
@@ -95,5 +113,8 @@ def test_execute_in_container_retry(monkeypatch):
     sys.modules["docker"] = dummy
 
     monkeypatch.setattr(env.time, "sleep", lambda s: None)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._DOCKER_CLIENT = None
     res = env._execute_in_container("print('hi')", {})
     assert len(attempts) >= 2 and res["exit_code"] == 0.0
