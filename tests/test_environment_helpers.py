@@ -62,3 +62,41 @@ def test_generate_input_stubs_templates(monkeypatch, tmp_path):
     stubs = env.generate_input_stubs(1)
     assert stubs == [{"mode": "x", "level": 9}]
 
+
+def test_generate_input_stubs_smart(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "smart")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    import importlib
+    importlib.reload(env)
+    if env._FAKER is not None:
+        monkeypatch.setattr(env._FAKER, "random_int", lambda *a, **k: 42)
+
+    def target(a: int, email: str, flag: bool = False) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    stub = stubs[0]
+    assert isinstance(stub["a"], int) and stub["a"] == 42
+    assert isinstance(stub["email"], str) and stub["email"]
+    assert stub["flag"] is False
+
+
+def test_generate_input_stubs_smart_no_faker(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "smart")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    import importlib
+    importlib.reload(env)
+    monkeypatch.setattr(env, "_FAKER", None)
+
+    def target(a: int, name: str) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    stub = stubs[0]
+    assert stub["a"] == 0
+    assert stub["name"] == ""
+

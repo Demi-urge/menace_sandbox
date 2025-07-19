@@ -34,6 +34,18 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+try:
+    from faker import Faker  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    Faker = None  # type: ignore
+
+try:
+    from hypothesis import strategies as _hyp_strats  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    _hyp_strats = None  # type: ignore
+
+_FAKER = Faker() if Faker is not None else None
+
 logger = logging.getLogger(__name__)
 
 from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
@@ -974,7 +986,37 @@ def _random_strategy(count: int, conf: Dict[str, Any] | None = None) -> List[Dic
     return stubs
 
 
-def _stub_from_signature(func: Callable[..., Any]) -> Dict[str, Any]:
+def _smart_value(name: str, hint: Any) -> Any:
+    """Return a realistic value for ``name`` with type ``hint``."""
+    val = None
+    if _FAKER is not None:
+        if hint is str:
+            lowered = name.lower()
+            if "email" in lowered:
+                val = _FAKER.email()
+            elif "name" in lowered:
+                val = _FAKER.name()
+            elif "url" in lowered:
+                val = _FAKER.url()
+            else:
+                val = _FAKER.word()
+        elif hint is int:
+            val = _FAKER.random_int(min=0, max=1000)
+        elif hint is float:
+            val = float(_FAKER.pyfloat(left_digits=2, right_digits=2, positive=True))
+        elif hint is bool:
+            val = _FAKER.pybool()
+        elif hint is datetime:
+            val = _FAKER.date_time()
+    if val is None and _hyp_strats is not None and hint is not inspect._empty:
+        try:
+            val = _hyp_strats.from_type(hint).example()
+        except Exception:
+            val = None
+    return val
+
+
+def _stub_from_signature(func: Callable[..., Any], *, smart: bool = False) -> Dict[str, Any]:
     """Return an input stub derived from ``func`` signature."""
     stub: Dict[str, Any] = {}
     try:
@@ -987,7 +1029,9 @@ def _stub_from_signature(func: Callable[..., Any]) -> Dict[str, Any]:
             continue
         hint = param.annotation
         val: Any = None
-        if hint is not inspect._empty:
+        if smart:
+            val = _smart_value(name, hint)
+        if hint is not inspect._empty and val is None:
             origin = get_origin(hint)
             if origin is list or hint is list:
                 val = []
@@ -1018,9 +1062,10 @@ def generate_input_stubs(
 
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
-    The built-in strategies ``templates``, ``history`` and ``random`` can be
-    selected via ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment
-    variable.
+    The built-in strategies ``templates``, ``history``, ``random`` and ``smart``
+    can be selected via ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment
+    variable. The ``smart`` strategy attempts to generate realistic values using
+    ``faker`` or ``hypothesis`` when available.
     """
 
     if SANDBOX_INPUT_STUBS:
@@ -1049,7 +1094,11 @@ def generate_input_stubs(
             stubs = [dict(random.choice(history)) for _ in range(num)]
         else:
             stubs = None
-    
+
+    if strat == "smart" and target is not None:
+        base = _stub_from_signature(target, smart=True)
+        stubs = [dict(base) for _ in range(num)]
+
     if strat in {"templates", "history"}:
         templates = _load_templates(
             os.getenv(
@@ -1062,7 +1111,7 @@ def generate_input_stubs(
 
     if stubs is None:
         if target is not None:
-            base = _stub_from_signature(target)
+            base = _stub_from_signature(target, smart=strat == "smart")
             stubs = [dict(base) for _ in range(num)]
         else:
             conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
