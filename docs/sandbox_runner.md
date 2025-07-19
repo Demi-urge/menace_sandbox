@@ -208,6 +208,13 @@ attempt the generated tests are executed again. If the tests still fail the
 debugger fetches new telemetry and tries again up to `SANDBOX_PATCH_RETRIES`
 times.
 
+Recent patch metrics are kept in a rolling history. The sandbox calculates
+the mean and standard deviation for coverage change, error reduction, ROI
+delta and patch complexity. `_composite_score` normalises the current
+values using these statistics and applies adaptive weights. Metrics with a
+consistent improvement (low variance) have a stronger influence while
+increased complexity is penalised based on how volatile it usually is.
+
 ## Metrics Plugins
 
 Custom metric collectors can be added without modifying `sandbox_runner.py`. Set

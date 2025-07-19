@@ -492,6 +492,7 @@ def test_score_weights_evolve_from_audit():
 
     assert first != second
     assert second != third
-    assert abs(third[0] - 0.75) < 1e-6
-    assert abs(third[1] - 0.75) < 1e-6
-    assert abs(third[2] - 1.5) < 1e-6
+    assert abs(third[0] - 1.0) < 1e-6
+    assert abs(third[1] - 1.0) < 1e-6
+    assert abs(third[2] - 2.0) < 1e-6
+    assert abs(third[3]) < 1e-6
