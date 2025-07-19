@@ -22,21 +22,34 @@ def _capture_run(preset: Dict[str, str], args: argparse.Namespace):
     return holder.get('tracker')
 
 
+def _ema(values: list[float]) -> tuple[float, float]:
+    alpha = 2.0 / (len(values) + 1)
+    ema = values[0]
+    ema_sq = values[0] ** 2
+    for v in values[1:]:
+        ema = alpha * v + (1 - alpha) * ema
+        ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
+    var = ema_sq - ema ** 2
+    if var < 0:
+        var = 0.0
+    return ema, var ** 0.5
+
+
 def _diminishing_modules(
     history: Dict[str, List[float]],
     flagged: set[str],
     threshold: float,
     consecutive: int = 3,
+    std_threshold: float = 1e-3,
 ) -> List[str]:
     flags: List[str] = []
     thr = float(threshold)
     for mod, vals in history.items():
-        if mod in flagged:
+        if mod in flagged or len(vals) < consecutive:
             continue
-        if len(vals) >= consecutive and all(abs(v) <= thr for v in vals[-consecutive:]):
-            flags.append(mod)
-            continue
-        if len(vals) >= 3 and (vals[-1] <= thr or abs(vals[-1]) < abs(vals[0]) * 0.1):
+        window = vals[-consecutive:]
+        ema, std = _ema(window)
+        if abs(ema) <= thr and std <= std_threshold:
             flags.append(mod)
     return flags
 
