@@ -72,15 +72,25 @@ class VisualAgentClient:
     def _refresh_token(self) -> bool:
         if not self.token_refresh_cmd:
             return False
-        try:
-            new = subprocess.check_output(
-                self.token_refresh_cmd, shell=True, text=True
-            ).strip()
-            if new:
-                self.token = new
+
+        for attempt in range(3):
+            proc = subprocess.run(
+                self.token_refresh_cmd,
+                shell=True,
+                text=True,
+                capture_output=True,
+            )
+            output = (proc.stdout + proc.stderr).strip()
+            if proc.returncode == 0 and proc.stdout.strip():
+                self.token = proc.stdout.strip()
                 return True
-        except Exception:
-            return False
+            logger.warning(
+                "token refresh attempt %s failed: %s",
+                attempt + 1,
+                output,
+            )
+            if attempt < 2:
+                time.sleep(1.0)
         return False
 
     def _send(self, base: str, prompt: str) -> tuple[bool, str]:
