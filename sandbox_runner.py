@@ -464,6 +464,7 @@ class SandboxContext:
     brainstorm_history: List[str]
     conversations: Dict[str, List[Dict[str, str]]]
     offline_suggestions: bool = False
+    adapt_presets: bool = True
     suggestion_cache: Dict[str, str] = field(default_factory=dict)
     suggestion_db: PatchSuggestionDB | None = None
     synergy_needed: bool = False
@@ -706,6 +707,11 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "offline_suggestions", False)
         or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
     )
+    adapt_env = os.getenv("SANDBOX_ADAPT_PRESETS")
+    if adapt_env is not None:
+        adapt_presets_flag = adapt_env not in {"0", "false", "False"}
+    else:
+        adapt_presets_flag = not getattr(args, "no_preset_adapt", False)
     suggestion_cache: Dict[str, str] = {}
     cache_path = getattr(args, "suggestion_cache", None) or os.getenv(
         "SANDBOX_SUGGESTION_CACHE"
@@ -766,6 +772,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         brainstorm_history=brainstorm_history,
         conversations=conversations,
         offline_suggestions=offline_suggestions,
+        adapt_presets=adapt_presets_flag,
         suggestion_cache=suggestion_cache,
         suggestion_db=suggestion_db,
     )
@@ -841,7 +848,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 if ctx.meta_log.flagged_sections >= ctx.all_section_names:
                     switched = True
                     break
-            if section_trackers:
+            if section_trackers and ctx.adapt_presets:
                 try:
                     from menace.environment_generator import adapt_presets
 
@@ -851,6 +858,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         for m, vals in t.metrics_history.items():
                             agg.metrics_history.setdefault(m, []).extend(vals)
                     SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
+                    os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
                 except Exception:
                     logger.exception("preset adaptation failed")
             if switched:
@@ -1042,6 +1050,15 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     ctx.prev_roi = 0.0
     ctx.predicted_roi = None
     _cycle(None, None, ctx.tracker)
+
+    if ctx.adapt_presets:
+        try:
+            from menace.environment_generator import adapt_presets
+
+            SANDBOX_ENV_PRESETS = adapt_presets(ctx.tracker, SANDBOX_ENV_PRESETS)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+        except Exception:
+            logger.exception("preset adaptation failed")
 
     if not getattr(args, "no_workflow_run", False):
         try:

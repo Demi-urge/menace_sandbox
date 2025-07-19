@@ -367,6 +367,11 @@ def main(argv: List[str] | None = None) -> None:
         help="skip workflow simulations after section cycles",
     )
     parser.add_argument(
+        "--no-preset-adapt",
+        action="store_true",
+        help="disable automatic environment preset adaptation",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
