@@ -68,6 +68,8 @@ class _DangerVisitor(ast.NodeVisitor):
         self.calls: List[str] = []
         self.files_written: List[str] = []
         self.flags: List[str] = []
+        self.imports: List[str] = []
+        self.attributes: List[str] = []
 
     def visit_Call(self, node: ast.Call) -> Any:
         name = self._name(node.func)
@@ -91,8 +93,52 @@ class _DangerVisitor(ast.NodeVisitor):
                 self.flags.append("file write")
         if lowered.startswith(("requests", "socket")):
             self.flags.append(f"network call {name}")
+        if lowered in {
+            "os.setuid",
+            "os.setgid",
+            "os.seteuid",
+            "os.setegid",
+        }:
+            self.flags.append(f"privilege escalation {name}")
+        if lowered.startswith("subprocess") or lowered.startswith("os.system"):
+            for arg in node.args:
+                if (
+                    isinstance(arg, ast.Constant)
+                    and isinstance(arg.value, str)
+                    and "sudo" in arg.value
+                ):
+                    self.flags.append("privilege escalation sudo")
+                    break
         if "reward" in lowered:
             self.flags.append(f"reward manipulation {name}")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        name = self._name(node)
+        self.attributes.append(name)
+        if name in {
+            "os.system",
+            "subprocess.Popen",
+            "subprocess.call",
+            "requests.get",
+            "requests.post",
+        }:
+            self.flags.append(f"risky attribute {name}")
+        self.generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> Any:
+        for alias in node.names:
+            mod = alias.name.split(".")[0]
+            self.imports.append(alias.name)
+            if mod in {"socket", "requests", "subprocess", "ctypes"}:
+                self.flags.append(f"import dangerous module {alias.name}")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> Any:
+        mod = node.module or ""
+        self.imports.append(mod)
+        if mod.split(".")[0] in {"socket", "requests", "subprocess", "ctypes"}:
+            self.flags.append(f"import dangerous module {mod}")
         self.generic_visit(node)
 
     def _name(self, node: ast.AST) -> str:
@@ -113,7 +159,13 @@ class _DangerVisitor(ast.NodeVisitor):
 def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
     """Return dictionary describing risky constructs in ``code_str``."""
     logger.debug("starting static analysis of code (%d chars)", len(code_str))
-    result: Dict[str, Any] = {"calls": [], "files_written": [], "flags": []}
+    result: Dict[str, Any] = {
+        "calls": [],
+        "files_written": [],
+        "flags": [],
+        "imports": [],
+        "attributes": [],
+    }
     try:
         tree = ast.parse(code_str)
     except SyntaxError as exc:
@@ -124,10 +176,43 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
     result["calls"] = visitor.calls
     result["files_written"] = visitor.files_written
     result["flags"] = visitor.flags
+    result["imports"] = visitor.imports
+    result["attributes"] = visitor.attributes
 
     patterns = [r"\bsubprocess\b", r"\bos\.system\b", r"eval\(", r"exec\("]
     if any(re.search(p, code_str) for p in patterns):
         result.setdefault("regex_flags", []).append("raw_dangerous_pattern")
+
+    # optional Bandit integration
+    tmp_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tmp:
+            tmp.write(code_str)
+            tmp_path = tmp.name
+        proc = subprocess.run(
+            ["bandit", "-f", "json", "-q", tmp_path],
+            capture_output=True,
+            text=True,
+        )
+        if proc.stdout:
+            data = json.loads(proc.stdout)
+            issues = [
+                {
+                    "line": i.get("line_number"),
+                    "severity": i.get("issue_severity"),
+                    "text": i.get("issue_text"),
+                }
+                for i in data.get("results", [])
+            ]
+            if issues:
+                result["bandit"] = issues
+    except Exception as exc:  # pragma: no cover - optional dependency
+        logger.debug("bandit failed: %s", exc)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
     logger.debug(
         "static analysis result: %s",
         {k: v for k, v in result.items() if v},
