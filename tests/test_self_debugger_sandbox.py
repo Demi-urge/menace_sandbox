@@ -126,7 +126,7 @@ def test_sandbox_failing_patch(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_fail():\n    assert False\n"])
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 50.0)
-    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     def run_fail(cmd, cwd=None, check=False, env=None):
@@ -204,7 +204,7 @@ def test_sandbox_success(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
     dbg.analyse_and_fix()
@@ -224,7 +224,7 @@ def test_sandbox_failed_audit(monkeypatch, tmp_path):
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n   assert True\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
     monkeypatch.setattr(dbg, "_coverage_percent", lambda p, env=None: 80.0)
-    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
     dbg.analyse_and_fix()
     assert not engine.applied
@@ -330,7 +330,7 @@ def test_select_best_patch(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def a():\n    pass\n", "def b():\n    pass\n"])
     monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
-    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None: 0.0)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
     monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
 
     cov_vals = [50.0, 60.0, 50.0, 70.0, 50.0, 80.0]
@@ -435,3 +435,21 @@ def test_coverage_report_failure(monkeypatch, caplog):
     cov = dbg._coverage_percent([Path("dummy.py")])
     assert cov == 0.0
     assert "coverage generation failed" in caplog.text
+
+
+def test_flakiness_deterministic(monkeypatch):
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (80.0, 0.0))
+    assert dbg._test_flakiness(Path("dummy.py")) == 0.0
+
+
+def test_flakiness_variable(monkeypatch):
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=5)
+    cov_vals = [50.0, 60.0, 70.0, 80.0, 90.0]
+
+    def fake_run(path, env=None):
+        return cov_vals.pop(0), 0.0
+
+    monkeypatch.setattr(dbg, "_run_tests", fake_run)
+    flakiness = dbg._test_flakiness(Path("dummy.py"))
+    assert abs(flakiness - 14.142) < 0.001

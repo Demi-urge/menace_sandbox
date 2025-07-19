@@ -15,6 +15,7 @@ from datetime import datetime
 import json
 import io
 import math
+from statistics import pstdev
 from coverage import Coverage
 
 from .automated_debugger import AutomatedDebugger
@@ -26,7 +27,13 @@ from typing import Callable
 
 
 class SelfDebuggerSandbox(AutomatedDebugger):
-    """Extend AutomatedDebugger with sandbox verification."""
+    """Extend AutomatedDebugger with sandbox verification.
+
+    Parameters
+    ----------
+    flakiness_runs:
+        Number of test executions used when estimating flakiness.
+    """
 
     def __init__(
         self,
@@ -38,6 +45,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         *,
         score_threshold: float = 0.5,
         score_weights: tuple[float, float, float] | None = None,
+        flakiness_runs: int = 5,
     ) -> None:
         super().__init__(telemetry_db, engine)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
@@ -46,6 +54,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._bad_hashes: set[str] = set()
         self.score_threshold = score_threshold
         self.score_weights = score_weights or (1.0, 1.0, 1.0)
+        self.flakiness_runs = max(1, int(flakiness_runs))
 
     # ------------------------------------------------------------------
     def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
@@ -143,11 +152,20 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return cov, runtime
 
     # ------------------------------------------------------------------
-    def _test_flakiness(self, path: Path, env: dict[str, str] | None = None) -> float:
-        """Return a naive flakiness metric for tests at *path*."""
-        cov1, _ = self._run_tests(path, env)
-        cov2, _ = self._run_tests(path, env)
-        return abs(cov1 - cov2)
+    def _test_flakiness(
+        self,
+        path: Path,
+        env: dict[str, str] | None = None,
+        *,
+        runs: int | None = None,
+    ) -> float:
+        """Return the standard deviation of coverage across multiple test runs."""
+        n = runs if runs is not None else self.flakiness_runs
+        coverages = []
+        for _ in range(max(1, int(n))):
+            cov, _ = self._run_tests(path, env)
+            coverages.append(cov)
+        return pstdev(coverages) if len(coverages) > 1 else 0.0
 
     # ------------------------------------------------------------------
     def _code_complexity(self, path: Path) -> float:
@@ -307,7 +325,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                         error_delta = before_err - after_err
-                        flakiness = self._test_flakiness(root_test)
+                        flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                         complexity = self._code_complexity(root_test)
                         runtime_delta = after_runtime - before_runtime
                         result = "reverted" if reverted else "success"
@@ -390,7 +408,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                 error_delta = before_err - after_err
-                flakiness = self._test_flakiness(root_test)
+                flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                 complexity = self._code_complexity(root_test)
                 runtime_delta = after_runtime - before_runtime
                 patch_score = self._composite_score(
