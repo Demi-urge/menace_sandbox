@@ -32,10 +32,23 @@ def test_restart_on_failure(monkeypatch):
 
 
 def test_run_autonomous_integration(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    pkg = types.ModuleType("menace")
+    pkg.__path__ = [str(ROOT / "menace")]
+    sys.modules["menace"] = pkg
     # Stub heavy imports before loading modules
     sc_mod = types.ModuleType("menace.startup_checks")
     sc_mod.verify_project_dependencies = lambda: ["pkg"]
+    sc_mod._parse_requirement = lambda r: "pkg"
     monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
+
+    env_mod = types.ModuleType("menace.environment_generator")
+    env_mod.generate_presets = lambda n=None: [{}]
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", env_mod)
+
+    env_mod = types.ModuleType("menace.environment_generator")
+    env_mod.generate_presets = lambda n=None: [{}]
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", env_mod)
 
     tracker_mod = types.ModuleType("menace.roi_tracker")
     class DummyTracker:
@@ -62,7 +75,11 @@ def test_run_autonomous_integration(monkeypatch, tmp_path):
     sr_stub._sandbox_main = fail_then_ok
     cli_stub = types.ModuleType("sandbox_runner.cli")
     cli_stub.full_autonomous_run = lambda args: sr_stub._sandbox_main({}, args)
-    cli_stub._diminishing_modules = lambda *a, **k: set()
+    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
+    cli_stub._ema = lambda seq: (0.0, [])
+    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
+    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
+    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
     sr_stub.cli = cli_stub
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
@@ -93,9 +110,18 @@ def test_run_autonomous_integration(monkeypatch, tmp_path):
 
 
 def test_run_autonomous_multiple_runs(monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    pkg = types.ModuleType("menace")
+    pkg.__path__ = [str(ROOT / "menace")]
+    sys.modules["menace"] = pkg
     sc_mod = types.ModuleType("menace.startup_checks")
     sc_mod.verify_project_dependencies = lambda: ["pkg"]
+    sc_mod._parse_requirement = lambda r: "pkg"
     monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
+
+    env_mod = types.ModuleType("menace.environment_generator")
+    env_mod.generate_presets = lambda n=None: [{}]
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", env_mod)
 
     tracker_mod = types.ModuleType("menace.roi_tracker")
     class DummyTracker:
@@ -114,7 +140,11 @@ def test_run_autonomous_multiple_runs(monkeypatch):
 
     cli_stub = types.ModuleType("sandbox_runner.cli")
     cli_stub.full_autonomous_run = lambda args: runs.append("run")
-    cli_stub._diminishing_modules = lambda *a, **k: set()
+    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
+    cli_stub._ema = lambda seq: (0.0, [])
+    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
+    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
+    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
     sr_stub = types.ModuleType("sandbox_runner")
     sr_stub._sandbox_main = lambda p, a: None
     sr_stub.cli = cli_stub

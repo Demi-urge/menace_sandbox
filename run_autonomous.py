@@ -37,7 +37,8 @@ elif "menace" not in sys.modules:
     spec.loader.exec_module(menace_pkg)
 
 from menace.environment_generator import generate_presets
-from menace.startup_checks import verify_project_dependencies, _parse_requirement
+from menace.startup_checks import verify_project_dependencies
+from menace.dependency_installer import install_packages
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
@@ -79,39 +80,18 @@ def _check_dependencies() -> None:
 
     missing_pkgs = verify_project_dependencies()
     if missing_pkgs:
-        lock = None
-        for name in ("uv.lock", "requirements.txt"):
-            path = Path(name)
-            if path.exists():
-                lock = path
-                break
-        if lock:
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", "-r", str(lock)]
-                )
-            except Exception as exc:
-                logger.error("failed installing %s: %s", lock, exc)
-        for pkg in missing_pkgs:
-            mod = _parse_requirement(pkg)
-            success = False
-            for i in range(2):
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", pkg]
-                    )
-                    importlib.import_module(mod)
-                    success = True
-                    break
-                except Exception as exc:  # pragma: no cover - retry
-                    logger.warning(
-                        "install attempt %s for %s failed: %s", i + 1, pkg, exc
-                    )
-                    time.sleep(1)
-            if not success:
-                missing.append(pkg)
-    if missing_pkgs:
-        missing.extend([m for m in missing_pkgs if m not in missing])
+        offline = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+        errors = install_packages(missing_pkgs, offline=offline)
+        if offline and missing_pkgs:
+            logger.info(
+                "offline install mode enabled; skipping installation for: %s",
+                ", ".join(missing_pkgs),
+            )
+        for pkg, err in errors.items():
+            logger.error("failed installing %s: %s", pkg, err)
+        failed_pkgs = [p for p in missing_pkgs if p in errors]
+        if failed_pkgs:
+            missing.extend(failed_pkgs)
 
     if missing:
         logger.error("Missing dependencies: %s", ", ".join(missing))

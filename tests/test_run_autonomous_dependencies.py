@@ -22,10 +22,8 @@ def setup_startup(monkeypatch, missing_pkg="pkg"):
     sc_mod = types.ModuleType("menace.startup_checks")
     sc_mod.verify_project_dependencies = lambda: [missing_pkg]
     sc_mod._parse_requirement = lambda r: missing_pkg
-    monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
     eg_mod = types.ModuleType("menace.environment_generator")
     eg_mod.generate_presets = lambda n=None: [{}]
-    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
     tracker_mod = types.ModuleType("menace.roi_tracker")
     class DummyTracker:
         def __init__(self, *a, **k):
@@ -37,7 +35,25 @@ def setup_startup(monkeypatch, missing_pkg="pkg"):
             return 0.0
 
     tracker_mod.ROITracker = DummyTracker
+
+    pkg = types.ModuleType("menace")
+    pkg.__path__ = []
+    pkg.startup_checks = sc_mod
+    pkg.environment_generator = eg_mod
+    pkg.roi_tracker = tracker_mod
+    monkeypatch.setitem(sys.modules, "menace", pkg)
+    monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
     monkeypatch.setitem(sys.modules, "menace.roi_tracker", tracker_mod)
+
+    sr_stub = types.ModuleType("sandbox_runner")
+    cli_stub = types.ModuleType("sandbox_runner.cli")
+    cli_stub.full_autonomous_run = lambda args: None
+    cli_stub._diminishing_modules = lambda *a, **k: set()
+    sr_stub._sandbox_main = lambda p, a: None
+    sr_stub.cli = cli_stub
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
 
 
 def test_retry_on_install_failure(monkeypatch):
@@ -45,17 +61,18 @@ def test_retry_on_install_failure(monkeypatch):
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
     monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
-    monkeypatch.setattr(mod.importlib, "import_module", lambda n: types.ModuleType(n))
-    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    di = sys.modules["menace.dependency_installer"]
+    monkeypatch.setattr(di.importlib, "import_module", lambda n: types.ModuleType(n))
+    monkeypatch.setattr(di.time, "sleep", lambda s: None)
     calls = []
 
     def failing_call(cmd, **kwargs):
         calls.append(cmd)
-        if len(calls) == 1:
+        if cmd[-1] == "pkg" and calls.count(cmd) == 1:
             raise subprocess.CalledProcessError(1, cmd)
         return 0
 
-    monkeypatch.setattr(mod.subprocess, "check_call", failing_call)
+    monkeypatch.setattr(di.subprocess, "check_call", failing_call)
     mod._check_dependencies()
     expected = [mod.sys.executable, "-m", "pip", "install", "pkg"]
     assert calls.count(expected) == 2
@@ -66,9 +83,10 @@ def test_abort_after_failed_installs(monkeypatch):
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
     monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
-    monkeypatch.setattr(mod.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
-    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
-    monkeypatch.setattr(mod.subprocess, "check_call", lambda *a, **k: (_ for _ in ()).throw(subprocess.CalledProcessError(1, a[0])))
+    di = sys.modules["menace.dependency_installer"]
+    monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
+    monkeypatch.setattr(di.time, "sleep", lambda s: None)
+    monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: (_ for _ in ()).throw(subprocess.CalledProcessError(1, a[0])))
     with pytest.raises(RuntimeError):
         mod._check_dependencies()
 
@@ -81,14 +99,30 @@ def test_lock_file_used(monkeypatch, tmp_path):
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
     monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
-    monkeypatch.setattr(mod.importlib, "import_module", lambda n: types.ModuleType(n))
-    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    di = sys.modules["menace.dependency_installer"]
+    monkeypatch.setattr(di.importlib, "import_module", lambda n: types.ModuleType(n))
+    monkeypatch.setattr(di.time, "sleep", lambda s: None)
     calls = []
     monkeypatch.setattr(
-        mod.subprocess,
+        di.subprocess,
         "check_call",
         lambda cmd, **k: calls.append(cmd) or 0,
     )
     mod._check_dependencies()
-    assert [mod.sys.executable, "-m", "pip", "install", "-r", str(lock)] in calls
+    assert [mod.sys.executable, "-m", "pip", "install", "-r", lock.name] in calls
+
+
+def test_offline_mode_skips_install(monkeypatch):
+    setup_startup(monkeypatch)
+    mod = load_module()
+    monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
+    monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
+    di = sys.modules["menace.dependency_installer"]
+    monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
+    calls = []
+    monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: calls.append(a))
+    monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
+    with pytest.raises(RuntimeError):
+        mod._check_dependencies()
+    assert calls == []
 
