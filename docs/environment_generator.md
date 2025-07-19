@@ -77,3 +77,10 @@ forecasts the next `synergy_roi` value and `predict_synergy_metric()` provides
 predictions for metrics like `efficiency` or `resilience`. These forecasts are
 averaged with the most recent measurements so `adapt_presets` can pre‑emptively
 raise or lower CPU, memory and network limits before each sandbox iteration.
+
+When the environment variable `SANDBOX_PRESET_RL_PATH` points to a writable
+file, `adapt_presets` uses :class:`PresetRLAgent` to learn from the recorded ROI
+and synergy values. Once at least three ROI samples exist the agent predicts
+actions for CPU, memory, bandwidth and threat intensity. The learned policy is
+stored at the provided path so adjustments improve over time. If history is too
+short the function falls back to the heuristics described above.
