@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import os
 import shlex
-import subprocess
-import re
+import json
+import tempfile
+import pytest
 from threading import Event
 
 from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
@@ -26,24 +27,35 @@ class SelfTestService:
 
     # ------------------------------------------------------------------
     def _run_once(self) -> None:
-        cmd = ["pytest", "-q"] + self.pytest_args
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        output = (proc.stdout or "") + (proc.stderr or "")
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+        tmp.close()
+        cmd = [
+            "-q",
+            "--json-report",
+            f"--json-report-file={tmp.name}",
+        ] + self.pytest_args
+        ret = pytest.main(cmd)
         passed = 0
         failed = 0
-        m = re.search(r"(\d+)\s+passed", output)
-        if m:
-            passed = int(m.group(1))
-        m = re.search(r"(\d+)\s+failed", output)
-        if m:
-            failed = int(m.group(1))
+        try:
+            with open(tmp.name, "r", encoding="utf-8") as fh:
+                report = json.load(fh)
+            summary = report.get("summary", {})
+            passed = int(summary.get("passed", 0))
+            failed = int(summary.get("failed", 0)) + int(summary.get("error", 0))
+        except Exception:
+            self.logger.exception("failed to parse test report")
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
         try:
             self.error_logger.db.add_test_result(passed, failed)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to store test results")
-        try:
-            proc.check_returncode()
-        except Exception as exc:  # pragma: no cover - best effort
+        if ret != 0:  # pragma: no cover - best effort
+            exc = RuntimeError(f"self tests failed with code {ret}")
             self.logger.error("self tests failed: %s", exc)
             try:
                 self.error_logger.log(exc, "self_tests", "sandbox")
