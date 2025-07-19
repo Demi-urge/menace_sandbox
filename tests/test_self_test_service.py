@@ -3,6 +3,7 @@ import json
 import sys
 import types
 import os
+import asyncio
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -67,22 +68,24 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e.db")
     svc = mod.SelfTestService(db)
 
-    def fail(args):
+    async def fail_exec(*cmd):
         path = None
-        for i, a in enumerate(args):
-            if a.startswith("--json-report-file"):
-                if "=" in a:
-                    path = a.split("=", 1)[1]
-                else:
-                    path = args[i + 1]
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
                 break
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 0, "failed": 1}}, fh)
-        return 1
+        class P:
+            returncode = 1
+            async def wait(self):
+                return None
+        return P()
 
-    monkeypatch.setattr(mod.pytest, "main", fail)
-    svc._run_once()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
+    asyncio.run(svc._run_once())
     cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
     assert cur.fetchone()[0] == 1
     row = db.conn.execute("SELECT passed, failed FROM test_results").fetchone()
@@ -93,22 +96,24 @@ def test_success_logs_results(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e2.db")
     svc = mod.SelfTestService(db)
 
-    def succeed(args):
+    async def succeed_exec(*cmd):
         path = None
-        for i, a in enumerate(args):
-            if a.startswith("--json-report-file"):
-                if "=" in a:
-                    path = a.split("=", 1)[1]
-                else:
-                    path = args[i + 1]
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
                 break
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 3, "failed": 0}}, fh)
-        return 0
+        class P:
+            returncode = 0
+            async def wait(self):
+                return None
+        return P()
 
-    monkeypatch.setattr(mod.pytest, "main", succeed)
-    svc._run_once()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", succeed_exec)
+    asyncio.run(svc._run_once())
     cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
     assert cur.fetchone()[0] == 0
     row = db.conn.execute("SELECT passed, failed FROM test_results").fetchone()
@@ -118,23 +123,25 @@ def test_success_logs_results(tmp_path, monkeypatch):
 def test_custom_args(monkeypatch):
     recorded = {}
 
-    def fake_run(args):
-        recorded['cmd'] = args
+    async def fake_exec(*cmd):
+        recorded['cmd'] = cmd
         path = None
-        for i, a in enumerate(args):
-            if a.startswith("--json-report-file"):
-                if "=" in a:
-                    path = a.split("=", 1)[1]
-                else:
-                    path = args[i + 1]
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
                 break
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
-        return 0
+        class P:
+            returncode = 0
+            async def wait(self):
+                return None
+        return P()
 
-    monkeypatch.setattr(mod.pytest, "main", fake_run)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     svc = mod.SelfTestService(pytest_args="-k pattern")
-    svc._run_once()
-    assert "-k" in recorded['cmd'] and "pattern" in recorded['cmd']
+    asyncio.run(svc._run_once())
+    assert any("-k" in str(x) for x in recorded['cmd']) and any("pattern" in str(x) for x in recorded['cmd'])
 

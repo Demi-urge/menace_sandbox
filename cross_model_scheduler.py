@@ -257,7 +257,9 @@ class _AsyncScheduler:
                         sleeps.append(self._next_runs[jid] - time.time())
                         continue
                     try:
-                        fn()
+                        result = fn()
+                        if asyncio.iscoroutine(result):
+                            await result
                         self._retry_counts[jid] = 0
                         self._next_runs[jid] = time.time() + interval
                     except BaseException:
