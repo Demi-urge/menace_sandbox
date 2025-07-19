@@ -1714,8 +1714,27 @@ def run_workflow_simulations(
         }
         combined_results: Dict[str, Dict[str, Any]] = {}
 
+        def _wf_snippet(steps: list[str]) -> str:
+            imports: list[str] = []
+            calls: list[str] = []
+            for idx, step in enumerate(steps):
+                mod = ""
+                func = ""
+                if ":" in step:
+                    mod, func = step.split(":", 1)
+                elif "." in step:
+                    mod, func = step.rsplit(".", 1)
+                else:
+                    mod, func = "simple_functions", step
+                alias = f"_wf_{idx}"
+                imports.append(f"from {mod} import {func} as {alias}")
+                calls.append(f"{alias}()")
+            if not calls:
+                return "\n".join(f"# {s}" for s in steps) + "\npass\n"
+            return "\n".join(imports + [""] + calls) + "\n"
+
         for wf in workflows:
-            snippet = "\n".join(f"# {step}" for step in wf.workflow) + "\npass\n"
+            snippet = _wf_snippet(wf.workflow)
             debugger = SelfDebuggerSandbox(
                 object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
             )
@@ -1759,8 +1778,8 @@ def run_workflow_simulations(
 
         combined_steps: list[str] = []
         for wf in workflows:
-            combined_steps.extend(f"# {step}" for step in wf.workflow)
-        combined_snippet = "\n".join(combined_steps) + "\npass\n"
+            combined_steps.extend(wf.workflow)
+        combined_snippet = _wf_snippet(combined_steps)
         workflow_modules = [f"workflow_{wf.wid}" for wf in workflows]
         for p_idx, preset in enumerate(env_presets):
             scenario = scenario_names[p_idx]
