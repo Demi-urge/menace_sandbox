@@ -1,4 +1,37 @@
 import importlib.util
+import json
+import sys
+import types
+import os
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
+sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
+sys.modules.setdefault("cryptography.hazmat.primitives", types.ModuleType("primitives"))
+sys.modules.setdefault(
+    "cryptography.hazmat.primitives.asymmetric", types.ModuleType("asymmetric")
+)
+sys.modules.setdefault(
+    "cryptography.hazmat.primitives.asymmetric.ed25519", types.ModuleType("ed25519")
+)
+ed = sys.modules["cryptography.hazmat.primitives.asymmetric.ed25519"]
+ed.Ed25519PrivateKey = types.SimpleNamespace(generate=lambda: object())
+ed.Ed25519PublicKey = object
+serialization = types.ModuleType("serialization")
+primitives = sys.modules["cryptography.hazmat.primitives"]
+primitives.serialization = serialization
+sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
+jinja_mod = types.ModuleType("jinja2")
+jinja_mod.Template = lambda *a, **k: None
+sys.modules.setdefault("jinja2", jinja_mod)
+sys.modules.setdefault("yaml", types.ModuleType("yaml"))
+sys.modules.setdefault("numpy", types.ModuleType("numpy"))
+sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///"))
+sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
+sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
+
 
 ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
 
@@ -13,7 +46,6 @@ if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 spec.loader.exec_module(mod)
 import menace.error_bot as eb
-import subprocess
 import types
 
 
@@ -34,10 +66,22 @@ def test_scheduler_start(monkeypatch):
 def test_failure_logs_telemetry(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e.db")
     svc = mod.SelfTestService(db)
-    def fail(cmd, capture_output=True, text=True):
-        return subprocess.CompletedProcess(cmd, 1, stdout="1 failed, 0 passed", stderr="")
 
-    monkeypatch.setattr(mod.subprocess, "run", fail)
+    def fail(args):
+        path = None
+        for i, a in enumerate(args):
+            if a.startswith("--json-report-file"):
+                if "=" in a:
+                    path = a.split("=", 1)[1]
+                else:
+                    path = args[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 1}}, fh)
+        return 1
+
+    monkeypatch.setattr(mod.pytest, "main", fail)
     svc._run_once()
     cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
     assert cur.fetchone()[0] == 1
@@ -49,10 +93,21 @@ def test_success_logs_results(tmp_path, monkeypatch):
     db = eb.ErrorDB(tmp_path / "e2.db")
     svc = mod.SelfTestService(db)
 
-    def succeed(cmd, capture_output=True, text=True):
-        return subprocess.CompletedProcess(cmd, 0, stdout="3 passed in 0.1s", stderr="")
+    def succeed(args):
+        path = None
+        for i, a in enumerate(args):
+            if a.startswith("--json-report-file"):
+                if "=" in a:
+                    path = a.split("=", 1)[1]
+                else:
+                    path = args[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 3, "failed": 0}}, fh)
+        return 0
 
-    monkeypatch.setattr(mod.subprocess, "run", succeed)
+    monkeypatch.setattr(mod.pytest, "main", succeed)
     svc._run_once()
     cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
     assert cur.fetchone()[0] == 0
@@ -63,11 +118,22 @@ def test_success_logs_results(tmp_path, monkeypatch):
 def test_custom_args(monkeypatch):
     recorded = {}
 
-    def fake_run(cmd, capture_output=True, text=True):
-        recorded['cmd'] = cmd
-        return subprocess.CompletedProcess(cmd, 0, stdout="0 passed", stderr="")
+    def fake_run(args):
+        recorded['cmd'] = args
+        path = None
+        for i, a in enumerate(args):
+            if a.startswith("--json-report-file"):
+                if "=" in a:
+                    path = a.split("=", 1)[1]
+                else:
+                    path = args[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+        return 0
 
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(mod.pytest, "main", fake_run)
     svc = mod.SelfTestService(pytest_args="-k pattern")
     svc._run_once()
     assert "-k" in recorded['cmd'] and "pattern" in recorded['cmd']

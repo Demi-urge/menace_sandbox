@@ -27,6 +27,9 @@ sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
+cov_mod = types.ModuleType("coverage")
+cov_mod.Coverage = object
+sys.modules.setdefault("coverage", cov_mod)
 import os
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
