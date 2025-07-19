@@ -165,24 +165,32 @@ class SelfImprovementEngine:
                 vals = tracker.metrics_history.get("synergy_roi", [])
                 if vals:
                     syn_roi = float(vals[-1])
+                    if len(vals) >= 2:
+                        syn_roi = float(vals[-1] - vals[-2])
             except Exception:
                 syn_roi = 0.0
             try:
                 eff_vals = tracker.metrics_history.get("synergy_efficiency", [])
                 if eff_vals:
                     syn_eff = float(eff_vals[-1])
+                    if len(eff_vals) >= 2:
+                        syn_eff = float(eff_vals[-1] - eff_vals[-2])
             except Exception:
                 syn_eff = 0.0
             try:
                 res_vals = tracker.metrics_history.get("synergy_resilience", [])
                 if res_vals:
                     syn_res = float(res_vals[-1])
+                    if len(res_vals) >= 2:
+                        syn_res = float(res_vals[-1] - res_vals[-2])
             except Exception:
                 syn_res = 0.0
             try:
                 af_vals = tracker.metrics_history.get("synergy_antifragility", [])
                 if af_vals:
                     syn_af = float(af_vals[-1])
+                    if len(af_vals) >= 2:
+                        syn_af = float(af_vals[-1] - af_vals[-2])
             except Exception:
                 syn_af = 0.0
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)

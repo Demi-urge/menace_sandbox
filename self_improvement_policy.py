@@ -192,6 +192,20 @@ class SelfImprovementPolicy:
         action: int = 1,
     ) -> float:
         """Update ``state`` with ``reward`` and optional ``next_state``."""
+        extra = 0.0
+        try:
+            if len(state) >= 17:
+                if next_state is not None and len(next_state) >= len(state):
+                    extra = (
+                        (next_state[-4] - state[-4]) / 10.0
+                        + (next_state[-3] - state[-3]) / 10.0
+                    )
+                else:
+                    extra = state[-4] / 10.0 + state[-3] / 10.0
+        except Exception:
+            extra = 0.0
+
+        reward += extra
         q = self.strategy.update(
             self.values,
             state,
