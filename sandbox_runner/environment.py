@@ -34,6 +34,14 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from pyroute2 import IPRoute, NSPopen, netns
+except Exception as exc:
+    IPRoute = None  # type: ignore
+    NSPopen = None  # type: ignore
+    netns = None  # type: ignore
+    logger.warning("pyroute2 import failed: %s", exc)
+
 try:
     from faker import Faker  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -854,52 +862,90 @@ async def _section_worker(
             if dup:
                 netem_args += ["duplicate", f"{dup}%"]
 
+            netem_metrics = {
+                "netem_latency_ms": float(latency or 0),
+                "netem_jitter_ms": float(env_input.get("NETWORK_JITTER_MS", 0) or 0),
+                "netem_packet_loss": float(loss or 0),
+                "netem_packet_duplication": float(dup or 0),
+            }
+
             if {"network", "network_partition"} & modes:
                 if "loss" not in netem_args:
                     netem_args += ["loss", "100%"]
             _use_netem = False
-            if netem_args and shutil.which("tc"):
+            _ns_name = None
+            _ipr = None
+            if netem_args and IPRoute is not None and NSPopen is not None and netns is not None:
                 try:
-                    subprocess.run(
-                        [
-                            "tc",
-                            "qdisc",
-                            "replace",
-                            "dev",
-                            "lo",
-                            "root",
-                            "netem",
-                            *netem_args,
-                        ],
-                        check=True,
-                    )
+                    _ns_name = f"sandbox_{int(time.time() * 1000)}_{random.randint(0, 9999)}"
+                    netns.create(_ns_name)
+                    _ipr = IPRoute()
+                    _ipr.bind(netns=_ns_name)
+                    idx = _ipr.link_lookup(ifname="lo")[0]
+                    _ipr.link("set", index=idx, state="up")
+                    kwargs = {}
+                    if latency:
+                        if jitter:
+                            kwargs["delay"] = f"{latency}ms {jitter}ms"
+                        else:
+                            kwargs["delay"] = f"{latency}ms"
+                    if loss:
+                        kwargs["loss"] = float(loss)
+                    if dup:
+                        kwargs["duplicate"] = float(dup)
+                    _ipr.tc("add", "root", idx, "netem", **kwargs)
                     _use_netem = True
-                except Exception:
+                except Exception as exc:
+                    logger.warning("pyroute2 netem setup failed: %s", exc)
+                    try:
+                        if _ipr:
+                            _ipr.close()
+                    finally:
+                        _ipr = None
+                        if _ns_name:
+                            try:
+                                netns.remove(_ns_name)
+                            except Exception:
+                                pass
+                            _ns_name = None
                     _use_netem = False
             elif netem_args:
                 try:
-                    code = "import subprocess\n" + (
-                        f"subprocess.run(['tc','qdisc','replace','dev','eth0','root','netem', {', '.join(repr(a) for a in netem_args)}], check=False)\n"
-                    )
-                    code += (
+                    code = (
+                        "from pyroute2 import IPRoute, netns, NSPopen\n"
+                        "ns='sn'\n"
+                        "netns.create(ns)\n"
+                        "ipr=IPRoute()\n"
+                        "ipr.bind(netns=ns)\n"
+                        "idx=ipr.link_lookup(ifname='eth0')[0]\n"
+                        "ipr.link('set', index=idx, state='up')\n"
+                        f"ipr.tc('add','root',idx,'netem',"
+                        f"delay='{latency}ms{' '+str(jitter)+'ms' if env_input.get('NETWORK_JITTER_MS') else ''}',"
+                        f"loss={float(loss) if loss else 0},"
+                        f"duplicate={float(dup) if dup else 0})\n"
                         "try:\n"
-                        + textwrap.indent(snip, "    ")
-                        + "\nfinally:\n    subprocess.run(['tc','qdisc','del','dev','eth0','root','netem'], check=False)\n"
+                    )
+                    code += textwrap.indent(snip, "    ")
+                    code += (
+                        "\nfinally:\n"
+                        "    ipr.tc('del','root',idx,'netem')\n"
+                        "    ipr.close()\n"
+                        "    netns.remove(ns)\n"
                     )
                     metrics = _execute_in_container(
                         code,
                         env_input,
-                        network_disabled={
-                            "network" in modes or "network_partition" in modes
-                        },
+                        network_disabled={"network" in modes or "network_partition" in modes},
                     )
+                    metrics.update(netem_metrics)
                     return {
                         "stdout": "",
                         "stderr": "",
                         "exit_code": int(metrics.get("exit_code", 0)),
+                        **netem_metrics,
                     }
                 except Exception as exc:
-                    logger.warning("tc missing and docker netem failed: %s", exc)
+                    logger.warning("pyroute2 docker netem failed: %s", exc)
 
             rlimit_ok = _rlimits_supported()
 
@@ -923,13 +969,24 @@ async def _section_worker(
                     logger.warning("failed to set memory limit: %s", exc)
 
             def _run_psutil() -> Dict[str, Any]:
-                proc = subprocess.Popen(
-                    ["python", str(path)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    env=env,
-                )
+                args = ["python", str(path)]
+                if _use_netem and NSPopen is not None and _ns_name is not None:
+                    proc = NSPopen(
+                        _ns_name,
+                        args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    )
+                else:
+                    proc = subprocess.Popen(
+                        args,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env,
+                    )
                 p = psutil.Process(proc.pid) if psutil else None
                 net_start = psutil.net_io_counters() if psutil else None
                 cpu_lim = (
@@ -1033,9 +1090,12 @@ async def _section_worker(
                         "disk_io": 0.0,
                         "net_io": 0.0,
                         "gpu_usage": 0.0,
+                        **netem_metrics,
                     }
                 if psutil is not None:
-                    return _run_psutil()
+                    out = _run_psutil()
+                    out.update(netem_metrics)
+                    return out
                 metrics = _execute_in_container(
                     snip,
                     env_input,
@@ -1052,6 +1112,7 @@ async def _section_worker(
                     "disk_io": float(metrics.get("disk_io", 0.0)),
                     "net_io": float(metrics.get("net_io", 0.0)),
                     "gpu_usage": float(metrics.get("gpu_usage", 0.0)),
+                    **netem_metrics,
                 }
             except subprocess.TimeoutExpired as exc:
                 return {
@@ -1063,10 +1124,18 @@ async def _section_worker(
                 return {"stdout": "", "stderr": str(exc), "exit_code": -1}
             finally:
                 if _use_netem:
-                    subprocess.run(
-                        ["tc", "qdisc", "del", "dev", "lo", "root", "netem"],
-                        check=False,
-                    )
+                    try:
+                        if _ipr is not None:
+                            idx = _ipr.link_lookup(ifname="lo")[0]
+                            _ipr.tc("del", "root", idx, "netem")
+                            _ipr.close()
+                        if _ns_name is not None:
+                            netns.remove(_ns_name)
+                    except Exception:
+                        subprocess.run(
+                            ["tc", "qdisc", "del", "dev", "lo", "root", "netem"],
+                            check=False,
+                        )
 
     async def _run() -> Dict[str, Any]:
         return await asyncio.to_thread(_run_snippet)
@@ -1111,6 +1180,10 @@ async def _section_worker(
             "disk_io": float(result.get("disk_io", 0.0)),
             "net_io": float(result.get("net_io", 0.0)),
             "gpu_usage": float(result.get("gpu_usage", 0.0)),
+            "netem_latency_ms": float(result.get("netem_latency_ms", 0.0)),
+            "netem_jitter_ms": float(result.get("netem_jitter_ms", 0.0)),
+            "netem_packet_loss": float(result.get("netem_packet_loss", 0.0)),
+            "netem_packet_duplication": float(result.get("netem_packet_duplication", 0.0)),
         }
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
