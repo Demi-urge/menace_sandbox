@@ -91,20 +91,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             buf = io.StringIO()
             xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
             xml_tmp.close()
+            percent = 0.0
             try:
-                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for paths in path_sets for p in paths])
+                cov.xml_report(
+                    outfile=xml_tmp.name,
+                    include=[str(p) for paths in path_sets for p in paths],
+                )
+                percent = cov.report(
+                    include=[str(p) for paths in path_sets for p in paths],
+                    file=buf,
+                )
             except Exception:
-                pass
-            try:
-                percent = cov.report(include=[str(p) for paths in path_sets for p in paths], file=buf)
-            except Exception:
-                percent = 0.0
+                self.logger.exception("coverage generation failed")
             finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
                 try:
                     os.unlink(xml_tmp.name)
                 except Exception:
-                    pass
+                    self.logger.exception("coverage cleanup failed")
             return float(percent or 0.0)
 
         # Support a list of paths treated as individual test sets
