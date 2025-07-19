@@ -92,9 +92,19 @@ def test_workflow_sim(monkeypatch, tmp_path):
     jinja_mod.Template = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
 
-    import menace.task_handoff_bot as thb
+    from pathlib import Path as _P
+    import importlib.util
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
-    wf_db.add(thb.WorkflowRecord(workflow=["a"], title="t"))
+    wf_db.add(thb.WorkflowRecord(workflow=["simple_functions:print_ten"], title="t"))
 
     import sandbox_runner
 
@@ -140,9 +150,20 @@ def test_workflow_sim_multi_env(monkeypatch, tmp_path):
     jinja_mod.Template = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
 
-    import menace.task_handoff_bot as thb
+    from pathlib import Path as _P
+    import importlib.util
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
-    wf_db.add(thb.WorkflowRecord(workflow=["a"], title="t"))
+    wf_db.add(thb.WorkflowRecord(workflow=["simple_functions:print_ten"], title="t"))
 
     import sandbox_runner
 
@@ -181,10 +202,21 @@ def test_workflow_sim_combined(monkeypatch, tmp_path):
     jinja_mod.Template = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
 
-    import menace.task_handoff_bot as thb
+    from pathlib import Path as _P
+    import importlib.util
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
-    wf_db.add(thb.WorkflowRecord(workflow=["a"], title="t1"))
-    wf_db.add(thb.WorkflowRecord(workflow=["b"], title="t2"))
+    wf_db.add(thb.WorkflowRecord(workflow=["simple_functions:print_ten"], title="t1"))
+    wf_db.add(thb.WorkflowRecord(workflow=["simple_functions:print_eleven"], title="t2"))
 
     import sandbox_runner
 
@@ -198,4 +230,65 @@ def test_workflow_sim_combined(monkeypatch, tmp_path):
     )
 
     assert any("all_workflows" in (c or []) for c in tracker.calls)
+
+
+def test_workflow_function_execution(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    import types, sys, importlib.util
+    from pathlib import Path as _P
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+
+    _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", PatchHistoryDB=DummyBot, CodeDB=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+    jinja_mod = types.ModuleType("jinja2")
+    jinja_mod.Template = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
+
+    step_mod = tmp_path / "wf_steps.py"
+    step_mod.write_text(
+        "import os\n"
+        "def mark():\n"
+        "    p=os.path.join(os.environ['WORKFLOW_FLAG_DIR'],'flag');\n"
+        "    open(p,'w').write('x')\n"
+        "    return True\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
+    wf_db = thb.WorkflowDB(tmp_path / "wf.db")
+    wf_db.add(thb.WorkflowRecord(workflow=["wf_steps:mark"], title="t"))
+
+    import sandbox_runner
+
+    def fake_sim(code_str, stub=None):
+        return {"risk_flags_triggered": []}
+
+    monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", fake_sim)
+
+    tracker = sandbox_runner.run_workflow_simulations(
+        workflows_db=str(tmp_path / "wf.db"),
+        env_presets=[{"WORKFLOW_FLAG_DIR": str(tmp_path), "PYTHONPATH": str(tmp_path)}],
+    )
+
+    assert (tmp_path / "flag").exists()
 

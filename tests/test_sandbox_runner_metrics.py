@@ -194,6 +194,7 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
 
     import sandbox_runner
+    monkeypatch.setattr(sandbox_runner, "scan_repo_sections", lambda p: {"m.py": {"sec": ["pass"]}}, raising=False)
 
     code = "def a():\n    pass\n\ndef b():\n    pass\n"
     (tmp_path / "m.py").write_text(code)
@@ -204,7 +205,8 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
         calls.append((code_str, stub))
         return {"risk_flags_triggered": ["x"]}
 
-    monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", fake_sim)
+    import sandbox_runner.environment as env
+    monkeypatch.setattr(env, "simulate_execution_environment", fake_sim)
 
     tracker = sandbox_runner.run_repo_section_simulations(
         str(tmp_path), input_stubs=[{"k": 1}], env_presets=[{"env": "prod"}]
@@ -1083,9 +1085,20 @@ def test_workflow_sim_synergy_metrics(monkeypatch, tmp_path):
     jinja_mod.Template = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, "jinja2", jinja_mod)
 
-    import menace.task_handoff_bot as thb
+    from pathlib import Path as _P
+    import importlib.util
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot", ROOT / "task_handoff_bot.py", submodule_search_locations=[str(ROOT)]
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
     wf_db = thb.WorkflowDB(tmp_path / "wf.db")
-    wf_db.add(thb.WorkflowRecord(workflow=["a"], title="t"))
+    wf_db.add(thb.WorkflowRecord(workflow=["simple_functions:print_ten"], title="t"))
 
     import sandbox_runner
     import sandbox_runner.environment as env
