@@ -134,18 +134,36 @@ def _diminishing_modules(
     flagged: set[str],
     threshold: float,
     consecutive: int = 3,
+    std_threshold: float = 1e-3,
 ) -> list[str]:
-    """Return modules with ROI deltas below ``threshold``."""
+    """Return modules with ROI deltas that consistently fall within ``threshold``.
+
+    The last ``consecutive`` deltas are evaluated using an exponential moving
+    average and variance. A module is flagged when the EMA magnitude is below the
+    given ``threshold`` and the exponentially weighted standard deviation is less
+    than ``std_threshold``.
+    """
+
     flags: list[str] = []
     thr = float(threshold)
     for mod, vals in history.items():
-        if mod in flagged:
+        if mod in flagged or len(vals) < consecutive:
             continue
-        if len(vals) >= consecutive and all(abs(v) <= thr for v in vals[-consecutive:]):
+
+        window = vals[-consecutive:]
+        alpha = 2.0 / (len(window) + 1)
+        ema = window[0]
+        ema_sq = window[0] ** 2
+        for v in window[1:]:
+            ema = alpha * v + (1 - alpha) * ema
+            ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
+        var = ema_sq - ema ** 2
+        if var < 0:
+            var = 0.0
+        std = var ** 0.5
+        if abs(ema) <= thr and std <= std_threshold:
             flags.append(mod)
-            continue
-        if len(vals) >= 3 and (vals[-1] <= thr or abs(vals[-1]) < abs(vals[0]) * 0.1):
-            flags.append(mod)
+
     return flags
 
 
