@@ -15,7 +15,7 @@ from datetime import datetime
 import json
 import io
 import math
-from statistics import pstdev
+from statistics import pstdev, fmean
 from coverage import Coverage
 
 from .automated_debugger import AutomatedDebugger
@@ -44,7 +44,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         *,
         score_threshold: float = 0.5,
-        score_weights: tuple[float, float, float] | None = None,
+        score_weights: tuple[float, float, float, float] | None = None,
         flakiness_runs: int = 5,
     ) -> None:
         super().__init__(telemetry_db, engine)
@@ -53,9 +53,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.state_getter = state_getter
         self._bad_hashes: set[str] = set()
         self.score_threshold = score_threshold
-        self.score_weights = score_weights or (1.0, 1.0, 1.0)
+        self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0)
         self.flakiness_runs = max(1, int(flakiness_runs))
         self._score_db: PatchHistoryDB | None = None
+        self._metric_stats: dict[str, tuple[float, float]] = {
+            "coverage": (0.0, 1.0),
+            "error": (0.0, 1.0),
+            "roi": (0.0, 1.0),
+            "complexity": (0.0, 1.0),
+        }
 
     # ------------------------------------------------------------------
     def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
@@ -185,11 +191,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     # ------------------------------------------------------------------
     def _update_score_weights(
-        self, patch_db: PatchHistoryDB | None = None, limit: int = 10
+        self, patch_db: PatchHistoryDB | None = None, limit: int = 50
     ) -> None:
-        """Adjust ``score_weights`` using recent patch metrics."""
+        """Adjust ``score_weights`` using recent patch metrics and update rolling statistics."""
 
-        records: list[tuple[float, float, float]] = []
+        records: list[tuple[float, float, float, float]] = []
 
         if patch_db:
             try:
@@ -201,6 +207,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             0.0,
                             float(rec.errors_before - rec.errors_after),
                             float(rec.roi_delta),
+                            float(rec.complexity_delta),
                         )
                     )
             except Exception:
@@ -226,6 +233,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             float(rec.get("coverage_delta") or 0.0),
                             float(rec.get("error_delta") or 0.0),
                             float(rec.get("roi_delta") or 0.0),
+                            float(rec.get("complexity") or rec.get("complexity_delta") or 0.0),
                         )
                     )
             except Exception:
@@ -234,16 +242,34 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if not records:
             return
 
-        avg_cov = sum(abs(r[0]) for r in records) / len(records)
-        avg_err = sum(abs(r[1]) for r in records) / len(records)
-        avg_roi = sum(abs(r[2]) for r in records) / len(records)
-        total = avg_cov + avg_err + avg_roi
+        cov = [r[0] for r in records][-limit:]
+        err = [r[1] for r in records][-limit:]
+        roi = [r[2] for r in records][-limit:]
+        comp = [r[3] for r in records][-limit:]
+
+        means = {
+            "coverage": fmean(abs(v) for v in cov) if cov else 0.0,
+            "error": fmean(abs(v) for v in err) if err else 0.0,
+            "roi": fmean(abs(v) for v in roi) if roi else 0.0,
+            "complexity": fmean(abs(v) for v in comp) if comp else 0.0,
+        }
+        stds = {
+            "coverage": pstdev(cov) if len(cov) > 1 else 0.0,
+            "error": pstdev(err) if len(err) > 1 else 0.0,
+            "roi": pstdev(roi) if len(roi) > 1 else 0.0,
+            "complexity": pstdev(comp) if len(comp) > 1 else 0.0,
+        }
+        self._metric_stats = {k: (means[k], stds[k]) for k in means}
+
+        weights = [
+            means["coverage"] / (stds["coverage"] + 1e-6),
+            means["error"] / (stds["error"] + 1e-6),
+            means["roi"] / (stds["roi"] + 1e-6),
+            means["complexity"] / (stds["complexity"] + 1e-6),
+        ]
+        total = sum(weights)
         if total > 0:
-            self.score_weights = (
-                avg_cov / total * 3.0,
-                avg_err / total * 3.0,
-                avg_roi / total * 3.0,
-            )
+            self.score_weights = tuple(w / total * 4.0 for w in weights)
 
     # ------------------------------------------------------------------
     def _composite_score(
@@ -257,13 +283,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> float:
         """Return a composite score from multiple metrics."""
         self._update_score_weights(self._score_db)
+        mc = {k: s for k, s in self._metric_stats.items()}
+        cov = coverage_delta / (mc.get("coverage", (0.0, 1.0))[1] + 1e-6)
+        err = error_delta / (mc.get("error", (0.0, 1.0))[1] + 1e-6)
+        roi = roi_delta / (mc.get("roi", (0.0, 1.0))[1] + 1e-6)
+        comp = complexity / (mc.get("complexity", (0.0, 1.0))[1] + 1e-6)
         x = (
-            self.score_weights[0] * coverage_delta
-            + self.score_weights[1] * error_delta
-            + self.score_weights[2] * roi_delta
+            self.score_weights[0] * cov
+            + self.score_weights[1] * err
+            + self.score_weights[2] * roi
+            - self.score_weights[3] * comp
             - flakiness
             - runtime_delta
-            - complexity
         )
         try:
             return 1.0 / (1.0 + math.exp(-x))

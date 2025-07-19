@@ -68,3 +68,10 @@ def test_bad_patch_rolled_back(monkeypatch, tmp_path):
     assert recs[-1]["result"] == "reverted"
     assert "score" in recs[-1]
     assert recs[-1]["score"] < 0.5
+
+
+def test_composite_score_prefers_better(monkeypatch):
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    score_low = dbg._composite_score(0.05, 0.0, 0.1, 0.0, 0.0, 1.0)
+    score_high = dbg._composite_score(0.2, 0.2, 0.3, 0.0, 0.0, 0.1)
+    assert score_high > score_low
