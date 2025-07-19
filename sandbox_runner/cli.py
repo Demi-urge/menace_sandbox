@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, List
 import tempfile
 import shutil
+import math
 from threading import Thread
 
 from menace.metrics_dashboard import MetricsDashboard
@@ -149,7 +150,9 @@ def _diminishing_modules(
     threshold: float,
     consecutive: int = 3,
     std_threshold: float = 1e-3,
-) -> list[str]:
+    *,
+    confidence: float = 0.95,
+) -> tuple[list[str], dict[str, float]]:
     """Return modules with ROI deltas that consistently fall within ``threshold``.
 
     The last ``consecutive`` deltas are evaluated using an exponential moving
@@ -159,6 +162,7 @@ def _diminishing_modules(
     """
 
     flags: list[str] = []
+    confidences: dict[str, float] = {}
     thr = float(threshold)
     for mod, vals in history.items():
         if mod in flagged or len(vals) < consecutive:
@@ -166,10 +170,16 @@ def _diminishing_modules(
 
         window = vals[-consecutive:]
         ema, std = _ema(window)
-        if abs(ema) <= thr and std <= std_threshold:
+        if std == 0:
+            conf = 1.0 if abs(ema) <= thr else 0.0
+        else:
+            z = abs(ema) / (std / math.sqrt(len(window)))
+            conf = math.erfc(z / math.sqrt(2))
+        if abs(ema) <= thr and std <= std_threshold and conf >= confidence:
             flags.append(mod)
+            confidences[mod] = conf
 
-    return flags
+    return flags, confidences
 
 
 def _synergy_converged(
@@ -177,21 +187,30 @@ def _synergy_converged(
     window: int,
     threshold: float,
     std_threshold: float = 1e-3,
-) -> tuple[bool, float]:
-    """Return whether synergy metrics have converged using EMA."""
+    *,
+    confidence: float = 0.95,
+) -> tuple[bool, float, float]:
+    """Return whether synergy metrics have converged using EMA and z-score."""
     if len(history) < window:
-        return False, 0.0
+        return False, 0.0, 0.0
     metrics: dict[str, list[float]] = {}
     for entry in history[-window:]:
         for k, v in entry.items():
             metrics.setdefault(k, []).append(float(v))
     max_abs = 0.0
+    min_conf = 1.0
     for vals in metrics.values():
         ema, std = _ema(vals)
         max_abs = max(max_abs, abs(ema))
-        if abs(ema) > threshold or std > std_threshold:
-            return False, max_abs
-    return True, max_abs
+        if std == 0:
+            conf = 1.0 if abs(ema) <= threshold else 0.0
+        else:
+            z = abs(ema) / (std / math.sqrt(len(vals)))
+            conf = math.erfc(z / math.sqrt(2))
+        min_conf = min(min_conf, conf)
+        if abs(ema) > threshold or std > std_threshold or conf < confidence:
+            return False, max_abs, min_conf
+    return True, max_abs, min_conf
 
 
 def full_autonomous_run(args: argparse.Namespace) -> None:
@@ -218,6 +237,20 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             synergy_threshold = float(env_val)
         except Exception:
             synergy_threshold = None
+    roi_confidence = getattr(args, "roi_confidence", None)
+    env_val = os.getenv("ROI_CONFIDENCE")
+    if roi_confidence is None and env_val is not None:
+        try:
+            roi_confidence = float(env_val)
+        except Exception:
+            roi_confidence = None
+    synergy_confidence = getattr(args, "synergy_confidence", None)
+    env_val = os.getenv("SYNERGY_CONFIDENCE")
+    if synergy_confidence is None and env_val is not None:
+        try:
+            synergy_confidence = float(env_val)
+        except Exception:
+            synergy_confidence = None
     last_tracker = None
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
@@ -253,18 +286,25 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
         if last_tracker:
             if roi_threshold is None:
                 roi_threshold = last_tracker.diminishing()
-            new_flags = _diminishing_modules(
-                module_history, flagged, roi_threshold, consecutive=roi_cycles
+            new_flags, _ = _diminishing_modules(
+                module_history,
+                flagged,
+                roi_threshold,
+                consecutive=roi_cycles,
+                confidence=roi_confidence or 0.95,
             )
             flagged.update(new_flags)
         if last_tracker and synergy_threshold is None:
             synergy_threshold = last_tracker.diminishing()
         if synergy_threshold is not None:
-            converged, ema_val = _synergy_converged(
-                synergy_history, synergy_cycles, synergy_threshold
+            converged, ema_val, _ = _synergy_converged(
+                synergy_history,
+                synergy_cycles,
+                synergy_threshold,
+                confidence=synergy_confidence or 0.95,
             )
         else:
-            converged, ema_val = False, 0.0
+            converged, ema_val, _ = False, 0.0, 0.0
         if module_history and set(module_history) <= flagged and converged:
             logger.info(
                 "synergy convergence reached",
@@ -368,6 +408,11 @@ def main(argv: List[str] | None = None) -> None:
         help="override ROI delta threshold",
     )
     p_autorun.add_argument(
+        "--roi-confidence",
+        type=float,
+        help="confidence level for ROI convergence",
+    )
+    p_autorun.add_argument(
         "--synergy-cycles",
         type=int,
         default=3,
@@ -377,6 +422,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    p_autorun.add_argument(
+        "--synergy-confidence",
+        type=float,
+        help="confidence level for synergy convergence",
     )
 
     p_complete = sub.add_parser(
@@ -406,6 +456,11 @@ def main(argv: List[str] | None = None) -> None:
         help="override ROI delta threshold",
     )
     p_complete.add_argument(
+        "--roi-confidence",
+        type=float,
+        help="confidence level for ROI convergence",
+    )
+    p_complete.add_argument(
         "--synergy-cycles",
         type=int,
         default=3,
@@ -415,6 +470,11 @@ def main(argv: List[str] | None = None) -> None:
         "--synergy-threshold",
         type=float,
         help="override synergy threshold",
+    )
+    p_complete.add_argument(
+        "--synergy-confidence",
+        type=float,
+        help="confidence level for synergy convergence",
     )
 
     args = parser.parse_args(argv)

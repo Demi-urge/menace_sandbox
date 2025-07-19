@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from typing import Dict, List
+import math
 
 from menace.environment_generator import generate_presets
 from sandbox_runner.cli import _run_sandbox
@@ -41,17 +42,26 @@ def _diminishing_modules(
     threshold: float,
     consecutive: int = 3,
     std_threshold: float = 1e-3,
-) -> List[str]:
+    *,
+    confidence: float = 0.95,
+) -> tuple[List[str], Dict[str, float]]:
     flags: List[str] = []
+    confidences: Dict[str, float] = {}
     thr = float(threshold)
     for mod, vals in history.items():
         if mod in flagged or len(vals) < consecutive:
             continue
         window = vals[-consecutive:]
         ema, std = _ema(window)
-        if abs(ema) <= thr and std <= std_threshold:
+        if std == 0:
+            conf = 1.0 if abs(ema) <= thr else 0.0
+        else:
+            z = abs(ema) / (std / math.sqrt(len(window)))
+            conf = math.erfc(z / math.sqrt(2))
+        if abs(ema) <= thr and std <= std_threshold and conf >= confidence:
             flags.append(mod)
-    return flags
+            confidences[mod] = conf
+    return flags, confidences
 
 
 def main() -> None:
@@ -106,7 +116,9 @@ def main() -> None:
             for mod, vals in tracker.module_deltas.items():
                 module_history.setdefault(mod, []).extend(vals)
         if last_tracker:
-            new_flags = _diminishing_modules(module_history, flagged, last_tracker.diminishing())
+            new_flags, _ = _diminishing_modules(
+                module_history, flagged, last_tracker.diminishing()
+            )
             flagged.update(new_flags)
         if module_history and set(module_history) <= flagged:
             break
