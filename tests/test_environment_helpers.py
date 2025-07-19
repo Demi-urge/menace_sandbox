@@ -219,3 +219,60 @@ def test_generate_input_stubs_history_db_empty(monkeypatch, tmp_path):
     stubs = env.generate_input_stubs(1, target=target)
     assert stubs == [{"z": 0}]
 
+
+def test_generate_input_stubs_history_mean(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    db_path = tmp_path / "hist.db"
+    from sandbox_runner.input_history_db import InputHistoryDB
+
+    db = InputHistoryDB(db_path)
+    db.add({"level": 1})
+    db.add({"level": 3})
+
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "history")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
+    import importlib
+    importlib.reload(env)
+
+    stubs = env.generate_input_stubs(1)
+    assert stubs == [{"level": 2}]
+
+
+def test_generate_input_stubs_history_common(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    db_path = tmp_path / "hist.db"
+    from sandbox_runner.input_history_db import InputHistoryDB
+
+    db = InputHistoryDB(db_path)
+    db.add({"mode": "x"})
+    db.add({"mode": "y"})
+    db.add({"mode": "x"})
+
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "history")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
+    import importlib
+    importlib.reload(env)
+
+    stubs = env.generate_input_stubs(1)
+    assert stubs == [{"mode": "x"}]
+
+
+def test_generate_input_stubs_history_fallback(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    db_path = tmp_path / "hist.db"
+    from sandbox_runner.input_history_db import InputHistoryDB
+
+    db = InputHistoryDB(db_path)
+    db.add({"a": 10})
+
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "templates")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", str(tmp_path / "none.json"))
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
+    import importlib
+    importlib.reload(env)
+
+    stubs = env.generate_input_stubs(1)
+    assert stubs == [{"a": 10}]
+

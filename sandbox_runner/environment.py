@@ -1447,6 +1447,8 @@ def generate_input_stubs(
 
     history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
     strat = strategy or os.getenv("SANDBOX_STUB_STRATEGY", "templates")
+    templates: List[Dict[str, Any]] | None = None
+
     if history:
         stubs = [dict(random.choice(history)) for _ in range(num)]
     else:
@@ -1475,6 +1477,14 @@ def generate_input_stubs(
                 except Exception:
                     conf = {}
                 stubs = _random_strategy(num, conf) or [{}]
+
+    if strat == "history" or (templates is not None and not templates):
+        try:
+            from . import generative_stub_provider as gsp  # local import
+
+            stubs = gsp.generate_stubs(stubs, {"strategy": "history", "target": target})
+        except Exception:
+            logger.exception("history stub generation failed")
 
     for prov in providers:
         try:

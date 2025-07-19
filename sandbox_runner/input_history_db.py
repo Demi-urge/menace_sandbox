@@ -65,5 +65,23 @@ class InputHistoryDB:
                 continue
         return samples
 
+    def recent(self, limit: int = 10) -> List[dict[str, Any]]:
+        """Return up to ``limit`` most recent records."""
+        with self._lock:
+            with sqlite3.connect(self.path) as conn:
+                rows = conn.execute(
+                    "SELECT data FROM history ORDER BY id DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+        records: List[dict[str, Any]] = []
+        for r in rows:
+            try:
+                obj = json.loads(r[0])
+                if isinstance(obj, dict):
+                    records.append(obj)
+            except Exception:
+                continue
+        return records
+
 
 __all__ = ["InputHistoryDB", "InputRecord"]
