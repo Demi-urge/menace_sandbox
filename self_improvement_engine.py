@@ -22,6 +22,8 @@ from .self_coding_engine import SelfCodingEngine
 from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
 from .self_improvement_policy import SelfImprovementPolicy
+from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
+from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 
 
 class SelfImprovementEngine:
@@ -48,6 +50,10 @@ class SelfImprovementEngine:
         optimize_self: bool = False,
         meta_logger: object | None = None,
         module_index: "ModuleIndexDB" | None = None,
+        pre_roi_bot: PreExecutionROIBot | None = None,
+        pre_roi_scale: float | None = None,
+        pre_roi_bias: float | None = None,
+        pre_roi_cap: float | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -71,6 +77,10 @@ class SelfImprovementEngine:
         self.policy = policy
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
+        self.pre_roi_bot = pre_roi_bot
+        self.pre_roi_scale = pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
+        self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
+        self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         from .module_index_db import ModuleIndexDB
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
@@ -224,6 +234,13 @@ class SelfImprovementEngine:
                     return True
             except Exception as exc:
                 self.logger.exception("policy scoring failed: %s", exc)
+        if self.pre_roi_bot:
+            try:
+                forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
+                if forecast.roi > self.pre_roi_bias:
+                    return True
+            except Exception as exc:
+                self.logger.exception("pre ROI forecast failed: %s", exc)
         issues = self.diagnostics.diagnose()
         return bool(issues)
 
@@ -377,6 +394,20 @@ class SelfImprovementEngine:
                     self.logger.info("policy adjusted energy", extra={"value": energy})
                 except Exception as exc:
                     self.logger.exception("policy energy adjustment failed: %s", exc)
+            if self.pre_roi_bot:
+                try:
+                    forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
+                    roi_pred = float(getattr(forecast, "roi", 0.0))
+                    scale = 1 + max(0.0, roi_pred + self.pre_roi_bias) * self.pre_roi_scale
+                    if self.pre_roi_cap:
+                        scale = min(scale, self.pre_roi_cap)
+                    energy = max(1, int(round(energy * scale)))
+                    self.logger.info(
+                        "pre_roi adjusted energy",
+                        extra={"value": energy, "roi_prediction": roi_pred},
+                    )
+                except Exception as exc:
+                    self.logger.exception("pre ROI energy adjustment failed: %s", exc)
             model_id = bootstrap()
             self.logger.info("model bootstrapped", extra={"model_id": model_id})
             self.info_db.set_current_model(model_id)

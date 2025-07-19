@@ -97,6 +97,11 @@ LOCAL_PROVIDER_LOG_BACKUP_COUNT = int(
 # Optional Terraform configuration directory for DeploymentBot
 TERRAFORM_DIR = os.getenv("TERRAFORM_DIR")
 
+# Tuning for PreExecutionROIBot energy scaling
+PRE_ROI_SCALE = float(os.getenv("PRE_ROI_SCALE", "1.0"))
+PRE_ROI_BIAS = float(os.getenv("PRE_ROI_BIAS", "0.0"))
+PRE_ROI_CAP = float(os.getenv("PRE_ROI_CAP", "5.0"))
+
 
 def validate_production_config() -> None:
     """Ensure mandatory variables are set when running in production."""

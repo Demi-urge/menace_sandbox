@@ -1,5 +1,14 @@
+import os
+import importlib.util
+import sys
 import pytest
 import asyncio
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+spec = importlib.util.spec_from_file_location("menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py"))
+menace = importlib.util.module_from_spec(spec)
+sys.modules.setdefault("menace", menace)
+spec.loader.exec_module(menace)
 
 pytest.importorskip("pandas")
 
@@ -189,4 +198,57 @@ def test_policy_state_with_patch_metrics(tmp_path):
 
     state = engine._policy_state()
     assert len(state) == 15
+
+
+def test_pre_roi_energy_scaling(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def __init__(self) -> None:
+            self.energy = None
+
+        def run(self, model: str, energy: int = 1):
+            self.energy = energy
+            return mp.AutomationResult(package=None, roi=None)
+
+    class DummyCapitalBot:
+        def energy_score(self, **_: object) -> float:
+            return 0.4
+
+    class HighROIBot:
+        def predict_model_roi(self, *_: object) -> prb.ROIResult:
+            return prb.ROIResult(0.0, 0.0, 0.0, 1.0, 0.0)
+
+    class LowROIBot:
+        def predict_model_roi(self, *_: object) -> prb.ROIResult:
+            return prb.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0)
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    pipe_high = StubPipeline()
+    eng_high = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pipe_high,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+        pre_roi_bot=HighROIBot(),
+    )
+    eng_high.run_cycle()
+
+    pipe_low = StubPipeline()
+    eng_low = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pipe_low,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+        pre_roi_bot=LowROIBot(),
+    )
+    eng_low.run_cycle()
+
+    assert pipe_high.energy > pipe_low.energy
 
