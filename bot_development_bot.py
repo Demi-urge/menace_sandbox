@@ -807,16 +807,26 @@ class BotDevelopmentBot:
         """Refresh visual agent token using configured command."""
         if not self.token_refresh_cmd:
             return False
-        try:
-            new_token = subprocess.check_output(
-                self.token_refresh_cmd, shell=True, text=True
-            ).strip()
-            if new_token:
-                self.visual_token = new_token
+        for attempt in range(3):
+            proc = subprocess.run(
+                self.token_refresh_cmd,
+                shell=True,
+                text=True,
+                capture_output=True,
+            )
+            output = (proc.stdout + proc.stderr).strip()
+            if proc.returncode == 0 and proc.stdout.strip():
+                self.visual_token = proc.stdout.strip()
                 return True
-        except Exception as exc:
-            self.logger.warning("token refresh failed: %s", exc)
-            self._escalate(f"visual token refresh failed: {exc}")
+            self.logger.warning(
+                "token refresh attempt %s failed: %s",
+                attempt + 1,
+                output,
+            )
+            if attempt < 2:
+                time.sleep(1.0)
+            else:
+                self._escalate(f"visual token refresh failed: {output}")
         return False
 
     def _call_codex_api(

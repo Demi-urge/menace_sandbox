@@ -3,6 +3,7 @@ import os
 import importlib.util
 import importlib
 import sys
+import types
 from types import ModuleType
 from pathlib import Path
 import logging
@@ -67,7 +68,9 @@ def test_parse_plan_yaml():
 
 
 def test_build_from_plan(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    cfg = cfg_mod.BotDevConfig()
+    cfg.visual_token_refresh_cmd = "cmd"
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
     files = bot.build_from_plan(_json())
     assert (tmp_path / "sample_bot" / "sample_bot.py") in files
     assert (tmp_path / "sample_bot" / "sample_bot.py").exists()
@@ -85,7 +88,9 @@ def test_config_override(monkeypatch, tmp_path):
 
 
 def test_build_prompt_with_docs(tmp_path):
-    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    cfg = cfg_mod.BotDevConfig()
+    cfg.visual_token_refresh_cmd = "cmd"
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
     spec = bdb.BotSpec(
         name="doc_bot",
         purpose="demo",
@@ -183,3 +188,36 @@ def test_build_from_plan_honours_concurrency(tmp_path, monkeypatch):
     paths = bot.build_from_plan(plan)
     assert (tmp_path / "sample_bot" / "sample_bot.py") in paths
     assert calls.get("workers") == 2
+
+
+def test_token_refresh_failure(monkeypatch, caplog, tmp_path):
+    calls: list[int] = []
+
+    def fake_run(cmd, shell=True, text=True, capture_output=True):
+        calls.append(1)
+        return types.SimpleNamespace(returncode=1, stdout="out", stderr="err")
+
+    monkeypatch.setattr(bdb.subprocess, "run", fake_run)
+    monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
+    caplog.set_level("WARNING")
+    cfg = cfg_mod.BotDevConfig()
+    cfg.visual_token_refresh_cmd = "cmd"
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    assert not bot._refresh_token()
+    assert len(calls) == 3
+    assert "out" in caplog.text or "err" in caplog.text
+
+
+def test_token_refresh_retry_success(monkeypatch, tmp_path):
+    results = [
+        types.SimpleNamespace(returncode=1, stdout="", stderr="bad"),
+        types.SimpleNamespace(returncode=0, stdout="NEW", stderr=""),
+    ]
+
+    monkeypatch.setattr(bdb.subprocess, "run", lambda *a, **k: results.pop(0))
+    monkeypatch.setattr(bdb.time, "sleep", lambda *a: None)
+    cfg = cfg_mod.BotDevConfig()
+    cfg.visual_token_refresh_cmd = "cmd"
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
+    assert bot._refresh_token()
+    assert bot.visual_token == "NEW"

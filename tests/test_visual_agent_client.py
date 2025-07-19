@@ -121,3 +121,37 @@ def test_sequential_asks_succeed(monkeypatch):
     assert resp1["choices"][0]["message"]["content"] == "ok"
     assert resp2["choices"][0]["message"]["content"] == "ok"
 
+
+def test_token_refresh_retry(monkeypatch, caplog):
+    vac_mod = _reload_client(monkeypatch)
+    calls: list[int] = []
+
+    def fake_run(cmd, shell=True, text=True, capture_output=True):
+        calls.append(1)
+        if len(calls) < 2:
+            return types.SimpleNamespace(returncode=1, stdout="bad", stderr="err")
+        return types.SimpleNamespace(returncode=0, stdout="NEW", stderr="")
+
+    monkeypatch.setattr(vac_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(vac_mod.time, "sleep", lambda *a: None)
+    caplog.set_level("WARNING")
+    client = vac_mod.VisualAgentClient(urls=["http://x"], token_refresh_cmd="cmd")
+    assert client._refresh_token()
+    assert client.token == "NEW"
+    assert len(calls) == 2
+    assert "bad" in caplog.text or "err" in caplog.text
+
+
+def test_token_refresh_failure(monkeypatch, caplog):
+    vac_mod = _reload_client(monkeypatch)
+
+    def fake_run(cmd, shell=True, text=True, capture_output=True):
+        return types.SimpleNamespace(returncode=1, stdout="oops", stderr="fail")
+
+    monkeypatch.setattr(vac_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(vac_mod.time, "sleep", lambda *a: None)
+    caplog.set_level("WARNING")
+    client = vac_mod.VisualAgentClient(urls=["http://x"], token_refresh_cmd="cmd")
+    assert not client._refresh_token()
+    assert "oops" in caplog.text or "fail" in caplog.text
+
