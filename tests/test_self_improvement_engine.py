@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 
 pytest.importorskip("pandas")
 
@@ -65,18 +66,29 @@ def test_schedule_energy_threshold(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_should_trigger", lambda: True)
     calls: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls.append(energy))
-    monkeypatch.setattr(sie.time, "sleep", lambda _: (_ for _ in ()).throw(SystemExit))
+    async def fake_sleep(_: float) -> None:
+        raise SystemExit
+    monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
+
+    async def run():
+        task = engine.schedule()
+        await task
 
     with pytest.raises(SystemExit):
-        engine.schedule()
+        asyncio.run(run())
     assert calls == []
 
     engine.capital_bot = DummyCapitalBot(0.8)
     calls_high: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls_high.append(energy))
+    monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
+
+    async def run_high():
+        task = engine.schedule()
+        await task
 
     with pytest.raises(SystemExit):
-        engine.schedule()
+        asyncio.run(run_high())
     assert calls_high == [int(round(0.8 * 5))]
 
 
@@ -110,10 +122,16 @@ def test_schedule_high_energy_autoruns(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_should_trigger", lambda: False)
     calls: list[int] = []
     monkeypatch.setattr(engine, "run_cycle", lambda energy=1: calls.append(energy))
-    monkeypatch.setattr(sie.time, "sleep", lambda _: (_ for _ in ()).throw(SystemExit))
+    async def fake_sleep(_: float) -> None:
+        raise SystemExit
+    monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
+
+    async def run_task():
+        task = engine.schedule()
+        await task
 
     with pytest.raises(SystemExit):
-        engine.schedule()
+        asyncio.run(run_task())
     assert calls == [int(round(0.9 * 5))]
 
 

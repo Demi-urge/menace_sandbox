@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
 from pathlib import Path
 
 from .self_model_bootstrap import bootstrap
@@ -75,6 +76,8 @@ class SelfImprovementEngine:
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("SelfImprovementEngine")
         self._cycle_running = False
+        self._schedule_task: asyncio.Task | None = None
+        self._stop_event: asyncio.Event | None = None
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -565,9 +568,8 @@ class SelfImprovementEngine:
         finally:
             self._cycle_running = False
 
-    def schedule(self, energy: int = 1) -> None:  # pragma: no cover - loop
-        """Run continuously with periodic checks."""
-        while True:
+    async def _schedule_loop(self, energy: int = 1) -> None:
+        while not self._stop_event.is_set():
             current_energy = energy
             if self.capital_bot:
                 try:
@@ -582,14 +584,35 @@ class SelfImprovementEngine:
                     current_energy = energy
             if current_energy >= self.energy_threshold and not self._cycle_running:
                 try:
-                    self.run_cycle(energy=int(round(current_energy * 5)))
+                    await asyncio.to_thread(
+                        self.run_cycle, energy=int(round(current_energy * 5))
+                    )
                 except Exception as exc:
                     self.logger.exception(
                         "self improvement run_cycle failed with energy %s: %s",
                         int(round(current_energy * 5)),
                         exc,
                     )
-            time.sleep(self.interval)
+            await asyncio.sleep(self.interval)
+
+    def schedule(self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task:
+        """Start the scheduling loop in the background."""
+        if self._schedule_task and not self._schedule_task.done():
+            return self._schedule_task
+        self._stop_event = asyncio.Event()
+        loop = loop or asyncio.get_event_loop()
+        self._schedule_task = loop.create_task(self._schedule_loop(energy))
+        return self._schedule_task
+
+    async def shutdown_schedule(self) -> None:
+        """Stop the scheduler and wait for the task to finish."""
+        if self._schedule_task:
+            assert self._stop_event is not None
+            self._stop_event.set()
+            try:
+                await self._schedule_task
+            finally:
+                self._schedule_task = None
 
 
 from typing import Callable, Optional
@@ -616,6 +639,34 @@ class ImprovementEngineRegistry:
             if eng._should_trigger():
                 results[name] = eng.run_cycle(energy=energy)
         return results
+
+    async def run_all_cycles_async(self, energy: int = 1) -> dict[str, AutomationResult]:
+        """Asynchronously execute ``run_cycle`` on all registered engines."""
+        async def _run(name: str, eng: SelfImprovementEngine):
+            if eng._should_trigger():
+                res = await asyncio.to_thread(eng.run_cycle, energy=energy)
+                return name, res
+            return None
+
+        tasks = [asyncio.create_task(_run(n, e)) for n, e in self.engines.items()]
+        results: dict[str, AutomationResult] = {}
+        for t in tasks:
+            out = await t
+            if out:
+                results[out[0]] = out[1]
+        return results
+
+    def schedule_all(self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None) -> list[asyncio.Task]:
+        """Start schedules for all engines and return the created tasks."""
+        tasks: list[asyncio.Task] = []
+        for eng in self.engines.values():
+            tasks.append(eng.schedule(energy=energy, loop=loop))
+        return tasks
+
+    async def shutdown_all(self) -> None:
+        """Gracefully stop all running schedules."""
+        for eng in self.engines.values():
+            await eng.shutdown_schedule()
 
     def autoscale(
         self,

@@ -3,6 +3,7 @@ import pytest
 pytest.importorskip("pandas")
 
 import menace.self_improvement_engine as sie
+import asyncio
 import menace.diagnostic_manager as dm
 import menace.error_bot as eb
 import menace.data_bot as db
@@ -99,3 +100,30 @@ def test_registry_autoscale(tmp_path, monkeypatch):
         roi_threshold=0.0,
     )
     assert len(reg.engines) == 1
+
+
+def test_concurrent_schedules(tmp_path, monkeypatch):
+    eng1, _ = _make_engine(tmp_path, "e1", monkeypatch)
+    eng2, _ = _make_engine(tmp_path, "e2", monkeypatch)
+
+    monkeypatch.setattr(eng1, "_should_trigger", lambda: True)
+    monkeypatch.setattr(eng2, "_should_trigger", lambda: True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(eng1, "run_cycle", lambda energy=1: calls.append("e1"))
+    monkeypatch.setattr(eng2, "run_cycle", lambda energy=1: calls.append("e2"))
+
+    async def fake_sleep(_: float) -> None:
+        raise SystemExit
+
+    monkeypatch.setattr(sie.asyncio, "sleep", fake_sleep)
+
+    async def run_all():
+        t1 = eng1.schedule()
+        t2 = eng2.schedule()
+        await asyncio.gather(t1, t2)
+
+    with pytest.raises(SystemExit):
+        asyncio.run(run_all())
+
+    assert sorted(calls) == ["e1", "e2"]
