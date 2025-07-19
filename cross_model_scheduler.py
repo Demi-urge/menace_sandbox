@@ -8,6 +8,8 @@ import time
 from importlib import import_module
 from pathlib import Path
 from threading import Event
+import os
+import asyncio
 
 from .cross_model_comparator import CrossModelComparator
 from .neuroplasticity import PathwayDB
@@ -175,6 +177,113 @@ class _SimpleScheduler:
             self.thread.join(timeout=0)
         self._save_state()
 
+
+class _AsyncScheduler:
+    """Asynchronous in-process scheduler."""
+
+    RETRY_DELAY = 5.0
+    MAX_RETRIES = 3
+    MISFIRE_GRACE_TIME = 60.0
+
+    def __init__(self) -> None:
+        self.tasks: list[tuple[float, callable, str]] = []
+        self._next_runs: dict[str, float] = {}
+        self._retry_counts: dict[str, int] = {}
+        self._retry_delays: dict[str, float] = {}
+        self._max_retries: dict[str, int] = {}
+        self._misfire_grace: dict[str, float] = {}
+        self.stop = threading.Event()
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.thread: threading.Thread | None = None
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    # ------------------------------------------------------------------
+    def add_job(
+        self,
+        func: callable,
+        interval: float,
+        id: str,
+        *,
+        retry_delay: float | None = None,
+        max_retries: int | None = None,
+        misfire_grace_time: float | None = None,
+    ) -> None:
+        self.tasks.append((interval, func, id))
+        self._next_runs[id] = time.time() + interval
+        self._retry_counts[id] = 0
+        self._retry_delays[id] = (
+            self.RETRY_DELAY if retry_delay is None else retry_delay
+        )
+        self._max_retries[id] = (
+            self.MAX_RETRIES if max_retries is None else max_retries
+        )
+        self._misfire_grace[id] = (
+            self.MISFIRE_GRACE_TIME if misfire_grace_time is None else misfire_grace_time
+        )
+        if not self.thread:
+            self.loop = asyncio.new_event_loop()
+            self.thread = threading.Thread(target=self._run_loop, daemon=True)
+            self.thread.start()
+
+    def list_jobs(self) -> list[str]:
+        return [jid for _, _, jid in self.tasks]
+
+    def remove_job(self, id: str) -> None:
+        self.tasks = [t for t in self.tasks if t[2] != id]
+        self._next_runs.pop(id, None)
+        self._retry_counts.pop(id, None)
+        self._retry_delays.pop(id, None)
+        self._max_retries.pop(id, None)
+        self._misfire_grace.pop(id, None)
+
+    # ------------------------------------------------------------------
+    def _run_loop(self) -> None:
+        assert self.loop is not None
+        asyncio.set_event_loop(self.loop)
+        self.loop.create_task(self._run())
+        self.loop.run_forever()
+
+    async def _run(self) -> None:
+        while not self.stop.is_set():
+            now = time.time()
+            sleeps: list[float] = []
+            for interval, fn, jid in list(self.tasks):
+                next_run = self._next_runs.get(jid, now)
+                if now >= next_run:
+                    misfire_grace = self._misfire_grace.get(jid, self.MISFIRE_GRACE_TIME)
+                    if now - next_run > misfire_grace:
+                        self.logger.warning("job %s misfired by %.1fs", jid, now - next_run)
+                        self._next_runs[jid] = time.time() + interval
+                        sleeps.append(self._next_runs[jid] - time.time())
+                        continue
+                    try:
+                        fn()
+                        self._retry_counts[jid] = 0
+                        self._next_runs[jid] = time.time() + interval
+                    except BaseException:
+                        if not self.stop.is_set():
+                            self.logger.exception("job %s failed", jid)
+                        else:
+                            raise
+                        count = self._retry_counts.get(jid, 0) + 1
+                        self._retry_counts[jid] = count
+                        delay = self._retry_delays.get(jid, self.RETRY_DELAY)
+                        max_tries = self._max_retries.get(jid, self.MAX_RETRIES)
+                        if count <= max_tries:
+                            self._next_runs[jid] = time.time() + delay * count
+                        else:
+                            self._next_runs[jid] = time.time() + interval
+                    sleeps.append(self._next_runs[jid] - time.time())
+            await asyncio.sleep(max(0.0, min(sleeps, default=0.1)))
+
+    def shutdown(self) -> None:
+        self.stop.set()
+        if self.loop and self.loop.is_running():
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        if self.thread:
+            self.thread.join(timeout=0)
+
+
 try:  # pragma: no cover - optional dependency
     from apscheduler.schedulers.background import BackgroundScheduler
 except Exception:  # pragma: no cover - APScheduler missing
@@ -202,7 +311,12 @@ class ModelRankingService:
 
         if self.scheduler:
             return
-        if BackgroundScheduler:
+        use_async = os.getenv("USE_ASYNC_SCHEDULER")
+        if use_async:
+            sched = _AsyncScheduler()
+            sched.add_job(self.comparator.rank_and_deploy, interval, "model_ranking")
+            self.scheduler = sched
+        elif BackgroundScheduler:
             sched = BackgroundScheduler()
             sched.add_job(
                 self.comparator.rank_and_deploy,
@@ -231,4 +345,4 @@ class ModelRankingService:
         self.scheduler = None
 
 
-__all__ = ["ModelRankingService"]
+__all__ = ["ModelRankingService", "_SimpleScheduler", "_AsyncScheduler"]

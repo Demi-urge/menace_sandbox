@@ -6,6 +6,8 @@ import logging
 import time
 from threading import Event
 import threading
+import os
+import asyncio
 
 from .evaluation_manager import EvaluationManager
 from .cross_model_comparator import CrossModelComparator
@@ -13,6 +15,7 @@ from .neuroplasticity import PathwayDB
 from .evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from .workflow_cloner import WorkflowCloner
 from .unified_event_bus import UnifiedEventBus
+from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _AsyncScheduler
 from typing import TYPE_CHECKING
 
 from .retry_utils import publish_with_retry
@@ -169,7 +172,12 @@ class ModelEvaluationService:
 
         if self.scheduler:
             return
-        if BackgroundScheduler:
+        use_async = os.getenv("USE_ASYNC_SCHEDULER")
+        if use_async:
+            sched = _AsyncScheduler()
+            sched.add_job(self.run_cycle, interval, "model_evaluation")
+            self.scheduler = sched
+        elif BackgroundScheduler:
             sched = BackgroundScheduler()
             sched.add_job(
                 self.run_cycle,

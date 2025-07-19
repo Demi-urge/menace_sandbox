@@ -10,7 +10,7 @@ import tempfile
 import pytest
 from threading import Event
 
-from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler
+from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _AsyncScheduler
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
 
@@ -66,7 +66,12 @@ class SelfTestService:
     def run_continuous(self, interval: float = 86400.0, *, stop_event: Event | None = None) -> None:
         if self.scheduler:
             return
-        if BackgroundScheduler:
+        use_async = os.getenv("USE_ASYNC_SCHEDULER")
+        if use_async:
+            sched = _AsyncScheduler()
+            sched.add_job(self._run_once, interval, "self_test")
+            self.scheduler = sched
+        elif BackgroundScheduler:
             sched = BackgroundScheduler()
             sched.add_job(self._run_once, "interval", seconds=interval, id="self_test")
             sched.start()
