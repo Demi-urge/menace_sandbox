@@ -75,6 +75,7 @@ def test_run_autonomous_integration(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
     monkeypatch.setattr(run_autonomous.shutil, "which", lambda c: f"/usr/bin/{c}")
+    monkeypatch.setattr(run_autonomous.importlib, "import_module", lambda n: types.ModuleType(n))
 
     pip_calls = []
 
@@ -128,6 +129,7 @@ def test_run_autonomous_multiple_runs(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
     monkeypatch.setattr(run_autonomous.shutil, "which", lambda c: f"/usr/bin/{c}")
+    monkeypatch.setattr(run_autonomous.importlib, "import_module", lambda n: types.ModuleType(n))
 
     pip_calls = []
 
