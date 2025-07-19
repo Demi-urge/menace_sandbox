@@ -6,6 +6,7 @@ import os
 import subprocess
 import time
 import logging
+import threading
 from typing import Iterable, Dict, Any
 
 from .audit_logger import log_event
@@ -50,6 +51,8 @@ class VisualAgentClient:
             "VISUAL_TOKEN_REFRESH_CMD"
         )
         self.open_run_id: str | None = None
+        self.active = False
+        self._lock = threading.Lock()
 
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
@@ -84,6 +87,11 @@ class VisualAgentClient:
         if not requests:
             return False, "requests unavailable"
 
+        with self._lock:
+            if self.active:
+                return False, "busy"
+            self.active = True
+
         def sender() -> tuple[bool, str]:
             if self.open_run_id is None:
                 try:
@@ -112,10 +120,18 @@ class VisualAgentClient:
             return sender()
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
+        finally:
+            with self._lock:
+                self.active = False
 
     def _send_revert(self, base: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
+
+        with self._lock:
+            if self.active:
+                return False, "busy"
+            self.active = True
 
         def sender() -> tuple[bool, str]:
             resp = requests.post(
@@ -136,6 +152,9 @@ class VisualAgentClient:
             return sender()
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
+        finally:
+            with self._lock:
+                self.active = False
 
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
         prompt = SELF_IMPROVEMENT_PREFIX + "\n\n" + "\n".join(
@@ -171,6 +190,8 @@ class VisualAgentClient:
             )
         finally:
             self.open_run_id = None
+            with self._lock:
+                self.active = False
 
 
 class VisualAgentClientStub:
@@ -180,6 +201,8 @@ class VisualAgentClientStub:
         logger.info("VisualAgentClientStub active")
         self.urls: list[str] = []
         self.open_run_id: str | None = None
+        self.active = False
+        self._lock = threading.Lock()
 
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
         return {"choices": [{"message": {"content": ""}}]}
@@ -189,6 +212,8 @@ class VisualAgentClientStub:
 
     def resolve_run_log(self, outcome: str) -> None:
         self.open_run_id = None
+        with self._lock:
+            self.active = False
 
 
 __all__ = ["VisualAgentClient", "VisualAgentClientStub"]
