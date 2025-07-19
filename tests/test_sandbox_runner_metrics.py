@@ -498,14 +498,47 @@ def test_section_worker_netem(monkeypatch):
     sys.modules["sandbox_runner"] = sandbox_runner
     spec.loader.exec_module(sandbox_runner)
 
-    calls = []
+    class DummyIPRoute:
+        calls = []
 
-    def fake_run(cmd, *a, **kw):
-        calls.append(cmd)
-        return types.SimpleNamespace(stdout="", stderr="", returncode=0)
+        def __init__(self):
+            pass
 
-    monkeypatch.setattr(sandbox_runner.subprocess, "run", fake_run)
-    monkeypatch.setattr(sandbox_runner.shutil, "which", lambda n: "/sbin/tc" if n == "tc" else None)
+        def bind(self, netns=None):
+            DummyIPRoute.calls.append(("bind", netns))
+
+        def link_lookup(self, ifname):
+            return [1]
+
+        def link(self, *a, **kw):
+            DummyIPRoute.calls.append(("link", a, kw))
+
+        def tc(self, action, parent, index, kind, **kw):
+            DummyIPRoute.calls.append((action, kind, kw))
+
+        def close(self):
+            DummyIPRoute.calls.append(("close",))
+
+    class DummyNetns:
+        calls = []
+
+        @staticmethod
+        def create(name):
+            DummyNetns.calls.append(("create", name))
+
+        @staticmethod
+        def remove(name):
+            DummyNetns.calls.append(("remove", name))
+
+    dummy_popen_calls = []
+
+    def dummy_nspopen(ns, args, **kw):
+        dummy_popen_calls.append((ns, args))
+        return subprocess.Popen(args, **kw)
+
+    monkeypatch.setattr(sandbox_runner.environment, "IPRoute", DummyIPRoute)
+    monkeypatch.setattr(sandbox_runner.environment, "netns", DummyNetns)
+    monkeypatch.setattr(sandbox_runner.environment, "NSPopen", dummy_nspopen)
 
     res, updates = asyncio.run(
         sandbox_runner._section_worker(
@@ -514,10 +547,10 @@ def test_section_worker_netem(monkeypatch):
             0.0,
         )
     )
-
-    add_cmd = [c for c in calls if c[:3] == ["tc", "qdisc", "replace"]]
-    del_cmd = [c for c in calls if c[:3] == ["tc", "qdisc", "del"]]
-    assert add_cmd and del_cmd
+    assert any(c[0] == "add" for c in DummyIPRoute.calls)
+    assert any(c[0] == "del" for c in DummyIPRoute.calls)
+    assert updates[-1][2]["netem_latency_ms"] == 50.0
+    assert updates[-1][2]["netem_packet_loss"] == 1.0
 
 
 def test_section_worker_netem_no_tc(monkeypatch):
@@ -552,8 +585,10 @@ def test_section_worker_netem_no_tc(monkeypatch):
         called["code"] = code
         return {"exit_code": 0.0}
 
-    monkeypatch.setattr(sandbox_runner, "_execute_in_container", fake_exec)
-    monkeypatch.setattr(sandbox_runner.shutil, "which", lambda n: None)
+    monkeypatch.setattr(sandbox_runner.environment, "_execute_in_container", fake_exec)
+    monkeypatch.setattr(sandbox_runner.environment, "IPRoute", None)
+    monkeypatch.setattr(sandbox_runner.environment, "NSPopen", None)
+    monkeypatch.setattr(sandbox_runner.environment, "netns", None)
 
     res, updates = asyncio.run(
         sandbox_runner._section_worker(
@@ -562,8 +597,7 @@ def test_section_worker_netem_no_tc(monkeypatch):
             0.0,
         )
     )
-
-    assert "tc" in called.get("code", "")
+    assert "pyroute2" in called.get("code", "")
 
 
 def test_auto_prompt_selection(monkeypatch):
