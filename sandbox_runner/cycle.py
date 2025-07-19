@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import json
 import subprocess
 import shutil
 import time
@@ -51,8 +52,19 @@ def _sandbox_cycle_runner(
 ) -> None:
     """Execute a single improvement/test cycle."""
 
+    global SANDBOX_ENV_PRESETS
     from sandbox_runner import build_section_prompt, GPT_SECTION_PROMPT_MAX_LENGTH
     from sandbox_runner.metrics_plugins import collect_plugin_metrics
+
+    env_val = os.getenv("SANDBOX_ENV_PRESETS")
+    if env_val:
+        try:
+            data = json.loads(env_val)
+            if isinstance(data, dict):
+                data = [data]
+            SANDBOX_ENV_PRESETS = [dict(p) for p in data]
+        except Exception:
+            logger.exception("failed to reload presets")
 
     low_roi_streak = 0
     resilience_history: list[float] = []
@@ -597,12 +609,12 @@ def _sandbox_cycle_runner(
         logger.info("cycle %d complete", idx)
         logger.info("cycle roi", extra={"iteration": idx, "roi": roi})
 
-    if section:
+    if ctx.adapt_presets:
         try:
             from menace.environment_generator import adapt_presets
 
-            global SANDBOX_ENV_PRESETS
             SANDBOX_ENV_PRESETS = adapt_presets(tracker, SANDBOX_ENV_PRESETS)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
         except Exception:
             logger.exception("preset adaptation failed")
 

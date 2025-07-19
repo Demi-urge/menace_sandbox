@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 import os
 import asyncio
+import json
 import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -827,6 +828,148 @@ def test_preset_adaptation(monkeypatch, tmp_path):
 
     assert calls.get("tracker") is ctx.tracker
     assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"adapted": True}]
+
+
+def test_preset_persistence_across_runs(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("SANDBOX_CYCLES", "1")
+
+    count = {"val": 0}
+
+    def fake_adapt(tracker, presets):
+        count["val"] += 1
+        cur = presets[0].get("num", 0)
+        return [{"num": cur + 1}]
+
+    _stub_module(monkeypatch, "menace.environment_generator", adapt_presets=fake_adapt)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBus)
+    _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy)
+    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=lambda *a, **k: DummyImprover())
+    _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyEngine)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
+    mod = types.ModuleType("menace.data_bot")
+    mod.DataBot = DummyDataBot
+    mod.MetricsDB = DummyBot
+    monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
+
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
+    monkeypatch.setattr(sandbox_runner, "_SandboxMetaLogger", DummyMetaLogger)
+    monkeypatch.setattr(
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda path: {"mod.py": {"sec": ["pass"]}},
+    )
+
+    def fake_cycle(ctx, sec, snip, tracker, scenario=None):
+        from menace.environment_generator import adapt_presets
+        if getattr(ctx, "adapt_presets", True):
+            sandbox_runner.SANDBOX_ENV_PRESETS = adapt_presets(tracker, sandbox_runner.SANDBOX_ENV_PRESETS)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(sandbox_runner.SANDBOX_ENV_PRESETS)
+
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cycle_runner", fake_cycle)
+
+    class DummyCtx:
+        def __init__(self):
+            self.adapt_presets = True
+
+    sandbox_runner.SANDBOX_ENV_PRESETS = [{"num": 0}]
+    tracker = DummyTracker()
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)
+    assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 1}]
+
+    tracker2 = DummyTracker()
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)
+    assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 2}]
+
+    assert count["val"] == 2
+
+
+def test_no_preset_adapt_flag(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("SANDBOX_CYCLES", "1")
+
+    def fake_adapt(tracker, presets):
+        return [{"num": 1}]
+
+    _stub_module(monkeypatch, "menace.environment_generator", adapt_presets=fake_adapt)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBus)
+    _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy)
+    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=lambda *a, **k: DummyImprover())
+    _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyEngine)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
+    mod = types.ModuleType("menace.data_bot")
+    mod.DataBot = DummyDataBot
+    mod.MetricsDB = DummyBot
+    monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
+
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[str(Path(__file__).resolve().parents[1] / "sandbox_runner")],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
+
+    monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
+    monkeypatch.setattr(sandbox_runner, "_SandboxMetaLogger", DummyMetaLogger)
+    monkeypatch.setattr(
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda path: {"mod.py": {"sec": ["pass"]}},
+    )
+
+    def fake_cycle(ctx, sec, snip, tracker, scenario=None):
+        from menace.environment_generator import adapt_presets
+        if getattr(ctx, "adapt_presets", True):
+            sandbox_runner.SANDBOX_ENV_PRESETS = adapt_presets(tracker, sandbox_runner.SANDBOX_ENV_PRESETS)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(sandbox_runner.SANDBOX_ENV_PRESETS)
+
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cycle_runner", fake_cycle)
+
+    class DummyCtx:
+        def __init__(self):
+            self.adapt_presets = False
+
+    sandbox_runner.SANDBOX_ENV_PRESETS = [{"num": 0}]
+    tracker = DummyTracker()
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker)
+    assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 0}]
+
+    tracker2 = DummyTracker()
+    sandbox_runner._sandbox_cycle_runner(DummyCtx(), "mod.py:sec", "pass", tracker2)
+    assert sandbox_runner.SANDBOX_ENV_PRESETS == [{"num": 0}]
 
 
 
