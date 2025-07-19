@@ -266,6 +266,9 @@ async def revert_patch(x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="Bad token")
 
+    if not _running_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Agent busy")
+
     def _revert_worker():
         try:
             _current_job["active"] = True
@@ -280,6 +283,7 @@ async def revert_patch(x_token: str = Header(default="")):
             pyautogui.hotkey('win', '1')  # return to browser
         finally:
             _current_job["active"] = False
+            _running_lock.release()
 
     threading.Thread(target=_revert_worker, daemon=True).start()
     return {"status": "revert triggered"}
@@ -288,6 +292,9 @@ async def revert_patch(x_token: str = Header(default="")):
 async def clone_repo(x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="Bad token")
+
+    if not _running_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Agent busy")
 
     def _clone_worker():
         try:
@@ -303,6 +310,7 @@ async def clone_repo(x_token: str = Header(default="")):
             pyautogui.hotkey('win', '1')  # return to browser
         finally:
             _current_job["active"] = False
+            _running_lock.release()
 
 @app.get("/status")
 async def status():
