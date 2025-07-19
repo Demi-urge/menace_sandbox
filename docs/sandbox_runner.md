@@ -422,6 +422,9 @@ commit all changes to git using descriptive commit messages
 
 ### Testing
 Run `scripts/setup_tests.sh` then execute `pytest --cov`. Report any failures.
+The suite includes integration checks under `tests/test_sandbox_integration.py`
+that exercise preset adaptation and synergy metric forecasts. These tests run in
+CI along with the rest of the collection.
 
 ### Snippet context
 def hello():
