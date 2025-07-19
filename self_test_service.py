@@ -23,6 +23,9 @@ class SelfTestService:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
         self.scheduler: object | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task | None = None
+        self._async_stop: asyncio.Event | None = None
         env_args = os.getenv("SELF_TEST_ARGS") if pytest_args is None else pytest_args
         self.pytest_args = shlex.split(env_args) if env_args else []
 
@@ -87,9 +90,32 @@ class SelfTestService:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to store test results")
 
+    async def _schedule_loop(self, interval: float) -> None:
+        assert self._async_stop is not None
+        while not self._async_stop.is_set():
+            try:
+                await self._run_once()
+            except Exception:
+                self.logger.exception("self test run failed")
+            try:
+                await asyncio.wait_for(self._async_stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+
     # ------------------------------------------------------------------
-    def run_continuous(self, interval: float = 86400.0, *, stop_event: Event | None = None) -> None:
-        if self.scheduler:
+    def run_continuous(
+        self,
+        interval: float = 86400.0,
+        *,
+        stop_event: Event | None = None,
+        loop: asyncio.AbstractEventLoop | None = None,
+    ) -> None:
+        if self.scheduler or self._task:
+            return
+        if loop is not None:
+            self._loop = loop
+            self._async_stop = asyncio.Event()
+            self._task = loop.create_task(self._schedule_loop(interval))
             return
         use_async = os.getenv("USE_ASYNC_SCHEDULER")
         if use_async:
@@ -108,7 +134,16 @@ class SelfTestService:
         self._stop = stop_event or Event()
 
     # ------------------------------------------------------------------
-    def stop(self) -> None:
+    async def stop(self) -> None:
+        if self._task:
+            assert self._async_stop is not None
+            self._async_stop.set()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+            return
         if not self.scheduler:
             return
         if hasattr(self, "_stop") and self._stop:
