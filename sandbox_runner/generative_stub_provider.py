@@ -7,6 +7,12 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
+from collections import Counter
+
+from .input_history_db import InputHistoryDB
+
+ROOT = Path(__file__).resolve().parents[1]
 
 try:
     from transformers import pipeline
@@ -37,12 +43,46 @@ def _load_generator():
     return _GENERATOR
 
 
-def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
-    """Generate or enhance ``stubs`` using a language model.
+def _get_history_db() -> InputHistoryDB:
+    path = os.getenv(
+        "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
+    )
+    return InputHistoryDB(path)
 
-    When the backend is unavailable the input ``stubs`` are returned
-    unchanged.
-    """
+
+def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
+    stats: dict[str, List[Any]] = {}
+    for rec in records:
+        for k, v in rec.items():
+            stats.setdefault(k, []).append(v)
+    result: dict[str, Any] = {}
+    for k, vals in stats.items():
+        if all(isinstance(v, (int, float)) for v in vals):
+            avg = sum(float(v) for v in vals) / len(vals)
+            if all(isinstance(v, int) for v in vals):
+                avg = int(round(avg))
+            result[k] = avg
+        else:
+            cnt = Counter(vals)
+            result[k] = cnt.most_common(1)[0][0]
+    return result
+
+
+def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
+    """Generate or enhance ``stubs`` using recent history or a language model."""
+
+    strategy = ctx.get("strategy")
+    if strategy == "history":
+        try:
+            records = _get_history_db().recent(50)
+        except Exception:
+            logger.exception("failed to load input history")
+            records = []
+        if records:
+            hist = _aggregate(records)
+            return [dict(hist) for _ in range(max(1, len(stubs)))]
+        return stubs
+
     gen = _load_generator()
     if gen is None:
         return stubs
