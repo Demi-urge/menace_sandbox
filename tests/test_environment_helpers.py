@@ -95,6 +95,7 @@ def test_generate_input_stubs_smart_no_faker(monkeypatch):
     import importlib
     importlib.reload(env)
     monkeypatch.setattr(env, "_FAKER", None)
+    monkeypatch.setattr(env, "_hyp_strats", None)
 
     def target(a: int, name: str) -> None:
         pass
@@ -172,10 +173,49 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch):
     monkeypatch.setattr(gsp, "_load_generator", lambda: None)
     importlib.reload(env)
     monkeypatch.setattr(env, "_FAKER", None)
+    monkeypatch.setattr(env, "_hyp_strats", None)
 
     def target(a: int) -> None:
         pass
 
     stubs = env.generate_input_stubs(1, target=target)
     assert stubs == [{"a": 0}]
+
+
+def test_generate_input_stubs_history_db(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    db_path = tmp_path / "hist.db"
+    from sandbox_runner.input_history_db import InputHistoryDB
+
+    db = InputHistoryDB(db_path)
+    db.add({"x": 5})
+
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "history")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
+    import importlib
+    importlib.reload(env)
+
+    stubs = env.generate_input_stubs(1)
+    assert stubs == [{"x": 5}]
+
+
+def test_generate_input_stubs_history_db_empty(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    db_path = tmp_path / "hist.db"
+    from sandbox_runner.input_history_db import InputHistoryDB
+
+    InputHistoryDB(db_path)  # create empty db
+
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "history")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", str(db_path))
+    import importlib
+    importlib.reload(env)
+
+    def target(z: int) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    assert stubs == [{"z": 0}]
 
