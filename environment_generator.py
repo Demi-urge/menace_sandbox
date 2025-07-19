@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 import os
 from typing import Any, Dict, List, TYPE_CHECKING
+import json
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -36,6 +37,9 @@ _JITTERS = [0, 5, 10, 20, 50]  # milliseconds
 _PACKET_DUPLICATION = [0.0, 0.01, 0.05]
 _SECURITY_LEVELS = [1, 2, 3, 4, 5]
 _THREAT_INTENSITIES = [10, 30, 50, 70, 90]
+
+# minimum ROI history length for the adaptive RL agent
+_ADAPTIVE_THRESHOLD = 5
 
 # optional hardware and platform settings
 _GPU_LIMITS = ["0", "1", "2", "4"]
@@ -104,7 +108,84 @@ def generate_presets(count: int | None = None) -> List[Dict[str, Any]]:
     return presets
 
 
-__all__ = ["generate_presets"]
+__all__ = ["generate_presets", "AdaptivePresetAgent"]
+
+
+class AdaptivePresetAgent:
+    """Simple RL agent using ROI and synergy history to adjust presets."""
+
+    ACTIONS: tuple[dict[str, int], ...] = (
+        {"cpu": 1, "memory": 0, "threat": 0},
+        {"cpu": -1, "memory": 0, "threat": 0},
+        {"cpu": 0, "memory": 1, "threat": 0},
+        {"cpu": 0, "memory": -1, "threat": 0},
+        {"cpu": 0, "memory": 0, "threat": 1},
+        {"cpu": 0, "memory": 0, "threat": -1},
+        {"cpu": 0, "memory": 0, "threat": 0},
+    )
+
+    def __init__(self, path: str | None = None) -> None:
+        from .self_improvement_policy import SelfImprovementPolicy
+
+        self.policy = SelfImprovementPolicy(path=path)
+        self.state_file = f"{path}.state.json" if path else None
+        self.prev_state: tuple[int, int] | None = None
+        self.prev_action: int | None = None
+        self._load_state()
+
+    # --------------------------------------------------------------
+    def _load_state(self) -> None:
+        if not self.state_file or not os.path.exists(self.state_file):
+            return
+        try:
+            with open(self.state_file) as fh:
+                data = json.load(fh)
+            st = data.get("state")
+            self.prev_state = tuple(st) if st is not None else None
+            self.prev_action = data.get("action")
+        except Exception:
+            pass
+
+    def _save_state(self) -> None:
+        if not self.state_file:
+            return
+        try:
+            with open(self.state_file, "w") as fh:
+                json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
+        except Exception:
+            pass
+
+    # --------------------------------------------------------------
+    def _state(self, tracker: "ROITracker") -> tuple[int, int]:
+        roi = float(tracker.roi_history[-1]) if tracker.roi_history else 0.0
+        syn_vals = tracker.metrics_history.get("synergy_roi", [])
+        syn = float(syn_vals[-1]) if syn_vals else 0.0
+        roi_s = 1 if roi > 0 else (-1 if roi < 0 else 0)
+        syn_s = 1 if syn > 0 else (-1 if syn < 0 else 0)
+        return roi_s, syn_s
+
+    def _reward(self, tracker: "ROITracker") -> float:
+        hist = tracker.roi_history
+        if len(hist) < 2:
+            return 0.0
+        return float(hist[-1]) - float(hist[-2])
+
+    # --------------------------------------------------------------
+    def decide(self, tracker: "ROITracker") -> Dict[str, int]:
+        state = self._state(tracker)
+        if self.prev_state is not None and self.prev_action is not None:
+            reward = self._reward(tracker)
+            self.policy.update(self.prev_state, reward, state, action=self.prev_action)
+        action_idx = self.policy.select_action(state)
+        self.prev_state = state
+        self.prev_action = action_idx
+        return dict(self.ACTIONS[action_idx])
+
+    def save(self) -> None:
+        self.policy.save()
+        self._save_state()
+
+
 
 
 def adapt_presets(
@@ -128,6 +209,15 @@ def adapt_presets(
                 adapt_presets._rl_agent = agent
         except Exception:
             agent = None
+
+    adapt_agent = getattr(adapt_presets, "_adaptive_agent", None)
+    if adapt_agent is None:
+        try:
+            path = os.getenv("SANDBOX_ADAPTIVE_AGENT_PATH")
+            adapt_agent = AdaptivePresetAgent(path)
+            adapt_presets._adaptive_agent = adapt_agent
+        except Exception:
+            adapt_agent = None
 
     sec_vals = tracker.metrics_history.get("security_score", [])
     if not sec_vals:
@@ -251,6 +341,50 @@ def adapt_presets(
 
                     p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
             agent.save()
+            return presets
+        except Exception:
+            pass
+
+    elif adapt_agent and len(tracker.roi_history) >= _ADAPTIVE_THRESHOLD:
+        try:
+            actions = adapt_agent.decide(tracker)
+
+            def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
+                lookup = [str(x) for x in seq]
+                try:
+                    idx = lookup.index(str(cur))
+                except ValueError:
+                    idx = 0
+                idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
+                return seq[idx]
+
+            for p in presets:
+                if actions.get("cpu"):
+                    p["CPU_LIMIT"] = _nxt(
+                        _CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), actions["cpu"] > 0
+                    )
+                if actions.get("memory"):
+                    mem = str(p.get("MEMORY_LIMIT", _MEMORY_LIMITS[0]))
+                    p["MEMORY_LIMIT"] = _nxt(
+                        _MEMORY_LIMITS, mem, actions["memory"] > 0
+                    )
+                if actions.get("threat"):
+                    cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
+
+                    def _lvl(val: int, up: bool) -> int:
+                        levels = _THREAT_INTENSITIES
+                        if up:
+                            for lvl in levels:
+                                if lvl > val:
+                                    return lvl
+                            return levels[-1]
+                        for lvl in reversed(levels):
+                            if lvl < val:
+                                return lvl
+                        return levels[0]
+
+                    p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
+            adapt_agent.save()
             return presets
         except Exception:
             pass
