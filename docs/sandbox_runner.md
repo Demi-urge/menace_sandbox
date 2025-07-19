@@ -534,6 +534,11 @@ all modules and workflows. `--roi-cycles` and `--synergy-cycles` cap how many
 consecutive below-threshold cycles trigger convergence. The optional `--runs`
 argument acts as an upper bound:
 
+Synergy convergence now checks the rolling correlation of metric values to
+ensure improvements are not simply trending upward or downward. Confidence
+levels are derived from a dynamic t-distribution, providing more reliable
+bounds for small sample sizes.
+
 ```bash
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```

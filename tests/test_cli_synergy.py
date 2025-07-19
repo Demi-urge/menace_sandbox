@@ -19,3 +19,13 @@ def test_synergy_not_converged():
     ok, ema, conf = cli._synergy_converged(hist, 3, 0.03)
     assert ok is False
     assert conf < 0.95
+
+
+def test_synergy_trending_not_converged():
+    hist = [
+        {"synergy_roi": 0.01},
+        {"synergy_roi": 0.015},
+        {"synergy_roi": 0.02},
+    ]
+    ok, ema, conf = cli._synergy_converged(hist, 3, 0.03)
+    assert ok is False
