@@ -19,7 +19,13 @@ from .error_logger import ErrorLogger
 class SelfTestService:
     """Periodically execute the test suite to validate core bots."""
 
-    def __init__(self, db: ErrorDB | None = None, *, pytest_args: str | None = None) -> None:
+    def __init__(
+        self,
+        db: ErrorDB | None = None,
+        *,
+        pytest_args: str | None = None,
+        workers: int | None = None,
+    ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
         self.scheduler: object | None = None
@@ -28,6 +34,11 @@ class SelfTestService:
         self._async_stop: asyncio.Event | None = None
         env_args = os.getenv("SELF_TEST_ARGS") if pytest_args is None else pytest_args
         self.pytest_args = shlex.split(env_args) if env_args else []
+        env_workers = os.getenv("SELF_TEST_WORKERS") if workers is None else workers
+        try:
+            self.workers = int(env_workers) if env_workers is not None else 1
+        except ValueError:
+            self.workers = 1
 
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
@@ -52,6 +63,8 @@ class SelfTestService:
                 f"--json-report-file={tmp.name}",
                 *other_args,
             ]
+            if self.workers > 1:
+                cmd.extend(["-n", str(self.workers)])
             if p:
                 cmd.append(p)
             proc = await asyncio.create_subprocess_exec(
