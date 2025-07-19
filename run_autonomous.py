@@ -12,6 +12,7 @@ from typing import List
 import sys
 import subprocess
 import time
+import importlib
 
 # Default to test mode when using the bundled SQLite database.
 if (
@@ -36,7 +37,7 @@ elif "menace" not in sys.modules:
     spec.loader.exec_module(menace_pkg)
 
 from menace.environment_generator import generate_presets
-from menace.startup_checks import verify_project_dependencies
+from menace.startup_checks import verify_project_dependencies, _parse_requirement
 from sandbox_runner.cli import full_autonomous_run, _diminishing_modules
 from menace.roi_tracker import ROITracker
 from sandbox_recovery_manager import SandboxRecoveryManager
@@ -76,16 +77,44 @@ def _check_dependencies() -> None:
         missing.append("qemu-system-x86_64")
 
     missing_pkgs = verify_project_dependencies()
-    for pkg in missing_pkgs:
-        try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
-        except Exception:  # pragma: no cover - pip failures shouldn't abort tests
-            logger.exception("Failed to install %s", pkg)
     if missing_pkgs:
-        missing.extend(missing_pkgs)
+        lock = None
+        for name in ("uv.lock", "requirements.txt"):
+            path = Path(name)
+            if path.exists():
+                lock = path
+                break
+        if lock:
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "-r", str(lock)]
+                )
+            except Exception as exc:
+                logger.error("failed installing %s: %s", lock, exc)
+        for pkg in missing_pkgs:
+            mod = _parse_requirement(pkg)
+            success = False
+            for i in range(2):
+                try:
+                    subprocess.check_call(
+                        [sys.executable, "-m", "pip", "install", pkg]
+                    )
+                    importlib.import_module(mod)
+                    success = True
+                    break
+                except Exception as exc:  # pragma: no cover - retry
+                    logger.warning(
+                        "install attempt %s for %s failed: %s", i + 1, pkg, exc
+                    )
+                    time.sleep(1)
+            if not success:
+                missing.append(pkg)
+    if missing_pkgs:
+        missing.extend([m for m in missing_pkgs if m not in missing])
 
     if missing:
-        logger.warning("Missing dependencies: %s", ", ".join(missing))
+        logger.error("Missing dependencies: %s", ", ".join(missing))
+        raise RuntimeError("dependency installation failed")
     else:
         logger.info("All dependencies satisfied")
 
