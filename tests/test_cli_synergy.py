@@ -75,3 +75,28 @@ def test_synergy_non_stationary_via_adf(monkeypatch):
     )
     assert ok is False
     assert conf < 0.95
+
+
+def test_synergy_rolling_correlation_not_converged():
+    hist = [
+        {"synergy_roi": 0.0},
+        {"synergy_roi": 0.02},
+        {"synergy_roi": 0.0},
+        {"synergy_roi": 0.02},
+        {"synergy_roi": 0.0},
+    ]
+    ok, _, conf = cli._synergy_converged(hist, 5, 0.03, ma_window=2)
+    assert ok is False
+    assert conf < 0.95
+
+
+def test_synergy_high_variance_not_converged():
+    hist = [
+        {"synergy_roi": 0.02},
+        {"synergy_roi": -0.02},
+        {"synergy_roi": 0.02},
+        {"synergy_roi": -0.02},
+    ]
+    ok, _, conf = cli._synergy_converged(hist, 4, 0.03)
+    assert ok is False
+    assert conf < 0.95
