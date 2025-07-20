@@ -97,3 +97,16 @@ def test_dqn_strategy_learns():
         policy.update(next_state, 0.0, state0, action=0)
     policy.epsilon = 0.0
     assert policy.select_action(state0) == 1
+
+
+def test_deep_q_learning_strategy_learns():
+    pytest.importorskip("torch")
+    policy = sip.SelfImprovementPolicy(strategy="deep_q", epsilon=0.2)
+    state0 = (0, 0, 0)
+    for _ in range(60):
+        act = policy.select_action(state0)
+        reward = 1.0 if act == 1 else 0.0
+        next_state = (1, 0, 0) if act == 1 else state0
+        policy.update(state0, reward, next_state, action=act)
+    policy.epsilon = 0.0
+    assert policy.select_action(state0) == 1

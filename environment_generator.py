@@ -115,7 +115,11 @@ __all__ = ["generate_presets", "AdaptivePresetAgent"]
 
 
 class AdaptivePresetAgent:
-    """Simple RL agent using ROI and synergy history to adjust presets."""
+    """Simple RL agent using ROI and synergy history to adjust presets.
+
+    When ``strategy`` is set to ``"deep_q"`` a small neural network is used to
+    estimate Q-values via :class:`DeepQLearningStrategy`.
+    """
 
     ACTIONS: tuple[dict[str, int], ...] = (
         {"cpu": 1, "memory": 0, "threat": 0},
