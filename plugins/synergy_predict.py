@@ -3,6 +3,7 @@ from __future__ import annotations
 """Predict synergy metrics using PredictionManager."""
 
 from typing import Dict, Optional
+import asyncio
 
 from menace.prediction_manager_bot import PredictionManager
 from menace.roi_tracker import ROITracker
@@ -60,3 +61,12 @@ def collect_metrics(
             new_preds[name] = pred
         _last_predictions = new_preds
     return result
+
+
+async def collect_metrics_async(
+    prev_roi: float, roi: float, resources: Optional[Dict[str, float]]
+) -> Dict[str, float]:
+    """Asynchronous wrapper for :func:`collect_metrics`."""
+
+    return await asyncio.to_thread(collect_metrics, prev_roi, roi, resources)
+

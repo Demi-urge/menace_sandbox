@@ -6,7 +6,9 @@ import json
 import subprocess
 import shutil
 import time
-from typing import Any
+import asyncio
+import sys
+from typing import Any, Dict
 
 try:
     from radon.metrics import mi_visit  # type: ignore
@@ -43,6 +45,37 @@ def _choose_suggestion(ctx: Any, module: str) -> str:
     return ctx.suggestion_cache.get(module, "refactor for clarity")
 
 
+async def _collect_plugin_metrics_async(
+    plugins: list,
+    prev_roi: float,
+    roi: float,
+    resources: Dict[str, float] | None,
+) -> Dict[str, float]:
+    """Gather metrics from plugins asynchronously."""
+
+    tasks = []
+    for func in plugins:
+        module = sys.modules.get(func.__module__)
+        async_fn = getattr(module, "collect_metrics_async", None)
+        if callable(async_fn):
+            tasks.append(async_fn(prev_roi, roi, resources))
+        else:
+            tasks.append(asyncio.to_thread(func, prev_roi, roi, resources))
+
+    merged: Dict[str, float] = {}
+    for res in await asyncio.gather(*tasks, return_exceptions=True):
+        if isinstance(res, Exception):
+            logger.exception("metrics plugin failed", exc_info=res)
+            continue
+        if isinstance(res, dict):
+            for k, v in res.items():
+                try:
+                    merged[k] = float(v)
+                except Exception:
+                    merged[k] = 0.0
+    return merged
+
+
 def _sandbox_cycle_runner(
     ctx: Any,
     section: str | None,
@@ -54,7 +87,6 @@ def _sandbox_cycle_runner(
 
     global SANDBOX_ENV_PRESETS
     from sandbox_runner import build_section_prompt, GPT_SECTION_PROMPT_MAX_LENGTH
-    from sandbox_runner.metrics_plugins import collect_plugin_metrics
 
     env_val = os.getenv("SANDBOX_ENV_PRESETS")
     if env_val:
@@ -323,7 +355,15 @@ def _sandbox_cycle_runner(
             "recovery_time": recovery_time,
         }
         if ctx.plugins:
-            extra = collect_plugin_metrics(ctx.plugins, ctx.prev_roi, roi, resources)
+            try:
+                extra = asyncio.run(
+                    _collect_plugin_metrics_async(
+                        ctx.plugins, ctx.prev_roi, roi, resources
+                    )
+                )
+            except Exception:
+                logger.exception("metrics plugin collection failed")
+                extra = None
             if extra:
                 metrics.update(extra)
         if ctx.extra_metrics:

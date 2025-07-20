@@ -5,6 +5,52 @@ import pytest
 
 os.environ["MENACE_LIGHT_IMPORTS"] = "1"
 
+stub = types.ModuleType("stub")
+stats_stub = types.SimpleNamespace(
+    pearsonr=lambda *a, **k: (0.0, 0.0),
+    t=lambda *a, **k: 0.0,
+)
+stub.stats = stats_stub
+stub.isscalar = lambda x: isinstance(x, (int, float))
+stub.bool_ = bool
+sys.modules.setdefault("scipy", stub)
+sys.modules.setdefault("scipy.stats", stats_stub)
+sys.modules.setdefault("yaml", stub)
+sys.modules.setdefault("numpy", stub)
+sys.modules.setdefault("sklearn", types.ModuleType("sklearn"))
+lm_stub = types.ModuleType("sklearn.linear_model")
+lm_stub.LinearRegression = lambda *a, **k: types.SimpleNamespace(
+    fit=lambda *a, **k: None,
+    predict=lambda X: [0.0],
+)
+pf_stub = types.ModuleType("sklearn.preprocessing")
+pf_stub.PolynomialFeatures = lambda *a, **k: types.SimpleNamespace(
+    fit_transform=lambda X: X
+)
+sys.modules.setdefault("sklearn.linear_model", lm_stub)
+sys.modules.setdefault("sklearn.preprocessing", pf_stub)
+import importlib.util
+from pathlib import Path
+
+class _StubPM:
+    registry: dict = {}
+
+    def get_prediction_bots_for(self, name: str) -> list:
+        return []
+
+    def assign_prediction_bots(self, tracker):
+        return []
+
+pm_mod = types.ModuleType("menace.prediction_manager_bot")
+pm_mod.PredictionManager = _StubPM
+sys.modules.setdefault("menace.prediction_manager_bot", pm_mod)
+
+spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))
+rt = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+sys.modules.setdefault("menace.roi_tracker", rt)
+
+
 # Provide a minimal Flask stub to satisfy metrics_dashboard import
 flask_stub = types.ModuleType("flask")
 class _DummyFlask:
@@ -135,3 +181,22 @@ def test_autonomous_synergy_converges(monkeypatch):
     assert tracker.metrics_history["synergy_roi"] == [0.1, 0.1, 0.02, 0.02, 0.005, 0.005]
     msg = ("synergy convergence reached", {"iteration": 3, "ema": pytest.approx(0.005)})
     assert msg in log_calls
+
+
+def test_async_synergy_prediction(monkeypatch):
+    """Ensure async synergy prediction stores pred_synergy values."""
+
+    from plugins import synergy_predict as sp
+    from menace.roi_tracker import ROITracker
+    pm = _StubPM()
+    import asyncio
+
+    tracker = ROITracker()
+    sp.register(pm, tracker)
+
+    tracker.update(0.0, 0.1, metrics={"synergy_roi": 0.05})
+    metrics = asyncio.run(sp.collect_metrics_async(0.0, 0.1, None))
+    tracker.register_metrics(*metrics.keys())
+    tracker.update(0.1, 0.2, metrics=metrics)
+
+    assert "pred_synergy_roi" in tracker.metrics_history
