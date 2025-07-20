@@ -402,7 +402,9 @@ def _cleanup_idle_containers() -> int:
                     try:
                         shutil.rmtree(td)
                     except Exception:
-                        logger.exception("temporary directory removal failed")
+                        logger.exception(
+                            "temporary directory removal failed for %s", td
+                        )
                 _CONTAINER_LAST_USED.pop(c.id, None)
                 cleaned += 1
     return cleaned
@@ -441,7 +443,9 @@ def _cleanup_pools() -> None:
                 try:
                     shutil.rmtree(td)
                 except Exception:
-                    logger.exception("temporary directory removal failed")
+                    logger.exception(
+                        "temporary directory removal failed for %s", td
+                    )
             _CONTAINER_LAST_USED.pop(c.id, None)
     _CONTAINER_POOLS.clear()
 
