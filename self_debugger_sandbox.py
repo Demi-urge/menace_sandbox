@@ -73,7 +73,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     async def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
         """Run tests for *paths* under coverage using parallel workers asynchronously."""
 
-        async def run_one(idx: int, set_paths: list[Path]) -> Path:
+        async def run_one(idx: int, set_paths: list[Path]) -> tuple[Path, int]:
             data_file = tmp_dir / f".coverage.{idx}"
             p_env = dict(env or os.environ)
             p_env["COVERAGE_FILE"] = str(data_file)
@@ -98,8 +98,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             )
             await proc.wait()
             if proc.returncode != 0:
-                self.logger.error("test run failed", extra={"cmd": cmd, "rc": proc.returncode})
-            return data_file
+                self.logger.error(
+                    "test run failed", extra={"cmd": cmd, "rc": proc.returncode}
+                )
+            return data_file, int(proc.returncode)
 
         # Support a list of paths treated as individual test sets
         if paths and isinstance(paths[0], (list, tuple)):
@@ -109,9 +111,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         tmp_dir = Path(tempfile.mkdtemp())
         try:
-            coverage_files = await asyncio.gather(
+            results = await asyncio.gather(
                 *(run_one(idx, sp) for idx, sp in enumerate(sets))
             )
+            coverage_files = [r[0] for r in results]
+            returncodes = [r[1] for r in results]
+            if any(rc != 0 for rc in returncodes):
+                raise RuntimeError("test subprocess failed")
             cov = Coverage(data_file=str(tmp_dir / ".coverage"))
             cov.combine([str(f) for f in coverage_files])
             buf = io.StringIO()
@@ -615,6 +621,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             )
                         else:
                             score = float("-inf")
+                    except RuntimeError as exc:
+                        self.logger.error("sandbox tests failed", exc_info=exc)
+                        score = float("-inf")
                     except Exception:
                         self.logger.exception("patch failed")
                         score = float("-inf")
@@ -723,6 +732,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     result = "reverted"
                 else:
                     patched = not reverted and patch_score >= self.score_threshold
+            except RuntimeError as exc:
+                self.logger.error("sandbox tests failed", exc_info=exc)
             except Exception:
                 self.logger.exception("patch failed")
             finally:
