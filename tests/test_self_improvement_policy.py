@@ -1,4 +1,5 @@
 import self_improvement_policy as sip
+import pytest
 
 
 def test_policy_update():
@@ -82,3 +83,17 @@ def test_reward_includes_synergy():
     policy.update(state, 0.0, next_state)
     after = policy.score(state)
     assert after > before
+
+
+def test_dqn_strategy_learns():
+    pytest.importorskip("torch")
+    policy = sip.SelfImprovementPolicy(strategy="dqn", epsilon=0.2)
+    state0 = (0, 0, 0)
+    for _ in range(100):
+        act = policy.select_action(state0)
+        reward = 1.0 if act == 1 else 0.0
+        next_state = (1, 0, 0) if act == 1 else state0
+        policy.update(state0, reward, next_state, action=act)
+        policy.update(next_state, 0.0, state0, action=0)
+    policy.epsilon = 0.0
+    assert policy.select_action(state0) == 1

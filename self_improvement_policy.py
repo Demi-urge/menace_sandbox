@@ -8,6 +8,16 @@ import os
 import random
 import math
 import statistics
+from typing import List
+
+try:  # pragma: no cover - optional dependency
+    import torch
+    from torch import nn
+    import torch.nn.functional as F
+except Exception:  # pragma: no cover - fallback if torch missing
+    torch = None  # type: ignore
+    nn = None  # type: ignore
+    F = None  # type: ignore
 
 
 class RLStrategy:
@@ -140,6 +150,119 @@ class ActorCriticStrategy(RLStrategy):
         return state_table[action]
 
 
+class DQNStrategy(RLStrategy):
+    """Simple Deep Q-Network strategy using PyTorch."""
+
+    def __init__(
+        self,
+        state_dim: Optional[int] = None,
+        action_dim: int = 2,
+        hidden_dim: int = 32,
+        lr: float = 1e-3,
+        batch_size: int = 32,
+        capacity: int = 1000,
+    ) -> None:
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.hidden_dim = hidden_dim
+        self.lr = lr
+        self.batch_size = batch_size
+        self.capacity = capacity
+        self.memory: List[Tuple[torch.Tensor, int, float, Optional[torch.Tensor], bool]] = []
+        self.model: Optional[nn.Module] = None
+        self.optimizer: Optional[torch.optim.Optimizer] = None
+
+    # ------------------------------------------------------------------
+    def _ensure_model(self, dim: int) -> None:
+        if self.model is None:
+            self.state_dim = dim
+            self.model = nn.Sequential(
+                nn.Linear(dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.action_dim),
+            )
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+
+    # ------------------------------------------------------------------
+    def predict(self, state: Tuple[int, ...]) -> torch.Tensor:
+        self._ensure_model(len(state))
+        assert self.model is not None
+        with torch.no_grad():
+            s = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            q = self.model(s)
+        return q.squeeze(0)
+
+    # ------------------------------------------------------------------
+    def select_action(
+        self,
+        state: Tuple[int, ...],
+        *,
+        epsilon: float = 0.1,
+        temperature: float = 1.0,
+        exploration: str = "epsilon_greedy",
+    ) -> int:
+        q_vals = self.predict(state)
+        actions = list(range(self.action_dim))
+        if exploration == "softmax":
+            t = max(0.01, temperature)
+            probs = F.softmax(q_vals / t, dim=0).tolist()
+            return random.choices(actions, weights=probs, k=1)[0]
+        if random.random() < epsilon:
+            return random.choice(actions)
+        return int(torch.argmax(q_vals).item())
+
+    # ------------------------------------------------------------------
+    def update(
+        self,
+        table: Dict[Tuple[int, ...], Dict[int, float]],
+        state: Tuple[int, ...],
+        action: int,
+        reward: float,
+        next_state: Tuple[int, ...] | None,
+        alpha: float,
+        gamma: float,
+    ) -> float:
+        self._ensure_model(len(state))
+        assert self.model is not None and self.optimizer is not None
+
+        s_t = torch.tensor(state, dtype=torch.float32)
+        ns_t = torch.tensor(next_state, dtype=torch.float32) if next_state is not None else None
+        done = next_state is None
+        self.memory.append((s_t, action, reward, ns_t, done))
+        if len(self.memory) > self.capacity:
+            self.memory.pop(0)
+
+        batch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+        states = torch.stack([b[0] for b in batch])
+        actions = torch.tensor([b[1] for b in batch], dtype=torch.long)
+        rewards = torch.tensor([b[2] for b in batch], dtype=torch.float32)
+        next_states = torch.stack([
+            b[3] if b[3] is not None else torch.zeros_like(b[0]) for b in batch
+        ])
+        dones = torch.tensor([b[4] for b in batch], dtype=torch.float32)
+
+        q_values = self.model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
+        with torch.no_grad():
+            max_next = self.model(next_states).max(1).values
+            targets = rewards + gamma * max_next * (1 - dones)
+
+        loss = F.mse_loss(q_values, targets)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        with torch.no_grad():
+            cur_q = self.model(s_t.unsqueeze(0))[0, action]
+        return float(cur_q.item())
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def value(table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]) -> float:  # type: ignore[override]
+        raise NotImplementedError  # value should be computed via predict()
+
+
 class SelfImprovementPolicy:
     """Tiny reinforcement learning helper for the self-improvement engine."""
 
@@ -172,6 +295,11 @@ class SelfImprovementPolicy:
                 self.strategy = QLambdaStrategy()
             elif strategy.lower() in {"actor_critic", "actor-critic"}:
                 self.strategy = ActorCriticStrategy()
+            elif strategy.lower() == "dqn":
+                if torch is None or nn is None:
+                    self.strategy = QLearningStrategy()
+                else:
+                    self.strategy = DQNStrategy()
             else:
                 self.strategy = QLearningStrategy()
         else:
@@ -234,10 +362,20 @@ class SelfImprovementPolicy:
 
     def score(self, state: Tuple[int, ...]) -> float:
         """Return the learned value for ``state``."""
+        if hasattr(self.strategy, "predict"):
+            q = self.strategy.predict(state)  # type: ignore[attr-defined]
+            return float(torch.max(q).item())
         return self.strategy.value(self.values, state)
 
     def select_action(self, state: Tuple[int, ...]) -> int:
         """Choose an action using the configured exploration strategy."""
+        if hasattr(self.strategy, "select_action"):
+            return self.strategy.select_action(
+                state,
+                epsilon=self.epsilon,
+                temperature=self.temperature,
+                exploration=self.exploration,
+            )
         actions = self.values.get(state)
         if not actions:
             actions = {0: 0.0, 1: 0.0}
@@ -294,5 +432,6 @@ __all__ = [
     "QLambdaStrategy",
     "SarsaStrategy",
     "ActorCriticStrategy",
+    "DQNStrategy",
     "SelfImprovementPolicy",
 ]
