@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from typing import Dict, Tuple
 
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
+
+logger = logging.getLogger(__name__)
 
 
 class PresetRLAgent:
@@ -42,15 +45,16 @@ class PresetRLAgent:
             st = data.get("state")
             self.prev_state = tuple(st) if st is not None else None
             self.prev_action = data.get("action")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load RL state: %s", exc)
+            return
 
     def _save_state(self) -> None:
         try:
             with open(self.state_file, "w") as fh:
                 json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to save RL state: %s", exc)
 
     # ------------------------------------------------------------------
     def _state(self, tracker: ROITracker) -> Tuple[int, int]:
