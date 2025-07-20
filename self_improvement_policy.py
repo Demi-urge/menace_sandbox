@@ -263,6 +263,102 @@ class DQNStrategy(RLStrategy):
         raise NotImplementedError  # value should be computed via predict()
 
 
+class DeepQLearningStrategy(RLStrategy):
+    """Simpler online Deep Q-learning using PyTorch."""
+
+    def __init__(
+        self,
+        state_dim: Optional[int] = None,
+        action_dim: int = 2,
+        hidden_dim: int = 32,
+        lr: float = 1e-3,
+    ) -> None:
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.hidden_dim = hidden_dim
+        self.lr = lr
+        self.model: Optional[nn.Module] = None
+        self.optimizer: Optional[torch.optim.Optimizer] = None
+
+    # ------------------------------------------------------------------
+    def _ensure_model(self, dim: int) -> None:
+        if self.model is None:
+            self.state_dim = dim
+            self.model = nn.Sequential(
+                nn.Linear(dim, self.hidden_dim),
+                nn.ReLU(),
+                nn.Linear(self.hidden_dim, self.action_dim),
+            )
+            self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+
+    # ------------------------------------------------------------------
+    def predict(self, state: Tuple[int, ...]) -> torch.Tensor:
+        self._ensure_model(len(state))
+        assert self.model is not None
+        with torch.no_grad():
+            s = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+            q = self.model(s)
+        return q.squeeze(0)
+
+    # ------------------------------------------------------------------
+    def select_action(
+        self,
+        state: Tuple[int, ...],
+        *,
+        epsilon: float = 0.1,
+        temperature: float = 1.0,
+        exploration: str = "epsilon_greedy",
+    ) -> int:
+        q_vals = self.predict(state)
+        actions = list(range(self.action_dim))
+        if exploration == "softmax":
+            t = max(0.01, temperature)
+            probs = F.softmax(q_vals / t, dim=0).tolist()
+            return random.choices(actions, weights=probs, k=1)[0]
+        if random.random() < epsilon:
+            return random.choice(actions)
+        return int(torch.argmax(q_vals).item())
+
+    # ------------------------------------------------------------------
+    def update(
+        self,
+        table: Dict[Tuple[int, ...], Dict[int, float]],
+        state: Tuple[int, ...],
+        action: int,
+        reward: float,
+        next_state: Tuple[int, ...] | None,
+        alpha: float,
+        gamma: float,
+    ) -> float:
+        self._ensure_model(len(state))
+        assert self.model is not None and self.optimizer is not None
+
+        s_t = torch.tensor(state, dtype=torch.float32)
+        q_vals = self.model(s_t)
+        q_sa = q_vals[action]
+
+        with torch.no_grad():
+            if next_state is not None:
+                ns_t = torch.tensor(next_state, dtype=torch.float32)
+                next_q = torch.max(self.model(ns_t))
+            else:
+                next_q = torch.tensor(0.0)
+            target = reward + gamma * next_q
+
+        loss = F.mse_loss(q_sa, target)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        return float(q_sa.detach().item())
+
+    # ------------------------------------------------------------------
+    def value(self, table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]) -> float:  # type: ignore[override]
+        self._ensure_model(len(state))
+        assert self.model is not None
+        with torch.no_grad():
+            return float(torch.max(self.model(torch.tensor(state, dtype=torch.float32))).item())
+
+
 class SelfImprovementPolicy:
     """Tiny reinforcement learning helper for the self-improvement engine."""
 
@@ -295,6 +391,11 @@ class SelfImprovementPolicy:
                 self.strategy = QLambdaStrategy()
             elif strategy.lower() in {"actor_critic", "actor-critic"}:
                 self.strategy = ActorCriticStrategy()
+            elif strategy.lower() == "deep_q":
+                if torch is None or nn is None:
+                    self.strategy = QLearningStrategy()
+                else:
+                    self.strategy = DeepQLearningStrategy()
             elif strategy.lower() == "dqn":
                 if torch is None or nn is None:
                     self.strategy = QLearningStrategy()
@@ -432,6 +533,7 @@ __all__ = [
     "QLambdaStrategy",
     "SarsaStrategy",
     "ActorCriticStrategy",
+    "DeepQLearningStrategy",
     "DQNStrategy",
     "SelfImprovementPolicy",
 ]
