@@ -507,6 +507,15 @@ python service_installer.py --orchestrator swarm  # writes docker-compose.yml
 # docker stack deploy -c docker-compose.yml menace
 ```
 
+### Visual agent
+
+`menace_visual_agent_2.py` exposes a FastAPI service used during
+development. The service must always run with a single worker:
+
+```python
+uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
+```
+
 ### Topic discovery and clip acquisition
 
 Two new bots automate topic research and raw clip gathering:

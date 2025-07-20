@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import types
+import runpy
 import filelock
 import pytest
 
@@ -429,4 +430,34 @@ def test_overlapping_clients_sequential(monkeypatch, tmp_path):
     end1 = next(t for n, t in times if n == "end1")
     end2 = next(t for n, t in times if n == "end2")
     assert end2 >= end1
+
+
+def test_main_runs_single_worker(monkeypatch):
+    """Running menace_visual_agent_2 directly should use one worker."""
+
+    import sys
+    import types
+    import uvicorn
+
+    heavy = ["cv2", "numpy", "mss", "pyautogui"]
+    for name in heavy:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    pt_mod = types.ModuleType("pytesseract")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.image_to_string = lambda *a, **k: ""
+    pt_mod.image_to_data = lambda *a, **k: {}
+    pt_mod.Output = types.SimpleNamespace(DICT=0)
+    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
+
+    calls = {}
+
+    def fake_run(*args, **kwargs):
+        calls.update(kwargs)
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+
+    runpy.run_module("menace_visual_agent_2", run_name="__main__")
+
+    assert calls.get("workers") == 1
 

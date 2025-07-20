@@ -358,4 +358,4 @@ async def status():
 # 3️⃣  BOOT SERVER  -------------------------------------------------
 if __name__ == "__main__":
     print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
-    uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT)
+    uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
