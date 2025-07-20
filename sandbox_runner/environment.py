@@ -267,9 +267,14 @@ except Exception as exc:  # pragma: no cover - docker may be unavailable
     _DOCKER_CLIENT = None
 
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
+_CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
+_POOL_CLEANUP_INTERVAL = float(os.getenv("SANDBOX_POOL_CLEANUP_INTERVAL", "60"))
+
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
+_CONTAINER_LAST_USED: Dict[str, float] = {}
 _WARMUP_THREADS: Dict[str, threading.Thread] = {}
+_CLEANUP_THREAD: threading.Thread | None = None
 
 
 def _ensure_pool_size_async(image: str) -> None:
@@ -277,6 +282,7 @@ def _ensure_pool_size_async(image: str) -> None:
     if _DOCKER_CLIENT is None:
         return
     pool = _CONTAINER_POOLS.setdefault(image, [])
+    _cleanup_idle_containers()
     if len(pool) >= _CONTAINER_POOL_SIZE:
         return
     t = _WARMUP_THREADS.get(image)
@@ -289,6 +295,7 @@ def _ensure_pool_size_async(image: str) -> None:
             for _ in range(needed):
                 c, _ = _create_pool_container(image)
                 pool.append(c)
+                _CONTAINER_LAST_USED[c.id] = time.time()
         except Exception as exc:
             logger.warning("container warm up failed: %s", exc)
         finally:
@@ -310,6 +317,7 @@ def _create_pool_container(image: str) -> tuple[Any, str]:
         volumes={td: {"bind": "/code", "mode": "rw"}},
     )
     _CONTAINER_DIRS[container.id] = td
+    _CONTAINER_LAST_USED[container.id] = time.time()
     return container, td
 
 
@@ -318,6 +326,7 @@ def _get_pooled_container(image: str) -> tuple[Any, str]:
     pool = _CONTAINER_POOLS.setdefault(image, [])
     if pool:
         c = pool.pop()
+        _CONTAINER_LAST_USED.pop(c.id, None)
         _ensure_pool_size_async(image)
         return c, _CONTAINER_DIRS[c.id]
     container, td = _create_pool_container(image)
@@ -332,22 +341,66 @@ def _release_container(image: str, container: Any) -> None:
         if getattr(container, "status", "running") != "running":
             raise RuntimeError("container not running")
         _CONTAINER_POOLS.setdefault(image, []).append(container)
+        _CONTAINER_LAST_USED[container.id] = time.time()
     except Exception:
         try:
             container.remove(force=True)
         except Exception:
             pass
-        td = _CONTAINER_DIRS.pop(getattr(container, "id", ""), None)
+        cid = getattr(container, "id", "")
+        td = _CONTAINER_DIRS.pop(cid, None)
+        _CONTAINER_LAST_USED.pop(cid, None)
         if td:
             shutil.rmtree(td, ignore_errors=True)
     finally:
         _ensure_pool_size_async(image)
 
 
+def _cleanup_idle_containers() -> None:
+    """Remove containers unused for longer than the idle timeout."""
+    if _DOCKER_CLIENT is None:
+        return
+    now = time.time()
+    for image, pool in list(_CONTAINER_POOLS.items()):
+        for c in list(pool):
+            last = _CONTAINER_LAST_USED.get(c.id, 0)
+            if now - last > _CONTAINER_IDLE_TIMEOUT:
+                pool.remove(c)
+                try:
+                    c.stop(timeout=0)
+                except Exception:
+                    pass
+                try:
+                    c.remove(force=True)
+                except Exception:
+                    pass
+                td = _CONTAINER_DIRS.pop(c.id, None)
+                if td:
+                    shutil.rmtree(td, ignore_errors=True)
+                _CONTAINER_LAST_USED.pop(c.id, None)
+
+
+def _cleanup_worker() -> None:
+    """Background thread to clean idle containers."""
+    while True:
+        time.sleep(_POOL_CLEANUP_INTERVAL)
+        try:
+            _cleanup_idle_containers()
+        except Exception:
+            logger.exception("idle container cleanup failed")
+
+
 def _cleanup_pools() -> None:
     """Stop and remove pooled containers."""
     if _DOCKER_CLIENT is None:
         return
+    global _CLEANUP_THREAD
+    if _CLEANUP_THREAD:
+        try:
+            _CLEANUP_THREAD.join(timeout=0)
+        except Exception:
+            pass
+        _CLEANUP_THREAD = None
     for t in list(_WARMUP_THREADS.values()):
         try:
             t.join(timeout=0)
@@ -367,6 +420,7 @@ def _cleanup_pools() -> None:
             td = _CONTAINER_DIRS.pop(c.id, None)
             if td:
                 shutil.rmtree(td, ignore_errors=True)
+            _CONTAINER_LAST_USED.pop(c.id, None)
     _CONTAINER_POOLS.clear()
 
 import atexit
@@ -374,6 +428,9 @@ import atexit
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
     _ensure_pool_size_async(default_img)
+    if _CLEANUP_THREAD is None:
+        _CLEANUP_THREAD = threading.Thread(target=_cleanup_worker, daemon=True)
+        _CLEANUP_THREAD.start()
     atexit.register(_cleanup_pools)
 
 
