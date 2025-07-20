@@ -84,3 +84,13 @@ and synergy values. Once at least three ROI samples exist the agent predicts
 actions for CPU, memory, bandwidth and threat intensity. The learned policy is
 stored at the provided path so adjustments improve over time. If history is too
 short the function falls back to the heuristics described above.
+## Preset Policy CLI
+
+Use `preset_policy_cli.py` to persist or restore the reinforcement learning policy used by `adapt_presets`.
+
+```bash
+python preset_policy_cli.py export --out policy.json
+python preset_policy_cli.py import policy.json
+```
+
+The tool calls `export_preset_policy` and `import_preset_policy` under the hood, encoding the policy table as JSON.
