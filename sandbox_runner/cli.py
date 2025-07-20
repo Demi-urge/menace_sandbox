@@ -272,7 +272,9 @@ def _synergy_converged(
     their sequence index and computes the confidence using the t-distribution
     when possible.  If ``statsmodels`` and ``scipy`` are installed the
     Augmented Dickey-Fuller and Levene variance tests are included as
-    additional signals.
+    additional signals.  When these dependencies are missing a basic mean or
+    variance comparison is used as a fallback so that convergence can still be
+    estimated.
     """
     if len(history) < window:
         return False, 0.0, 0.0
@@ -296,18 +298,43 @@ def _synergy_converged(
             p = 2 * (1 - t.cdf(t_stat, n - 1))
             conf = 1 - p
         stat_conf = conf
+        ma_series: list[float] = []
+        for i in range(len(series)):
+            start = max(0, i - ma_window + 1)
+            window_vals = series[start : i + 1]
+            ma_series.append(sum(window_vals) / len(window_vals))
         try:  # pragma: no cover - optional dependency
             from statsmodels.tsa.stattools import adfuller
 
-            ma_series: list[float] = []
-            for i in range(len(series)):
-                start = max(0, i - ma_window + 1)
-                window_vals = series[start : i + 1]
-                ma_series.append(sum(window_vals) / len(window_vals))
             adf_p = adfuller(ma_series)[1]
             stat_conf = 1.0 - float(adf_p)
         except Exception:
-            pass
+            # fallback when statsmodels is unavailable: compare mean of first
+            # and second halves using a simple t-test
+            half = len(ma_series) // 2
+            if half > 1 and len(ma_series) - half > 1:
+                m1 = sum(ma_series[:half]) / half
+                m2 = sum(ma_series[half:]) / (len(ma_series) - half)
+                v1 = sum((x - m1) ** 2 for x in ma_series[:half]) / (half - 1)
+                v2 = (
+                    sum((x - m2) ** 2 for x in ma_series[half:])
+                    / (len(ma_series) - half - 1)
+                )
+                pooled = math.sqrt(
+                    ((half - 1) * v1 + (len(ma_series) - half - 1) * v2)
+                    / (len(ma_series) - 2)
+                )
+                if pooled > 0:
+                    t_stat = abs(m1 - m2) / (
+                        pooled
+                        * math.sqrt(1 / half + 1 / (len(ma_series) - half))
+                    )
+                    p_val = 2 * (1 - t.cdf(t_stat, len(ma_series) - 2))
+                    stat_conf = 1.0 - float(p_val)
+                else:
+                    stat_conf = 1.0
+            else:
+                stat_conf = conf
 
         var_change_conf = 0.0
         try:  # pragma: no cover - optional dependency
@@ -318,7 +345,20 @@ def _synergy_converged(
                 lev_p = levene(series[:half], series[half:]).pvalue
                 var_change_conf = 1.0 - float(lev_p)
         except Exception:
-            pass
+            # fallback when scipy is unavailable: estimate variance change by
+            # comparing sample variances of the first and second halves
+            half = n // 2
+            if half > 1 and n - half > 1:
+                m1 = sum(series[:half]) / half
+                m2 = sum(series[half:]) / (n - half)
+                v1 = sum((x - m1) ** 2 for x in series[:half]) / (half - 1)
+                v2 = sum((x - m2) ** 2 for x in series[half:]) / (n - half - 1)
+                avg_var = (v1 + v2) / 2
+                if avg_var > 0:
+                    ratio = abs(v1 - v2) / avg_var
+                    var_change_conf = min(1.0, ratio)
+                else:
+                    var_change_conf = 0.0
 
         # rolling correlation of metric values against iteration index
         roll_corr = 0.0
