@@ -470,6 +470,14 @@ def test_reliability_metric_scores():
     assert tracker.reliability(metric="profit") == pytest.approx(1.0 / (1.0 + mae))
 
 
+def test_synergy_reliability():
+    tracker = rt.ROITracker()
+    tracker.record_metric_prediction("synergy_roi", 1.0, 1.5)
+    tracker.record_metric_prediction("synergy_roi", 2.0, 1.0)
+    assert tracker.synergy_reliability() == pytest.approx(0.75)
+    assert tracker.synergy_reliability(window=1) == pytest.approx(1.0)
+
+
 def test_reliability_cross_validation():
     tracker = rt.ROITracker()
     for i in range(4):

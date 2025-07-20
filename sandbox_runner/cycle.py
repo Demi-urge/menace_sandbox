@@ -428,6 +428,7 @@ def _sandbox_cycle_runner(
         mae = tracker.rolling_mae()
         reliability = tracker.reliability()
         synergy_rel = tracker.reliability(metric="synergy_roi")
+        synergy_mae = tracker.synergy_reliability()
         rel = synergy_rel if section is None else reliability
         ctx.roi_tolerance = max(
             ctx.base_roi_tolerance * (1.0 - rel), ctx.base_roi_tolerance * 0.1
@@ -443,6 +444,7 @@ def _sandbox_cycle_runner(
                 "mae": mae,
                 "reliability": reliability,
                 "synergy_reliability": synergy_rel,
+                "synergy_mae": synergy_mae,
             },
         )
         flagged = ctx.meta_log.diminishing(tracker.diminishing())
