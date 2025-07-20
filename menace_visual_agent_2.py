@@ -45,6 +45,7 @@ DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.json"
 task_queue = deque()
 job_status = {}
+_exit_event = threading.Event()
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -91,9 +92,9 @@ def _persist_state() -> None:
 
 
 def _queue_worker():
-    while True:
+    while not _exit_event.is_set():
         if not task_queue:
-            time.sleep(0.1)
+            _exit_event.wait(0.1)
             continue
         task = task_queue.popleft()
         tid = task["id"]
@@ -120,6 +121,9 @@ def _queue_worker():
                 _global_lock.release()
             except Exception:
                 pass
+
+        if _exit_event.is_set():
+            break
 
 
 try:
@@ -519,6 +523,7 @@ async def recover_queue(x_token: str = Header(default="")):
 if __name__ == "__main__":
     import argparse
     import sys
+    import signal
 
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
@@ -557,4 +562,18 @@ if __name__ == "__main__":
         sys.exit(0)
 
     print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
-    uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
+
+    config = uvicorn.Config(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
+    server = uvicorn.Server(config)
+    server.install_signal_handlers = lambda: None
+
+    def _handle_signal(sig, frame):
+        _exit_event.set()
+        server.handle_exit(sig, frame)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _handle_signal)
+
+    server.run()
+    _exit_event.set()
+    _worker_thread.join()
