@@ -123,7 +123,8 @@ visual agent is contacted. The most relevant are:
 
 - `VISUAL_AGENT_URLS` – semicolon separated list of agent endpoints. If unset
   the values of `VISUAL_DESKTOP_URL` and `VISUAL_LAPTOP_URL` are used.
-- `VISUAL_AGENT_TOKEN` – authentication token passed to the agent service.
+- `VISUAL_AGENT_TOKEN` – authentication token passed to the agent service. If
+  unset the agent uses `tombalolosvisualagent123`.
 - `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
   headless mode.
 - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
