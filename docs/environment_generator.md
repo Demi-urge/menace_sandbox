@@ -86,6 +86,14 @@ stored at the provided path so adjustments improve over time. If the variable is
 unset the policy is stored in ``sandbox_data/preset_policy.json`` and reloaded
 automatically on the next run. If history is too short the function falls back
 to the heuristics described above.
+
+If ``SANDBOX_ADAPTIVE_AGENT_PATH`` is set, ``adapt_presets`` employs
+``AdaptivePresetAgent`` to refine presets using a reinforcement learning
+policy. The algorithm can be selected via ``SANDBOX_ADAPTIVE_AGENT_STRATEGY``
+and defaults to ``q_learning``. Set this variable to ``double_dqn`` to enable
+the more sophisticated Double DQN strategy (PyTorch is used when available).
+The agent stores its learned policy at the configured path and reloads it on
+startup.
 ## Preset Policy CLI
 
 Use `preset_policy_cli.py` to persist or restore the reinforcement learning policy used by `adapt_presets`.

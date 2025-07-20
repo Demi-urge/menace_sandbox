@@ -3,7 +3,7 @@ import random
 import pytest
 import menace_sandbox.environment_generator as eg
 import menace_sandbox.self_improvement_policy as sp
-import roi_tracker as rt
+import menace_sandbox.roi_tracker as rt
 
 class DummyAgent:
     def __init__(self, path):
@@ -183,4 +183,31 @@ def test_strategy_env_var(monkeypatch, tmp_path):
     tracker = _tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
     assert "actor_critic" in captured["strategies"]
+
+
+def test_adaptive_strategy_env_var(monkeypatch, tmp_path):
+    captured = {"strategies": []}
+
+    class RecordPolicy:
+        def __init__(self, path=None, strategy=None, **k):
+            captured["strategies"].append(strategy)
+
+        def update(self, *a, **k):
+            return 0.0
+
+        def select_action(self, state):
+            return 0
+
+        def save(self):
+            pass
+
+    monkeypatch.setattr(sp, "SelfImprovementPolicy", RecordPolicy)
+    path = tmp_path / "p.pkl"
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_PATH", str(path))
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_STRATEGY", "double_dqn")
+    if hasattr(eg.adapt_presets, "_adaptive_agent"):
+        delattr(eg.adapt_presets, "_adaptive_agent")
+    tracker = _long_tracker()
+    eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
+    assert "double_dqn" in captured["strategies"]
 

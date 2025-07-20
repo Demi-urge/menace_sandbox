@@ -118,7 +118,8 @@ class AdaptivePresetAgent:
     """Simple RL agent using ROI and synergy history to adjust presets.
 
     When ``strategy`` is set to ``"deep_q"`` a small neural network is used to
-    estimate Q-values via :class:`DeepQLearningStrategy`.
+    estimate Q-values via :class:`DeepQLearningStrategy`. ``"double_dqn"``
+    selects the :class:`DoubleDQNStrategy` if PyTorch is available.
     """
 
     ACTIONS: tuple[dict[str, int], ...] = (
