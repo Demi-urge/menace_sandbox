@@ -471,7 +471,7 @@ def test_flakiness_variable(monkeypatch):
 
 def test_score_weights_evolve_from_audit():
     trail = DummyTrail()
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail, smoothing_factor=0.5)
 
     dbg._log_patch(
         "p1",
@@ -505,7 +505,40 @@ def test_score_weights_evolve_from_audit():
 
     assert first != second
     assert second != third
-    assert abs(third[0] - 1.5) < 1e-6
-    assert abs(third[1] - 1.5) < 1e-6
-    assert abs(third[2] - 3.0) < 1e-6
-    assert abs(third[3]) < 1e-6
+    assert abs(first[0] - 1.522060933814826) < 1e-6
+    assert abs(first[2] - 4.477939066185173) < 1e-6
+    assert abs(second[0] - 2.5064144193985287) < 1e-6
+    assert abs(second[1] - 1.0112140614949685) < 1e-6
+    assert abs(second[2] - 2.482371519106503) < 1e-6
+    assert abs(third[0] - 1.0707495347030116) < 1e-6
+    assert abs(third[1] - 2.1453016750691587) < 1e-6
+    assert abs(third[2] - 2.7839487902278295) < 1e-6
+
+
+def test_composite_score_ema_smooth():
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail, smoothing_factor=0.5)
+
+    patches = [
+        {"coverage_delta": 0.1, "error_delta": 0.0, "roi_delta": 0.3},
+        {"coverage_delta": 0.2, "error_delta": 0.1, "roi_delta": 0.1},
+        {"coverage_delta": 0.0, "error_delta": 0.2, "roi_delta": 0.2},
+    ]
+    scores = []
+    for p in patches:
+        dbg._log_patch("p", "success", **p)
+        score = dbg._composite_score(
+            p["coverage_delta"],
+            p["error_delta"],
+            p["roi_delta"],
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        )
+        scores.append(score)
+
+    assert abs(scores[0] - 0.8882695588837753) < 1e-6
+    assert abs(scores[1] - 0.8422919840017427) < 1e-6
+    assert abs(scores[2] - 0.9377324122041781) < 1e-6

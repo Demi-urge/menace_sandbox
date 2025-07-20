@@ -15,7 +15,7 @@ from datetime import datetime
 import json
 import io
 import math
-from statistics import pstdev, fmean
+from statistics import pstdev
 from coverage import Coverage
 
 from .automated_debugger import AutomatedDebugger
@@ -46,6 +46,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         score_threshold: float = 0.5,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int = 5,
+        smoothing_factor: float = 0.5,
     ) -> None:
         super().__init__(telemetry_db, engine)
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
@@ -55,6 +56,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.score_threshold = score_threshold
         self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
         self.flakiness_runs = max(1, int(flakiness_runs))
+        self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         self._score_db: PatchHistoryDB | None = None
         self._metric_stats: dict[str, tuple[float, float]] = {
             "coverage": (0.0, 1.0),
@@ -245,29 +247,31 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if not records:
             return
 
-        cov = [r[0] for r in records][-limit:]
-        err = [r[1] for r in records][-limit:]
-        roi = [r[2] for r in records][-limit:]
-        comp = [r[3] for r in records][-limit:]
-        syn_roi = [r[4] for r in records][-limit:]
-        syn_eff = [r[5] for r in records][-limit:]
+        data = {
+            "coverage": [r[0] for r in records][-limit:],
+            "error": [r[1] for r in records][-limit:],
+            "roi": [r[2] for r in records][-limit:],
+            "complexity": [r[3] for r in records][-limit:],
+            "synergy_roi": [r[4] for r in records][-limit:],
+            "synergy_efficiency": [r[5] for r in records][-limit:],
+        }
 
-        means = {
-            "coverage": fmean(abs(v) for v in cov) if cov else 0.0,
-            "error": fmean(abs(v) for v in err) if err else 0.0,
-            "roi": fmean(abs(v) for v in roi) if roi else 0.0,
-            "complexity": fmean(abs(v) for v in comp) if comp else 0.0,
-            "synergy_roi": fmean(abs(v) for v in syn_roi) if syn_roi else 0.0,
-            "synergy_efficiency": fmean(abs(v) for v in syn_eff) if syn_eff else 0.0,
-        }
-        stds = {
-            "coverage": pstdev(cov) if len(cov) > 1 else 0.0,
-            "error": pstdev(err) if len(err) > 1 else 0.0,
-            "roi": pstdev(roi) if len(roi) > 1 else 0.0,
-            "complexity": pstdev(comp) if len(comp) > 1 else 0.0,
-            "synergy_roi": pstdev(syn_roi) if len(syn_roi) > 1 else 0.0,
-            "synergy_efficiency": pstdev(syn_eff) if len(syn_eff) > 1 else 0.0,
-        }
+        means: dict[str, float] = {}
+        stds: dict[str, float] = {}
+        alpha = self.smoothing_factor
+
+        for key, values in data.items():
+            mean_abs = 0.0
+            mean_raw = 0.0
+            var = 1.0
+            for v in values:
+                mean_abs += alpha * (abs(v) - mean_abs)
+                delta = v - mean_raw
+                mean_raw += alpha * delta
+                var = (1 - alpha) * (var + alpha * delta * delta)
+            means[key] = mean_abs
+            stds[key] = math.sqrt(var)
+
         self._metric_stats = {k: (means[k], stds[k]) for k in means}
 
         weights = [
