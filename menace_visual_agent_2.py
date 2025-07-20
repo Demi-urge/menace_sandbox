@@ -15,6 +15,7 @@ import secrets
 import os
 import tempfile
 from filelock import FileLock, Timeout
+from collections import deque
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 API_TOKEN = "tombalolosvisualagent123"
@@ -37,26 +38,32 @@ GLOBAL_LOCK_PATH = os.getenv(
 )
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
 
-# ------------------------------------------------------------------
-# 2️⃣  END-POINT ----------------------------------------------------
-@app.post("/run", status_code=202)
-async def run_task(task: TaskIn, x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+# Queue management
+task_queue = deque()
+job_status = {}
 
-    if not _running_lock.acquire(blocking=False):
-        raise HTTPException(status_code=409, detail="Agent busy")
 
-    try:
-        _global_lock.acquire(timeout=0)
-    except Timeout:
-        _running_lock.release()
-        raise HTTPException(status_code=409, detail="Agent busy")
-
-    def _worker():
+def _queue_worker():
+    while True:
+        if not task_queue:
+            time.sleep(0.1)
+            continue
+        task = task_queue.popleft()
+        tid = task["id"]
+        job_status[tid]["status"] = "running"
+        _running_lock.acquire()
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            _running_lock.release()
+            job_status[tid]["status"] = "failed"
+            continue
         try:
             _current_job["active"] = True
-            run_menace_pipeline(task.prompt, task.branch)   # <-- you’ll add these params below
+            run_menace_pipeline(task["prompt"], task["branch"])
+            job_status[tid]["status"] = "completed"
+        except Exception:
+            job_status[tid]["status"] = "failed"
         finally:
             _current_job["active"] = False
             _running_lock.release()
@@ -65,8 +72,21 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
             except Exception:
                 pass
 
-    threading.Thread(target=_worker, daemon=True).start()
-    return {"status": "accepted", "prompt": task.prompt}
+
+_worker_thread = threading.Thread(target=_queue_worker, daemon=True)
+_worker_thread.start()
+
+# ------------------------------------------------------------------
+# 2️⃣  END-POINT ----------------------------------------------------
+@app.post("/run", status_code=202)
+async def run_task(task: TaskIn, x_token: str = Header(default="")):
+    if x_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Bad token")
+
+    task_id = secrets.token_hex(8)
+    job_status[task_id] = {"status": "queued", "prompt": task.prompt}
+    task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
+    return {"id": task_id, "status": "queued"}
 
 # Tesseract path (change this if needed)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -352,6 +372,15 @@ async def clone_repo(x_token: str = Header(default="")):
 @app.get("/status")
 async def status():
     return {"active": _current_job["active"]}
+
+
+@app.get("/status/{task_id}")
+async def task_status(task_id: str):
+    if task_id in job_status:
+        info = job_status[task_id].copy()
+        info["id"] = task_id
+        return info
+    raise HTTPException(status_code=404, detail="Not found")
 
 
 # ------------------------------------------------------------------
