@@ -3,6 +3,8 @@ from __future__ import annotations
 """Stub provider using a language model via ``transformers``."""
 
 from typing import Any, Dict, List, Tuple
+import asyncio
+import inspect
 import json
 import logging
 import os
@@ -73,7 +75,7 @@ def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
     return func_name, stub_key
 
 
-def _load_generator():
+async def _aload_generator():
     """Return a text generation pipeline or ``None`` when unavailable."""
     global _GENERATOR
     if _GENERATOR is not None:
@@ -84,12 +86,17 @@ def _load_generator():
     candidates = ["gpt2-large", "distilgpt2"] if model is None else [model]
     for name in candidates:
         try:
-            _GENERATOR = pipeline("text-generation", model=name)
+            _GENERATOR = await asyncio.to_thread(pipeline, "text-generation", model=name)
             break
         except Exception:  # pragma: no cover - model load failures
             logger.exception("failed to load model %s", name)
             _GENERATOR = None
     return _GENERATOR
+
+
+def _load_generator():
+    """Synchronous wrapper for :func:`_aload_generator`."""
+    return asyncio.run(_aload_generator())
 
 
 def _get_history_db() -> InputHistoryDB:
@@ -117,7 +124,7 @@ def _aggregate(records: List[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
+async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
     """Generate or enhance ``stubs`` using recent history or a language model."""
 
     strategy = ctx.get("strategy")
@@ -132,9 +139,17 @@ def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any
             return [dict(hist) for _ in range(max(1, len(stubs)))]
         return stubs
 
-    gen = _load_generator()
+    gen = await _aload_generator()
     if gen is None:
         return stubs
+
+    template: str = ctx.get(
+        "prompt_template",
+        "Create a JSON object for '{name}' using arguments with example values: {args}. Return only the JSON object.",
+    )
+    temperature = ctx.get("temperature")
+    top_p = ctx.get("top_p")
+    use_stream = ctx.get("stream", False)
 
     new_stubs: List[Dict[str, Any]] = []
     for stub in stubs:
@@ -146,14 +161,28 @@ def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any
             new_stubs.append(dict(cached))
             continue
         args = ", ".join(f"{k}={v!r}" for k, v in stub.items())
-        prompt = (
-            f"Create a JSON object for '{name}' using arguments with example values: "
-            f"{args}. Return only the JSON object."
-        )
+        prompt = template.format(name=name, args=args)
+
+        gen_kwargs = {"max_length": 64, "num_return_sequences": 1}
+        if temperature is not None:
+            gen_kwargs["temperature"] = temperature
+        if top_p is not None:
+            gen_kwargs["top_p"] = top_p
+
         try:
-            text = gen(prompt, max_length=64, num_return_sequences=1)[0][
-                "generated_text"
-            ]
+            if use_stream and hasattr(gen, "stream"):
+                stream_res = gen.stream(prompt, **gen_kwargs)
+                if inspect.isasyncgen(stream_res):
+                    parts = [p async for p in stream_res]
+                else:
+                    parts = list(stream_res)
+                text = "".join(parts)
+            else:
+                if inspect.iscoroutinefunction(getattr(gen, "__call__", gen)):
+                    result = await gen(prompt, **gen_kwargs)
+                else:
+                    result = await asyncio.to_thread(gen, prompt, **gen_kwargs)
+                text = result[0].get("generated_text", "")
             match = re.search(r"{.*}", text, flags=re.S)
             if match:
                 data = json.loads(match.group(0))
@@ -166,3 +195,8 @@ def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any
         _CACHE[key] = stub
         new_stubs.append(dict(stub))
     return new_stubs
+
+
+def generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[Dict[str, Any]]:
+    """Synchronous wrapper for :func:`async_generate_stubs`."""
+    return asyncio.run(async_generate_stubs(stubs, ctx))

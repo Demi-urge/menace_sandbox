@@ -126,7 +126,9 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch):
             return [{"generated_text": "{\"foo\": 7}"}]
 
     dummy = DummyGen()
-    monkeypatch.setattr(gsp, "_load_generator", lambda: dummy)
+    async def loader():
+        return dummy
+    monkeypatch.setattr(gsp, "_aload_generator", loader)
     importlib.reload(env)
 
     def target(foo: int) -> None:
@@ -170,7 +172,9 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch):
     )
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
-    monkeypatch.setattr(gsp, "_load_generator", lambda: None)
+    async def loader():
+        return None
+    monkeypatch.setattr(gsp, "_aload_generator", loader)
     importlib.reload(env)
     monkeypatch.setattr(env, "_FAKER", None)
     monkeypatch.setattr(env, "_hyp_strats", None)
