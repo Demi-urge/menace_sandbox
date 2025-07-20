@@ -279,3 +279,66 @@ def test_calls_process_sequentially(monkeypatch):
     assert not errors
     assert not overlap
 
+
+def test_refresh_serializes_with_run(monkeypatch):
+    """A refresh should block other /run calls via the global lock."""
+
+    class DummyTimeout(Exception):
+        pass
+
+    shared = threading.Lock()
+
+    class DummyLock:
+        def __init__(self, *a, **k):
+            pass
+
+        def acquire(self, timeout=0):
+            shared.acquire()
+
+        def release(self):
+            if shared.locked():
+                shared.release()
+
+        @property
+        def is_locked(self):
+            return shared.locked()
+
+    monkeypatch.setattr(filelock, "FileLock", DummyLock)
+    monkeypatch.setattr(filelock, "Timeout", DummyTimeout)
+
+    vac_mod = _reload_client(monkeypatch)
+
+    events: list[tuple[str, float]] = []
+
+    def fake_refresh(self):
+        events.append(("refresh_start", time.time()))
+        time.sleep(0.1)
+        events.append(("refresh_end", time.time()))
+        return True
+
+    def fake_post(url, headers=None, json=None, timeout=10):
+        if url.endswith("/run"):
+            events.append(("run", time.time()))
+        return types.SimpleNamespace(status_code=202)
+
+    def fake_get(url, timeout=10):
+        return types.SimpleNamespace(status_code=200, json=lambda: {"active": False, "status": "ok"})
+
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_refresh_token", fake_refresh)
+    monkeypatch.setattr(vac_mod, "requests", types.SimpleNamespace(post=fake_post, get=fake_get))
+    monkeypatch.setattr(vac_mod, "log_event", lambda *a, **k: "id")
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+
+    client1 = vac_mod.VisualAgentClient(urls=["http://x"], token_refresh_cmd="cmd")
+    client2 = vac_mod.VisualAgentClient(urls=["http://x"])
+
+    fut = client1._refresh_token_async()
+    time.sleep(0.02)
+    client2.ask_async([{"content": "hi"}]).result()
+    fut.result()
+
+    refresh_end = next(t for n, t in events if n == "refresh_end")
+    run_time = next(t for n, t in events if n == "run")
+
+    assert run_time >= refresh_end
+

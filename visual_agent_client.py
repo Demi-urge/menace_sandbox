@@ -161,6 +161,14 @@ class VisualAgentClient:
                 time.sleep(1.0)
         return False
 
+    def _refresh_token_async(self) -> Future:
+        """Run ``_refresh_token`` in the background respecting the global lock."""
+
+        def run() -> bool:
+            return self._refresh_token()
+
+        return self._enqueue(run)
+
     def _send(self, base: str, prompt: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
@@ -186,8 +194,7 @@ class VisualAgentClient:
                     timeout=10,
                 )
                 if resp.status_code == 401:
-                    if self._refresh_token():
-                        return sender()
+                    self._refresh_token_async()
                     return False, "unauthorized"
                 if resp.status_code == 202:
                     return self._poll(base)
@@ -218,8 +225,7 @@ class VisualAgentClient:
                     timeout=10,
                 )
                 if resp.status_code == 401:
-                    if self._refresh_token():
-                        return sender()
+                    self._refresh_token_async()
                     return False, "unauthorized"
                 if resp.status_code == 202:
                     return self._poll(base)
