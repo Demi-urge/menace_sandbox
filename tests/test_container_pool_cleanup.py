@@ -116,3 +116,61 @@ def test_cleanup_worker_logs_stats(monkeypatch, caplog):
     asyncio.run(run_worker())
     assert calls
     assert "cleaned 2 idle containers" in caplog.text
+
+
+def test_rmtree_failure_in_idle_cleanup(monkeypatch, tmp_path, caplog):
+    dummy = DummyClient()
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._CONTAINER_LAST_USED.clear()
+    env._WARMUP_TASKS.clear()
+    monkeypatch.setattr(env, "_CONTAINER_IDLE_TIMEOUT", 0.0)
+    monkeypatch.setattr(env.time, "time", lambda: 1.0)
+    c = DummyContainer("x")
+    env._CONTAINER_POOLS["img"] = [c]
+    td = tmp_path / "dir"
+    td.mkdir()
+    env._CONTAINER_DIRS[c.id] = str(td)
+    env._CONTAINER_LAST_USED[c.id] = 0.0
+
+    orig_rmtree = env.shutil.rmtree
+
+    def failing(path):
+        orig_rmtree(path)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(env.shutil, "rmtree", failing)
+    caplog.set_level("ERROR")
+    cleaned = env._cleanup_idle_containers()
+    assert cleaned == 1
+    assert not td.exists()
+    assert "temporary directory removal failed" in caplog.text
+
+
+def test_rmtree_failure_in_pool_cleanup(monkeypatch, tmp_path, caplog):
+    dummy = DummyClient()
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._CONTAINER_LAST_USED.clear()
+    env._WARMUP_TASKS.clear()
+    env._CLEANUP_TASK = None
+    c = DummyContainer("x")
+    env._CONTAINER_POOLS["img"] = [c]
+    td = tmp_path / "dir"
+    td.mkdir()
+    env._CONTAINER_DIRS[c.id] = str(td)
+    env._CONTAINER_LAST_USED[c.id] = 0.0
+
+    orig_rmtree = env.shutil.rmtree
+
+    def failing(path):
+        orig_rmtree(path)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(env.shutil, "rmtree", failing)
+    caplog.set_level("ERROR")
+    env._cleanup_pools()
+    assert not td.exists()
+    assert "temporary directory removal failed" in caplog.text
