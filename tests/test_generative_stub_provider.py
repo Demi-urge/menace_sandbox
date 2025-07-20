@@ -39,6 +39,31 @@ def test_generate_stubs_cache(monkeypatch, tmp_path):
     assert dummy.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_async_generate_stubs_cache(monkeypatch, tmp_path):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    dummy = DummyGen()
+
+    async def loader():
+        return dummy
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    gsp_mod._CACHE = {}
+
+    def target(x: int) -> None:
+        pass
+
+    first = await gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
+    second = await gsp_mod.async_generate_stubs([{"x": 0}], {"strategy": "synthetic", "target": target})
+
+    assert first == [{"x": 1}]
+    assert second == [{"x": 1}]
+    assert dummy.calls == 1
+
+
 def test_async_generate_returns_json(monkeypatch, tmp_path):
     path = tmp_path / "cache.json"
     monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
