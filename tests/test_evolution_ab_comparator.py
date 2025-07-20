@@ -1,5 +1,6 @@
 import json
-import menace.evolution_ab_comparator as eac
+import logging
+import evolution_ab_comparator as eac
 
 
 def _write_log(path, records):
@@ -80,3 +81,28 @@ def test_compare_and_report(tmp_path, monkeypatch):
     assert any(f.suffix == ".json" for f in files)
     assert metrics["differences"]["avg_risk"] > 0
     assert drifts
+
+
+def test_threshold_load_warning(tmp_path, monkeypatch, caplog):
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("{broken}")
+    monkeypatch.setattr(eac, "CONFIG_PATH", str(bad_file))
+    caplog.set_level(logging.WARNING)
+    cfg = eac._load_thresholds()
+    assert cfg == eac.DEFAULT_THRESHOLDS
+    assert "failed to load thresholds" in caplog.text
+
+
+def test_log_read_warning(tmp_path, monkeypatch, caplog):
+    data_file = tmp_path / "data.jsonl"
+    data_file.write_text("{}\n")
+
+    def bad_open(*a, **k):
+        raise RuntimeError("boom")
+
+    import builtins
+    monkeypatch.setattr(builtins, "open", bad_open)
+    caplog.set_level(logging.WARNING)
+    logs_a, logs_b = eac.load_behavior_logs(str(data_file), str(data_file))
+    assert not logs_a and not logs_b
+    assert "failed to read" in caplog.text
