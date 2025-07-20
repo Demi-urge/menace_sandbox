@@ -44,7 +44,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         state_getter: Callable[[], tuple[int, ...]] | None = None,
         *,
         score_threshold: float = 0.5,
-        score_weights: tuple[float, float, float, float] | None = None,
+        score_weights: tuple[float, float, float, float, float, float] | None = None,
         flakiness_runs: int = 5,
     ) -> None:
         super().__init__(telemetry_db, engine)
@@ -53,7 +53,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.state_getter = state_getter
         self._bad_hashes: set[str] = set()
         self.score_threshold = score_threshold
-        self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0)
+        self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
         self.flakiness_runs = max(1, int(flakiness_runs))
         self._score_db: PatchHistoryDB | None = None
         self._metric_stats: dict[str, tuple[float, float]] = {
@@ -61,6 +61,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "error": (0.0, 1.0),
             "roi": (0.0, 1.0),
             "complexity": (0.0, 1.0),
+            "synergy_roi": (0.0, 1.0),
+            "synergy_efficiency": (0.0, 1.0),
         }
 
     # ------------------------------------------------------------------
@@ -192,7 +194,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> None:
         """Adjust ``score_weights`` using recent patch metrics and update rolling statistics."""
 
-        records: list[tuple[float, float, float, float]] = []
+        records: list[tuple[float, float, float, float, float, float]] = []
 
         if patch_db:
             try:
@@ -205,6 +207,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             float(rec.errors_before - rec.errors_after),
                             float(rec.roi_delta),
                             float(rec.complexity_delta),
+                            float(getattr(rec, "synergy_roi", 0.0)),
+                            float(getattr(rec, "synergy_efficiency", 0.0)),
                         )
                     )
             except Exception:
@@ -231,6 +235,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             float(rec.get("error_delta") or 0.0),
                             float(rec.get("roi_delta") or 0.0),
                             float(rec.get("complexity") or rec.get("complexity_delta") or 0.0),
+                            float(rec.get("synergy_roi") or 0.0),
+                            float(rec.get("synergy_efficiency") or 0.0),
                         )
                     )
             except Exception:
@@ -243,18 +249,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         err = [r[1] for r in records][-limit:]
         roi = [r[2] for r in records][-limit:]
         comp = [r[3] for r in records][-limit:]
+        syn_roi = [r[4] for r in records][-limit:]
+        syn_eff = [r[5] for r in records][-limit:]
 
         means = {
             "coverage": fmean(abs(v) for v in cov) if cov else 0.0,
             "error": fmean(abs(v) for v in err) if err else 0.0,
             "roi": fmean(abs(v) for v in roi) if roi else 0.0,
             "complexity": fmean(abs(v) for v in comp) if comp else 0.0,
+            "synergy_roi": fmean(abs(v) for v in syn_roi) if syn_roi else 0.0,
+            "synergy_efficiency": fmean(abs(v) for v in syn_eff) if syn_eff else 0.0,
         }
         stds = {
             "coverage": pstdev(cov) if len(cov) > 1 else 0.0,
             "error": pstdev(err) if len(err) > 1 else 0.0,
             "roi": pstdev(roi) if len(roi) > 1 else 0.0,
             "complexity": pstdev(comp) if len(comp) > 1 else 0.0,
+            "synergy_roi": pstdev(syn_roi) if len(syn_roi) > 1 else 0.0,
+            "synergy_efficiency": pstdev(syn_eff) if len(syn_eff) > 1 else 0.0,
         }
         self._metric_stats = {k: (means[k], stds[k]) for k in means}
 
@@ -263,10 +275,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             means["error"] / (stds["error"] + 1e-6),
             means["roi"] / (stds["roi"] + 1e-6),
             means["complexity"] / (stds["complexity"] + 1e-6),
+            means["synergy_roi"] / (stds["synergy_roi"] + 1e-6),
+            means["synergy_efficiency"] / (stds["synergy_efficiency"] + 1e-6),
         ]
         total = sum(weights)
         if total > 0:
-            self.score_weights = tuple(w / total * 4.0 for w in weights)
+            self.score_weights = tuple(w / total * 6.0 for w in weights)
 
     # ------------------------------------------------------------------
     def _composite_score(
@@ -277,6 +291,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         flakiness: float,
         runtime_delta: float,
         complexity: float,
+        synergy_roi: float = 0.0,
+        synergy_efficiency: float = 0.0,
     ) -> float:
         """Return a composite score from multiple metrics."""
         self._update_score_weights(self._score_db)
@@ -285,11 +301,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         err = error_delta / (mc.get("error", (0.0, 1.0))[1] + 1e-6)
         roi = roi_delta / (mc.get("roi", (0.0, 1.0))[1] + 1e-6)
         comp = complexity / (mc.get("complexity", (0.0, 1.0))[1] + 1e-6)
+        syn_r = synergy_roi / (mc.get("synergy_roi", (0.0, 1.0))[1] + 1e-6)
+        syn_e = synergy_efficiency / (
+            mc.get("synergy_efficiency", (0.0, 1.0))[1] + 1e-6
+        )
         x = (
             self.score_weights[0] * cov
             + self.score_weights[1] * err
             + self.score_weights[2] * roi
             - self.score_weights[3] * comp
+            + self.score_weights[4] * syn_r
+            + self.score_weights[5] * syn_e
             - flakiness
             - runtime_delta
         )
@@ -314,6 +336,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         flakiness: float | None = None,
         runtime_impact: float | None = None,
         complexity: float | None = None,
+        synergy_roi: float | None = None,
+        synergy_efficiency: float | None = None,
     ) -> None:
         if not self.audit_trail:
             return
@@ -329,6 +353,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "coverage_delta": coverage_delta,
                     "error_delta": error_delta,
                     "roi_delta": roi_delta,
+                    "synergy_roi": synergy_roi,
+                    "synergy_efficiency": synergy_efficiency,
                     "score": score,
                     "reason": reason,
                     "flakiness": flakiness,
@@ -461,6 +487,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             flakiness=flakiness,
                             runtime_impact=runtime_delta,
                             complexity=complexity,
+                            synergy_roi=0.0,
+                            synergy_efficiency=0.0,
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -550,6 +578,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     flakiness=flakiness if 'flakiness' in locals() else None,
                     runtime_impact=runtime_delta if 'runtime_delta' in locals() else None,
                     complexity=complexity if 'complexity' in locals() else None,
+                    synergy_roi=0.0,
+                    synergy_efficiency=0.0,
                     reason=reason,
                 )
                 root_test.unlink(missing_ok=True)
