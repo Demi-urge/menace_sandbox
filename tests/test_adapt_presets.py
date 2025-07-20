@@ -2,7 +2,7 @@ import pickle
 from pathlib import Path
 
 import menace_sandbox.environment_generator as eg
-import roi_tracker as rt
+import menace_sandbox.roi_tracker as rt
 
 
 def _tracker():
@@ -82,3 +82,105 @@ def test_adaptive_agent_exception_logged(monkeypatch, caplog):
     tracker = _long_tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
     assert "preset adaptation failed" in caplog.text
+
+class _NoopAgent:
+    def __init__(self, path=None, *, strategy=None):
+        self.policy = type("p", (), {"path": path, "strategy": strategy})()
+
+    def decide(self, tracker):
+        return {}
+
+    def save(self):
+        pass
+
+
+class _PredTracker:
+    def __init__(self, metrics, preds=None):
+        self.metrics_history = metrics
+        self.roi_history = []
+        self._preds = preds or {}
+
+    def predict_synergy_metric(self, name):
+        return self._preds.get(name, 0.0)
+
+
+def test_synergy_efficiency_downscale(monkeypatch):
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_PATH", "")
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setattr(eg.adapt_presets, "_adaptive_agent", None, raising=False)
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", _NoopAgent, raising=False)
+
+    metrics = {
+        "security_score": [70, 70, 70],
+        "synergy_efficiency": [0.02, 0.02, 0.02],
+    }
+    tracker = _PredTracker(metrics, {"efficiency": 0.2})
+    presets = [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "256Mi"}]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["CPU_LIMIT"] == "0.5"
+    assert new[0]["MEMORY_LIMIT"] == "128Mi"
+
+
+def test_synergy_efficiency_upscale(monkeypatch):
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_PATH", "")
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setattr(eg.adapt_presets, "_adaptive_agent", None, raising=False)
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", _NoopAgent, raising=False)
+
+    metrics = {
+        "security_score": [70, 70, 70],
+        "synergy_efficiency": [-0.02, -0.02, -0.02],
+    }
+    tracker = _PredTracker(metrics, {"efficiency": -0.2})
+    presets = [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "256Mi"}]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["CPU_LIMIT"] == "2"
+    assert new[0]["MEMORY_LIMIT"] == "512Mi"
+
+
+def test_synergy_resilience_bandwidth_up(monkeypatch):
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_PATH", "")
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setattr(eg.adapt_presets, "_adaptive_agent", None, raising=False)
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", _NoopAgent, raising=False)
+
+    metrics = {
+        "security_score": [70, 70, 70],
+        "synergy_resilience": [0.02, 0.02, 0.02],
+    }
+    tracker = _PredTracker(metrics, {"resilience": 0.2})
+    presets = [{
+        "BANDWIDTH_LIMIT": "5Mbps",
+        "MAX_BANDWIDTH": "5Mbps",
+        "MIN_BANDWIDTH": "1Mbps",
+    }]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["BANDWIDTH_LIMIT"] == "10Mbps"
+    assert new[0]["MAX_BANDWIDTH"] == "10Mbps"
+    assert new[0]["MIN_BANDWIDTH"] == "5Mbps"
+
+
+def test_synergy_resilience_bandwidth_down(monkeypatch):
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_PATH", "")
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setattr(eg.adapt_presets, "_adaptive_agent", None, raising=False)
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", _NoopAgent, raising=False)
+
+    metrics = {
+        "security_score": [70, 70, 70],
+        "synergy_resilience": [-0.02, -0.02, -0.02],
+    }
+    tracker = _PredTracker(metrics, {"resilience": -0.2})
+    presets = [{
+        "BANDWIDTH_LIMIT": "10Mbps",
+        "MAX_BANDWIDTH": "10Mbps",
+        "MIN_BANDWIDTH": "5Mbps",
+    }]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["BANDWIDTH_LIMIT"] == "5Mbps"
+    assert new[0]["MAX_BANDWIDTH"] == "5Mbps"
+    assert new[0]["MIN_BANDWIDTH"] == "1Mbps"
