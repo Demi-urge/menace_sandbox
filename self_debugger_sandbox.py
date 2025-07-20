@@ -66,6 +66,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "complexity": (0.0, 1.0),
             "synergy_roi": (0.0, 1.0),
             "synergy_efficiency": (0.0, 1.0),
+            "synergy_resilience": (0.0, 1.0),
+            "synergy_antifragility": (0.0, 1.0),
         }
         self._last_test_log: Path | None = None
 
@@ -268,10 +270,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def _recent_synergy_metrics(
         self, tracker: ROITracker | None
-    ) -> tuple[float, float]:
-        """Return the latest synergy ROI and efficiency from ``tracker``."""
+    ) -> tuple[float, float, float, float]:
+        """Return the latest synergy metrics from ``tracker``."""
         if not tracker:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
         try:
             roi_hist = tracker.synergy_metrics_history.get("synergy_roi")
             if not roi_hist:
@@ -286,7 +288,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             s_eff = float(eff_hist[-1]) if eff_hist else 0.0
         except Exception:
             s_eff = 0.0
-        return s_roi, s_eff
+        try:
+            res_hist = tracker.synergy_metrics_history.get("synergy_resilience")
+            if not res_hist:
+                res_hist = tracker.metrics_history.get("synergy_resilience")
+            s_res = float(res_hist[-1]) if res_hist else 0.0
+        except Exception:
+            s_res = 0.0
+        try:
+            af_hist = tracker.synergy_metrics_history.get("synergy_antifragility")
+            if not af_hist:
+                af_hist = tracker.metrics_history.get("synergy_antifragility")
+            s_af = float(af_hist[-1]) if af_hist else 0.0
+        except Exception:
+            s_af = 0.0
+        return s_roi, s_eff, s_res, s_af
 
     # ------------------------------------------------------------------
     def _update_score_weights(
@@ -417,19 +433,27 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         complexity: float,
         synergy_roi: float | None = None,
         synergy_efficiency: float | None = None,
+        synergy_resilience: float | None = None,
+        synergy_antifragility: float | None = None,
         *,
         tracker: ROITracker | None = None,
     ) -> float:
         """Return a composite score from multiple metrics."""
         if tracker is not None:
-            s_roi, s_eff = self._recent_synergy_metrics(tracker)
+            s_roi, s_eff, s_res, s_af = self._recent_synergy_metrics(tracker)
             if synergy_roi is None:
                 synergy_roi = s_roi
             if synergy_efficiency is None:
                 synergy_efficiency = s_eff
+            if synergy_resilience is None:
+                synergy_resilience = s_res
+            if synergy_antifragility is None:
+                synergy_antifragility = s_af
 
         synergy_roi = float(synergy_roi or 0.0)
         synergy_efficiency = float(synergy_efficiency or 0.0)
+        synergy_resilience = float(synergy_resilience or 0.0)
+        synergy_antifragility = float(synergy_antifragility or 0.0)
 
         self._update_score_weights(self._score_db)
         mc = {k: s for k, s in self._metric_stats.items()}
@@ -440,6 +464,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         syn_r = synergy_roi / (mc.get("synergy_roi", (0.0, 1.0))[1] + 1e-6)
         syn_e = synergy_efficiency / (
             mc.get("synergy_efficiency", (0.0, 1.0))[1] + 1e-6
+        )
+        syn_res = synergy_resilience / (
+            mc.get("synergy_resilience", (0.0, 1.0))[1] + 1e-6
+        )
+        syn_af = synergy_antifragility / (
+            mc.get("synergy_antifragility", (0.0, 1.0))[1] + 1e-6
         )
         x = (
             self.score_weights[0] * cov
@@ -474,6 +504,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         complexity: float | None = None,
         synergy_roi: float | None = None,
         synergy_efficiency: float | None = None,
+        synergy_resilience: float | None = None,
+        synergy_antifragility: float | None = None,
         log_path: str | None = None,
     ) -> None:
         if not self.audit_trail:
@@ -492,6 +524,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "roi_delta": roi_delta,
                     "synergy_roi": synergy_roi,
                     "synergy_efficiency": synergy_efficiency,
+                    "synergy_resilience": synergy_resilience,
+                    "synergy_antifragility": synergy_antifragility,
                     "score": score,
                     "reason": reason,
                     "flakiness": flakiness,
