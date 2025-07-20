@@ -125,6 +125,7 @@ visual agent is contacted. The most relevant are:
   the values of `VISUAL_DESKTOP_URL` and `VISUAL_LAPTOP_URL` are used.
 - `VISUAL_AGENT_TOKEN` – authentication token passed to the agent service. If
   unset the agent uses `tombalolosvisualagent123`.
+- `MENACE_AGENT_PORT` – port where `menace_visual_agent_2.py` listens for HTTP connections.
 - `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
   headless mode.
 - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
@@ -139,6 +140,10 @@ visual agent is contacted. The most relevant are:
   prepends "Improve Menace by enhancing error handling and modifying
   existing bots." (see `DEFAULT_MESSAGE_PREFIX` in
   `visual_agent_client.py`).
+
+## Visual agent service
+
+The standalone service `menace_visual_agent_2.py` exposes HTTP endpoints on the port specified by `MENACE_AGENT_PORT` (default 8001). Requests must include `VISUAL_AGENT_TOKEN` for authentication. Only one task runs at a time; additional jobs are placed in a queue and processed sequentially.
 
 ## Prompt customisation
 
