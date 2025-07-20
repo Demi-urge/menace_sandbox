@@ -16,6 +16,8 @@ import os
 import tempfile
 from filelock import FileLock, Timeout
 from collections import deque
+import json
+from pathlib import Path
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
@@ -39,8 +41,53 @@ GLOBAL_LOCK_PATH = os.getenv(
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
 
 # Queue management
+DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+QUEUE_FILE = DATA_DIR / "visual_agent_queue.json"
 task_queue = deque()
 job_status = {}
+
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _save_state_locked() -> None:
+    data = {"queue": list(task_queue), "status": job_status}
+    tmp = QUEUE_FILE.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, QUEUE_FILE)
+
+
+def _load_state_locked() -> None:
+    if not QUEUE_FILE.exists():
+        return
+    try:
+        with open(QUEUE_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return
+
+    for item in data.get("queue", []):
+        task_queue.append(item)
+    job_status.update(data.get("status", {}))
+    for tid, info in job_status.items():
+        if info.get("status") not in {"completed", "cancelled", "failed"}:
+            info["status"] = "queued"
+            if not any(t.get("id") == tid for t in task_queue):
+                task_queue.append({"id": tid, "prompt": info.get("prompt", ""), "branch": info.get("branch")})
+
+
+def _persist_state() -> None:
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        return
+    try:
+        _save_state_locked()
+    finally:
+        try:
+            _global_lock.release()
+        except Exception:
+            pass
 
 
 def _queue_worker():
@@ -50,7 +97,6 @@ def _queue_worker():
             continue
         task = task_queue.popleft()
         tid = task["id"]
-        job_status[tid]["status"] = "running"
         _running_lock.acquire()
         try:
             _global_lock.acquire(timeout=0)
@@ -58,6 +104,8 @@ def _queue_worker():
             _running_lock.release()
             job_status[tid]["status"] = "failed"
             continue
+        job_status[tid]["status"] = "running"
+        _save_state_locked()
         try:
             _current_job["active"] = True
             run_menace_pipeline(task["prompt"], task["branch"])
@@ -67,11 +115,21 @@ def _queue_worker():
         finally:
             _current_job["active"] = False
             _running_lock.release()
+            _save_state_locked()
             try:
                 _global_lock.release()
             except Exception:
                 pass
 
+
+try:
+    _global_lock.acquire(timeout=0)
+    try:
+        _load_state_locked()
+    finally:
+        _global_lock.release()
+except Timeout:
+    pass
 
 _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
 _worker_thread.start()
@@ -87,8 +145,9 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
         raise HTTPException(status_code=409, detail="Agent busy")
 
     task_id = secrets.token_hex(8)
-    job_status[task_id] = {"status": "queued", "prompt": task.prompt}
+    job_status[task_id] = {"status": "queued", "prompt": task.prompt, "branch": task.branch}
     task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
+    _persist_state()
     return {"id": task_id, "status": "queued"}
 
 # Tesseract path (change this if needed)
@@ -400,6 +459,7 @@ async def cancel_task(task_id: str, x_token: str = Header(default="")):
                     break
 
             job_status[task_id]["status"] = "cancelled"
+            _save_state_locked()
             return {"id": task_id, "status": "cancelled"}
         finally:
             _global_lock.release()
@@ -420,8 +480,82 @@ async def task_status(task_id: str):
     raise HTTPException(status_code=404, detail="Not found")
 
 
+@app.post("/flush", status_code=200)
+async def flush_queue(x_token: str = Header(default="")):
+    if x_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Bad token")
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        raise HTTPException(status_code=409, detail="Agent busy")
+    try:
+        task_queue.clear()
+        job_status.clear()
+        if QUEUE_FILE.exists():
+            QUEUE_FILE.unlink()
+    finally:
+        _global_lock.release()
+    return {"status": "flushed"}
+
+
+@app.post("/recover", status_code=200)
+async def recover_queue(x_token: str = Header(default="")):
+    if x_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Bad token")
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        raise HTTPException(status_code=409, detail="Agent busy")
+    try:
+        task_queue.clear()
+        job_status.clear()
+        _load_state_locked()
+    finally:
+        _global_lock.release()
+    return {"status": "recovered", "queued": len(task_queue)}
+
+
 # ------------------------------------------------------------------
 # 3️⃣  BOOT SERVER  -------------------------------------------------
 if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description="Menace Visual Agent")
+    parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
+    parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
+    args = parser.parse_args()
+
+    if args.flush_queue:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            print("Agent busy", file=sys.stderr)
+            sys.exit(1)
+        try:
+            task_queue.clear()
+            job_status.clear()
+            if QUEUE_FILE.exists():
+                QUEUE_FILE.unlink()
+        finally:
+            _global_lock.release()
+        print("Queue flushed")
+        sys.exit(0)
+
+    if args.recover_queue:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            print("Agent busy", file=sys.stderr)
+            sys.exit(1)
+        try:
+            task_queue.clear()
+            job_status.clear()
+            _load_state_locked()
+        finally:
+            _global_lock.release()
+        print(f"Recovered {len(task_queue)} tasks")
+        sys.exit(0)
+
     print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
     uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
