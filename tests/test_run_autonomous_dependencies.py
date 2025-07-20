@@ -3,6 +3,7 @@ import sys
 import subprocess
 import types
 from pathlib import Path
+import collections
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,7 +61,7 @@ def test_retry_on_install_failure(monkeypatch):
     setup_startup(monkeypatch)
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
+    _patch_tools(monkeypatch, mod)
     di = sys.modules["menace.dependency_installer"]
     monkeypatch.setattr(di.importlib, "import_module", lambda n: types.ModuleType(n))
     monkeypatch.setattr(di.time, "sleep", lambda s: None)
@@ -82,7 +83,7 @@ def test_abort_after_failed_installs(monkeypatch):
     setup_startup(monkeypatch)
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
+    _patch_tools(monkeypatch, mod)
     di = sys.modules["menace.dependency_installer"]
     monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
     monkeypatch.setattr(di.time, "sleep", lambda s: None)
@@ -98,7 +99,7 @@ def test_lock_file_used(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
+    _patch_tools(monkeypatch, mod)
     di = sys.modules["menace.dependency_installer"]
     monkeypatch.setattr(di.importlib, "import_module", lambda n: types.ModuleType(n))
     monkeypatch.setattr(di.time, "sleep", lambda s: None)
@@ -116,7 +117,7 @@ def test_offline_mode_skips_install(monkeypatch):
     setup_startup(monkeypatch)
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    monkeypatch.setattr(mod.shutil, "which", lambda c: f"/usr/bin/{c}")
+    _patch_tools(monkeypatch, mod)
     di = sys.modules["menace.dependency_installer"]
     monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
     calls = []
@@ -125,4 +126,70 @@ def test_offline_mode_skips_install(monkeypatch):
     with pytest.raises(RuntimeError):
         mod._check_dependencies()
     assert calls == []
+
+
+def _setup_base(monkeypatch):
+    """Return loaded module with startup stubs and patched dependencies."""
+    setup_startup(monkeypatch)
+    mod = load_module()
+    monkeypatch.setattr(mod, "verify_project_dependencies", lambda: [])
+    monkeypatch.setattr(mod, "install_packages", lambda *a, **k: {})
+    monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
+    return mod
+
+
+def _patch_tools(monkeypatch, mod, *, git=True, pytest_tool=True, docker_group=True):
+    def which(cmd):
+        if cmd == "git" and not git:
+            return None
+        if cmd == "pytest" and not pytest_tool:
+            return None
+        return f"/usr/bin/{cmd}"
+
+    monkeypatch.setattr(mod.shutil, "which", which)
+
+    gid = 100
+    grp_stub = types.SimpleNamespace(
+        getgrnam=lambda n: types.SimpleNamespace(
+            gr_mem=["user"] if docker_group else [], gr_gid=gid
+        )
+    )
+    monkeypatch.setitem(sys.modules, "grp", grp_stub)
+    monkeypatch.setitem(
+        sys.modules, "getpass", types.SimpleNamespace(getuser=lambda: "user")
+    )
+    monkeypatch.setattr(mod.os, "getgid", lambda: gid if docker_group else gid + 1)
+
+
+def test_python_version_requirement(monkeypatch):
+    mod = _setup_base(monkeypatch)
+    _patch_tools(monkeypatch, mod)
+    VersionInfo = collections.namedtuple(
+        "VersionInfo", "major minor micro releaselevel serial"
+    )
+    monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 9, 0, "final", 0))
+    with pytest.raises(RuntimeError):
+        mod._check_dependencies()
+
+
+def test_missing_system_tools(monkeypatch):
+    mod = _setup_base(monkeypatch)
+    _patch_tools(monkeypatch, mod, git=False, pytest_tool=False)
+    VersionInfo = collections.namedtuple(
+        "VersionInfo", "major minor micro releaselevel serial"
+    )
+    monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 10, 0, "final", 0))
+    with pytest.raises(RuntimeError):
+        mod._check_dependencies()
+
+
+def test_docker_group_membership(monkeypatch):
+    mod = _setup_base(monkeypatch)
+    _patch_tools(monkeypatch, mod, docker_group=False)
+    VersionInfo = collections.namedtuple(
+        "VersionInfo", "major minor micro releaselevel serial"
+    )
+    monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 10, 0, "final", 0))
+    with pytest.raises(RuntimeError):
+        mod._check_dependencies()
 

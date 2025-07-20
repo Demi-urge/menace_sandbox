@@ -63,6 +63,13 @@ def _check_dependencies() -> None:
     """Install missing project dependencies and warn about binaries."""
     missing: List[str] = []
 
+    if sys.version_info[:2] < (3, 10):
+        msg = (
+            f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
+        )
+        logger.error(msg)
+        raise RuntimeError(msg)
+
     if shutil.which("docker") is None:
         logger.warning(
             "Docker not found. Install using: sudo apt-get install docker.io"
@@ -78,6 +85,31 @@ def _check_dependencies() -> None:
             "qemu-system-x86_64 not found. Install using: sudo apt-get install qemu-system-x86"
         )
         missing.append("qemu-system-x86_64")
+
+    if shutil.which("git") is None:
+        logger.warning("git not found. Install using your system package manager")
+        missing.append("git")
+
+    if shutil.which("pytest") is None:
+        logger.warning(
+            "pytest not found. Install using: pip install pytest or system package"
+        )
+        missing.append("pytest")
+
+    # verify docker group membership if docker command exists
+    if shutil.which("docker") is not None:
+        try:  # pragma: no cover - optional
+            import grp
+            import getpass
+
+            user = getpass.getuser()
+            docker_grp = grp.getgrnam("docker")
+            if user not in docker_grp.gr_mem and os.getgid() != docker_grp.gr_gid:
+                logger.warning("User %s not in docker group", user)
+                missing.append("docker group")
+        except Exception:  # pragma: no cover - platform dependent
+            logger.warning("Unable to verify docker group membership")
+            missing.append("docker group")
 
     missing_pkgs = verify_project_dependencies()
     if missing_pkgs:
