@@ -698,3 +698,55 @@ def test_candidates_evaluated_concurrently(monkeypatch, tmp_path):
     elapsed = time.perf_counter() - start
 
     assert elapsed < 0.5
+
+
+def test_run_tests_logs_output(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    def fake_run(cmd, capture_output=True, text=True, env=None):
+        class R:
+            returncode = 1
+            stdout = "out"
+            stderr = "err"
+
+        return R()
+
+    class Cov:
+        def __init__(self, *a, **k):
+            pass
+
+        def load(self):
+            pass
+
+        def report(self, include=None, file=None):
+            return 0.0
+
+        def xml_report(self, outfile=None, include=None):
+            return 0
+
+    monkeypatch.setattr(sds.subprocess, "run", fake_run)
+    monkeypatch.setattr(sds, "Coverage", Cov)
+
+    dbg._run_tests(Path("test_dummy.py"))
+
+    assert dbg._last_test_log is not None
+    assert dbg._last_test_log.exists()
+    assert dbg._last_test_log.parent == tmp_path
+
+
+def test_log_patch_includes_log_path(monkeypatch, tmp_path):
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    monkeypatch.chdir(tmp_path)
+
+    log_file = tmp_path / "fail.log"
+    log_file.write_text("boom")
+    dbg._last_test_log = log_file
+
+    dbg._log_patch("desc", "failed")
+
+    rec = json.loads(trail.records[-1])
+    assert rec["log_path"] == str(log_file)

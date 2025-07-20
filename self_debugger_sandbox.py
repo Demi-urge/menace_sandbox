@@ -67,6 +67,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "synergy_roi": (0.0, 1.0),
             "synergy_efficiency": (0.0, 1.0),
         }
+        self._last_test_log: Path | None = None
 
     # ------------------------------------------------------------------
     async def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
@@ -142,6 +143,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         """Return coverage percentage and runtime for tests at *path* with telemetry tests."""
         test_paths = [path]
         tmp: Path | None = None
+        self._last_test_log = None
+        sandbox_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        sandbox_dir.mkdir(parents=True, exist_ok=True)
         try:
             logs = list(self._recent_logs())
             tests = self._generate_tests(logs)
@@ -153,12 +157,68 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 test_paths.append(tmp)
         except Exception:
             self.logger.exception("failed to create telemetry tests")
+
+        cov_file = tempfile.NamedTemporaryFile(delete=False, dir=sandbox_dir, suffix=".cov")
+        cov_file.close()
+        p_env = dict(env or os.environ)
+        p_env["COVERAGE_FILE"] = cov_file.name
+        cmd = [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "--parallel-mode",
+            "-m",
+            "pytest",
+            "-q",
+            "-n",
+            "auto",
+            *[str(p) for p in test_paths],
+        ]
+
         start = time.perf_counter()
-        cov = asyncio.run(self._coverage_percent(test_paths, env))
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=p_env)
+            output = proc.stdout + proc.stderr
+            rc = proc.returncode
+        except Exception:
+            rc = 1
+            output = ""
+            self.logger.exception("test execution failed")
         runtime = time.perf_counter() - start
+
+        if rc != 0:
+            with tempfile.NamedTemporaryFile(delete=False, dir=sandbox_dir, suffix=".log", mode="w", encoding="utf-8") as lf:
+                lf.write(output)
+                self._last_test_log = Path(lf.name)
+
+        percent = 0.0
+        try:
+            cov = Coverage(data_file=cov_file.name)
+            cov.load()
+            buf = io.StringIO()
+            xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
+            xml_tmp.close()
+            try:
+                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for p in test_paths])
+                percent = cov.report(include=[str(p) for p in test_paths], file=buf)
+            except Exception:
+                self.logger.exception("coverage generation failed")
+            finally:
+                try:
+                    os.unlink(xml_tmp.name)
+                except Exception:
+                    self.logger.exception("coverage cleanup failed")
+        finally:
+            try:
+                os.unlink(cov_file.name)
+            except Exception:
+                self.logger.exception("coverage cleanup failed")
+
         if tmp:
             tmp.unlink(missing_ok=True)
-        return cov, runtime
+
+        return float(percent or 0.0), runtime
 
     # ------------------------------------------------------------------
     def _test_flakiness(
@@ -408,6 +468,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         complexity: float | None = None,
         synergy_roi: float | None = None,
         synergy_efficiency: float | None = None,
+        log_path: str | None = None,
     ) -> None:
         if not self.audit_trail:
             return
@@ -430,6 +491,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     "flakiness": flakiness,
                     "runtime_impact": runtime_impact,
                     "complexity": complexity,
+                    "log_path": log_path,
                 },
                 sort_keys=True,
             )
@@ -571,6 +633,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             complexity=complexity,
                             synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
                             synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
+                            log_path=str(self._last_test_log) if self._last_test_log else None,
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -677,6 +740,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     complexity=complexity if 'complexity' in locals() else None,
                     synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
                     synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
+                    log_path=str(self._last_test_log) if self._last_test_log else None,
                     reason=reason,
                 )
                 root_test.unlink(missing_ok=True)
