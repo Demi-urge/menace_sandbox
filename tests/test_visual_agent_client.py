@@ -461,3 +461,29 @@ def test_main_runs_single_worker(monkeypatch):
 
     assert calls.get("workers") == 1
 
+
+def test_dataset_dir_env(monkeypatch, tmp_path):
+    """The dataset directory should respect the VA_DATASET_DIR env var."""
+
+    import sys
+    import types
+
+    heavy = ["cv2", "numpy", "mss", "pyautogui"]
+    for name in heavy:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    pt_mod = types.ModuleType("pytesseract")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.image_to_string = lambda *a, **k: ""
+    pt_mod.image_to_data = lambda *a, **k: {}
+    pt_mod.Output = types.SimpleNamespace(DICT=0)
+    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
+
+    data_dir = tmp_path / "dataset"
+    monkeypatch.setenv("VA_DATASET_DIR", str(data_dir))
+
+    va_mod = importlib.reload(importlib.import_module("menace_visual_agent_2"))
+
+    assert va_mod.DATASET_DIR == str(data_dir)
+    assert data_dir.exists()
+
