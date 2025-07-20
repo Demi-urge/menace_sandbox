@@ -33,8 +33,34 @@ class _ContextFileLock(FileLock):
                 except Exception:
                     pass
 
+    def _pid_running(self, pid: int) -> bool:
+        """Return True if ``pid`` refers to a running process."""
+        try:
+            os.kill(pid, 0)
+        except Exception:
+            return False
+        return True
+
     def acquire(self, *args, **kwargs):  # type: ignore[override]
+        lock_path = getattr(self, "lock_file", None)
+        if lock_path and os.path.exists(lock_path):
+            try:
+                with open(lock_path, "r") as fh:
+                    pid = int(fh.read().strip() or "0")
+                if not self._pid_running(pid):
+                    os.remove(lock_path)
+            except Exception:
+                try:
+                    os.remove(lock_path)
+                except Exception:
+                    pass
         super().acquire(*args, **kwargs)
+        if lock_path:
+            try:
+                with open(lock_path, "w") as fh:
+                    fh.write(str(os.getpid()))
+            except Exception:
+                pass
         return self._Guard(self)
 
     def release(self, *args, **kwargs) -> None:  # type: ignore[override]
