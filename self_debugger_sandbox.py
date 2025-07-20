@@ -445,7 +445,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 return
             tests = self._generate_tests(logs)
             best: dict[str, object] | None = None
-            for code in tests:
+
+            async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
                 with tempfile.TemporaryDirectory() as tmp:
                     tdir = Path(tmp)
                     repo = tdir / "repo"
@@ -469,7 +470,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.logger.info(
                                     "skipping known bad patch", extra={"hash": code_hash}
                                 )
-                                continue
+                                return None
                             if patch_db:
                                 try:
                                     records = patch_db.by_hash(code_hash)
@@ -481,14 +482,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                         extra={"hash": code_hash},
                                     )
                                     self._bad_hashes.add(code_hash)
-                                    continue
+                                    return None
 
                         subprocess.run(["pytest", "-q"], cwd=str(repo), check=True, env=env)
                     except Exception:
                         self.logger.exception("sandbox tests failed")
-                        continue
+                        return None
 
-                    root_test = Path("test_auto.py")
+                    root_test = Path(f"test_auto_{idx}.py")
                     root_test.write_text(code)
                     result = "failed"
                     before_cov = after_cov = None
@@ -502,14 +503,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     runtime_delta = 0.0
                     reason = None
                     try:
-                        before_cov, before_runtime = self._run_tests(root_test)
+                        before_cov, before_runtime = await asyncio.to_thread(self._run_tests, root_test)
                         before_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                        pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
-                        after_cov, after_runtime = self._run_tests(root_test)
+                        pid, reverted, roi_delta = await asyncio.to_thread(
+                            self.engine.apply_patch, root_test, "auto_debug"
+                        )
+                        after_cov, after_runtime = await asyncio.to_thread(self._run_tests, root_test)
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
                         coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
                         error_delta = before_err - after_err
-                        flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
+                        flakiness = await asyncio.to_thread(
+                            self._test_flakiness, root_test, runs=self.flakiness_runs
+                        )
                         complexity = self._code_complexity(root_test)
                         runtime_delta = after_runtime - before_runtime
                         result = "reverted" if reverted else "success"
@@ -566,8 +571,19 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.logger.exception("candidate rollback failed")
                         root_test.unlink(missing_ok=True)
 
-                if score > (best["score"] if best else float("-inf")):
-                    best = {"score": score, "code": code}
+                    return {"score": score, "code": code}
+
+            async def _eval_all() -> list[dict[str, object] | None]:
+                tasks = [_eval_candidate(i, c) for i, c in enumerate(tests)]
+                return await asyncio.gather(*tasks)
+
+            results = asyncio.run(_eval_all())
+
+            for res in results:
+                if not res:
+                    continue
+                if res["score"] > (best["score"] if best else float("-inf")):
+                    best = res
 
             if not best:
                 continue
