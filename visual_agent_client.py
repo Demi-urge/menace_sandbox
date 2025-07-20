@@ -8,10 +8,12 @@ import time
 import logging
 import threading
 import tempfile
-from typing import Iterable, Dict, Any
+from collections import deque
+from concurrent.futures import Future
+from typing import Iterable, Dict, Any, Callable, Deque, Tuple
 
 from .audit_logger import log_event
-from filelock import FileLock, Timeout
+from filelock import FileLock
 
 
 class _ContextFileLock(FileLock):
@@ -94,6 +96,31 @@ class VisualAgentClient:
         self.open_run_id: str | None = None
         self.active = False
         self._lock = threading.Lock()
+        self._queue: Deque[Tuple[Callable[[], Any], Future]] = deque()
+        self._cv = threading.Condition()
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
+
+    # ------------------------------------------------------------------
+    def _enqueue(self, func: Callable[[], Any]) -> Future:
+        fut: Future = Future()
+        with self._cv:
+            self._queue.append((func, fut))
+            self._cv.notify()
+        return fut
+
+    def _worker_loop(self) -> None:
+        while True:
+            with self._cv:
+                while not self._queue:
+                    self._cv.wait()
+                func, fut = self._queue.popleft()
+            try:
+                with _global_lock.acquire():
+                    result = func()
+                fut.set_result(result)
+            except Exception as exc:
+                fut.set_exception(exc)
 
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
@@ -138,116 +165,113 @@ class VisualAgentClient:
         if not requests:
             return False, "requests unavailable"
 
+        with self._lock:
+            if self.active:
+                return False, "busy"
+            self.active = True
+
+            def sender() -> tuple[bool, str]:
+                if self.open_run_id is None:
+                    try:
+                        self.open_run_id = log_event(
+                            "visual_agent_run",
+                            {"url": base, "prompt": prompt, "status": "started"},
+                        )
+                    except Exception:
+                        self.open_run_id = None
+                resp = requests.post(
+                    f"{base}/run",
+                    headers={"x-token": self.token},
+                    json={"prompt": prompt, "branch": None},
+                    timeout=10,
+                )
+                if resp.status_code == 401:
+                    if self._refresh_token():
+                        return sender()
+                    return False, "unauthorized"
+                if resp.status_code == 202:
+                    return self._poll(base)
+                snippet = resp.text[:200]
+                return False, f"status {resp.status_code}: {snippet}"
+
         try:
-            with _global_lock.acquire(timeout=0):
-                with self._lock:
-                    if self.active:
-                        return False, "busy"
-                    self.active = True
-
-                def sender() -> tuple[bool, str]:
-                    if self.open_run_id is None:
-                        try:
-                            self.open_run_id = log_event(
-                                "visual_agent_run",
-                                {"url": base, "prompt": prompt, "status": "started"},
-                            )
-                        except Exception:
-                            self.open_run_id = None
-                    resp = requests.post(
-                        f"{base}/run",
-                        headers={"x-token": self.token},
-                        json={"prompt": prompt, "branch": None},
-                        timeout=10,
-                    )
-                    if resp.status_code == 401:
-                        if self._refresh_token():
-                            return sender()
-                        return False, "unauthorized"
-                    if resp.status_code == 202:
-                        return self._poll(base)
-                    snippet = resp.text[:200]
-                    return False, f"status {resp.status_code}: {snippet}"
-
-                try:
-                    return sender()
-                except Exception as exc:  # pragma: no cover - network issues
-                    return False, f"exception {exc}"
-                finally:
-                    with self._lock:
-                        self.active = False
-        except Timeout:
-            return False, "busy"
+            return sender()
+        except Exception as exc:  # pragma: no cover - network issues
+            return False, f"exception {exc}"
         finally:
-            if _global_lock.is_locked:
-                try:
-                    _global_lock.release()
-                except Exception:
-                    pass
+            with self._lock:
+                self.active = False
 
     def _send_revert(self, base: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
 
+        with self._lock:
+            if self.active:
+                return False, "busy"
+            self.active = True
+
+            def sender() -> tuple[bool, str]:
+                resp = requests.post(
+                    f"{base}/revert",
+                    headers={"x-token": self.token},
+                    timeout=10,
+                )
+                if resp.status_code == 401:
+                    if self._refresh_token():
+                        return sender()
+                    return False, "unauthorized"
+                if resp.status_code == 202:
+                    return self._poll(base)
+                snippet = resp.text[:200]
+                return False, f"status {resp.status_code}: {snippet}"
+
         try:
-            with _global_lock.acquire(timeout=0):
-                with self._lock:
-                    if self.active:
-                        return False, "busy"
-                    self.active = True
-
-                def sender() -> tuple[bool, str]:
-                    resp = requests.post(
-                        f"{base}/revert",
-                        headers={"x-token": self.token},
-                        timeout=10,
-                    )
-                    if resp.status_code == 401:
-                        if self._refresh_token():
-                            return sender()
-                        return False, "unauthorized"
-                    if resp.status_code == 202:
-                        return self._poll(base)
-                    snippet = resp.text[:200]
-                    return False, f"status {resp.status_code}: {snippet}"
-
-                try:
-                    return sender()
-                except Exception as exc:  # pragma: no cover - network issues
-                    return False, f"exception {exc}"
-                finally:
-                    with self._lock:
-                        self.active = False
-        except Timeout:
-            return False, "busy"
+            return sender()
+        except Exception as exc:  # pragma: no cover - network issues
+            return False, f"exception {exc}"
         finally:
-            if _global_lock.is_locked:
-                try:
-                    _global_lock.release()
-                except Exception:
-                    pass
+            with self._lock:
+                self.active = False
 
-    def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
+    def ask_async(self, messages: Iterable[Dict[str, str]]) -> Future:
         prompt = SELF_IMPROVEMENT_PREFIX + "\n\n" + "\n".join(
             m.get("content", "") for m in messages
         )
-        last_reason = "failed"
-        for url in self.urls:
-            ok, reason = self._send(url, prompt)
-            if ok:
-                return {"choices": [{"message": {"content": reason}}]}
-            last_reason = reason
-        raise RuntimeError(f"visual agent failed: {last_reason}")
+
+        def run() -> Dict[str, Any]:
+            last_reason = "failed"
+            for url in self.urls:
+                ok, reason = self._send(url, prompt)
+                if ok:
+                    return {"choices": [{"message": {"content": reason}}]}
+                last_reason = reason
+            raise RuntimeError(f"visual agent failed: {last_reason}")
+
+        return self._enqueue(run)
+
+    def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
+        """Synchronously send ``messages`` to the visual agent."""
+        fut = self.ask_async(messages)
+        return fut.result()
+
+    def revert_async(self) -> Future:
+        """Trigger a revert asynchronously via the visual agent."""
+
+        def run() -> bool:
+            last_reason = "failed"
+            for url in self.urls:
+                ok, reason = self._send_revert(url)
+                if ok:
+                    return True
+                last_reason = reason
+            raise RuntimeError(f"visual agent revert failed: {last_reason}")
+
+        return self._enqueue(run)
 
     def revert(self) -> bool:
-        """Trigger a revert of the last merge via the visual agent."""
-        last_reason = "failed"
-        for url in self.urls:
-            ok, reason = self._send_revert(url)
-            if ok:
-                return True
-            last_reason = reason
-        raise RuntimeError(f"visual agent revert failed: {last_reason}")
+        fut = self.revert_async()
+        return fut.result()
 
     # ------------------------------------------------------------------
     def resolve_run_log(self, outcome: str) -> None:
@@ -275,11 +299,21 @@ class VisualAgentClientStub:
         self.active = False
         self._lock = threading.Lock()
 
+    def ask_async(self, messages: Iterable[Dict[str, str]]) -> Future:
+        fut: Future = Future()
+        fut.set_result({"choices": [{"message": {"content": ""}}]})
+        return fut
+
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
-        return {"choices": [{"message": {"content": ""}}]}
+        return self.ask_async(messages).result()
+
+    def revert_async(self) -> Future:
+        fut: Future = Future()
+        fut.set_result(False)
+        return fut
 
     def revert(self) -> bool:
-        return False
+        return self.revert_async().result()
 
     def resolve_run_log(self, outcome: str) -> None:
         self.open_run_id = None
