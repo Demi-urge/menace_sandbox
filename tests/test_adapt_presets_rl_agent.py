@@ -1,6 +1,8 @@
 import os
 import random
+import pytest
 import menace_sandbox.environment_generator as eg
+import menace_sandbox.self_improvement_policy as sp
 import roi_tracker as rt
 
 class DummyAgent:
@@ -41,7 +43,7 @@ def test_rl_agent_actions(monkeypatch, tmp_path):
 
 
 class DummyAdaptive:
-    def __init__(self, path=None):
+    def __init__(self, path=None, *, strategy=None):
         self.path = path
         DummyAdaptive.calls.append(path)
 
@@ -112,4 +114,73 @@ def test_policy_determinism(tmp_path, monkeypatch):
     out2 = eg.adapt_presets(tracker, [base.copy()])
 
     assert out1 == out2
+
+
+def test_adaptive_agent_uses_synergy_metrics(monkeypatch):
+    class CapturePolicy:
+        records = []
+
+        def __init__(self, path=None, strategy=None, **k):
+            self.path = path
+            self.strategy = strategy
+
+        def update(self, state, reward, next_state=None, action=1):
+            CapturePolicy.records.append((state, reward, next_state, action))
+            return 0.0
+
+        def select_action(self, state):
+            return 0
+
+        def save(self):
+            pass
+
+    monkeypatch.setattr(sp, "SelfImprovementPolicy", CapturePolicy)
+
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.1, metrics={
+        "security_score": 70,
+        "synergy_roi": 0.05,
+        "synergy_efficiency": 0.02,
+        "synergy_resilience": 0.01,
+    })
+    agent = eg.AdaptivePresetAgent()
+    agent.decide(tracker)
+    tracker.update(0.1, 0.2, metrics={
+        "security_score": 70,
+        "synergy_roi": 0.1,
+        "synergy_efficiency": 0.07,
+        "synergy_resilience": 0.06,
+    })
+    agent.decide(tracker)
+
+    state, reward, next_state, _ = CapturePolicy.records[-1]
+    assert len(state) == 7
+    assert reward == pytest.approx(0.15)
+
+
+def test_strategy_env_var(monkeypatch, tmp_path):
+    captured = {"strategies": []}
+
+    class RecordPolicy:
+        def __init__(self, path=None, strategy=None, **k):
+            captured["strategies"].append(strategy)
+
+        def update(self, *a, **k):
+            return 0.0
+
+        def select_action(self, state):
+            return 0
+
+        def save(self):
+            pass
+
+    monkeypatch.setattr(sp, "SelfImprovementPolicy", RecordPolicy)
+    path = tmp_path / "p.pkl"
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", str(path))
+    monkeypatch.setenv("SANDBOX_PRESET_RL_STRATEGY", "actor_critic")
+    if hasattr(eg.adapt_presets, "_rl_agent"):
+        delattr(eg.adapt_presets, "_rl_agent")
+    tracker = _tracker()
+    eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
+    assert "actor_critic" in captured["strategies"]
 

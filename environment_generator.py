@@ -127,12 +127,12 @@ class AdaptivePresetAgent:
         {"cpu": 0, "memory": 0, "threat": 0},
     )
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(self, path: str | None = None, *, strategy: str | None = None) -> None:
         from .self_improvement_policy import SelfImprovementPolicy
 
-        self.policy = SelfImprovementPolicy(path=path)
+        self.policy = SelfImprovementPolicy(path=path, strategy=strategy or "q_learning")
         self.state_file = f"{path}.state.json" if path else None
-        self.prev_state: tuple[int, int, int, int, int] | None = None
+        self.prev_state: tuple[int, ...] | None = None
         self.prev_action: int | None = None
         self._load_state()
 
@@ -159,7 +159,7 @@ class AdaptivePresetAgent:
             logger.warning("Failed to save RL state: %s", exc)
 
     # --------------------------------------------------------------
-    def _state(self, tracker: "ROITracker") -> tuple[int, int, int, int, int]:
+    def _state(self, tracker: "ROITracker") -> tuple[int, ...]:
         """Return a compact representation of the current environment state.
 
         The state encodes ROI and synergy trends along with recent CPU usage,
@@ -169,6 +169,8 @@ class AdaptivePresetAgent:
 
         roi_hist = tracker.roi_history
         syn_hist = tracker.metrics_history.get("synergy_roi", [])
+        eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
+        res_hist = tracker.metrics_history.get("synergy_resilience", [])
         cpu_hist = tracker.metrics_history.get("cpu_usage", [])
         mem_hist = tracker.metrics_history.get("memory_usage", [])
         threat_hist = tracker.metrics_history.get("threat_intensity", [])
@@ -180,6 +182,8 @@ class AdaptivePresetAgent:
 
         roi_trend = _trend(roi_hist)
         syn_trend = _trend(syn_hist)
+        eff_trend = _trend(eff_hist)
+        res_trend = _trend(res_hist)
         cpu_trend = _trend(cpu_hist)
         mem_trend = _trend(mem_hist)
         threat_trend = _trend(threat_hist)
@@ -190,6 +194,8 @@ class AdaptivePresetAgent:
         return (
             _sign(roi_trend),
             _sign(syn_trend),
+            _sign(eff_trend),
+            _sign(res_trend),
             _sign(cpu_trend),
             _sign(mem_trend),
             _sign(threat_trend),
@@ -202,11 +208,15 @@ class AdaptivePresetAgent:
         roi_delta = roi_hist[-1] - roi_hist[-2] if len(roi_hist) >= 2 else 0.0
 
         syn_hist = tracker.metrics_history.get("synergy_roi", [])
+        eff_hist = tracker.metrics_history.get("synergy_efficiency", [])
+        res_hist = tracker.metrics_history.get("synergy_resilience", [])
         syn_delta = 0.0
         if len(syn_hist) >= 2:
             syn_delta = syn_hist[-1] - syn_hist[-2]
         elif syn_hist:
             syn_delta = syn_hist[-1]
+        eff_delta = eff_hist[-1] - eff_hist[-2] if len(eff_hist) >= 2 else (eff_hist[-1] if eff_hist else 0.0)
+        res_delta = res_hist[-1] - res_hist[-2] if len(res_hist) >= 2 else (res_hist[-1] if res_hist else 0.0)
 
         cpu_hist = tracker.metrics_history.get("cpu_usage", [])
         mem_hist = tracker.metrics_history.get("memory_usage", [])
@@ -219,7 +229,7 @@ class AdaptivePresetAgent:
         )
 
         # Penalise increased resource usage and threat intensity
-        return float(roi_delta + syn_delta - cpu_delta - mem_delta - threat_delta)
+        return float(roi_delta + syn_delta + eff_delta + res_delta - cpu_delta - mem_delta - threat_delta)
 
     # --------------------------------------------------------------
     def decide(self, tracker: "ROITracker") -> Dict[str, int]:
@@ -268,11 +278,18 @@ def adapt_presets(
 
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
+    rl_strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY")
     if rl_path:
         try:
             agent = getattr(adapt_presets, "_rl_agent", None)
-            if agent is None or getattr(getattr(agent, "policy", None), "path", None) != rl_path:
-                agent = AdaptivePresetAgent(rl_path)
+            strat_name = (getattr(getattr(agent, "policy", None), "strategy", None).__class__.__name__.lower()
+                if agent else None)
+            if (
+                agent is None
+                or getattr(getattr(agent, "policy", None), "path", None) != rl_path
+                or (rl_strategy and strat_name != rl_strategy.replace("-", "_").lower())
+            ):
+                agent = AdaptivePresetAgent(rl_path, strategy=rl_strategy)
                 adapt_presets._rl_agent = agent
         except Exception:
             agent = None
@@ -281,7 +298,8 @@ def adapt_presets(
     if adapt_agent is None:
         try:
             path = os.getenv("SANDBOX_ADAPTIVE_AGENT_PATH")
-            adapt_agent = AdaptivePresetAgent(path)
+            adapt_strategy = os.getenv("SANDBOX_ADAPTIVE_AGENT_STRATEGY")
+            adapt_agent = AdaptivePresetAgent(path, strategy=adapt_strategy)
             adapt_presets._adaptive_agent = adapt_agent
         except Exception:
             adapt_agent = None
