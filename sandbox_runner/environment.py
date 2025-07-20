@@ -273,8 +273,8 @@ _POOL_CLEANUP_INTERVAL = float(os.getenv("SANDBOX_POOL_CLEANUP_INTERVAL", "60"))
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
-_WARMUP_THREADS: Dict[str, threading.Thread] = {}
-_CLEANUP_THREAD: threading.Thread | None = None
+_WARMUP_TASKS: Dict[str, asyncio.Task] = {}
+_CLEANUP_TASK: asyncio.Task | None = None
 
 
 def _ensure_pool_size_async(image: str) -> None:
@@ -285,31 +285,31 @@ def _ensure_pool_size_async(image: str) -> None:
     _cleanup_idle_containers()
     if len(pool) >= _CONTAINER_POOL_SIZE:
         return
-    t = _WARMUP_THREADS.get(image)
-    if t and t.is_alive():
+    t = _WARMUP_TASKS.get(image)
+    if t and not t.done():
         return
 
-    def _worker() -> None:
+    async def _worker() -> None:
         try:
             needed = _CONTAINER_POOL_SIZE - len(pool)
             for _ in range(needed):
-                c, _ = _create_pool_container(image)
+                c, _ = await _create_pool_container(image)
                 pool.append(c)
                 _CONTAINER_LAST_USED[c.id] = time.time()
         except Exception as exc:
             logger.warning("container warm up failed: %s", exc)
         finally:
-            _WARMUP_THREADS.pop(image, None)
+            _WARMUP_TASKS.pop(image, None)
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    _WARMUP_THREADS[image] = thread
-    thread.start()
+    task = asyncio.create_task(_worker())
+    _WARMUP_TASKS[image] = task
 
-def _create_pool_container(image: str) -> tuple[Any, str]:
+async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity``."""
     assert _DOCKER_CLIENT is not None
     td = tempfile.mkdtemp(prefix="pool_")
-    container = _DOCKER_CLIENT.containers.run(
+    container = await asyncio.to_thread(
+        _DOCKER_CLIENT.containers.run,
         image,
         ["sleep", "infinity"],
         detach=True,
@@ -321,7 +321,7 @@ def _create_pool_container(image: str) -> tuple[Any, str]:
     return container, td
 
 
-def _get_pooled_container(image: str) -> tuple[Any, str]:
+async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
     pool = _CONTAINER_POOLS.setdefault(image, [])
     if pool:
@@ -329,7 +329,7 @@ def _get_pooled_container(image: str) -> tuple[Any, str]:
         _CONTAINER_LAST_USED.pop(c.id, None)
         _ensure_pool_size_async(image)
         return c, _CONTAINER_DIRS[c.id]
-    container, td = _create_pool_container(image)
+    container, td = await _create_pool_container(image)
     _ensure_pool_size_async(image)
     return container, td
 
@@ -380,10 +380,10 @@ def _cleanup_idle_containers() -> None:
                 _CONTAINER_LAST_USED.pop(c.id, None)
 
 
-def _cleanup_worker() -> None:
-    """Background thread to clean idle containers."""
+async def _cleanup_worker() -> None:
+    """Background task to clean idle containers."""
     while True:
-        time.sleep(_POOL_CLEANUP_INTERVAL)
+        await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
         try:
             _cleanup_idle_containers()
         except Exception:
@@ -394,19 +394,13 @@ def _cleanup_pools() -> None:
     """Stop and remove pooled containers."""
     if _DOCKER_CLIENT is None:
         return
-    global _CLEANUP_THREAD
-    if _CLEANUP_THREAD:
-        try:
-            _CLEANUP_THREAD.join(timeout=0)
-        except Exception:
-            pass
-        _CLEANUP_THREAD = None
-    for t in list(_WARMUP_THREADS.values()):
-        try:
-            t.join(timeout=0)
-        except Exception:
-            pass
-    _WARMUP_THREADS.clear()
+    global _CLEANUP_TASK
+    if _CLEANUP_TASK:
+        _CLEANUP_TASK.cancel()
+        _CLEANUP_TASK = None
+    for t in list(_WARMUP_TASKS.values()):
+        t.cancel()
+    _WARMUP_TASKS.clear()
     for pool in list(_CONTAINER_POOLS.values()):
         for c in list(pool):
             try:
@@ -428,15 +422,14 @@ import atexit
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
     _ensure_pool_size_async(default_img)
-    if _CLEANUP_THREAD is None:
-        _CLEANUP_THREAD = threading.Thread(target=_cleanup_worker, daemon=True)
-        _CLEANUP_THREAD.start()
+    if _CLEANUP_TASK is None:
+        _CLEANUP_TASK = asyncio.create_task(_cleanup_worker())
     atexit.register(_cleanup_pools)
 
 
 
 # ----------------------------------------------------------------------
-def _execute_in_container(
+async def _execute_in_container(
     code_str: str,
     env: Dict[str, Any],
     *,
@@ -710,7 +703,7 @@ def _execute_in_container(
                         f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
                     )
 
-            container, td = _get_pooled_container(image)
+            container, td = await _get_pooled_container(image)
             path = Path(td) / "snippet.py"
             path.write_text(code_str, encoding="utf-8")
 
@@ -813,7 +806,9 @@ def simulate_execution_environment(
     runtime_metrics: Dict[str, float] = {}
     if container:
         try:
-            runtime_metrics = _execute_in_container(code_str, input_stub or {})
+            runtime_metrics = asyncio.run(
+                _execute_in_container(code_str, input_stub or {})
+            )
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("container execution failed: %s", exc)
 
@@ -1087,10 +1082,12 @@ async def _section_worker(
                         "    ipr.close()\n"
                         "    netns.remove(ns)\n"
                     )
-                    metrics = _execute_in_container(
-                        code,
-                        env_input,
-                        network_disabled={"network" in modes or "network_partition" in modes},
+                    metrics = asyncio.run(
+                        _execute_in_container(
+                            code,
+                            env_input,
+                            network_disabled={"network" in modes or "network_partition" in modes},
+                        )
                     )
                     metrics.update(netem_metrics)
                     return {
@@ -1253,12 +1250,14 @@ async def _section_worker(
                     out = _run_psutil()
                     out.update(netem_metrics)
                     return out
-                metrics = _execute_in_container(
-                    snip,
-                    env_input,
-                    network_disabled={
-                        "network" in modes or "network_partition" in modes
-                    },
+                metrics = asyncio.run(
+                    _execute_in_container(
+                        snip,
+                        env_input,
+                        network_disabled={
+                            "network" in modes or "network_partition" in modes
+                        },
+                    )
                 )
                 return {
                     "stdout": "",
@@ -2001,11 +2000,13 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 + "')\n"
             )
             try:
-                _execute_in_container(
-                    code,
-                    env,
-                    mounts={str(repo_path): container_repo, tmp_dir: sandbox_tmp},
-                    network_disabled=False,
+                asyncio.run(
+                    _execute_in_container(
+                        code,
+                        env,
+                        mounts={str(repo_path): container_repo, tmp_dir: sandbox_tmp},
+                        network_disabled=False,
+                    )
                 )
             except Exception:
                 logger.exception("docker execution failed, falling back to local run")

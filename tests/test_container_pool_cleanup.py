@@ -1,3 +1,4 @@
+import asyncio
 import sandbox_runner.environment as env
 
 class DummyContainer:
@@ -31,19 +32,18 @@ def test_idle_container_cleanup(monkeypatch):
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()
     env._CONTAINER_LAST_USED.clear()
-    env._WARMUP_THREADS.clear()
+    env._WARMUP_TASKS.clear()
     monkeypatch.setattr(env, "_CONTAINER_IDLE_TIMEOUT", 0.1)
     monkeypatch.setattr(env, "_CONTAINER_POOL_SIZE", 1)
     times = [0.0]
     monkeypatch.setattr(env.time, "time", lambda: times[0])
     env._ensure_pool_size_async("img")
-    th = env._WARMUP_THREADS["img"]
-    th.join()
+    asyncio.run(env._WARMUP_TASKS["img"])
     assert len(env._CONTAINER_POOLS["img"]) == env._CONTAINER_POOL_SIZE
-    c, _ = env._get_pooled_container("img")
+    c, _ = asyncio.run(env._get_pooled_container("img"))
     env._release_container("img", c)
-    if "img" in env._WARMUP_THREADS:
-        env._WARMUP_THREADS["img"].join()
+    if "img" in env._WARMUP_TASKS:
+        asyncio.run(env._WARMUP_TASKS["img"])
     times[0] = 0.2
     env._cleanup_idle_containers()
     assert not env._CONTAINER_POOLS["img"]
@@ -56,7 +56,7 @@ def test_pool_not_expanded_when_full(monkeypatch):
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()
     env._CONTAINER_LAST_USED.clear()
-    env._WARMUP_THREADS.clear()
+    env._WARMUP_TASKS.clear()
     monkeypatch.setattr(env, "_CONTAINER_POOL_SIZE", 1)
     pool = [DummyContainer(i) for i in range(env._CONTAINER_POOL_SIZE)]
     env._CONTAINER_POOLS["img"] = pool
@@ -65,4 +65,4 @@ def test_pool_not_expanded_when_full(monkeypatch):
     for c in pool:
         env._CONTAINER_LAST_USED[c.id] = now
     env._ensure_pool_size_async("img")
-    assert "img" not in env._WARMUP_THREADS
+    assert "img" not in env._WARMUP_TASKS
