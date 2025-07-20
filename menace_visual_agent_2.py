@@ -92,7 +92,7 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # Dataset directory
-DATASET_DIR = r'C:\menace_training_dataset'
+DATASET_DIR = os.getenv("VA_DATASET_DIR", r"C:\\menace_training_dataset")
 
 # Create dataset directory if it doesn't exist
 os.makedirs(DATASET_DIR, exist_ok=True)
