@@ -293,6 +293,7 @@ The deployment helpers use the following variables:
 
   outside the repository.
 - `METRICS_PORT` – start the internal metrics exporter on this port.
+- `AUTO_DASHBOARD_PORT` – start the metrics dashboard automatically on this port.
 - `SANDBOX_RESOURCE_DB` – path to a `ROIHistoryDB` for resource-aware forecasts.
 - `SANDBOX_BRAINSTORM_INTERVAL` – request GPT-4 brainstorming ideas every N cycles.
 - `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
@@ -323,6 +324,7 @@ missing. Notable defaults include:
 - `RUN_CYCLES=0`
 - `RUN_UNTIL=`
 - `METRICS_PORT=8001`
+- `AUTO_DASHBOARD_PORT=`
 - `SANDBOX_BRAINSTORM_INTERVAL=0`
 - `SANDBOX_BRAINSTORM_RETRIES=3`
 - `SANDBOX_OFFLINE_SUGGESTIONS=0`
@@ -391,7 +393,7 @@ python sandbox_runner.py run-complete presets.json --max-iterations 1
 ```
 
 The command forwards the presets to ``full_autonomous_run`` and starts the
-dashboard when ``--dashboard-port`` is supplied.
+dashboard when ``--dashboard-port`` (or ``AUTO_DASHBOARD_PORT``) is supplied.
 
 When ``--auto-thresholds`` is enabled the loop recomputes the ROI and synergy
 thresholds each iteration. The thresholds are derived from the rolling standard
@@ -402,6 +404,8 @@ To execute multiple runs sequentially and launch the metrics dashboard run:
 
 ```
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
+
+# or simply set AUTO_DASHBOARD_PORT=8002
 ```
 
 To optimise across distinct scenarios supply preset files explicitly. The
