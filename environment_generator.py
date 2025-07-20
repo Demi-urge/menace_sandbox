@@ -157,18 +157,39 @@ class AdaptivePresetAgent:
 
     # --------------------------------------------------------------
     def _state(self, tracker: "ROITracker") -> tuple[int, int]:
-        roi = float(tracker.roi_history[-1]) if tracker.roi_history else 0.0
-        syn_vals = tracker.metrics_history.get("synergy_roi", [])
-        syn = float(syn_vals[-1]) if syn_vals else 0.0
-        roi_s = 1 if roi > 0 else (-1 if roi < 0 else 0)
-        syn_s = 1 if syn > 0 else (-1 if syn < 0 else 0)
+        """Return a compact representation of the current environment state."""
+
+        roi_hist = tracker.roi_history
+        syn_hist = tracker.metrics_history.get("synergy_roi", [])
+
+        roi_trend = 0.0
+        if len(roi_hist) >= 2:
+            roi_trend = roi_hist[-1] - roi_hist[-2]
+
+        syn_trend = 0.0
+        if len(syn_hist) >= 2:
+            syn_trend = syn_hist[-1] - syn_hist[-2]
+        elif syn_hist:
+            syn_trend = syn_hist[-1]
+
+        roi_s = 1 if roi_trend > 0 else (-1 if roi_trend < 0 else 0)
+        syn_s = 1 if syn_trend > 0 else (-1 if syn_trend < 0 else 0)
         return roi_s, syn_s
 
     def _reward(self, tracker: "ROITracker") -> float:
+        """Return reward based on ROI and synergy improvement."""
+
         hist = tracker.roi_history
-        if len(hist) < 2:
-            return 0.0
-        return float(hist[-1]) - float(hist[-2])
+        roi_delta = hist[-1] - hist[-2] if len(hist) >= 2 else 0.0
+
+        syn_hist = tracker.metrics_history.get("synergy_roi", [])
+        syn_delta = 0.0
+        if len(syn_hist) >= 2:
+            syn_delta = syn_hist[-1] - syn_hist[-2]
+        elif syn_hist:
+            syn_delta = syn_hist[-1]
+
+        return float(roi_delta + syn_delta)
 
     # --------------------------------------------------------------
     def decide(self, tracker: "ROITracker") -> Dict[str, int]:
@@ -184,6 +205,23 @@ class AdaptivePresetAgent:
     def save(self) -> None:
         self.policy.save()
         self._save_state()
+
+    # --------------------------------------------------------------
+    def export_policy(self) -> Dict[tuple[int, ...], Dict[int, float]]:
+        """Return policy values for external analysis."""
+
+        return {k: dict(v) for k, v in self.policy.values.items()}
+
+    def import_policy(
+        self, data: Dict[tuple[int, ...], Dict[int, float]]
+    ) -> None:
+        """Load policy values from ``data``."""
+
+        new_table: Dict[tuple[int, ...], Dict[int, float]] = {}
+        for key, val in data.items():
+            tup = tuple(key) if not isinstance(key, tuple) else key
+            new_table[tup] = {int(a): float(q) for a, q in val.items()}
+        self.policy.values = new_table
 
 
 
@@ -204,8 +242,7 @@ def adapt_presets(
         try:
             agent = getattr(adapt_presets, "_rl_agent", None)
             if agent is None or getattr(getattr(agent, "policy", None), "path", None) != rl_path:
-                from .preset_rl_agent import PresetRLAgent
-                agent = PresetRLAgent(rl_path)
+                agent = AdaptivePresetAgent(rl_path)
                 adapt_presets._rl_agent = agent
         except Exception:
             agent = None
@@ -937,4 +974,20 @@ def adapt_presets(
     return presets
 
 
+def export_preset_policy() -> Dict[tuple[int, ...], Dict[int, float]]:
+    """Return policy data from the active RL agent."""
+
+    agent = getattr(adapt_presets, "_rl_agent", None)
+    return agent.export_policy() if agent else {}
+
+
+def import_preset_policy(data: Dict[tuple[int, ...], Dict[int, float]]) -> None:
+    """Load policy ``data`` into the active RL agent if available."""
+
+    agent = getattr(adapt_presets, "_rl_agent", None)
+    if agent:
+        agent.import_policy(data)
+
+
 __all__.append("adapt_presets")
+__all__.extend(["export_preset_policy", "import_preset_policy"])

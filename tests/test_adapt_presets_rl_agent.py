@@ -1,4 +1,5 @@
 import os
+import random
 import menace_sandbox.environment_generator as eg
 import roi_tracker as rt
 
@@ -85,4 +86,30 @@ def test_adaptive_agent(monkeypatch):
     assert DummyAdaptive.decided
     assert new[0]["MEMORY_LIMIT"] != "512Mi"
     assert new[0]["THREAT_INTENSITY"] != 30
+
+
+def test_policy_determinism(tmp_path, monkeypatch):
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", str(tmp_path / "policy.pkl"))
+    monkeypatch.delenv("SANDBOX_ADAPTIVE_AGENT_PATH", raising=False)
+    if hasattr(eg.adapt_presets, "_rl_agent"):
+        delattr(eg.adapt_presets, "_rl_agent")
+
+    tracker = _long_tracker()
+    base = {
+        "CPU_LIMIT": "1",
+        "MEMORY_LIMIT": "512Mi",
+        "BANDWIDTH_LIMIT": "5Mbps",
+        "MAX_BANDWIDTH": "10Mbps",
+        "MIN_BANDWIDTH": "1Mbps",
+        "THREAT_INTENSITY": 30,
+    }
+    random.seed(0)
+    out1 = eg.adapt_presets(tracker, [base.copy()])
+
+    if hasattr(eg.adapt_presets, "_rl_agent"):
+        delattr(eg.adapt_presets, "_rl_agent")
+    random.seed(0)
+    out2 = eg.adapt_presets(tracker, [base.copy()])
+
+    assert out1 == out2
 
