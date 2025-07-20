@@ -235,3 +235,63 @@ def test_revert_exception_releases_lock(monkeypatch, tmp_path):
     assert not ok
     assert not lock_path.exists()
 
+
+def test_parallel_ask_returns_busy(monkeypatch):
+    vac_mod = _reload_client(monkeypatch)
+
+    active = 0
+    overlap = []
+
+    def fake_send(self, base, prompt):
+        nonlocal active, overlap
+        acquired = False
+        try:
+            with vac_mod._global_lock.acquire(timeout=0):
+                acquired = True
+                with self._lock:
+                    if self.active:
+                        return False, "busy"
+                    self.active = True
+                active += 1
+                if active > 1:
+                    overlap.append(True)
+                time.sleep(0.1)
+                return True, "ok"
+        except vac_mod.Timeout:
+            return False, "busy"
+        finally:
+            if acquired:
+                active -= 1
+                with self._lock:
+                    self.active = False
+                if vac_mod._global_lock.is_locked:
+                    try:
+                        vac_mod._global_lock.release()
+                    except Exception:
+                        pass
+
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_send", fake_send)
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+
+    results: list[dict] = []
+    errors: list[Exception] = []
+
+    def call():
+        try:
+            results.append(client.ask([{"content": "hi"}]))
+        except Exception as exc:  # pragma: no cover - thread errors
+            errors.append(exc)
+
+    t1 = threading.Thread(target=call)
+    t2 = threading.Thread(target=call)
+    t1.start()
+    time.sleep(0.02)
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(results) == 1
+    assert len(errors) == 1
+    assert "busy" in str(errors[0])
+    assert not overlap
+
