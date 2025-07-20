@@ -123,7 +123,10 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--dashboard-port",
         type=int,
-        help="start MetricsDashboard on this port for each run",
+        help=(
+            "start MetricsDashboard on this port for each run"
+            " (overrides AUTO_DASHBOARD_PORT)"
+        ),
     )
     parser.add_argument(
         "--roi-cycles",
@@ -233,7 +236,16 @@ def main(argv: List[str] | None = None) -> None:
 
     _check_dependencies()
 
-    if args.dashboard_port:
+    dash_port = args.dashboard_port
+    if dash_port is None:
+        env_val = os.getenv("AUTO_DASHBOARD_PORT")
+        if env_val is not None:
+            try:
+                dash_port = int(env_val)
+            except Exception:
+                dash_port = None
+
+    if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
 
@@ -243,7 +255,7 @@ def main(argv: List[str] | None = None) -> None:
         dash = MetricsDashboard(str(history_file))
         Thread(
             target=dash.run,
-            kwargs={"port": args.dashboard_port},
+            kwargs={"port": dash_port},
             daemon=True,
         ).start()
 

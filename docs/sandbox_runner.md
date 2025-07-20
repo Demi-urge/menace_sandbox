@@ -455,7 +455,7 @@ python -m menace.metrics_dashboard --file sandbox_data/roi_history.json --port 8
 ```
 
 When running the autonomous loop you can start the dashboard automatically with
-the `--dashboard-port` option:
+the `--dashboard-port` option or by setting `AUTO_DASHBOARD_PORT`:
 
 ```bash
 python sandbox_runner.py full-autonomous-run --dashboard-port 8002
@@ -522,8 +522,8 @@ python sandbox_runner.py full-autonomous-run --preset-count 3 --dashboard-port 8
 
 Use `--max-iterations` to limit the number of iterations when running
 non-interactively. Final module rankings and metric values are printed once the
-loop finishes. Pass `--dashboard-port PORT` to monitor progress live via the
-metrics dashboard.
+loop finishes. Pass `--dashboard-port PORT` or set `AUTO_DASHBOARD_PORT` to
+monitor progress live via the metrics dashboard.
 
 To replay a specific set of presets use the `run-complete` subcommand and pass
 the preset JSON directly:
@@ -533,7 +533,8 @@ python sandbox_runner.py run-complete presets.json --max-iterations 1
 ```
 
 This will invoke `full_autonomous_run` with the provided presets and also launch
-`MetricsDashboard` when `--dashboard-port` is specified.
+`MetricsDashboard` when `--dashboard-port` or `AUTO_DASHBOARD_PORT` is
+specified.
 
 The `run_autonomous.py` helper exposes the same functionality while verifying
 dependencies first. It keeps launching new runs until ROI improvements fade for
