@@ -67,7 +67,8 @@ def test_generate_input_stubs_templates(monkeypatch, tmp_path):
     assert stubs == [{"mode": "x", "level": 9}]
 
 
-def test_generate_input_stubs_smart(monkeypatch):
+def test_generate_input_stubs_smart(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(tmp_path / "cache.json"))
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "smart")
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
@@ -106,7 +107,8 @@ def test_generate_input_stubs_smart_no_faker(monkeypatch):
     assert stub["name"] == ""
 
 
-def test_generate_input_stubs_synthetic_plugin(monkeypatch):
+def test_generate_input_stubs_synthetic_plugin(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(tmp_path / "cache.json"))
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "synthetic")
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
@@ -116,6 +118,7 @@ def test_generate_input_stubs_synthetic_plugin(monkeypatch):
     )
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
+    gsp = importlib.reload(gsp)
 
     class DummyGen:
         def __init__(self):
@@ -162,7 +165,8 @@ def test_generative_load_default(monkeypatch):
     assert gen is not None
 
 
-def test_generate_input_stubs_synthetic_fallback(monkeypatch):
+def test_generate_input_stubs_synthetic_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(tmp_path / "cache.json"))
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "synthetic")
     monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
@@ -172,6 +176,7 @@ def test_generate_input_stubs_synthetic_fallback(monkeypatch):
     )
     import importlib
     import sandbox_runner.generative_stub_provider as gsp
+    gsp = importlib.reload(gsp)
     async def loader():
         return None
     monkeypatch.setattr(gsp, "_aload_generator", loader)
