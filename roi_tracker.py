@@ -281,6 +281,12 @@ class ROITracker:
         return float(arr.mean()) if arr.size else 0.0
 
     # ------------------------------------------------------------------
+    def synergy_reliability(self, window: int | None = None) -> float:
+        """Return MAE for ``synergy_roi`` predictions."""
+
+        return self.rolling_mae_metric("synergy_roi", window)
+
+    # ------------------------------------------------------------------
     def reliability(
         self,
         *,

@@ -985,8 +985,10 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                     ctx.best_synergy_metrics[k] = v
             stall = False
             reliability = ctx.tracker.reliability(metric="synergy_roi")
+            synergy_mae = ctx.tracker.synergy_reliability()
+            thr_scale = min(1.0, synergy_mae)
             threshold = max(
-                ctx.tracker.diminishing() * (1.0 - reliability),
+                ctx.tracker.diminishing() * thr_scale,
                 ctx.tracker.diminishing() * 0.1,
             )
             if len(synergy_history) >= 2:
