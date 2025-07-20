@@ -3,6 +3,8 @@ import os
 import threading
 import time
 import types
+import filelock
+import pytest
 
 
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
@@ -154,4 +156,44 @@ def test_token_refresh_failure(monkeypatch, caplog):
     client = vac_mod.VisualAgentClient(urls=["http://x"], token_refresh_cmd="cmd")
     assert not client._refresh_token()
     assert "oops" in caplog.text or "fail" in caplog.text
+
+
+def test_global_lock_across_clients(monkeypatch):
+    """Concurrent clients should respect the global lock."""
+
+    class DummyTimeout(Exception):
+        pass
+
+    shared = threading.Lock()
+
+    class DummyLock:
+        def __init__(self, *a, **k):
+            pass
+
+        def acquire(self, timeout=0):
+            if not shared.acquire(blocking=False):
+                raise DummyTimeout()
+
+        def release(self):
+            if shared.locked():
+                shared.release()
+
+        @property
+        def is_locked(self):
+            return shared.locked()
+
+    monkeypatch.setattr(filelock, "FileLock", DummyLock)
+    monkeypatch.setattr(filelock, "Timeout", DummyTimeout)
+
+    vac_mod = _reload_client(monkeypatch)
+    client1 = _setup_stubbed_client(monkeypatch, vac_mod, delay=0.5)
+    client2 = _setup_stubbed_client(monkeypatch, vac_mod)
+
+    # Manually hold the global lock to simulate an active run
+    vac_mod._global_lock.acquire(timeout=0)
+    try:
+        with pytest.raises(RuntimeError):
+            client2.ask([{"content": "hi"}])
+    finally:
+        vac_mod._global_lock.release()
 

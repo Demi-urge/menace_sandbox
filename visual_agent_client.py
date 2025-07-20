@@ -7,9 +7,11 @@ import subprocess
 import time
 import logging
 import threading
+import tempfile
 from typing import Iterable, Dict, Any
 
 from .audit_logger import log_event
+from filelock import FileLock, Timeout
 
 try:
     import requests  # type: ignore
@@ -26,6 +28,12 @@ DEFAULT_MESSAGE_PREFIX = (
 # Allow overriding the default via environment variable for easier testing
 # and custom deployments.
 SELF_IMPROVEMENT_PREFIX = os.getenv("VA_MESSAGE_PREFIX", DEFAULT_MESSAGE_PREFIX)
+
+GLOBAL_LOCK_PATH = os.getenv(
+    "VISUAL_AGENT_LOCK_FILE",
+    os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
+)
+_global_lock = FileLock(GLOBAL_LOCK_PATH)
 
 
 class VisualAgentClient:
@@ -97,8 +105,14 @@ class VisualAgentClient:
         if not requests:
             return False, "requests unavailable"
 
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            return False, "busy"
+
         with self._lock:
             if self.active:
+                _global_lock.release()
                 return False, "busy"
             self.active = True
 
@@ -133,13 +147,24 @@ class VisualAgentClient:
         finally:
             with self._lock:
                 self.active = False
+            if _global_lock.is_locked:
+                try:
+                    _global_lock.release()
+                except Exception:
+                    pass
 
     def _send_revert(self, base: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
 
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            return False, "busy"
+
         with self._lock:
             if self.active:
+                _global_lock.release()
                 return False, "busy"
             self.active = True
 
@@ -165,6 +190,11 @@ class VisualAgentClient:
         finally:
             with self._lock:
                 self.active = False
+            if _global_lock.is_locked:
+                try:
+                    _global_lock.release()
+                except Exception:
+                    pass
 
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
         prompt = SELF_IMPROVEMENT_PREFIX + "\n\n" + "\n".join(
