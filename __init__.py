@@ -15,9 +15,14 @@ if (
     )
     os.environ["MENACE_MODE"] = "test"
 
-from . import menace_db as _menace_db
+if not os.getenv("MENACE_LIGHT_IMPORTS"):
+    from . import menace_db as _menace_db
+    sys.modules.setdefault("menace.menace", _menace_db)
+else:
+    import types
 
-sys.modules.setdefault("menace.menace", _menace_db)
+    _menace_db = types.ModuleType("menace.menace")
+    sys.modules.setdefault("menace.menace", _menace_db)
 
 _pkg_dir = os.path.dirname(__file__)
 _sk_dir = os.path.join(_pkg_dir, "sklearn")

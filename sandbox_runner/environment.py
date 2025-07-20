@@ -1557,6 +1557,10 @@ def run_repo_section_simulations(
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
+    from sandbox_runner.metrics_plugins import (
+        discover_metrics_plugins,
+        collect_plugin_metrics,
+    )
 
     if input_stubs is None:
         input_stubs = generate_input_stubs()
@@ -1579,6 +1583,7 @@ def run_repo_section_simulations(
         logger.info("scanning repository sections in %s", repo_path)
         sections = scan_repo_sections(repo_path)
         tracker = ROITracker()
+        plugins = discover_metrics_plugins(os.environ)
         scenario_names = []
         for i, preset in enumerate(env_presets):
             name = preset.get("SCENARIO_NAME", f"scenario_{i}")
@@ -1700,6 +1705,9 @@ def run_repo_section_simulations(
                     res.get("exit_code"),
                 )
                 for prev, actual, metrics in updates:
+                    extra = collect_plugin_metrics(plugins, prev, actual, metrics)
+                    if extra:
+                        metrics.update(extra)
                     scenario_metrics = {
                         f"{k}:{scenario}": v for k, v in metrics.items()
                     }
@@ -1741,6 +1749,9 @@ def run_repo_section_simulations(
                         tracker.diminishing(),
                     )
                     for prev, actual, metrics in updates:
+                        extra = collect_plugin_metrics(plugins, prev, actual, metrics)
+                        if extra:
+                            metrics.update(extra)
                         scenario_metrics = {
                             f"{k}:{scenario}": v for k, v in metrics.items()
                         }
