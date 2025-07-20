@@ -9,8 +9,10 @@ import json
 import tempfile
 import asyncio
 import sys
+from typing import Callable, Any
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
+from .data_bot import DataBot
 
 
 class SelfTestService:
@@ -22,9 +24,14 @@ class SelfTestService:
         *,
         pytest_args: str | None = None,
         workers: int | None = None,
+        data_bot: DataBot | None = None,
+        result_callback: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
+        self.data_bot = data_bot
+        self.result_callback = result_callback
+        self.results: dict[str, Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._async_stop: asyncio.Event | None = None
@@ -46,6 +53,8 @@ class SelfTestService:
         procs: list[tuple[asyncio.subprocess.Process, str]] = []
         passed = 0
         failed = 0
+        coverage_total = 0.0
+        runtime_total = 0.0
 
         for p in paths:
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
@@ -79,6 +88,19 @@ class SelfTestService:
                 summary = report.get("summary", {})
                 passed += int(summary.get("passed", 0))
                 failed += int(summary.get("failed", 0)) + int(summary.get("error", 0))
+                cov_info = report.get("coverage", {}) or report.get("cov", {})
+                coverage_total += float(
+                    cov_info.get("percent")
+                    or cov_info.get("coverage")
+                    or cov_info.get("percent_covered")
+                    or 0.0
+                )
+                runtime_total += float(
+                    report.get("duration")
+                    or summary.get("duration")
+                    or summary.get("runtime")
+                    or 0.0
+                )
             except Exception:
                 self.logger.exception("failed to parse test report")
             finally:
@@ -98,6 +120,28 @@ class SelfTestService:
             self.error_logger.db.add_test_result(passed, failed)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to store test results")
+
+        coverage = coverage_total / max(len(procs), 1)
+        runtime = runtime_total
+        self.results = {
+            "passed": passed,
+            "failed": failed,
+            "coverage": coverage,
+            "runtime": runtime,
+        }
+
+        if self.result_callback:
+            try:
+                self.result_callback(self.results)
+            except Exception:
+                self.logger.exception("result callback failed")
+
+        if self.data_bot:
+            try:
+                self.data_bot.db.log_eval("self_tests", "coverage", float(coverage))
+                self.data_bot.db.log_eval("self_tests", "runtime", float(runtime))
+            except Exception:
+                self.logger.exception("failed to store metrics")
 
     async def _schedule_loop(self, interval: float) -> None:
         assert self._async_stop is not None
