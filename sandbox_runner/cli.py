@@ -34,6 +34,7 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
             try:
                 from menace.environment_generator import generate_presets
+
                 count = getattr(args, "preset_count", None)
                 presets = generate_presets(count)
             except Exception:
@@ -47,7 +48,12 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
             delta = sum(tracker.roi_history)
             sec_hist = tracker.metrics_history.get("security_score", [])
             sec_val = sec_hist[-1] if sec_hist else 0.0
-            summary.update(0.0, delta, modules=[f"preset_{idx}"], metrics={"security_score": sec_val})
+            summary.update(
+                0.0,
+                delta,
+                modules=[f"preset_{idx}"],
+                metrics={"security_score": sec_val},
+            )
         logger.info("sandbox presets complete", extra={"ranking": summary.rankings()})
         return
 
@@ -138,11 +144,11 @@ def _ema(values: list[float]) -> tuple[float, float]:
     ema_sq = values[0] ** 2
     for v in values[1:]:
         ema = alpha * v + (1 - alpha) * ema
-        ema_sq = alpha * (v ** 2) + (1 - alpha) * ema_sq
-    var = ema_sq - ema ** 2
+        ema_sq = alpha * (v**2) + (1 - alpha) * ema_sq
+    var = ema_sq - ema**2
     if var < 1e-12:
         var = 0.0
-    return ema, var ** 0.5
+    return ema, var**0.5
 
 
 def _adaptive_threshold(values: list[float], window: int, factor: float = 2.0) -> float:
@@ -200,14 +206,14 @@ def _adaptive_synergy_threshold(
         return 0.0
 
     if weight != 1.0:
-        w = [weight ** i for i in range(len(diffs) - 1, -1, -1)]
+        w = [weight**i for i in range(len(diffs) - 1, -1, -1)]
         ema = sum(d * w_i for d, w_i in zip(diffs, w)) / sum(w)
         var = sum(w_i * (d - ema) ** 2 for d, w_i in zip(diffs, w)) / sum(w)
     else:
         ema = sum(diffs) / len(diffs)
         var = sum((d - ema) ** 2 for d in diffs) / len(diffs)
 
-    std = var ** 0.5
+    std = var**0.5
     return float(std * factor)
 
 
@@ -258,12 +264,15 @@ def _synergy_converged(
     *,
     confidence: float = 0.95,
     stationarity_confidence: float = 0.95,
+    variance_confidence: float = 0.95,
 ) -> tuple[bool, float, float]:
     """Return whether synergy metrics have converged.
 
     The check now also considers the correlation between the metric values and
     their sequence index and computes the confidence using the t-distribution
-    when possible.
+    when possible.  If ``statsmodels`` and ``scipy`` are installed the
+    Augmented Dickey-Fuller and Levene variance tests are included as
+    additional signals.
     """
     if len(history) < window:
         return False, 0.0, 0.0
@@ -300,6 +309,17 @@ def _synergy_converged(
         except Exception:
             pass
 
+        var_change_conf = 0.0
+        try:  # pragma: no cover - optional dependency
+            from scipy.stats import levene
+
+            half = n // 2
+            if half > 1 and n - half > 1:
+                lev_p = levene(series[:half], series[half:]).pvalue
+                var_change_conf = 1.0 - float(lev_p)
+        except Exception:
+            pass
+
         # rolling correlation of metric values against iteration index
         roll_corr = 0.0
         if n > 1:
@@ -321,13 +341,14 @@ def _synergy_converged(
         if std_threshold > 0:
             var_factor = 1.0 / (1.0 + std / std_threshold)
         conf *= var_factor * (1.0 - abs(roll_corr))
-        min_conf = min(min_conf, conf, stat_conf)
+        min_conf = min(min_conf, conf, stat_conf, 1.0 - var_change_conf)
 
         if (
             abs(ema) > threshold
             or std > std_threshold
             or conf < confidence
             or stat_conf < stationarity_confidence
+            or var_change_conf >= variance_confidence
             or roll_corr > 0.3
         ):
             return False, max_abs, min_conf
@@ -337,9 +358,13 @@ def _synergy_converged(
 def full_autonomous_run(args: argparse.Namespace) -> None:
     """Execute sandbox cycles until all modules show diminishing returns."""
     if getattr(args, "dashboard_port", None):
-        history_file = Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
+        history_file = (
+            Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
+        )
         dash = MetricsDashboard(str(history_file))
-        Thread(target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True).start()
+        Thread(
+            target=dash.run, kwargs={"port": args.dashboard_port}, daemon=True
+        ).start()
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
@@ -396,13 +421,29 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             synergy_ma_window = int(env_val)
         except Exception:
             synergy_ma_window = None
-    synergy_stationarity_confidence = getattr(args, "synergy_stationarity_confidence", None)
+    synergy_stationarity_confidence = getattr(
+        args, "synergy_stationarity_confidence", None
+    )
     env_val = os.getenv("SYNERGY_STATIONARITY_CONFIDENCE")
     if synergy_stationarity_confidence is None and env_val is not None:
         try:
             synergy_stationarity_confidence = float(env_val)
         except Exception:
             synergy_stationarity_confidence = None
+    synergy_std_threshold = getattr(args, "synergy_std_threshold", None)
+    env_val = os.getenv("SYNERGY_STD_THRESHOLD")
+    if synergy_std_threshold is None and env_val is not None:
+        try:
+            synergy_std_threshold = float(env_val)
+        except Exception:
+            synergy_std_threshold = None
+    synergy_variance_confidence = getattr(args, "synergy_variance_confidence", None)
+    env_val = os.getenv("SYNERGY_VARIANCE_CONFIDENCE")
+    if synergy_variance_confidence is None and env_val is not None:
+        try:
+            synergy_variance_confidence = float(env_val)
+        except Exception:
+            synergy_variance_confidence = None
     last_tracker = None
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
@@ -415,6 +456,10 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
         synergy_ma_window = synergy_cycles
     if synergy_stationarity_confidence is None:
         synergy_stationarity_confidence = synergy_confidence or 0.95
+    if synergy_std_threshold is None:
+        synergy_std_threshold = 1e-3
+    if synergy_variance_confidence is None:
+        synergy_variance_confidence = synergy_confidence or 0.95
 
     while args.max_iterations is None or iteration < args.max_iterations:
         iteration += 1
@@ -442,7 +487,7 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 if k.startswith("synergy_") and v
             }
             pred_vals = {
-                k[len("pred_"):]: v[-1]
+                k[len("pred_") :]: v[-1]
                 for k, v in tracker.metrics_history.items()
                 if k.startswith("pred_synergy_") and v
             }
@@ -494,9 +539,13 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 synergy_history,
                 synergy_cycles,
                 synergy_threshold,
+                std_threshold=synergy_std_threshold,
                 ma_window=synergy_ma_window,
                 confidence=synergy_confidence or 0.95,
-                stationarity_confidence=synergy_stationarity_confidence or (synergy_confidence or 0.95),
+                stationarity_confidence=synergy_stationarity_confidence
+                or (synergy_confidence or 0.95),
+                variance_confidence=synergy_variance_confidence
+                or (synergy_confidence or 0.95),
             )
         else:
             converged, ema_val, _ = False, 0.0, 0.0
@@ -521,6 +570,7 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
 
 def run_complete(args: argparse.Namespace) -> None:
     """Run ``full_autonomous_run`` with explicitly supplied presets."""
+
     def _load(val: str) -> dict[str, Any]:
         if os.path.exists(val):
             with open(val, "r", encoding="utf-8") as fh:
@@ -541,12 +591,28 @@ def run_complete(args: argparse.Namespace) -> None:
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
-    parser.add_argument("--workflow-sim", action="store_true", help="simulate workflows instead of repo sections")
-    parser.add_argument("--workflow-db", default="workflows.db", help="path to workflow database")
-    parser.add_argument("--sandbox-data-dir", help="override data directory for sandbox mode")
-    parser.add_argument("--preset-count", type=int, help="number of presets to generate when none are provided")
-    parser.add_argument("--max-prompt-length", type=int, help="maximum characters for GPT prompts")
-    parser.add_argument("--summary-depth", type=int, help="lines to keep when summarising snippets")
+    parser.add_argument(
+        "--workflow-sim",
+        action="store_true",
+        help="simulate workflows instead of repo sections",
+    )
+    parser.add_argument(
+        "--workflow-db", default="workflows.db", help="path to workflow database"
+    )
+    parser.add_argument(
+        "--sandbox-data-dir", help="override data directory for sandbox mode"
+    )
+    parser.add_argument(
+        "--preset-count",
+        type=int,
+        help="number of presets to generate when none are provided",
+    )
+    parser.add_argument(
+        "--max-prompt-length", type=int, help="maximum characters for GPT prompts"
+    )
+    parser.add_argument(
+        "--summary-depth", type=int, help="lines to keep when summarising snippets"
+    )
     parser.add_argument(
         "--offline-suggestions",
         action="store_true",
@@ -649,6 +715,16 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy stationarity test",
     )
     p_autorun.add_argument(
+        "--synergy-std-threshold",
+        type=float,
+        help="standard deviation threshold for synergy convergence",
+    )
+    p_autorun.add_argument(
+        "--synergy-variance-confidence",
+        type=float,
+        help="confidence level for variance change test",
+    )
+    p_autorun.add_argument(
         "--auto-thresholds",
         action="store_true",
         help="adjust ROI and synergy thresholds automatically",
@@ -722,6 +798,16 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy stationarity test",
     )
     p_complete.add_argument(
+        "--synergy-std-threshold",
+        type=float,
+        help="standard deviation threshold for synergy convergence",
+    )
+    p_complete.add_argument(
+        "--synergy-variance-confidence",
+        type=float,
+        help="confidence level for variance change test",
+    )
+    p_complete.add_argument(
         "--auto-thresholds",
         action="store_true",
         help="adjust ROI and synergy thresholds automatically",
@@ -774,4 +860,3 @@ def main(argv: List[str] | None = None) -> None:
         run_workflow_simulations(args.workflow_db)
     else:
         _run_sandbox(args)
-
