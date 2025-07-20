@@ -16,7 +16,13 @@ from .data_bot import DataBot
 
 
 class SelfTestService:
-    """Periodically execute the test suite to validate core bots."""
+    """Periodically execute the test suite to validate core bots.
+
+    If ``result_callback`` is provided, it will be invoked with a dictionary
+    containing cumulative results each time a test file finishes running and
+    again once the entire run completes.  This allows callers to display
+    incremental progress while the tests execute.
+    """
 
     def __init__(
         self,
@@ -50,44 +56,58 @@ class SelfTestService:
         if not paths:
             paths = [None]
 
-        procs: list[tuple[asyncio.subprocess.Process, str]] = []
         passed = 0
         failed = 0
         coverage_total = 0.0
         runtime_total = 0.0
+        proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
 
+        use_pipe = self.result_callback is not None
         for p in paths:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-            tmp.close()
+            tmp_name: str | None = None
             cmd = [
                 sys.executable,
                 "-m",
                 "pytest",
                 "-q",
                 "--json-report",
-                f"--json-report-file={tmp.name}",
-                *other_args,
             ]
+            if use_pipe:
+                cmd.append("--json-report-file=-")
+            else:
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+                tmp.close()
+                tmp_name = tmp.name
+                cmd.append(f"--json-report-file={tmp_name}")
+            cmd.extend(other_args)
             if self.workers > 1:
                 cmd.extend(["-n", str(self.workers)])
             if p:
                 cmd.append(p)
+
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdout=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
-            procs.append((proc, tmp.name))
+            proc_info.append((proc, tmp_name))
 
-        await asyncio.gather(*(pr.wait() for pr, _ in procs))
-
-        for proc, tmp_name in procs:
+        for proc, tmp_name in proc_info:
+            await proc.wait()
             try:
-                with open(tmp_name, "r", encoding="utf-8") as fh:
-                    report = json.load(fh)
+                if use_pipe:
+                    assert proc.stdout is not None
+                    out = await proc.stdout.read()
+                    report = json.loads(out.decode() or "{}")
+                else:
+                    assert tmp_name is not None
+                    with open(tmp_name, "r", encoding="utf-8") as fh:
+                        report = json.load(fh)
                 summary = report.get("summary", {})
-                passed += int(summary.get("passed", 0))
-                failed += int(summary.get("failed", 0)) + int(summary.get("error", 0))
+                pcount = int(summary.get("passed", 0))
+                fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
+                passed += pcount
+                failed += fcount
                 cov_info = report.get("coverage", {}) or report.get("cov", {})
                 coverage_total += float(
                     cov_info.get("percent")
@@ -104,10 +124,11 @@ class SelfTestService:
             except Exception:
                 self.logger.exception("failed to parse test report")
             finally:
-                try:
-                    os.unlink(tmp_name)
-                except Exception:
-                    pass
+                if tmp_name:
+                    try:
+                        os.unlink(tmp_name)
+                    except Exception:
+                        pass
             if proc.returncode != 0:
                 exc = RuntimeError(f"self tests failed with code {proc.returncode}")
                 self.logger.error("self tests failed: %s", exc)
@@ -116,12 +137,24 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("error logging failed")
 
+            if self.result_callback:
+                partial = {
+                    "passed": passed,
+                    "failed": failed,
+                    "coverage": coverage_total / max(len(paths), 1),
+                    "runtime": runtime_total,
+                }
+                try:
+                    self.result_callback(partial)
+                except Exception:
+                    self.logger.exception("result callback failed")
+
         try:
             self.error_logger.db.add_test_result(passed, failed)
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to store test results")
 
-        coverage = coverage_total / max(len(procs), 1)
+        coverage = coverage_total / max(len(proc_info), 1)
         runtime = runtime_total
         self.results = {
             "passed": passed,

@@ -219,3 +219,53 @@ def test_records_coverage_and_runtime(tmp_path, monkeypatch):
     metrics_names = [r[1] for r in rows]
     assert "coverage" in metrics_names and "runtime" in metrics_names
 
+
+def test_json_pipe_when_callback(monkeypatch):
+    recorded = {}
+
+    async def fake_exec(*cmd, **kwargs):
+        recorded["cmd"] = cmd
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService(result_callback=lambda r: None)
+    asyncio.run(svc._run_once())
+    assert any("--json-report-file=-" in str(x) for x in recorded["cmd"])
+
+
+def test_callback_emits_partial_results(monkeypatch):
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 1, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService(pytest_args="a b", result_callback=lambda r: calls.append(r.copy()))
+    asyncio.run(svc._run_once())
+
+    # two partial results plus final summary
+    assert len(calls) == 3
+    passes = sorted(c["passed"] for c in calls[:-1])
+    assert passes == [1, 2]
+    assert calls[-1] == svc.results
+
