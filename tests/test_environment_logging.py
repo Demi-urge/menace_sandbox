@@ -107,6 +107,7 @@ def test_execute_local_rlimit_warning(monkeypatch, caplog):
         def __init__(self, cmd, stdout=None, stderr=None, text=None, env=None, cwd=None, preexec_fn=None):
             if preexec_fn:
                 preexec_fn()
+            self.pid = 1
             self.returncode = 0
             self.stdout = ""
             self.stderr = ""

@@ -436,6 +436,8 @@ def _execute_in_container(
                     preexec_fn=_limits if rlimit_ok else None,
                 )
                 p = psutil.Process(proc.pid) if psutil else None
+                if p and not rlimit_ok:
+                    _apply_psutil_rlimits(p, env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
                 proc.communicate(timeout=int(env.get("TIMEOUT", "30")))
                 exit_code = proc.returncode
             except subprocess.TimeoutExpired:
@@ -803,6 +805,36 @@ def _rlimits_supported() -> bool:
         return False
 
 
+def _psutil_rlimits_supported() -> bool:
+    """Return ``True`` if psutil can set rlimits."""
+    if psutil is None:
+        return False
+    try:
+        p = psutil.Process()
+        return hasattr(p, "rlimit")
+    except Exception:
+        return False
+
+
+def _apply_psutil_rlimits(proc: Any, cpu: Any, mem: Any) -> None:
+    """Apply CPU and memory limits to ``proc`` using psutil."""
+    if psutil is None or not hasattr(proc, "rlimit"):
+        return
+    try:
+        if cpu:
+            sec = int(float(cpu)) * 10
+            proc.rlimit(getattr(psutil, "RLIMIT_CPU", 0), (sec, sec))
+    except Exception as exc:
+        logger.warning("failed to set CPU limit via psutil: %s", exc)
+    try:
+        if mem:
+            size = _parse_size(mem)
+            if size:
+                proc.rlimit(getattr(psutil, "RLIMIT_AS", 9), (size, size))
+    except Exception as exc:
+        logger.warning("failed to set memory limit via psutil: %s", exc)
+
+
 def _parse_failure_modes(value: Any) -> set[str]:
     """Return a normalized set of failure modes from ``value``."""
     if not value:
@@ -1054,6 +1086,8 @@ async def _section_worker(
                         env=env,
                     )
                 p = psutil.Process(proc.pid) if psutil else None
+                if p:
+                    _apply_psutil_rlimits(p, env_input.get("CPU_LIMIT"), env_input.get("MEMORY_LIMIT"))
                 net_start = psutil.net_io_counters() if psutil else None
                 cpu_lim = (
                     int(float(env_input.get("CPU_LIMIT", 0))) * 10
