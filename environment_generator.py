@@ -278,8 +278,11 @@ def adapt_presets(
 
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
+    if not rl_path:
+        rl_path = os.path.join("sandbox_data", "preset_policy.json")
     rl_strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY")
     if rl_path:
+        os.makedirs(os.path.dirname(rl_path), exist_ok=True)
         try:
             agent = getattr(adapt_presets, "_rl_agent", None)
             strat_name = (getattr(getattr(agent, "policy", None), "strategy", None).__class__.__name__.lower()
