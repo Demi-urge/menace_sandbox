@@ -212,20 +212,31 @@ def main(argv: List[str] | None = None) -> None:
         logger.info("created env file at %s", env_file)
 
     if args.preset_files is None:
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir = Path(
+            args.sandbox_data_dir
+            or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+        )
         preset_file = data_dir / "presets.json"
         created_preset = False
-        if os.getenv("SANDBOX_ENV_PRESETS"):
+        env_val = os.getenv("SANDBOX_ENV_PRESETS")
+        if env_val:
             try:
-                presets = json.loads(os.environ["SANDBOX_ENV_PRESETS"])
+                presets = json.loads(env_val)
                 if isinstance(presets, dict):
                     presets = [presets]
             except Exception:
                 presets = generate_presets(args.preset_count)
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        elif preset_file.exists():
+            try:
+                presets = json.loads(preset_file.read_text())
+                if isinstance(presets, dict):
+                    presets = [presets]
+            except Exception:
+                presets = generate_presets(args.preset_count)
         else:
             presets = generate_presets(args.preset_count)
-            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
             preset_file.write_text(json.dumps(presets))

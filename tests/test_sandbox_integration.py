@@ -3,8 +3,17 @@ import sys
 import types
 from pathlib import Path
 import environment_generator as eg
-import roi_tracker as rt
 import sandbox_runner
+
+spec = importlib.util.spec_from_file_location(
+    "menace", Path(__file__).resolve().parents[1] / "__init__.py"
+)
+menace_pkg = importlib.util.module_from_spec(spec)
+sys.modules["menace"] = menace_pkg
+spec.loader.exec_module(menace_pkg)
+import importlib
+rt = importlib.import_module("menace.roi_tracker")
+sys.modules.setdefault("roi_tracker", rt)
 
 from tests.test_menace_master import _setup_mm_stubs, DummyBot, _stub_module
 
@@ -225,3 +234,80 @@ def test_adapt_presets_synergy_resilience_history(monkeypatch):
     assert bw.index(new[0]["BANDWIDTH_LIMIT"]) < bw.index("50Mbps")
     assert bw.index(new[0]["MAX_BANDWIDTH"]) < bw.index("100Mbps")
     assert bw.index(new[0]["MIN_BANDWIDTH"]) < bw.index("10Mbps")
+
+
+def test_autonomous_presets_reused(monkeypatch, tmp_path):
+    import importlib.util
+    from types import ModuleType
+
+    # stub modules before importing run_autonomous
+    sc_mod = ModuleType("menace.startup_checks")
+    sc_mod.verify_project_dependencies = lambda: []
+    sc_mod._parse_requirement = lambda r: r
+
+    calls = []
+
+    eg_mod = ModuleType("menace.environment_generator")
+
+    def _gen(n=None):
+        calls.append("gen")
+        return [{"CPU_LIMIT": "1"}]
+
+    eg_mod.generate_presets = _gen
+
+    tracker_mod = ModuleType("menace.roi_tracker")
+
+    class DummyTracker:
+        def __init__(self, *a, **k):
+            self.module_deltas = {}
+            self.metrics_history = {}
+
+        def load_history(self, p):
+            pass
+
+        def diminishing(self):
+            return 0.0
+
+    tracker_mod.ROITracker = DummyTracker
+
+    sr_stub = ModuleType("sandbox_runner")
+    cli_stub = ModuleType("sandbox_runner.cli")
+    cli_stub.full_autonomous_run = lambda args: None
+    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
+    cli_stub._ema = lambda seq: (0.0, [])
+    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
+    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
+    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+    sr_stub._sandbox_main = lambda p, a: None
+    sr_stub.cli = cli_stub
+
+    monkeypatch.setitem(sys.modules, "menace.startup_checks", sc_mod)
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", tracker_mod)
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
+
+    path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
+    spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
+    run_autonomous = importlib.util.module_from_spec(spec)
+    sys.modules["run_autonomous"] = run_autonomous
+    spec.loader.exec_module(run_autonomous)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_autonomous, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(run_autonomous, "full_autonomous_run", lambda args: None)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.delenv("SANDBOX_ENV_PRESETS", raising=False)
+
+    run_autonomous.main([])
+
+    preset_file = tmp_path / "sandbox_data" / "presets.json"
+    assert preset_file.exists()
+    first = preset_file.read_text()
+    assert len(calls) == 1
+
+    monkeypatch.delenv("SANDBOX_ENV_PRESETS", raising=False)
+    run_autonomous.main([])
+
+    assert len(calls) == 1
+    assert preset_file.read_text() == first
