@@ -342,3 +342,91 @@ def test_refresh_serializes_with_run(monkeypatch):
 
     assert run_time >= refresh_end
 
+
+
+def test_overlapping_clients_sequential(monkeypatch, tmp_path):
+    """Concurrent clients contacting a real server should run sequentially."""
+
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    import json
+
+    lock_path = tmp_path / "va.lock"
+
+    events: list[float] = []
+    running_lock = threading.Lock()
+    active = {"val": False}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path == "/run":
+                if not running_lock.acquire(blocking=False):
+                    self.send_response(409)
+                    self.end_headers()
+                    return
+                events.append(time.time())
+                active["val"] = True
+
+                def worker():
+                    time.sleep(0.2)
+                    active["val"] = False
+                    running_lock.release()
+                    pass
+
+                threading.Thread(target=worker, daemon=True).start()
+                self.send_response(202)
+                self.end_headers()
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def do_GET(self):
+            if self.path == "/status":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(json.dumps({"active": active["val"]}).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    server = HTTPServer(("localhost", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+    try:
+        monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+        vac_mod = _reload_client(monkeypatch)
+        monkeypatch.setattr(vac_mod, "log_event", lambda *a, **k: "id")
+
+        c1 = vac_mod.VisualAgentClient(
+            urls=[f"http://localhost:{port}"], poll_interval=0.01
+        )
+        c2 = vac_mod.VisualAgentClient(
+            urls=[f"http://localhost:{port}"], poll_interval=0.01
+        )
+
+        times: list[tuple[str, float]] = []
+
+        def run1():
+            c1.ask([{"content": "a"}])
+            times.append(("end1", time.time()))
+
+        def run2():
+            c2.ask([{"content": "b"}])
+            times.append(("end2", time.time()))
+
+        t1 = threading.Thread(target=run1)
+        t2 = threading.Thread(target=run2)
+        t1.start()
+        time.sleep(0.05)
+        t2.start()
+        t1.join()
+        t2.join()
+    finally:
+        server.shutdown()
+
+    assert len(events) == 2
+    assert events[1] - events[0] >= 0.19
+    end1 = next(t for n, t in times if n == "end1")
+    end2 = next(t for n, t in times if n == "end2")
+    assert end2 >= end1
+
