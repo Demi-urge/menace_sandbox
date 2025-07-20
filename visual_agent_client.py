@@ -125,16 +125,32 @@ class VisualAgentClient:
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
             return False, "requests unavailable"
+
+        attempts = 0
+        delay = self.poll_interval
         while True:
             try:
                 resp = requests.get(f"{base}/status", timeout=10)
             except Exception as exc:  # pragma: no cover - network issues
-                return False, f"status poll failed: {exc}"
+                attempts += 1
+                if attempts >= 3:
+                    return False, f"status poll failed: {exc}"
+                time.sleep(delay)
+                delay *= 2
+                continue
+
             if resp.status_code != 200:
-                return False, f"unexpected status {resp.status_code}"
+                attempts += 1
+                if attempts >= 3:
+                    return False, f"unexpected status {resp.status_code}"
+                time.sleep(delay)
+                delay *= 2
+                continue
+
             data = resp.json()
             if not data.get("active", False):
                 return True, str(data.get("status", "done"))
+
             time.sleep(self.poll_interval)
 
     def _refresh_token(self) -> bool:
@@ -187,19 +203,34 @@ class VisualAgentClient:
                         )
                     except Exception:
                         self.open_run_id = None
-                resp = requests.post(
-                    f"{base}/run",
-                    headers={"x-token": self.token},
-                    json={"prompt": prompt, "branch": None},
-                    timeout=10,
-                )
-                if resp.status_code == 401:
-                    self._refresh_token_async()
-                    return False, "unauthorized"
-                if resp.status_code == 202:
-                    return self._poll(base)
-                snippet = resp.text[:200]
-                return False, f"status {resp.status_code}: {snippet}"
+                delay = 1.0
+                for attempt in range(3):
+                    try:
+                        resp = requests.post(
+                            f"{base}/run",
+                            headers={"x-token": self.token},
+                            json={"prompt": prompt, "branch": None},
+                            timeout=10,
+                        )
+                    except Exception as exc:
+                        if attempt == 2:
+                            return False, f"connection error: {exc}"
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+
+                    if resp.status_code == 401:
+                        self._refresh_token_async()
+                        return False, "unauthorized"
+                    if resp.status_code == 202:
+                        return self._poll(base)
+                    if resp.status_code >= 500 and attempt < 2:
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    snippet = resp.text[:200]
+                    return False, f"status {resp.status_code}: {snippet}"
+                return False, "failed"
 
         try:
             return sender()
@@ -219,18 +250,33 @@ class VisualAgentClient:
             self.active = True
 
             def sender() -> tuple[bool, str]:
-                resp = requests.post(
-                    f"{base}/revert",
-                    headers={"x-token": self.token},
-                    timeout=10,
-                )
-                if resp.status_code == 401:
-                    self._refresh_token_async()
-                    return False, "unauthorized"
-                if resp.status_code == 202:
-                    return self._poll(base)
-                snippet = resp.text[:200]
-                return False, f"status {resp.status_code}: {snippet}"
+                delay = 1.0
+                for attempt in range(3):
+                    try:
+                        resp = requests.post(
+                            f"{base}/revert",
+                            headers={"x-token": self.token},
+                            timeout=10,
+                        )
+                    except Exception as exc:
+                        if attempt == 2:
+                            return False, f"connection error: {exc}"
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+
+                    if resp.status_code == 401:
+                        self._refresh_token_async()
+                        return False, "unauthorized"
+                    if resp.status_code == 202:
+                        return self._poll(base)
+                    if resp.status_code >= 500 and attempt < 2:
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    snippet = resp.text[:200]
+                    return False, f"status {resp.status_code}: {snippet}"
+                return False, "failed"
 
         try:
             return sender()

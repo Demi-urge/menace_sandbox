@@ -567,6 +567,11 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     from menace.menace_memory_manager import MenaceMemoryManager
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
 
+    # ``suggestion_db`` is assigned later once paths are available but it is
+    # passed into ``SelfCodingEngine`` below, so initialise it here to avoid an
+    # UnboundLocalError during argument evaluation.
+    suggestion_db: PatchSuggestionDB | None = None
+
     try:
         from menace.visual_agent_client import VisualAgentClient
     except Exception as exc:
