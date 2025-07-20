@@ -83,6 +83,9 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="Bad token")
 
+    if _running_lock.locked() or getattr(_global_lock, "is_locked", False) or task_queue:
+        raise HTTPException(status_code=409, detail="Agent busy")
+
     task_id = secrets.token_hex(8)
     job_status[task_id] = {"status": "queued", "prompt": task.prompt}
     task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
@@ -368,6 +371,40 @@ async def clone_repo(x_token: str = Header(default="")):
                 _global_lock.release()
             except Exception:
                 pass
+
+@app.post("/cancel/{task_id}", status_code=202)
+async def cancel_task(task_id: str, x_token: str = Header(default="")):
+    if x_token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Bad token")
+
+    if task_id not in job_status:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    if not _running_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Agent busy")
+
+    try:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            _running_lock.release()
+            raise HTTPException(status_code=409, detail="Agent busy")
+
+        try:
+            if job_status[task_id]["status"] != "queued":
+                raise HTTPException(status_code=409, detail="Task already running")
+
+            for i, t in enumerate(list(task_queue)):
+                if t["id"] == task_id:
+                    del task_queue[i]
+                    break
+
+            job_status[task_id]["status"] = "cancelled"
+            return {"id": task_id, "status": "cancelled"}
+        finally:
+            _global_lock.release()
+    finally:
+        _running_lock.release()
 
 @app.get("/status")
 async def status():

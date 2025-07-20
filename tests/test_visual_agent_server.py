@@ -83,3 +83,125 @@ async def test_run_endpoint_busy(monkeypatch):
 
     assert resp1.status_code == 202
     assert resp2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_task(monkeypatch):
+    """A queued task should be cancellable before it starts."""
+    heavy = ["cv2", "numpy", "mss", "pyautogui"]
+    for name in heavy:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    filelock_mod = types.ModuleType("filelock")
+    class DummyTimeout(Exception):
+        pass
+
+    class DummyFileLock:
+        def __init__(self, *a, **k):
+            pass
+        def acquire(self, timeout=0):
+            pass
+        def release(self):
+            pass
+
+    filelock_mod.FileLock = DummyFileLock
+    filelock_mod.Timeout = DummyTimeout
+    monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
+
+    pt_mod = types.ModuleType("pytesseract")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.image_to_string = lambda *a, **k: ""
+    pt_mod.image_to_data = lambda *a, **k: {}
+    pt_mod.Output = types.SimpleNamespace(DICT=0)
+    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
+
+    class DummyThread:
+        def __init__(self, *a, **k):
+            pass
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Thread", DummyThread)
+
+    va = importlib.reload(importlib.import_module("menace_visual_agent_2"))
+
+    monkeypatch.setattr(va, "run_menace_pipeline", lambda *a, **k: None)
+
+    from httpx import AsyncClient, ASGITransport
+
+    transport = ASGITransport(app=va.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "p"}
+        )
+        tid = resp.json()["id"]
+        resp_cancel = await client.post(
+            f"/cancel/{tid}", headers={"x-token": va.API_TOKEN}
+        )
+
+    assert resp.status_code == 202
+    assert resp_cancel.status_code == 202
+    assert va.job_status[tid]["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_task(monkeypatch):
+    """Cancelling a running task should fail."""
+    heavy = ["cv2", "numpy", "mss", "pyautogui"]
+    for name in heavy:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    filelock_mod = types.ModuleType("filelock")
+    class DummyTimeout(Exception):
+        pass
+
+    class DummyFileLock:
+        def __init__(self, *a, **k):
+            pass
+        def acquire(self, timeout=0):
+            pass
+        def release(self):
+            pass
+
+    filelock_mod.FileLock = DummyFileLock
+    filelock_mod.Timeout = DummyTimeout
+    monkeypatch.setitem(sys.modules, "filelock", filelock_mod)
+
+    pt_mod = types.ModuleType("pytesseract")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.image_to_string = lambda *a, **k: ""
+    pt_mod.image_to_data = lambda *a, **k: {}
+    pt_mod.Output = types.SimpleNamespace(DICT=0)
+    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
+
+    class DummyThread:
+        def __init__(self, *a, **k):
+            pass
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Thread", DummyThread)
+
+    va = importlib.reload(importlib.import_module("menace_visual_agent_2"))
+    monkeypatch.setattr(va, "run_menace_pipeline", lambda *a, **k: None)
+
+    from httpx import AsyncClient, ASGITransport
+
+    transport = ASGITransport(app=va.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "p"}
+        )
+        tid = resp.json()["id"]
+
+        va.job_status[tid]["status"] = "running"
+        va._running_lock.acquire()
+        try:
+            resp_cancel = await client.post(
+                f"/cancel/{tid}", headers={"x-token": va.API_TOKEN}
+            )
+        finally:
+            va._running_lock.release()
+
+    assert resp.status_code == 202
+    assert resp_cancel.status_code == 409
