@@ -5,6 +5,13 @@ import sys
 sys.modules.setdefault("numpy", types.ModuleType("numpy"))
 sys.modules["numpy"].isscalar = lambda x: isinstance(x, (int, float, complex))
 sys.modules["numpy"].bool_ = bool
+sys.modules["numpy"].ndarray = type("ndarray", (), {})
+np_random = types.ModuleType("numpy.random")
+np_random.seed = lambda *a, **k: None
+np_random.get_state = lambda: None
+np_random.set_state = lambda state: None
+sys.modules.setdefault("numpy.random", np_random)
+sys.modules["numpy"].random = np_random
 sys.modules.setdefault("sklearn", types.ModuleType("sklearn"))
 sys.modules.setdefault("sklearn.linear_model", types.ModuleType("sklearn.linear_model"))
 sys.modules.setdefault("sklearn.preprocessing", types.ModuleType("sklearn.preprocessing"))
@@ -14,6 +21,9 @@ sys.modules["sklearn.preprocessing"].PolynomialFeatures = object
 import environment_generator as eg
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+import hypothesis.strategies as st
+from hypothesis import given, settings, HealthCheck
 
 from menace_sandbox.environment_generator import AdaptivePresetAgent
 
@@ -95,3 +105,94 @@ def test_adapt_presets_threat_intensity_decrease(monkeypatch):
     presets = [{"THREAT_INTENSITY": 70}]
     new = eg.adapt_presets(tracker, presets)
     assert new[0]["THREAT_INTENSITY"] < 70
+
+
+class PropertyTracker:
+    def __init__(
+        self,
+        roi,
+        syn,
+        eff,
+        res,
+        cpu,
+        mem,
+        threat,
+    ):
+        self.roi_history = list(roi)
+        self.metrics_history = {
+            "synergy_roi": list(syn),
+            "synergy_efficiency": list(eff),
+            "synergy_resilience": list(res),
+            "cpu_usage": list(cpu),
+            "memory_usage": list(mem),
+            "threat_intensity": list(threat),
+        }
+
+
+def _expected_reward(roi, syn, eff, res, cpu, mem, threat):
+    roi_delta = roi[-1] - roi[-2] if len(roi) >= 2 else 0.0
+    syn_delta = (
+        syn[-1] - syn[-2]
+        if len(syn) >= 2
+        else (syn[-1] if syn else 0.0)
+    )
+    eff_delta = (
+        eff[-1] - eff[-2]
+        if len(eff) >= 2
+        else (eff[-1] if eff else 0.0)
+    )
+    res_delta = (
+        res[-1] - res[-2]
+        if len(res) >= 2
+        else (res[-1] if res else 0.0)
+    )
+    cpu_delta = cpu[-1] - cpu[-2] if len(cpu) >= 2 else 0.0
+    mem_delta = mem[-1] - mem[-2] if len(mem) >= 2 else 0.0
+    threat_delta = threat[-1] - threat[-2] if len(threat) >= 2 else 0.0
+    return float(
+        roi_delta
+        + syn_delta
+        + eff_delta
+        + res_delta
+        - cpu_delta
+        - mem_delta
+        - threat_delta
+    )
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    roi=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    syn=st.lists(st.floats(-1, 1), min_size=0, max_size=5),
+    eff=st.lists(st.floats(-1, 1), min_size=0, max_size=5),
+    res=st.lists(st.floats(-1, 1), min_size=0, max_size=5),
+    cpu=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    mem=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    threat=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+)
+def test_reward_matches_formula(roi, syn, eff, res, cpu, mem, threat):
+    tracker = PropertyTracker(roi, syn, eff, res, cpu, mem, threat)
+    agent = AdaptivePresetAgent()
+    reward = agent._reward(tracker)
+    expected = _expected_reward(roi, syn, eff, res, cpu, mem, threat)
+    assert reward == pytest.approx(expected)
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(
+    roi=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    syn=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    eff=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    res=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    cpu=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    mem=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+    threat=st.lists(st.floats(-1, 1), min_size=2, max_size=5),
+)
+def test_decide_action_within_bounds(roi, syn, eff, res, cpu, mem, threat):
+    tracker = PropertyTracker(roi, syn, eff, res, cpu, mem, threat)
+    agent = AdaptivePresetAgent()
+    state = agent._state(tracker)
+    agent.policy.epsilon = 0.0
+    agent.policy.values[state] = {i: 0.0 for i in range(len(agent.ACTIONS))}
+    action = agent.decide(tracker)
+    assert action in [dict(a) for a in agent.ACTIONS]
