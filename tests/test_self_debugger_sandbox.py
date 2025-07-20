@@ -502,7 +502,7 @@ def test_flakiness_variable(monkeypatch):
 
     monkeypatch.setattr(dbg, "_run_tests", fake_run)
     flakiness = dbg._test_flakiness(Path("dummy.py"))
-    assert abs(flakiness - 14.142) < 0.001
+    assert abs(flakiness - 6.324) < 0.001
 
 
 def test_score_weights_evolve_from_audit():

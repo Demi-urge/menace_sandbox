@@ -168,13 +168,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         *,
         runs: int | None = None,
     ) -> float:
-        """Return the standard deviation of coverage across multiple test runs."""
-        n = runs if runs is not None else self.flakiness_runs
-        coverages = []
-        for _ in range(max(1, int(n))):
-            cov, _ = self._run_tests(path, env)
-            coverages.append(cov)
-        return pstdev(coverages) if len(coverages) > 1 else 0.0
+        """Return the standard error of coverage across multiple test runs."""
+        n = max(1, int(runs if runs is not None else self.flakiness_runs))
+
+        async def _run_all() -> list[float]:
+            tasks = [
+                asyncio.to_thread(self._run_tests, path, env) for _ in range(n)
+            ]
+            results = await asyncio.gather(*tasks)
+            return [cov for cov, _ in results]
+
+        coverages = asyncio.run(_run_all())
+        if len(coverages) <= 1:
+            return 0.0
+        stdev = pstdev(coverages)
+        return stdev / math.sqrt(len(coverages))
 
     # ------------------------------------------------------------------
     def _code_complexity(self, path: Path) -> float:
