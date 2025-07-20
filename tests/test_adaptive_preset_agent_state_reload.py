@@ -55,3 +55,16 @@ def test_state_file_reload(tmp_path):
     loaded = AdaptivePresetAgent(str(path))
     assert loaded.prev_state == agent.prev_state
     assert loaded.prev_action == agent.prev_action
+
+
+def test_state_file_reload_ddqn(tmp_path):
+    path = tmp_path / "policy.pkl"
+    tracker = TempTracker()
+    agent = AdaptivePresetAgent(str(path), strategy="double_dqn")
+    agent.decide(tracker)
+    agent.save()
+
+    loaded = AdaptivePresetAgent(str(path), strategy="double_dqn")
+    assert loaded.prev_state == agent.prev_state
+    assert loaded.prev_action == agent.prev_action
+    assert isinstance(loaded.policy.strategy, type(agent.policy.strategy))
