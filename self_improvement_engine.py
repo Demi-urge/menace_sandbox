@@ -485,6 +485,28 @@ class SelfImprovementEngine:
                     )
                 except Exception as exc:
                     self.logger.exception("pre ROI energy adjustment failed: %s", exc)
+            tracker = getattr(self, "tracker", None)
+            if tracker is not None:
+                try:
+                    def _delta(name: str) -> float:
+                        vals = tracker.metrics_history.get(name, [])
+                        if not vals:
+                            return 0.0
+                        if len(vals) >= 2:
+                            return float(vals[-1] - vals[-2])
+                        return float(vals[-1])
+
+                    syn_adj = (
+                        _delta("synergy_roi") * self.synergy_weight_roi
+                        + _delta("synergy_efficiency") * self.synergy_weight_efficiency
+                        + _delta("synergy_resilience") * self.synergy_weight_resilience
+                        + _delta("synergy_antifragility") * self.synergy_weight_antifragility
+                    )
+                    if syn_adj:
+                        energy = int(round(energy * (1.0 + syn_adj)))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("synergy energy adjustment failed: %s", exc)
+            energy = max(1, min(int(energy), 100))
             model_id = bootstrap()
             self.logger.info("model bootstrapped", extra={"model_id": model_id})
             self.info_db.set_current_model(model_id)
