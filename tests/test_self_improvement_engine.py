@@ -515,3 +515,55 @@ def test_synergy_energy_cap(tmp_path, monkeypatch):
     engine.run_cycle()
     assert pipe.energy == 100
 
+
+def test_policy_update_receives_synergy_deltas(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=None)
+
+    class DummyPolicy(sip.SelfImprovementPolicy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.deltas: tuple[float | None, float | None] | None = None
+
+        def update(
+            self,
+            state: tuple[int, ...],
+            reward: float,
+            next_state: tuple[int, ...] | None = None,
+            action: int = 1,
+            *,
+            synergy_roi_delta: float | None = None,
+            synergy_efficiency_delta: float | None = None,
+        ) -> float:
+            self.deltas = (synergy_roi_delta, synergy_efficiency_delta)
+            return super().update(
+                state,
+                reward,
+                next_state,
+                action,
+                synergy_roi_delta=synergy_roi_delta,
+                synergy_efficiency_delta=synergy_efficiency_delta,
+            )
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    policy = DummyPolicy()
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        policy=policy,
+    )
+
+    engine.tracker = _DummyTracker([0.0, 0.2], eff=[0.0, 0.3])
+    engine.run_cycle()
+
+    assert policy.deltas == (0.2, 0.3)
+
