@@ -346,12 +346,15 @@ def _release_container(image: str, container: Any) -> None:
         try:
             container.remove(force=True)
         except Exception:
-            pass
+            logger.exception("container remove failed")
         cid = getattr(container, "id", "")
         td = _CONTAINER_DIRS.pop(cid, None)
         _CONTAINER_LAST_USED.pop(cid, None)
         if td:
-            shutil.rmtree(td, ignore_errors=True)
+            try:
+                shutil.rmtree(td)
+            except Exception:
+                logger.exception("temporary directory removal failed")
     finally:
         _ensure_pool_size_async(image)
 
@@ -396,7 +399,10 @@ def _cleanup_idle_containers() -> int:
                 _stop_and_remove(c)
                 td = _CONTAINER_DIRS.pop(c.id, None)
                 if td:
-                    shutil.rmtree(td, ignore_errors=True)
+                    try:
+                        shutil.rmtree(td)
+                    except Exception:
+                        logger.exception("temporary directory removal failed")
                 _CONTAINER_LAST_USED.pop(c.id, None)
                 cleaned += 1
     return cleaned
@@ -432,7 +438,10 @@ def _cleanup_pools() -> None:
             _stop_and_remove(c)
             td = _CONTAINER_DIRS.pop(c.id, None)
             if td:
-                shutil.rmtree(td, ignore_errors=True)
+                try:
+                    shutil.rmtree(td)
+                except Exception:
+                    logger.exception("temporary directory removal failed")
             _CONTAINER_LAST_USED.pop(c.id, None)
     _CONTAINER_POOLS.clear()
 
