@@ -6,8 +6,7 @@ import importlib
 import pytest
 import json
 import asyncio
-import asyncio
-import asyncio
+import time
 
 sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
 sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
@@ -673,3 +672,29 @@ def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
     rec_with_tracker = json.loads(trail.records[-1])
     assert rec_with_tracker["result"] == "success"
     assert rec_with_tracker["synergy_roi"] > 0.0
+
+
+def test_candidates_evaluated_concurrently(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        dbg,
+        "_generate_tests",
+        lambda logs: ["def a():\n    pass\n", "def b():\n    pass\n"],
+    )
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    def fake_run(path, env=None):
+        time.sleep(0.1)
+        return 50.0, 0.0
+
+    monkeypatch.setattr(dbg, "_run_tests", fake_run)
+
+    start = time.perf_counter()
+    dbg.analyse_and_fix()
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 0.5
