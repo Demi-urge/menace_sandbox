@@ -435,7 +435,7 @@ def adapt_presets(
             agent.save()
             return presets
         except Exception:
-            pass
+            logger.exception("preset adaptation failed")
 
     elif adapt_agent and len(tracker.roi_history) >= _ADAPTIVE_THRESHOLD:
         try:
@@ -479,7 +479,7 @@ def adapt_presets(
             adapt_agent.save()
             return presets
         except Exception:
-            pass
+            logger.exception("preset adaptation failed")
 
     # --------------------------------------------------------------
     # Synergy-driven adjustments with prediction support
