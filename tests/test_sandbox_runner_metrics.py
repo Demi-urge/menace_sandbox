@@ -291,6 +291,7 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy)
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
     mod = types.ModuleType("menace.data_bot")
     mod.DataBot = DummyDataBot
     mod.MetricsDB = DummyBot
@@ -337,11 +338,13 @@ def test_metrics_db_records(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy)
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
     mod = types.ModuleType("menace.data_bot")
     mod.DataBot = DummyDataBot
     mod.MetricsDB = DummyBot
     mod.MetricsDB = DummyBot
     monkeypatch.setitem(sys.modules, "menace.data_bot", mod)
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
     _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBus)
     _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
     _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=lambda *a, **k: DummyImprover())

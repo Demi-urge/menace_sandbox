@@ -47,6 +47,7 @@ if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 spec.loader.exec_module(mod)
 import menace.error_bot as eb
+from menace.data_bot import DataBot, MetricsDB
 import types
 
 
@@ -177,4 +178,44 @@ def test_parallel_workers(monkeypatch):
     assert len(calls) == 2
     for cmd in calls:
         assert "-n" in cmd and "2" in cmd
+
+
+def test_records_coverage_and_runtime(tmp_path, monkeypatch):
+    db = eb.ErrorDB(tmp_path / "e3.db")
+    metrics = MetricsDB(tmp_path / "m.db")
+    data_bot = DataBot(metrics)
+    svc = mod.SelfTestService(db, data_bot=data_bot)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "summary": {"passed": 1, "failed": 0, "duration": 1.0},
+                        "coverage": {"percent": 80.0},
+                        "duration": 1.0,
+                    },
+                    fh,
+                )
+        class P:
+            returncode = 0
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(svc._run_once())
+    assert svc.results["coverage"] == 80.0
+    assert svc.results["runtime"] == 1.0
+    rows = metrics.fetch_eval("self_tests")
+    metrics_names = [r[1] for r in rows]
+    assert "coverage" in metrics_names and "runtime" in metrics_names
 
