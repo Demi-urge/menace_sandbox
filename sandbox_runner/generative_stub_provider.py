@@ -61,9 +61,29 @@ def _save_cache() -> None:
         logger.exception("failed to save stub cache")
 
 
+async def _aload_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Asynchronously load stub cache from disk."""
+    return await asyncio.to_thread(_load_cache)
+
+
+async def _asave_cache() -> None:
+    """Asynchronously persist stub cache to disk."""
+    await asyncio.to_thread(_save_cache)
+
+
 # load persistent cache at import time
 _CACHE.update(_load_cache())
-atexit.register(_save_cache)
+
+
+def _atexit_save_cache() -> None:
+    """Persist the cache on shutdown without blocking the event loop."""
+    try:
+        asyncio.run(asyncio.to_thread(_save_cache))
+    except Exception:
+        pass
+
+
+atexit.register(_atexit_save_cache)
 
 
 def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
@@ -128,6 +148,12 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
     """Generate or enhance ``stubs`` using recent history or a language model."""
 
     strategy = ctx.get("strategy")
+
+    if not _CACHE:
+        try:
+            _CACHE.update(await _aload_cache())
+        except Exception:
+            logger.exception("failed to load stub cache")
     if strategy == "history":
         try:
             records = _get_history_db().recent(50)
@@ -152,6 +178,7 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
     use_stream = ctx.get("stream", False)
 
     new_stubs: List[Dict[str, Any]] = []
+    changed = False
     for stub in stubs:
         func = ctx.get("target")
         name = getattr(func, "__name__", "function")
@@ -188,12 +215,21 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
                 data = json.loads(match.group(0))
                 if isinstance(data, dict):
                     _CACHE[key] = data
+                    changed = True
                     new_stubs.append(dict(data))
                     continue
         except Exception:  # pragma: no cover - generation failures
             logger.exception("stub generation failed")
         _CACHE[key] = stub
+        changed = True
         new_stubs.append(dict(stub))
+
+    if changed:
+        try:
+            await _asave_cache()
+        except Exception:
+            logger.exception("failed to save stub cache")
+
     return new_stubs
 
 
