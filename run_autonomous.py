@@ -36,6 +36,8 @@ elif "menace" not in sys.modules:
     sys.modules["menace"] = menace_pkg
     spec.loader.exec_module(menace_pkg)
 
+from menace.auto_env_setup import ensure_env
+
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies
 from menace.dependency_installer import install_packages
@@ -190,6 +192,36 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
+
+    env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
+    created_env = not env_file.exists()
+    ensure_env(str(env_file))
+    if created_env:
+        logger.info("created env file at %s", env_file)
+
+    if args.preset_files is None:
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        preset_file = data_dir / "presets.json"
+        created_preset = False
+        if os.getenv("SANDBOX_ENV_PRESETS"):
+            try:
+                presets = json.loads(os.environ["SANDBOX_ENV_PRESETS"])
+                if isinstance(presets, dict):
+                    presets = [presets]
+            except Exception:
+                presets = generate_presets(args.preset_count)
+                os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        else:
+            presets = generate_presets(args.preset_count)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        if not preset_file.exists():
+            data_dir.mkdir(parents=True, exist_ok=True)
+            preset_file.write_text(json.dumps(presets))
+            created_preset = True
+        args.preset_files = [str(preset_file)]
+        if created_preset:
+            logger.info("created preset file at %s", preset_file)
+
     _check_dependencies()
 
     if args.dashboard_port:
