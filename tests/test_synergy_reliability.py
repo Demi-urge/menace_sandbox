@@ -5,6 +5,16 @@ from pathlib import Path
 
 import pytest
 
+import os
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+spec = importlib.util.spec_from_file_location(
+    "menace", Path(__file__).resolve().parents[1] / "__init__.py"
+)
+menace = importlib.util.module_from_spec(spec)
+sys.modules["menace"] = menace
+spec.loader.exec_module(menace)
+
 
 class DummyBot:
     def __init__(self, *a, **k):
@@ -97,6 +107,9 @@ class DummyTracker:
 
     def diminishing(self):
         return 0.01
+
+    def synergy_reliability(self):
+        return 0.0
 
     def reliability(self, metric=None, window=None, cv=None):
         if metric == "synergy_roi":
@@ -204,3 +217,23 @@ def test_synergy_reliability_affects_loop(monkeypatch, tmp_path, reliability):
 def test_varied_reliability_levels(monkeypatch, tmp_path, reliability, expected):
     count = _run_sandbox_loop(monkeypatch, tmp_path, reliability)
     assert count == expected
+
+
+def test_synergy_weight_influences_actions():
+    import menace.self_improvement_policy as sip
+
+    base = (0,) * 15 + (0, 0, 0, 0)
+    next_high = (0,) * 15 + (10, 0, 0, 0)
+    next_low = base
+
+    high = sip.SelfImprovementPolicy(epsilon=0.0)
+    high.update(base, -1.0, action=1)
+    high.update(base, 0.0, action=0)
+    high.update(base, 0.0, next_high, action=1)
+    assert high.select_action(base) == 1
+
+    low = sip.SelfImprovementPolicy(epsilon=0.0)
+    low.update(base, -1.0, action=1)
+    low.update(base, 0.0, action=0)
+    low.update(base, 0.0, next_low, action=1)
+    assert low.select_action(base) == 0

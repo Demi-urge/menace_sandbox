@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import asyncio
+import os
 from pathlib import Path
 
 from .self_model_bootstrap import bootstrap
@@ -56,6 +57,10 @@ class SelfImprovementEngine:
         pre_roi_scale: float | None = None,
         pre_roi_bias: float | None = None,
         pre_roi_cap: float | None = None,
+        synergy_weight_roi: float | None = None,
+        synergy_weight_efficiency: float | None = None,
+        synergy_weight_resilience: float | None = None,
+        synergy_weight_antifragility: float | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -88,6 +93,26 @@ class SelfImprovementEngine:
         self.pre_roi_scale = pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
         self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
+        self.synergy_weight_roi = (
+            synergy_weight_roi
+            if synergy_weight_roi is not None
+            else float(os.getenv("SYNERGY_WEIGHT_ROI", "1.0"))
+        )
+        self.synergy_weight_efficiency = (
+            synergy_weight_efficiency
+            if synergy_weight_efficiency is not None
+            else float(os.getenv("SYNERGY_WEIGHT_EFFICIENCY", "1.0"))
+        )
+        self.synergy_weight_resilience = (
+            synergy_weight_resilience
+            if synergy_weight_resilience is not None
+            else float(os.getenv("SYNERGY_WEIGHT_RESILIENCE", "1.0"))
+        )
+        self.synergy_weight_antifragility = (
+            synergy_weight_antifragility
+            if synergy_weight_antifragility is not None
+            else float(os.getenv("SYNERGY_WEIGHT_ANTIFRAGILITY", "1.0"))
+        )
         from .module_index_db import ModuleIndexDB
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
@@ -198,6 +223,10 @@ class SelfImprovementEngine:
                         syn_af = float(af_vals[-1] - af_vals[-2])
             except Exception:
                 syn_af = 0.0
+        syn_roi *= self.synergy_weight_roi
+        syn_eff *= self.synergy_weight_efficiency
+        syn_res *= self.synergy_weight_resilience
+        syn_af *= self.synergy_weight_antifragility
         profit += syn_roi
         energy = max(0.0, energy + syn_eff)
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
@@ -494,7 +523,14 @@ class SelfImprovementEngine:
                                     "delta": delta,
                                 },
                             )
-                            self.policy.update(self._policy_state(), delta)
+                            st = self._policy_state()
+                            syn_reward = (
+                                st[-4] / 10.0
+                                + st[-3] / 10.0
+                                + st[-2] / 10.0
+                                + st[-1] / 10.0
+                            )
+                            self.policy.update(st, delta + syn_reward)
                             if getattr(self.policy, "path", None):
                                 try:
                                     self.policy.save()
@@ -641,7 +677,15 @@ class SelfImprovementEngine:
             if self.policy:
                 try:
                     next_state = self._policy_state()
-                    self.policy.update(state, after_roi - before_roi, next_state)
+                    syn_reward = (
+                        (next_state[-4] - state[-4]) / 10.0
+                        + (next_state[-3] - state[-3]) / 10.0
+                        + (next_state[-2] - state[-2]) / 10.0
+                        + (next_state[-1] - state[-1]) / 10.0
+                    )
+                    self.policy.update(
+                        state, after_roi - before_roi + syn_reward, next_state
+                    )
                     if getattr(self.policy, "path", None):
                         try:
                             self.policy.save()
