@@ -6,6 +6,7 @@ import random
 import os
 from typing import Any, Dict, List, TYPE_CHECKING
 import json
+import logging
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -37,6 +38,8 @@ _JITTERS = [0, 5, 10, 20, 50]  # milliseconds
 _PACKET_DUPLICATION = [0.0, 0.01, 0.05]
 _SECURITY_LEVELS = [1, 2, 3, 4, 5]
 _THREAT_INTENSITIES = [10, 30, 50, 70, 90]
+
+logger = logging.getLogger(__name__)
 
 # minimum ROI history length for the adaptive RL agent
 _ADAPTIVE_THRESHOLD = 5
@@ -143,8 +146,8 @@ class AdaptivePresetAgent:
             st = data.get("state")
             self.prev_state = tuple(st) if st is not None else None
             self.prev_action = data.get("action")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load RL state: %s", exc)
 
     def _save_state(self) -> None:
         if not self.state_file:
@@ -152,8 +155,8 @@ class AdaptivePresetAgent:
         try:
             with open(self.state_file, "w") as fh:
                 json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to save RL state: %s", exc)
 
     # --------------------------------------------------------------
     def _state(self, tracker: "ROITracker") -> tuple[int, int, int, int, int]:
