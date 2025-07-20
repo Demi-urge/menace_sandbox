@@ -519,6 +519,7 @@ development. The service must always run with a single worker:
 ```python
 uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 ```
+Only one connection is processed at a time. If `/run` returns `409` queue the request and retry once `/status` reports the agent idle.
 
 ### Topic discovery and clip acquisition
 
