@@ -194,18 +194,22 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     def _update_score_weights(
         self, patch_db: PatchHistoryDB | None = None, limit: int = 50
     ) -> None:
-        """Adjust ``score_weights`` using recent patch metrics and update rolling statistics."""
+        """Adjust ``score_weights`` using patch history statistics."""
 
         records: list[tuple[float, float, float, float, float, float]] = []
+        weights_path: Path | None = None
 
         if patch_db:
+            weights_path = Path(getattr(patch_db, "path", "weights.db")).with_suffix(
+                ".weights.json"
+            )
             try:
                 patches = patch_db.filter()
                 patches.sort(key=lambda r: r.ts)
                 for rec in patches[-limit:]:
                     records.append(
                         (
-                            0.0,
+                            float(getattr(rec, "coverage_delta", 0.0)),
                             float(rec.errors_before - rec.errors_after),
                             float(rec.roi_delta),
                             float(rec.complexity_delta),
@@ -244,6 +248,22 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             except Exception:
                 self.logger.exception("score weight update failed from audit trail")
 
+        if weights_path and weights_path.is_file():
+            try:
+                with open(weights_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, dict) and "weights" in data:
+                    vals = data.get("weights")
+                    if isinstance(vals, list) and len(vals) == 6:
+                        self.score_weights = tuple(float(v) for v in vals)
+                stats = data.get("stats") if isinstance(data, dict) else None
+                if isinstance(stats, dict):
+                    self._metric_stats = {
+                        k: (float(v[0]), float(v[1])) for k, v in stats.items()
+                    }
+            except Exception:
+                self.logger.exception("score weight load failed")
+
         if not records:
             return
 
@@ -257,34 +277,36 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         }
 
         means: dict[str, float] = {}
-        stds: dict[str, float] = {}
-        alpha = self.smoothing_factor
-
+        vars_: dict[str, float] = {}
         for key, values in data.items():
-            mean_abs = 0.0
-            mean_raw = 0.0
-            var = 1.0
-            for v in values:
-                mean_abs += alpha * (abs(v) - mean_abs)
-                delta = v - mean_raw
-                mean_raw += alpha * delta
-                var = (1 - alpha) * (var + alpha * delta * delta)
-            means[key] = mean_abs
-            stds[key] = math.sqrt(var)
+            if not values:
+                means[key] = 0.0
+                vars_[key] = 1.0
+                continue
+            m = sum(values) / len(values)
+            v = sum((x - m) ** 2 for x in values) / len(values)
+            means[key] = m
+            vars_[key] = v if v > 0 else 1e-6
 
-        self._metric_stats = {k: (means[k], stds[k]) for k in means}
+        self._metric_stats = {
+            k: (means[k], math.sqrt(vars_[k])) for k in data.keys()
+        }
 
-        weights = [
-            means["coverage"] / (stds["coverage"] + 1e-6),
-            means["error"] / (stds["error"] + 1e-6),
-            means["roi"] / (stds["roi"] + 1e-6),
-            means["complexity"] / (stds["complexity"] + 1e-6),
-            means["synergy_roi"] / (stds["synergy_roi"] + 1e-6),
-            means["synergy_efficiency"] / (stds["synergy_efficiency"] + 1e-6),
-        ]
+        weights = [1.0 / (vars_["coverage"] + 1e-6),
+                   1.0 / (vars_["error"] + 1e-6),
+                   1.0 / (vars_["roi"] + 1e-6),
+                   1.0 / (vars_["complexity"] + 1e-6),
+                   1.0 / (vars_["synergy_roi"] + 1e-6),
+                   1.0 / (vars_["synergy_efficiency"] + 1e-6)]
         total = sum(weights)
         if total > 0:
             self.score_weights = tuple(w / total * 6.0 for w in weights)
+        if weights_path:
+            try:
+                with open(weights_path, "w", encoding="utf-8") as fh:
+                    json.dump({"weights": self.score_weights, "stats": self._metric_stats}, fh)
+            except Exception:
+                self.logger.exception("score weight persistence failed")
 
     # ------------------------------------------------------------------
     def _composite_score(

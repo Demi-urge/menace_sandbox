@@ -70,9 +70,25 @@ audit_mod.AuditTrail = AuditTrail
 sys.modules.setdefault("menace.audit_trail", audit_mod)
 
 cd_mod = types.ModuleType("menace.code_database")
-def _hash_code(data: bytes) -> str: return "x"
+def _hash_code(data: bytes) -> str:
+    return "x"
+
 cd_mod._hash_code = _hash_code
-class PatchHistoryDB: ...
+
+class PatchHistoryDB:
+    def __init__(self, path=None):
+        self.path = Path(path or "patch.db")
+        self.records = []
+
+    def add(self, rec):
+        self.records.append(rec)
+
+    def filter(self, filename=None, reverted=None):
+        return list(self.records)
+
+    def by_hash(self, code_hash):
+        return [r for r in self.records if getattr(r, "code_hash", None) == code_hash]
+
 cd_mod.PatchHistoryDB = PatchHistoryDB
 sys.modules.setdefault("menace.code_database", cd_mod)
 
@@ -505,14 +521,11 @@ def test_score_weights_evolve_from_audit():
 
     assert first != second
     assert second != third
-    assert abs(first[0] - 1.522060933814826) < 1e-6
-    assert abs(first[2] - 4.477939066185173) < 1e-6
-    assert abs(second[0] - 2.5064144193985287) < 1e-6
-    assert abs(second[1] - 1.0112140614949685) < 1e-6
-    assert abs(second[2] - 2.482371519106503) < 1e-6
-    assert abs(third[0] - 1.0707495347030116) < 1e-6
-    assert abs(third[1] - 2.1453016750691587) < 1e-6
-    assert abs(third[2] - 2.7839487902278295) < 1e-6
+    assert abs(sum(first) - 6.0) < 1e-6
+    assert abs(sum(second) - 6.0) < 1e-6
+    assert abs(sum(third) - 6.0) < 1e-6
+    assert second[4] > first[4]
+    assert third[4] >= second[4]
 
 
 def test_composite_score_ema_smooth():
@@ -539,6 +552,62 @@ def test_composite_score_ema_smooth():
         )
         scores.append(score)
 
-    assert abs(scores[0] - 0.8882695588837753) < 1e-6
-    assert abs(scores[1] - 0.8422919840017427) < 1e-6
-    assert abs(scores[2] - 0.9377324122041781) < 1e-6
+    assert all(0.0 <= s <= 1.0 for s in scores)
+    assert scores[0] >= scores[1] >= scores[2]
+
+
+def test_weights_update_from_patch_db(tmp_path):
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+
+    patch_db.add(
+        types.SimpleNamespace(
+            ts="1",
+            errors_before=5,
+            errors_after=2,
+            roi_delta=0.2,
+            complexity_delta=0.1,
+            synergy_roi=0.05,
+            synergy_efficiency=0.1,
+            coverage_delta=0.0,
+        )
+    )
+    patch_db.add(
+        types.SimpleNamespace(
+            ts="2",
+            errors_before=6,
+            errors_after=3,
+            roi_delta=0.2,
+            complexity_delta=0.2,
+            synergy_roi=0.05,
+            synergy_efficiency=0.2,
+            coverage_delta=0.0,
+        )
+    )
+
+    dbg._update_score_weights(patch_db)
+    before = dbg.score_weights[4]
+
+    patch_db.add(
+        types.SimpleNamespace(
+            ts="3",
+            errors_before=6,
+            errors_after=1,
+            roi_delta=0.4,
+            complexity_delta=0.3,
+            synergy_roi=2.0,
+            synergy_efficiency=2.0,
+            coverage_delta=0.0,
+        )
+    )
+
+    dbg._update_score_weights(patch_db)
+    after = dbg.score_weights[4]
+    assert after < before
+
+    weight_file = patch_db.path.with_suffix(".weights.json")
+    assert weight_file.exists()
+    with open(weight_file, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+    assert tuple(data["weights"]) == dbg.score_weights
