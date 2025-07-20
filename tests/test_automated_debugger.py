@@ -24,6 +24,15 @@ yaml = types.ModuleType("yaml")
 sys.modules.setdefault("yaml", yaml)
 sys.modules.setdefault("numpy", types.ModuleType("numpy"))
 
+import importlib.util
+
+root = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "menace", root / "__init__.py", submodule_search_locations=[str(root)]
+)
+pkg = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(pkg)
+sys.modules["menace"] = pkg
 import menace.automated_debugger as ad
 
 
@@ -58,3 +67,22 @@ def test_generate_tests_absolute_path(monkeypatch, tmp_path):
     log = f"File '{mod}', line 1, in x"
     tests = dbg._generate_tests([log])
     assert "import_module('mod')" in tests[0]
+
+
+def test_generate_tests_traceback(monkeypatch, tmp_path):
+    eng = DummyEngine()
+    dbg = ad.AutomatedDebugger(DummyTelem(), eng)
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("def foo():\n    bar()\n")
+    b.write_text("def bar():\n    pass\n")
+    monkeypatch.chdir(tmp_path)
+    log = (
+        "Traceback (most recent call last):\n"
+        f"  File '{a}', line 1, in foo\n"
+        f"  File '{b}', line 1, in bar\n"
+        "ValueError: boom\n"
+    )
+    tests = dbg._generate_tests([log])
+    assert "import_module('b')" in tests[0]
+    assert "getattr(mod, 'bar'" in tests[0]
