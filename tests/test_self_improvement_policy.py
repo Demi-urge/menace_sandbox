@@ -110,3 +110,12 @@ def test_deep_q_learning_strategy_learns():
         policy.update(state0, reward, next_state, action=act)
     policy.epsilon = 0.0
     assert policy.select_action(state0) == 1
+
+
+def test_dqn_value_uses_predict(monkeypatch):
+    pytest.importorskip("torch")
+    strat = sip.DQNStrategy()
+    import torch
+    monkeypatch.setattr(strat, "predict", lambda s: torch.tensor([1.0, 2.0]))
+    val = strat.value({}, (0, 0, 0))
+    assert val == 2.0

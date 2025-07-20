@@ -258,9 +258,11 @@ class DQNStrategy(RLStrategy):
         return float(cur_q.item())
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def value(table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]) -> float:  # type: ignore[override]
-        raise NotImplementedError  # value should be computed via predict()
+    def value(
+        self, table: Dict[Tuple[int, ...], Dict[int, float]], state: Tuple[int, ...]
+    ) -> float:  # type: ignore[override]
+        q_vals = self.predict(state)
+        return float(q_vals.max().item())
 
 
 class DeepQLearningStrategy(RLStrategy):
