@@ -133,6 +133,26 @@ def _check_dependencies() -> None:
         logger.info("All dependencies satisfied")
 
 
+def _get_env_override(name: str, current):
+    """Return parsed environment variable when ``current`` is ``None``."""
+    env_val = os.getenv(name)
+    if current is not None or env_val is None:
+        return current
+    try:
+        if isinstance(current, int):
+            return int(env_val)
+        if isinstance(current, float):
+            return float(env_val)
+    except Exception:
+        return None
+    for cast in (int, float):
+        try:
+            return cast(env_val)
+        except Exception:
+            continue
+    return None
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
     parser = argparse.ArgumentParser(
@@ -324,76 +344,26 @@ def main(argv: List[str] | None = None) -> None:
     synergy_history: list[dict[str, float]] = []
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = []
-    roi_threshold = args.roi_threshold
-    env_val = os.getenv("ROI_THRESHOLD")
-    if roi_threshold is None and env_val is not None:
-        try:
-            roi_threshold = float(env_val)
-        except Exception:
-            roi_threshold = None
-    synergy_threshold = args.synergy_threshold
-    env_val = os.getenv("SYNERGY_THRESHOLD")
-    if synergy_threshold is None and env_val is not None:
-        try:
-            synergy_threshold = float(env_val)
-        except Exception:
-            synergy_threshold = None
-    roi_confidence = args.roi_confidence
-    env_val = os.getenv("ROI_CONFIDENCE")
-    if roi_confidence is None and env_val is not None:
-        try:
-            roi_confidence = float(env_val)
-        except Exception:
-            roi_confidence = None
-    synergy_confidence = args.synergy_confidence
-    env_val = os.getenv("SYNERGY_CONFIDENCE")
-    if synergy_confidence is None and env_val is not None:
-        try:
-            synergy_confidence = float(env_val)
-        except Exception:
-            synergy_confidence = None
-    synergy_threshold_window = args.synergy_threshold_window
-    env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
-    if synergy_threshold_window is None and env_val is not None:
-        try:
-            synergy_threshold_window = int(env_val)
-        except Exception:
-            synergy_threshold_window = None
-    synergy_threshold_weight = args.synergy_threshold_weight
-    env_val = os.getenv("SYNERGY_THRESHOLD_WEIGHT")
-    if synergy_threshold_weight is None and env_val is not None:
-        try:
-            synergy_threshold_weight = float(env_val)
-        except Exception:
-            synergy_threshold_weight = None
-    synergy_ma_window = args.synergy_ma_window
-    env_val = os.getenv("SYNERGY_MA_WINDOW")
-    if synergy_ma_window is None and env_val is not None:
-        try:
-            synergy_ma_window = int(env_val)
-        except Exception:
-            synergy_ma_window = None
-    synergy_stationarity_confidence = args.synergy_stationarity_confidence
-    env_val = os.getenv("SYNERGY_STATIONARITY_CONFIDENCE")
-    if synergy_stationarity_confidence is None and env_val is not None:
-        try:
-            synergy_stationarity_confidence = float(env_val)
-        except Exception:
-            synergy_stationarity_confidence = None
-    synergy_std_threshold = args.synergy_std_threshold
-    env_val = os.getenv("SYNERGY_STD_THRESHOLD")
-    if synergy_std_threshold is None and env_val is not None:
-        try:
-            synergy_std_threshold = float(env_val)
-        except Exception:
-            synergy_std_threshold = None
-    synergy_variance_confidence = args.synergy_variance_confidence
-    env_val = os.getenv("SYNERGY_VARIANCE_CONFIDENCE")
-    if synergy_variance_confidence is None and env_val is not None:
-        try:
-            synergy_variance_confidence = float(env_val)
-        except Exception:
-            synergy_variance_confidence = None
+    roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold)
+    synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold)
+    roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence)
+    synergy_confidence = _get_env_override("SYNERGY_CONFIDENCE", args.synergy_confidence)
+    synergy_threshold_window = _get_env_override(
+        "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window
+    )
+    synergy_threshold_weight = _get_env_override(
+        "SYNERGY_THRESHOLD_WEIGHT", args.synergy_threshold_weight
+    )
+    synergy_ma_window = _get_env_override("SYNERGY_MA_WINDOW", args.synergy_ma_window)
+    synergy_stationarity_confidence = _get_env_override(
+        "SYNERGY_STATIONARITY_CONFIDENCE", args.synergy_stationarity_confidence
+    )
+    synergy_std_threshold = _get_env_override(
+        "SYNERGY_STD_THRESHOLD", args.synergy_std_threshold
+    )
+    synergy_variance_confidence = _get_env_override(
+        "SYNERGY_VARIANCE_CONFIDENCE", args.synergy_variance_confidence
+    )
     if synergy_threshold_window is None:
         synergy_threshold_window = args.synergy_cycles
     if synergy_threshold_weight is None:
