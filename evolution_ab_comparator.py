@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from datetime import datetime
 from collections import Counter
 from statistics import mean, pstdev
@@ -22,6 +23,9 @@ DEFAULT_THRESHOLDS = {
 }
 
 
+logger = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 def _load_thresholds() -> Dict[str, Any]:
     """Return threshold values merged with defaults."""
@@ -32,8 +36,8 @@ def _load_thresholds() -> Dict[str, Any]:
                 cfg = DEFAULT_THRESHOLDS.copy()
                 cfg.update(data)
                 return cfg
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("failed to load thresholds: %s", exc)
     return DEFAULT_THRESHOLDS.copy()
 
 
@@ -64,8 +68,8 @@ def load_behavior_logs(version_a_path: str, version_b_path: str) -> Tuple[List[D
                             records.append(rec)
                     except json.JSONDecodeError:
                         continue
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to read %s: %s", path, exc)
         return records
 
     return _read(version_a_path), _read(version_b_path)
