@@ -9,10 +9,15 @@ import os
 import re
 from pathlib import Path
 from collections import Counter
+import atexit
 
 from .input_history_db import InputHistoryDB
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_STUB_CACHE_PATH = Path(
+    os.getenv("SANDBOX_STUB_CACHE", str(ROOT / "sandbox_data" / "stub_cache.json"))
+)
 
 try:
     from transformers import pipeline
@@ -23,6 +28,40 @@ logger = logging.getLogger(__name__)
 
 _GENERATOR = None
 _CACHE: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+
+def _load_cache() -> Dict[Tuple[str, str], Dict[str, Any]]:
+    try:
+        if _STUB_CACHE_PATH.exists():
+            with open(_STUB_CACHE_PATH, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                cache: Dict[Tuple[str, str], Dict[str, Any]] = {}
+                for k, v in data.items():
+                    if not isinstance(k, str) or not isinstance(v, dict):
+                        continue
+                    parts = k.split("::", 1)
+                    if len(parts) == 2:
+                        cache[(parts[0], parts[1])] = v
+                return cache
+    except Exception:
+        logger.exception("failed to load stub cache")
+    return {}
+
+
+def _save_cache() -> None:
+    try:
+        _STUB_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        data = {f"{k[0]}::{k[1]}": v for k, v in _CACHE.items()}
+        with open(_STUB_CACHE_PATH, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except Exception:
+        logger.exception("failed to save stub cache")
+
+
+# load persistent cache at import time
+_CACHE.update(_load_cache())
+atexit.register(_save_cache)
 
 
 def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
