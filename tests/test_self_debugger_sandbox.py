@@ -487,6 +487,26 @@ def test_coverage_report_failure(monkeypatch, caplog):
     assert "coverage generation failed" in caplog.text
 
 
+def test_coverage_subprocess_failure(monkeypatch):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+
+    async def fail_exec(*a, **k):
+        class P:
+            returncode = 1
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fail_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+
+
 def test_flakiness_deterministic(monkeypatch):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (80.0, 0.0))
@@ -750,3 +770,21 @@ def test_log_patch_includes_log_path(monkeypatch, tmp_path):
 
     rec = json.loads(trail.records[-1])
     assert rec["log_path"] == str(log_file)
+
+
+def test_analyse_and_fix_aborts_on_run_error(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"])
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda *a, **k: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+
+    def fail_run(path, env=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(dbg, "_run_tests", fail_run)
+
+    dbg.analyse_and_fix()
+    assert not engine.applied
