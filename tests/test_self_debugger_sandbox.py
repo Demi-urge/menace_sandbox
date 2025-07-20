@@ -35,8 +35,29 @@ sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
 cov_mod = types.ModuleType("coverage")
 cov_mod.Coverage = object
 sys.modules.setdefault("coverage", cov_mod)
+sklearn_mod = types.ModuleType("sklearn")
+linear_mod = types.ModuleType("linear_model")
+class DummyLR:
+    def fit(self, *a, **k):
+        return self
+    def predict(self, X):
+        return [0.0 for _ in range(len(X))]
+linear_mod.LinearRegression = DummyLR
+pre_mod = types.ModuleType("preprocessing")
+class DummyPF:
+    def __init__(self, *a, **k):
+        pass
+pre_mod.PolynomialFeatures = DummyPF
+sklearn_mod.linear_model = linear_mod
+sklearn_mod.preprocessing = pre_mod
+sys.modules.setdefault("sklearn", sklearn_mod)
+sys.modules.setdefault("sklearn.linear_model", linear_mod)
+sys.modules.setdefault("sklearn.preprocessing", pre_mod)
 import os
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
+import roi_tracker as rt
+sys.modules.setdefault("menace.roi_tracker", rt)
 
 # Create a lightweight menace package with stub modules used during import
 menace_pkg = types.ModuleType("menace")
@@ -611,3 +632,44 @@ def test_weights_update_from_patch_db(tmp_path):
     with open(weight_file, "r", encoding="utf-8") as fh:
         data = json.load(fh)
     assert tuple(data["weights"]) == dbg.score_weights
+
+
+def test_composite_score_uses_tracker_synergy():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.1, metrics={"synergy_roi": 0.5, "synergy_efficiency": 0.4})
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    base = dbg._composite_score(0.1, 0.0, 0.1, 0.0, 0.0, 0.0)
+    with_tracker = dbg._composite_score(
+        0.1,
+        0.0,
+        0.1,
+        0.0,
+        0.0,
+        0.0,
+        tracker=tracker,
+    )
+    assert with_tracker > base
+
+
+def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
+    engine = DummyEngine()
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail, score_threshold=0.6)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"])
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (50.0, 0.0))
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    dbg.analyse_and_fix()
+    rec_no_tracker = json.loads(trail.records[-1])
+    assert rec_no_tracker["result"] == "reverted"
+
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.1, metrics={"synergy_roi": 0.5, "synergy_efficiency": 0.5})
+    trail.records.clear()
+    dbg.analyse_and_fix(tracker=tracker)
+    rec_with_tracker = json.loads(trail.records[-1])
+    assert rec_with_tracker["result"] == "success"
+    assert rec_with_tracker["synergy_roi"] > 0.0
