@@ -7,6 +7,7 @@ import sandbox_runner.generative_stub_provider as gsp
 import importlib
 import time
 import pytest
+import logging
 
 class DummyGen:
     def __init__(self):
@@ -113,3 +114,26 @@ async def test_async_cache_file(tmp_path, monkeypatch):
     assert marker_time - start < 0.1
     assert res == [{"x": 1}]
     assert dummy.calls == 1
+
+
+def test_atexit_cache_failure_logged(monkeypatch, caplog):
+    import atexit
+
+    # prevent side effects from the module's atexit handler
+    try:
+        atexit.unregister(gsp._atexit_save_cache)
+    except Exception:
+        pass
+    monkeypatch.setattr(atexit, "register", lambda func: None)
+
+    gsp_mod = importlib.reload(gsp)
+
+    def bad_save() -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(gsp_mod, "_save_cache", bad_save)
+
+    caplog.set_level(logging.ERROR)
+    gsp_mod._atexit_save_cache()
+
+    assert "cache save failed" in caplog.text
