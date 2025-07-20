@@ -477,12 +477,15 @@ def main(argv: List[str] | None = None) -> None:
             logger.info("convergence reached", extra={"run": run_idx, "ema": ema_val})
             break
 
-    if agent_proc:
-        agent_proc.terminate()
+    if agent_proc and agent_proc.poll() is None:
         try:
-            agent_proc.wait(timeout=5)
+            agent_proc.terminate()
+            try:
+                agent_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                agent_proc.kill()
         except Exception:
-            agent_proc.kill()
+            logger.exception("failed to shutdown visual agent")
         agent_proc = None
 
 
