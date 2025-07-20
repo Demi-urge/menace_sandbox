@@ -1,5 +1,21 @@
 import pytest
-import menace.roi_tracker as rt
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
+if "menace.roi_tracker" in sys.modules:
+    import menace.roi_tracker as rt
+else:  # pragma: no cover - allow running file directly
+    spec = importlib.util.spec_from_file_location(
+        "menace.roi_tracker",
+        Path(__file__).resolve().parents[1] / "roi_tracker.py",
+    )
+    rt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rt)
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.roi_tracker = rt
+    sys.modules["menace.roi_tracker"] = rt
 
 
 def test_predict_synergy_basic(monkeypatch):
@@ -100,3 +116,55 @@ def test_predict_synergy_metric_negative(monkeypatch):
     monkeypatch.setattr(tracker, "forecast_metric", lambda name: (0.5, (0.0, 0.0)))
 
     assert tracker.predict_synergy_metric("m") < 0
+
+
+def test_synergy_security_and_efficiency(monkeypatch):
+    tracker = rt.ROITracker()
+    for i in range(1, 6):
+        roi = float(i)
+        sec = float(2 * i)
+        eff = float(3 * i)
+        tracker.update(
+            0.0,
+            roi,
+            metrics={
+                "security_score": sec,
+                "efficiency": eff,
+                "synergy_security_score": 0.65 * i,
+                "synergy_efficiency": 1.6 * i,
+            },
+        )
+
+    monkeypatch.setattr(tracker, "forecast", lambda: (6.0, (0.0, 0.0)))
+
+    def fake_forecast_metric(name):
+        vals = {
+            "security_score": (12.0, (0.0, 0.0)),
+            "efficiency": (18.0, (0.0, 0.0)),
+        }
+        return vals.get(name, (0.0, (0.0, 0.0)))
+
+    monkeypatch.setattr(tracker, "forecast_metric", fake_forecast_metric)
+
+    sec_pred = tracker.predict_synergy_metric("security_score")
+    eff_pred = tracker.predict_synergy_metric("efficiency")
+    assert sec_pred == pytest.approx(0.65 * 6.0)
+    assert eff_pred == pytest.approx(1.6 * 6.0)
+
+
+def test_synergy_security_efficiency_insufficient():
+    tracker = rt.ROITracker()
+    assert tracker.predict_synergy_metric("security_score") == 0.0
+    assert tracker.predict_synergy_metric("efficiency") == 0.0
+    tracker.update(
+        0.0,
+        1.0,
+        metrics={
+            "security_score": 2.0,
+            "efficiency": 3.0,
+            "synergy_security_score": 0.65,
+            "synergy_efficiency": 1.6,
+        },
+    )
+    assert tracker.predict_synergy_metric("security_score") == 0.0
+    assert tracker.predict_synergy_metric("efficiency") == 0.0
