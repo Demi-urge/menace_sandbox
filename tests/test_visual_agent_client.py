@@ -241,6 +241,22 @@ def test_revert_exception_releases_lock(monkeypatch, tmp_path):
     assert not lock_path.exists()
 
 
+def test_stale_lock_is_removed(monkeypatch, tmp_path):
+    lock_path = tmp_path / "stale.lock"
+    lock_path.write_text("999999")
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    vac_mod = _reload_client(monkeypatch)
+
+    monkeypatch.setattr(
+        vac_mod.os,
+        "kill",
+        lambda pid, sig=0: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    client = _setup_stubbed_client(monkeypatch, vac_mod)
+    client.ask([{"content": "hi"}])
+    assert not lock_path.exists()
+
+
 def test_calls_process_sequentially(monkeypatch):
     vac_mod = _reload_client(monkeypatch)
 
