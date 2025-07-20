@@ -421,20 +421,26 @@ class SelfImprovementPolicy:
         reward: float,
         next_state: Tuple[int, ...] | None = None,
         action: int = 1,
+        *,
+        synergy_roi_delta: float | None = None,
+        synergy_efficiency_delta: float | None = None,
     ) -> float:
         """Update ``state`` with ``reward`` and optional ``next_state``."""
         extra = 0.0
-        try:
-            if len(state) >= 17:
-                if next_state is not None and len(next_state) >= len(state):
-                    extra = (
-                        (next_state[-4] - state[-4]) / 10.0
-                        + (next_state[-3] - state[-3]) / 10.0
-                    )
-                else:
-                    extra = state[-4] / 10.0 + state[-3] / 10.0
-        except Exception:
-            extra = 0.0
+        if synergy_roi_delta is not None or synergy_efficiency_delta is not None:
+            extra += (synergy_roi_delta or 0.0) + (synergy_efficiency_delta or 0.0)
+        else:
+            try:
+                if len(state) >= 17:
+                    if next_state is not None and len(next_state) >= len(state):
+                        extra = (
+                            (next_state[-4] - state[-4]) / 10.0
+                            + (next_state[-3] - state[-3]) / 10.0
+                        )
+                    else:
+                        extra = state[-4] / 10.0 + state[-3] / 10.0
+            except Exception:
+                extra = 0.0
 
         reward += extra
         q = self.strategy.update(

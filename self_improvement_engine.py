@@ -546,13 +546,13 @@ class SelfImprovementEngine:
                                 },
                             )
                             st = self._policy_state()
-                            syn_reward = (
-                                st[-4] / 10.0
-                                + st[-3] / 10.0
-                                + st[-2] / 10.0
-                                + st[-1] / 10.0
+                            syn_reward = st[-2] / 10.0 + st[-1] / 10.0
+                            self.policy.update(
+                                st,
+                                delta + syn_reward,
+                                synergy_roi_delta=st[-4] / 10.0,
+                                synergy_efficiency_delta=st[-3] / 10.0,
                             )
-                            self.policy.update(st, delta + syn_reward)
                             if getattr(self.policy, "path", None):
                                 try:
                                     self.policy.save()
@@ -699,14 +699,13 @@ class SelfImprovementEngine:
             if self.policy:
                 try:
                     next_state = self._policy_state()
-                    syn_reward = (
-                        (next_state[-4] - state[-4]) / 10.0
-                        + (next_state[-3] - state[-3]) / 10.0
-                        + (next_state[-2] - state[-2]) / 10.0
-                        + (next_state[-1] - state[-1]) / 10.0
-                    )
+                    syn_reward = next_state[-2] / 10.0 + next_state[-1] / 10.0
                     self.policy.update(
-                        state, after_roi - before_roi + syn_reward, next_state
+                        state,
+                        after_roi - before_roi + syn_reward,
+                        next_state,
+                        synergy_roi_delta=next_state[-4] / 10.0,
+                        synergy_efficiency_delta=next_state[-3] / 10.0,
                     )
                     if getattr(self.policy, "path", None):
                         try:
