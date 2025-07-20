@@ -164,7 +164,7 @@ def _sandbox_cycle_runner(
                             gpu_usage = float(cur)
                             break
             except Exception:
-                pass
+                logger.exception("psutil GPU sensor query failed")
         if not gpu_usage:
             try:
                 if shutil.which("nvidia-smi"):
@@ -180,7 +180,7 @@ def _sandbox_cycle_runner(
                     if vals:
                         gpu_usage = sum(vals) / len(vals)
             except Exception:
-                pass
+                logger.exception("nvidia-smi GPU utilization query failed")
         if not gpu_usage:
             try:
                 import docker  # type: ignore
@@ -195,7 +195,7 @@ def _sandbox_cycle_runner(
                         if vals:
                             gpu_usage = sum(vals) / len(vals)
             except Exception:
-                pass
+                logger.exception("docker GPU stats collection failed")
         if resources is None:
             resources = {}
         resources.setdefault("gpu", gpu_usage)
@@ -262,7 +262,7 @@ def _sandbox_cycle_runner(
                         with open(path, "r", encoding="utf-8", errors="ignore") as fh:
                             total_lines += sum(1 for _ in fh)
                     except Exception:
-                        pass
+                        logger.exception("failed counting lines for %s", path)
                 if total_lines:
                     coverage_percent = 100.0 * exec_lines / float(total_lines)
                     adaptability = coverage_percent
@@ -315,7 +315,7 @@ def _sandbox_cycle_runner(
                         try:
                             mi_total += float(mi_visit(src, False))
                         except Exception:
-                            pass
+                            logger.exception("radon mi_visit failed for %s", t)
                     if PylintRun and TextReporter:
                         try:
                             buf = StringIO()
@@ -326,7 +326,7 @@ def _sandbox_cycle_runner(
                             )
                             cq_total += float(getattr(res.linter.stats, "global_note", 0.0))
                         except Exception:
-                            pass
+                            logger.exception("pylint run failed for %s", t)
                 if mi_total:
                     maintainability = mi_total / len(targets)
                 if cq_total:
