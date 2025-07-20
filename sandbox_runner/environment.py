@@ -356,36 +356,62 @@ def _release_container(image: str, container: Any) -> None:
         _ensure_pool_size_async(image)
 
 
-def _cleanup_idle_containers() -> None:
-    """Remove containers unused for longer than the idle timeout."""
+def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> None:
+    """Stop and remove ``container`` with retries."""
+    cid = getattr(container, "id", "")
+    for attempt in range(retries):
+        try:
+            container.stop(timeout=0)
+            break
+        except Exception as exc:
+            if attempt == retries - 1:
+                logger.error("failed to stop container %s: %s", cid, exc)
+            else:
+                time.sleep(base_delay * (2 ** attempt))
+    for attempt in range(retries):
+        try:
+            container.remove(force=True)
+            break
+        except Exception as exc:
+            if attempt == retries - 1:
+                logger.error("failed to remove container %s: %s", cid, exc)
+            else:
+                time.sleep(base_delay * (2 ** attempt))
+
+
+def _cleanup_idle_containers() -> int:
+    """Remove containers unused for longer than the idle timeout.
+
+    Returns the number of containers cleaned.
+    """
     if _DOCKER_CLIENT is None:
-        return
+        return 0
+    cleaned = 0
     now = time.time()
     for image, pool in list(_CONTAINER_POOLS.items()):
         for c in list(pool):
             last = _CONTAINER_LAST_USED.get(c.id, 0)
             if now - last > _CONTAINER_IDLE_TIMEOUT:
                 pool.remove(c)
-                try:
-                    c.stop(timeout=0)
-                except Exception:
-                    pass
-                try:
-                    c.remove(force=True)
-                except Exception:
-                    pass
+                _stop_and_remove(c)
                 td = _CONTAINER_DIRS.pop(c.id, None)
                 if td:
                     shutil.rmtree(td, ignore_errors=True)
                 _CONTAINER_LAST_USED.pop(c.id, None)
+                cleaned += 1
+    return cleaned
 
 
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
+    total = 0
     while True:
         await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
         try:
-            _cleanup_idle_containers()
+            cleaned = _cleanup_idle_containers()
+            total += cleaned
+            if cleaned:
+                logger.info("cleaned %d idle containers (total %d)", cleaned, total)
         except Exception:
             logger.exception("idle container cleanup failed")
 
@@ -403,14 +429,7 @@ def _cleanup_pools() -> None:
     _WARMUP_TASKS.clear()
     for pool in list(_CONTAINER_POOLS.values()):
         for c in list(pool):
-            try:
-                c.stop(timeout=0)
-            except Exception:
-                pass
-            try:
-                c.remove(force=True)
-            except Exception:
-                pass
+            _stop_and_remove(c)
             td = _CONTAINER_DIRS.pop(c.id, None)
             if td:
                 shutil.rmtree(td, ignore_errors=True)
