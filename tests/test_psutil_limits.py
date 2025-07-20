@@ -61,7 +61,7 @@ def test_execute_local_psutil_limits(monkeypatch):
             raise ImportError("no docker")
         return orig_import(name, *a, **k)
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    env._execute_in_container("print('hi')", {"CPU_LIMIT": "1", "MEMORY_LIMIT": "1Mi"})
+    asyncio.run(env._execute_in_container("print('hi')", {"CPU_LIMIT": "1", "MEMORY_LIMIT": "1Mi"}))
     assert (dummy_ps.RLIMIT_CPU, (10, 10)) in dummy_ps.calls
     assert (dummy_ps.RLIMIT_AS, (1048576, 1048576)) in dummy_ps.calls
 

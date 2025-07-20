@@ -770,7 +770,7 @@ def test_section_worker_netem_no_tc(monkeypatch):
 
     called = {}
 
-    def fake_exec(code, env, **kw):
+    async def fake_exec(code, env, **kw):
         called["code"] = code
         return {"exit_code": 0.0}
 

@@ -8,7 +8,7 @@ def test_section_worker_returns_metrics(monkeypatch):
     monkeypatch.setattr(env, "_rlimits_supported", lambda: False)
     monkeypatch.setattr(env, "psutil", None)
 
-    def fake_exec(code, env_input, **kw):
+    async def fake_exec(code, env_input, **kw):
         return {
             "exit_code": 0.0,
             "cpu": 1.0,

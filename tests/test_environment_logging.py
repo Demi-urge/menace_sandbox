@@ -2,8 +2,8 @@ import os
 import sys
 import types
 import logging
-import builtins
 import asyncio
+import builtins
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 dummy_jinja = types.ModuleType("jinja2")
@@ -117,7 +117,7 @@ def test_execute_local_rlimit_warning(monkeypatch, caplog):
             pass
 
     monkeypatch.setattr(env.subprocess, "Popen", DummyPopen)
-    env._execute_in_container("print('hi')", {"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"})
+    asyncio.run(env._execute_in_container("print('hi')", {"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}))
     assert any("failed to set CPU limit" in m or "failed to set memory limit" in m for m in msgs)
 
 
@@ -125,7 +125,7 @@ def test_execute_in_container_invalid_limits(monkeypatch, caplog):
     calls = []
     _stub_docker(calls)
     caplog.set_level(logging.WARNING)
-    env._execute_in_container("print('x')", {"CPU_LIMIT": "bad", "GPU_LIMIT": "bad"})
+    asyncio.run(env._execute_in_container("print('x')", {"CPU_LIMIT": "bad", "GPU_LIMIT": "bad"}))
     assert "invalid CPU limit" in caplog.text
     assert "GPU limit ignored" in caplog.text
 

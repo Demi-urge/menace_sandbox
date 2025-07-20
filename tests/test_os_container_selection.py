@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+import asyncio
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 import sys
 dummy_jinja = types.ModuleType("jinja2")
@@ -60,7 +61,7 @@ def test_execute_in_container_windows(monkeypatch):
     env._CONTAINER_DIRS.clear()
     env._DOCKER_CLIENT = None
     monkeypatch.setenv("SANDBOX_CONTAINER_IMAGE_WINDOWS", "win-img")
-    res = env._execute_in_container("print('hi')", {"OS_TYPE": "windows"})
+    res = asyncio.run(env._execute_in_container("print('hi')", {"OS_TYPE": "windows"}))
     assert calls[0] == "win-img" and res["exit_code"] == 0.0
 
 
@@ -70,8 +71,10 @@ def test_execute_in_container_override(monkeypatch):
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()
     env._DOCKER_CLIENT = None
-    res = env._execute_in_container(
-        "print('x')", {"OS_TYPE": "macos", "CONTAINER_IMAGE": "custom"}
+    res = asyncio.run(
+        env._execute_in_container(
+            "print('x')", {"OS_TYPE": "macos", "CONTAINER_IMAGE": "custom"}
+        )
     )
     assert calls[0] == "custom" and res["exit_code"] == 0.0
 
@@ -116,5 +119,5 @@ def test_execute_in_container_retry(monkeypatch):
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()
     env._DOCKER_CLIENT = None
-    res = env._execute_in_container("print('hi')", {})
+    res = asyncio.run(env._execute_in_container("print('hi')", {}))
     assert len(attempts) >= 2 and res["exit_code"] == 0.0

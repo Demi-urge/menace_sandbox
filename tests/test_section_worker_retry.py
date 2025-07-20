@@ -20,7 +20,7 @@ def test_section_worker_retry(monkeypatch):
 
     calls = []
 
-    def fake_exec(code, env_input, **kw):
+    async def fake_exec(code, env_input, **kw):
         calls.append(1)
         if len(calls) == 1:
             raise RuntimeError("fail")
