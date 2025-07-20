@@ -82,8 +82,10 @@ When the environment variable `SANDBOX_PRESET_RL_PATH` points to a writable
 file, `adapt_presets` uses :class:`PresetRLAgent` to learn from the recorded ROI
 and synergy values. Once at least three ROI samples exist the agent predicts
 actions for CPU, memory, bandwidth and threat intensity. The learned policy is
-stored at the provided path so adjustments improve over time. If history is too
-short the function falls back to the heuristics described above.
+stored at the provided path so adjustments improve over time. If the variable is
+unset the policy is stored in ``sandbox_data/preset_policy.json`` and reloaded
+automatically on the next run. If history is too short the function falls back
+to the heuristics described above.
 ## Preset Policy CLI
 
 Use `preset_policy_cli.py` to persist or restore the reinforcement learning policy used by `adapt_presets`.
