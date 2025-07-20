@@ -52,13 +52,16 @@ def collect_metrics(
             )
             actual = history[-1] if history else None
             try:
-                pred = _tracker.predict_metric_with_manager(
-                    _manager, name, [], actual=actual
-                )
+                if name == "synergy_roi" and hasattr(_tracker, "forecast_synergy"):
+                    pred, _ = _tracker.forecast_synergy()
+                else:
+                    pred = _tracker.predict_metric_with_manager(
+                        _manager, name, [], actual=actual
+                    )
             except Exception:
                 pred = 0.0
-            result[f"pred_{name}"] = pred
-            new_preds[name] = pred
+            result[f"pred_{name}"] = float(pred)
+            new_preds[name] = float(pred)
         _last_predictions = new_preds
     return result
 
