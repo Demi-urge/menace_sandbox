@@ -13,6 +13,8 @@ import threading
 import uvicorn
 import secrets
 import os
+import tempfile
+from filelock import FileLock, Timeout
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 API_TOKEN = "tombalolosvisualagent123"
@@ -29,6 +31,11 @@ app = FastAPI(title="Menace-Visual-Agent")
 
 _running_lock = threading.Lock()      # ensures only one job at a time
 _current_job  = {"active": False}
+GLOBAL_LOCK_PATH = os.getenv(
+    "VISUAL_AGENT_LOCK_FILE",
+    os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
+)
+_global_lock = FileLock(GLOBAL_LOCK_PATH)
 
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
@@ -40,6 +47,12 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
     if not _running_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Agent busy")
 
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        _running_lock.release()
+        raise HTTPException(status_code=409, detail="Agent busy")
+
     def _worker():
         try:
             _current_job["active"] = True
@@ -47,6 +60,10 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
         finally:
             _current_job["active"] = False
             _running_lock.release()
+            try:
+                _global_lock.release()
+            except Exception:
+                pass
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"status": "accepted", "prompt": task.prompt}
@@ -269,6 +286,12 @@ async def revert_patch(x_token: str = Header(default="")):
     if not _running_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Agent busy")
 
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        _running_lock.release()
+        raise HTTPException(status_code=409, detail="Agent busy")
+
     def _revert_worker():
         try:
             _current_job["active"] = True
@@ -284,6 +307,10 @@ async def revert_patch(x_token: str = Header(default="")):
         finally:
             _current_job["active"] = False
             _running_lock.release()
+            try:
+                _global_lock.release()
+            except Exception:
+                pass
 
     threading.Thread(target=_revert_worker, daemon=True).start()
     return {"status": "revert triggered"}
@@ -294,6 +321,12 @@ async def clone_repo(x_token: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Bad token")
 
     if not _running_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Agent busy")
+
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        _running_lock.release()
         raise HTTPException(status_code=409, detail="Agent busy")
 
     def _clone_worker():
@@ -311,6 +344,10 @@ async def clone_repo(x_token: str = Header(default="")):
         finally:
             _current_job["active"] = False
             _running_lock.release()
+            try:
+                _global_lock.release()
+            except Exception:
+                pass
 
 @app.get("/status")
 async def status():
