@@ -462,8 +462,10 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
                 roi_ma_history.append(ema)
         if last_tracker:
             if getattr(args, "auto_thresholds", False):
+                win = min(len(last_tracker.roi_history), roi_cycles)
                 roi_threshold = _adaptive_threshold(
-                    last_tracker.roi_history, roi_cycles
+                    last_tracker.roi_history,
+                    win,
                 )
             elif roi_threshold is None:
                 roi_threshold = last_tracker.diminishing()
@@ -476,13 +478,15 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
             )
             flagged.update(new_flags)
         if last_tracker and getattr(args, "auto_thresholds", False):
+            win = min(len(synergy_history), synergy_threshold_window)
             synergy_threshold = _adaptive_synergy_threshold(
                 synergy_history,
-                synergy_threshold_window,
+                win,
                 weight=synergy_threshold_weight,
                 confidence=synergy_confidence or 0.95,
                 predictions=synergy_pred_history,
             )
+            synergy_ma_window = max(1, win)
         elif last_tracker and synergy_threshold is None:
             synergy_threshold = last_tracker.diminishing()
         if synergy_threshold is not None:
@@ -647,7 +651,7 @@ def main(argv: List[str] | None = None) -> None:
     p_autorun.add_argument(
         "--auto-thresholds",
         action="store_true",
-        help="compute convergence thresholds adaptively",
+        help="adjust ROI and synergy thresholds automatically",
     )
 
     p_complete = sub.add_parser(
@@ -720,7 +724,7 @@ def main(argv: List[str] | None = None) -> None:
     p_complete.add_argument(
         "--auto-thresholds",
         action="store_true",
-        help="compute convergence thresholds adaptively",
+        help="adjust ROI and synergy thresholds automatically",
     )
 
     args = parser.parse_args(argv)
