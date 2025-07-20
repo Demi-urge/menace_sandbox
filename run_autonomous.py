@@ -15,10 +15,9 @@ import time
 import importlib
 
 # Default to test mode when using the bundled SQLite database.
-if (
-    os.getenv("MENACE_MODE", "test").lower() == "production"
-    and os.getenv("DATABASE_URL", "").startswith("sqlite")
-):
+if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
+    "DATABASE_URL", ""
+).startswith("sqlite"):
     logging.warning(
         "MENACE_MODE=production with SQLite database; switching to test mode"
     )
@@ -179,6 +178,16 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for synergy stationarity test",
     )
     parser.add_argument(
+        "--synergy-std-threshold",
+        type=float,
+        help="standard deviation threshold for synergy convergence",
+    )
+    parser.add_argument(
+        "--synergy-variance-confidence",
+        type=float,
+        help="confidence level for variance change test",
+    )
+    parser.add_argument(
         "--auto-thresholds",
         action="store_true",
         help="compute convergence thresholds adaptively",
@@ -243,9 +252,10 @@ def main(argv: List[str] | None = None) -> None:
     if autostart:
         try:
             import requests  # type: ignore
-            base = (
-                os.getenv("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")
-            ).split(";")[0]
+
+            base = (os.getenv("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")).split(";")[
+                0
+            ]
             resp = requests.get(f"{base}/status", timeout=3)
             if resp.status_code != 200:
                 raise RuntimeError(resp.text)
@@ -315,6 +325,20 @@ def main(argv: List[str] | None = None) -> None:
             synergy_stationarity_confidence = float(env_val)
         except Exception:
             synergy_stationarity_confidence = None
+    synergy_std_threshold = args.synergy_std_threshold
+    env_val = os.getenv("SYNERGY_STD_THRESHOLD")
+    if synergy_std_threshold is None and env_val is not None:
+        try:
+            synergy_std_threshold = float(env_val)
+        except Exception:
+            synergy_std_threshold = None
+    synergy_variance_confidence = args.synergy_variance_confidence
+    env_val = os.getenv("SYNERGY_VARIANCE_CONFIDENCE")
+    if synergy_variance_confidence is None and env_val is not None:
+        try:
+            synergy_variance_confidence = float(env_val)
+        except Exception:
+            synergy_variance_confidence = None
     if synergy_threshold_window is None:
         synergy_threshold_window = args.synergy_cycles
     if synergy_threshold_weight is None:
@@ -323,6 +347,10 @@ def main(argv: List[str] | None = None) -> None:
         synergy_ma_window = args.synergy_cycles
     if synergy_stationarity_confidence is None:
         synergy_stationarity_confidence = synergy_confidence or 0.95
+    if synergy_std_threshold is None:
+        synergy_std_threshold = 1e-3
+    if synergy_variance_confidence is None:
+        synergy_variance_confidence = synergy_confidence or 0.95
     last_tracker = None
 
     run_idx = 0
@@ -370,13 +398,13 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history.append(syn_vals)
             ma_entry: dict[str, float] = {}
             for k in syn_vals:
-                vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles:]]
+                vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
                 ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
                 ma_entry[k] = ema
             synergy_ma_history.append(ma_entry)
         history = getattr(tracker, "roi_history", [])
         if history:
-            ema, _ = cli._ema(history[-args.roi_cycles:])
+            ema, _ = cli._ema(history[-args.roi_cycles :])
             roi_ma_history.append(ema)
 
         if getattr(args, "auto_thresholds", False):
@@ -407,15 +435,21 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history,
             args.synergy_cycles,
             synergy_threshold,
-            ma_window=synergy_ma_window if synergy_ma_window is not None else args.synergy_cycles,
+            std_threshold=synergy_std_threshold,
+            ma_window=(
+                synergy_ma_window
+                if synergy_ma_window is not None
+                else args.synergy_cycles
+            ),
             confidence=synergy_confidence or 0.95,
-            stationarity_confidence=synergy_stationarity_confidence or (synergy_confidence or 0.95),
+            stationarity_confidence=synergy_stationarity_confidence
+            or (synergy_confidence or 0.95),
+            variance_confidence=synergy_variance_confidence
+            or (synergy_confidence or 0.95),
         )
 
         if module_history and set(module_history) <= flagged and converged:
-            logger.info(
-                "convergence reached", extra={"run": run_idx, "ema": ema_val}
-            )
+            logger.info("convergence reached", extra={"run": run_idx, "ema": ema_val})
             break
 
     if agent_proc:
