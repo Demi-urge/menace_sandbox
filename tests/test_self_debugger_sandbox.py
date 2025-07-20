@@ -303,11 +303,15 @@ def test_log_patch_records_extra_fields():
         flakiness=0.2,
         runtime_impact=0.05,
         complexity=1.0,
+        synergy_resilience=0.3,
+        synergy_antifragility=0.4,
     )
     rec = json.loads(trail.records[-1])
     assert rec["flakiness"] == 0.2
     assert rec["runtime_impact"] == 0.05
     assert rec["complexity"] == 1.0
+    assert rec["synergy_resilience"] == 0.3
+    assert rec["synergy_antifragility"] == 0.4
 
 
 def test_coverage_drop_reverts(monkeypatch, tmp_path):
