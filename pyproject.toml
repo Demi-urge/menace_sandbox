@@ -69,6 +69,7 @@ dependencies = [
 
 [project.scripts]
 menace-master = "service_supervisor:main"
+environment-cli = "environment_cli:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
