@@ -5,10 +5,109 @@ import pytest
 import asyncio
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-spec = importlib.util.spec_from_file_location("menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py"))
+spec = importlib.util.spec_from_file_location(
+    "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
+)
 menace = importlib.util.module_from_spec(spec)
-sys.modules.setdefault("menace", menace)
+sys.modules["menace"] = menace
 spec.loader.exec_module(menace)
+
+try:
+    import jinja2 as _j2  # noqa: F401
+except Exception:  # pragma: no cover - optional
+    import types
+
+    jinja_stub = types.ModuleType("jinja2")
+    jinja_stub.Template = lambda *a, **k: None
+    sys.modules["jinja2"] = jinja_stub
+
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *a, **k: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+if "networkx" not in sys.modules:
+    nx_stub = types.ModuleType("networkx")
+    nx_stub.DiGraph = object
+    sys.modules["networkx"] = nx_stub
+
+if "psutil" not in sys.modules:
+    sys.modules["psutil"] = types.ModuleType("psutil")
+
+if "loguru" not in sys.modules:
+    loguru_mod = types.ModuleType("loguru")
+
+    class DummyLogger:
+        def __getattr__(self, name):
+            def stub(*a, **k):
+                return None
+
+            return stub
+
+        def add(self, *a, **k):  # pragma: no cover - optional
+            pass
+
+    loguru_mod.logger = DummyLogger()
+    sys.modules["loguru"] = loguru_mod
+
+if "git" not in sys.modules:
+    git_mod = types.ModuleType("git")
+    git_mod.Repo = object
+    exc_mod = types.ModuleType("git.exc")
+    class _Err(Exception):
+        pass
+
+    exc_mod.GitCommandError = _Err
+    exc_mod.InvalidGitRepositoryError = _Err
+    exc_mod.NoSuchPathError = _Err
+    git_mod.exc = exc_mod
+    sys.modules["git.exc"] = exc_mod
+    sys.modules["git"] = git_mod
+
+if "filelock" not in sys.modules:
+    filelock_mod = types.ModuleType("filelock")
+    filelock_mod.FileLock = object
+    filelock_mod.Timeout = type("Timeout", (Exception,), {})
+    sys.modules["filelock"] = filelock_mod
+
+if "matplotlib" not in sys.modules:
+    mpl_mod = types.ModuleType("matplotlib")
+    pyplot_mod = types.ModuleType("matplotlib.pyplot")
+    mpl_mod.pyplot = pyplot_mod
+    sys.modules["matplotlib"] = mpl_mod
+    sys.modules["matplotlib.pyplot"] = pyplot_mod
+
+if "dotenv" not in sys.modules:
+    dotenv_mod = types.ModuleType("dotenv")
+    dotenv_mod.load_dotenv = lambda *a, **k: None
+    sys.modules["dotenv"] = dotenv_mod
+
+if "prometheus_client" not in sys.modules:
+    prom_mod = types.ModuleType("prometheus_client")
+    prom_mod.CollectorRegistry = object
+    prom_mod.Counter = prom_mod.Gauge = lambda *a, **k: object()
+    sys.modules["prometheus_client"] = prom_mod
+
+if "joblib" not in sys.modules:
+    joblib_mod = types.ModuleType("joblib")
+    joblib_mod.dump = joblib_mod.load = lambda *a, **k: None
+    sys.modules["joblib"] = joblib_mod
+
+if "sklearn" not in sys.modules:
+    sk_mod = types.ModuleType("sklearn")
+    fe_mod = types.ModuleType("sklearn.feature_extraction")
+    text_mod = types.ModuleType("sklearn.feature_extraction.text")
+    text_mod.TfidfVectorizer = object
+    fe_mod.text = text_mod
+    cluster_mod = types.ModuleType("sklearn.cluster")
+    cluster_mod.KMeans = object
+    lm_mod = types.ModuleType("sklearn.linear_model")
+    lm_mod.LinearRegression = object
+    sk_mod.feature_extraction = fe_mod
+    sys.modules["sklearn"] = sk_mod
+    sys.modules["sklearn.feature_extraction"] = fe_mod
+    sys.modules["sklearn.feature_extraction.text"] = text_mod
+    sys.modules["sklearn.cluster"] = cluster_mod
+    sys.modules["sklearn.linear_model"] = lm_mod
 
 pytest.importorskip("pandas")
 
@@ -21,6 +120,7 @@ import menace.model_automation_pipeline as mp
 import menace.pre_execution_roi_bot as prb
 import menace.code_database as cd
 import menace.evolution_history_db as eh
+import menace.self_improvement_policy as sip
 
 
 def test_run_cycle(tmp_path, monkeypatch):
@@ -283,4 +383,44 @@ def test_policy_state_includes_synergy(tmp_path):
     state = engine._policy_state()
     assert len(state) == sie.POLICY_STATE_LEN
     assert state[-4:] == (2, 4, -2, 1)
+
+
+def test_engine_policy_persistence(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(
+                package=None,
+                roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0),
+            )
+
+    path = tmp_path / "policy.pkl"
+    policy = sip.SelfImprovementPolicy(path=path)
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        policy=policy,
+    )
+    mdb.add(db.MetricRecord("bot", 5.0, 10.0, 3.0, 1.0, 1.0, 1))
+    edb.log_discrepancy("fail")
+    state = engine._policy_state()
+    engine.run_cycle()
+    val = engine.policy.score(state)
+
+    policy2 = sip.SelfImprovementPolicy(path=path)
+    engine2 = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        policy=policy2,
+    )
+    assert engine2.policy.score(state) == val
 

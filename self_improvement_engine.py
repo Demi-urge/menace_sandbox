@@ -77,6 +77,11 @@ class SelfImprovementEngine:
         self.data_bot = data_bot
         self.patch_db = patch_db or (data_bot.patch_db if data_bot else None)
         self.policy = policy
+        if self.policy and getattr(self.policy, "path", None):
+            try:
+                self.policy.load(self.policy.path)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("policy load failed: %s", exc)
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
         self.pre_roi_bot = pre_roi_bot
@@ -490,6 +495,11 @@ class SelfImprovementEngine:
                                 },
                             )
                             self.policy.update(self._policy_state(), delta)
+                            if getattr(self.policy, "path", None):
+                                try:
+                                    self.policy.save()
+                                except Exception as exc:  # pragma: no cover - best effort
+                                    self.logger.exception("policy save failed: %s", exc)
                         except Exception as exc:
                             self.logger.exception(
                                 "policy patch update failed: %s", exc
@@ -632,11 +642,21 @@ class SelfImprovementEngine:
                 try:
                     next_state = self._policy_state()
                     self.policy.update(state, after_roi - before_roi, next_state)
+                    if getattr(self.policy, "path", None):
+                        try:
+                            self.policy.save()
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.exception("policy save failed: %s", exc)
                     self.logger.info(
                         "policy updated", extra={"reward": after_roi - before_roi}
                     )
                 except Exception as exc:
                     self.logger.exception("policy update failed: %s", exc)
+            if self.policy and getattr(self.policy, "path", None):
+                try:
+                    self.policy.save()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("policy save failed: %s", exc)
             self.logger.info("cycle complete", extra={"roi": roi_value})
             return result
         finally:
