@@ -480,7 +480,7 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.0,
         roi_delta=0.3,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     first = dbg.score_weights
 
     dbg._log_patch(
@@ -490,7 +490,7 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.1,
         roi_delta=0.1,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     second = dbg.score_weights
 
     dbg._log_patch(
@@ -500,12 +500,12 @@ def test_score_weights_evolve_from_audit():
         error_delta=0.2,
         roi_delta=0.2,
     )
-    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
     third = dbg.score_weights
 
     assert first != second
     assert second != third
-    assert abs(third[0] - 1.0) < 1e-6
-    assert abs(third[1] - 1.0) < 1e-6
-    assert abs(third[2] - 2.0) < 1e-6
+    assert abs(third[0] - 1.5) < 1e-6
+    assert abs(third[1] - 1.5) < 1e-6
+    assert abs(third[2] - 3.0) < 1e-6
     assert abs(third[3]) < 1e-6

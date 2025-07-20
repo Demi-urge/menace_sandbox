@@ -193,6 +193,8 @@ class SelfImprovementEngine:
                         syn_af = float(af_vals[-1] - af_vals[-2])
             except Exception:
                 syn_af = 0.0
+        profit += syn_roi
+        energy = max(0.0, energy + syn_eff)
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
         if pdb:
             try:
