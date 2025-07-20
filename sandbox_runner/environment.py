@@ -248,7 +248,7 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
         try:
             os.unlink(tmp_path)
         except Exception:
-            pass
+            logger.exception("temporary file removal failed")
     logger.debug(
         "static analysis result: %s",
         {k: v for k, v in result.items() if v},
