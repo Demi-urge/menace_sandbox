@@ -10,6 +10,7 @@ import os
 import atexit
 import tempfile
 import time
+import sqlite3
 try:  # optional dependency
     from sqlalchemy import Column, String, Text, Table, MetaData, create_engine
     from sqlalchemy.engine import Engine
@@ -566,6 +567,58 @@ class MaintenanceStorageAdapter:
         raise NotImplementedError
 
 
+class SQLiteMaintenanceDB(MaintenanceStorageAdapter):
+    """SQLite-backed persistent store for maintenance logs."""
+
+    def __init__(self, path: Path | str | None = None) -> None:
+        db_path = Path(path or os.environ.get("MAINTENANCE_DB", env_config.MAINTENANCE_DB))
+        ensure_directory(db_path.parent)
+        self.conn = sqlite3.connect(db_path)
+        self.path = db_path
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS maintenance(
+                task TEXT,
+                status TEXT,
+                details TEXT,
+                ts TEXT
+            )
+            """
+        )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY, value TEXT)"
+        )
+        self.conn.commit()
+
+    def log(self, rec: MaintenanceRecord) -> None:
+        self.conn.execute(
+            "INSERT INTO maintenance(task, status, details, ts) VALUES (?,?,?,?)",
+            (rec.task, rec.status, rec.details, rec.ts),
+        )
+        self.conn.commit()
+
+    def fetch(self) -> List[Tuple[str, str, str, str]]:
+        cur = self.conn.execute(
+            "SELECT task, status, details, ts FROM maintenance"
+        )
+        return [(r[0], r[1], r[2], r[3]) for r in cur.fetchall()]
+
+    def set_state(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO state(key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        self.conn.commit()
+
+    def get_state(self, key: str) -> Optional[str]:
+        cur = self.conn.execute(
+            "SELECT value FROM state WHERE key=?",
+            (key,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
 class MaintenanceDB(MaintenanceStorageAdapter):
     """Persistent store for maintenance logs with environment-based backend."""
 
@@ -971,7 +1024,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
         )
         self.config = config or MaintenanceBotConfig()
         _validate_config(self.config)
-        self.db = db or MaintenanceDB()
+        self.db = db or SQLiteMaintenanceDB()
         self.error_bot = error_bot or ErrorBot(ErrorDB(self.config.error_db_path))
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
@@ -1859,6 +1912,7 @@ __all__ = [
     "TaskLock",
     "RateLimitError",
     "MaintenanceStorageAdapter",
+    "SQLiteMaintenanceDB",
     "MaintenanceDB",
     "CommunicationLogHandler",
     "entry_expired",
