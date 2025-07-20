@@ -424,3 +424,94 @@ def test_engine_policy_persistence(tmp_path, monkeypatch):
     )
     assert engine2.policy.score(state) == val
 
+
+class _DummyTracker:
+    def __init__(self, roi=None, eff=None, res=None, af=None):
+        self.metrics_history = {}
+        if roi is not None:
+            self.metrics_history["synergy_roi"] = roi
+        if eff is not None:
+            self.metrics_history["synergy_efficiency"] = eff
+        if res is not None:
+            self.metrics_history["synergy_resilience"] = res
+        if af is not None:
+            self.metrics_history["synergy_antifragility"] = af
+
+
+def test_synergy_energy_scaling(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def __init__(self) -> None:
+            self.energy = None
+
+        def run(self, model: str, energy: int = 1):
+            self.energy = energy
+            return mp.AutomationResult(package=None, roi=None)
+
+    class DummyCapitalBot:
+        def energy_score(self, **_: object) -> float:
+            return 0.5
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    base_pipe = StubPipeline()
+    base_engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=base_pipe,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+    )
+    base_engine.tracker = _DummyTracker([0.0])
+    base_engine.run_cycle()
+    base_energy = base_pipe.energy
+
+    pos_pipe = StubPipeline()
+    pos_engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pos_pipe,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+    )
+    pos_engine.tracker = _DummyTracker([0.0, 0.2], eff=[0.0, 0.3])
+    pos_engine.run_cycle()
+    assert pos_pipe.energy > base_energy
+
+
+def test_synergy_energy_cap(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def __init__(self) -> None:
+            self.energy = None
+
+        def run(self, model: str, energy: int = 1):
+            self.energy = energy
+            return mp.AutomationResult(package=None, roi=None)
+
+    class DummyCapitalBot:
+        def energy_score(self, **_: object) -> float:
+            return 0.5
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    pipe = StubPipeline()
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pipe,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+    )
+    engine.tracker = _DummyTracker([0.0, 50.0], eff=[0.0, 50.0])
+    engine.run_cycle()
+    assert pipe.energy == 100
+
