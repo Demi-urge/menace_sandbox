@@ -13,6 +13,39 @@ from typing import Iterable, Dict, Any
 from .audit_logger import log_event
 from filelock import FileLock, Timeout
 
+
+class _ContextFileLock(FileLock):
+    """FileLock variant whose ``acquire`` works as a context manager."""
+
+    class _Guard:
+        def __init__(self, lock: FileLock) -> None:
+            self.lock = lock
+
+        def __enter__(self) -> FileLock:
+            return self.lock
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            if self.lock.is_locked:
+                try:
+                    self.lock.release()
+                except Exception:
+                    pass
+
+    def acquire(self, *args, **kwargs):  # type: ignore[override]
+        super().acquire(*args, **kwargs)
+        return self._Guard(self)
+
+    def release(self, *args, **kwargs) -> None:  # type: ignore[override]
+        try:
+            super().release(*args, **kwargs)
+        finally:
+            try:
+                os.remove(self.lock_file)
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -33,7 +66,7 @@ GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
 )
-_global_lock = FileLock(GLOBAL_LOCK_PATH)
+_global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
 
 
 class VisualAgentClient:
@@ -106,47 +139,46 @@ class VisualAgentClient:
             return False, "requests unavailable"
 
         try:
-            _global_lock.acquire(timeout=0)
+            with _global_lock.acquire(timeout=0):
+                with self._lock:
+                    if self.active:
+                        return False, "busy"
+                    self.active = True
+
+                def sender() -> tuple[bool, str]:
+                    if self.open_run_id is None:
+                        try:
+                            self.open_run_id = log_event(
+                                "visual_agent_run",
+                                {"url": base, "prompt": prompt, "status": "started"},
+                            )
+                        except Exception:
+                            self.open_run_id = None
+                    resp = requests.post(
+                        f"{base}/run",
+                        headers={"x-token": self.token},
+                        json={"prompt": prompt, "branch": None},
+                        timeout=10,
+                    )
+                    if resp.status_code == 401:
+                        if self._refresh_token():
+                            return sender()
+                        return False, "unauthorized"
+                    if resp.status_code == 202:
+                        return self._poll(base)
+                    snippet = resp.text[:200]
+                    return False, f"status {resp.status_code}: {snippet}"
+
+                try:
+                    return sender()
+                except Exception as exc:  # pragma: no cover - network issues
+                    return False, f"exception {exc}"
+                finally:
+                    with self._lock:
+                        self.active = False
         except Timeout:
             return False, "busy"
-
-        with self._lock:
-            if self.active:
-                _global_lock.release()
-                return False, "busy"
-            self.active = True
-
-        def sender() -> tuple[bool, str]:
-            if self.open_run_id is None:
-                try:
-                    self.open_run_id = log_event(
-                        "visual_agent_run",
-                        {"url": base, "prompt": prompt, "status": "started"},
-                    )
-                except Exception:
-                    self.open_run_id = None
-            resp = requests.post(
-                f"{base}/run",
-                headers={"x-token": self.token},
-                json={"prompt": prompt, "branch": None},
-                timeout=10,
-            )
-            if resp.status_code == 401:
-                if self._refresh_token():
-                    return sender()
-                return False, "unauthorized"
-            if resp.status_code == 202:
-                return self._poll(base)
-            snippet = resp.text[:200]
-            return False, f"status {resp.status_code}: {snippet}"
-
-        try:
-            return sender()
-        except Exception as exc:  # pragma: no cover - network issues
-            return False, f"exception {exc}"
         finally:
-            with self._lock:
-                self.active = False
             if _global_lock.is_locked:
                 try:
                     _global_lock.release()
@@ -158,38 +190,37 @@ class VisualAgentClient:
             return False, "requests unavailable"
 
         try:
-            _global_lock.acquire(timeout=0)
+            with _global_lock.acquire(timeout=0):
+                with self._lock:
+                    if self.active:
+                        return False, "busy"
+                    self.active = True
+
+                def sender() -> tuple[bool, str]:
+                    resp = requests.post(
+                        f"{base}/revert",
+                        headers={"x-token": self.token},
+                        timeout=10,
+                    )
+                    if resp.status_code == 401:
+                        if self._refresh_token():
+                            return sender()
+                        return False, "unauthorized"
+                    if resp.status_code == 202:
+                        return self._poll(base)
+                    snippet = resp.text[:200]
+                    return False, f"status {resp.status_code}: {snippet}"
+
+                try:
+                    return sender()
+                except Exception as exc:  # pragma: no cover - network issues
+                    return False, f"exception {exc}"
+                finally:
+                    with self._lock:
+                        self.active = False
         except Timeout:
             return False, "busy"
-
-        with self._lock:
-            if self.active:
-                _global_lock.release()
-                return False, "busy"
-            self.active = True
-
-        def sender() -> tuple[bool, str]:
-            resp = requests.post(
-                f"{base}/revert",
-                headers={"x-token": self.token},
-                timeout=10,
-            )
-            if resp.status_code == 401:
-                if self._refresh_token():
-                    return sender()
-                return False, "unauthorized"
-            if resp.status_code == 202:
-                return self._poll(base)
-            snippet = resp.text[:200]
-            return False, f"status {resp.status_code}: {snippet}"
-
-        try:
-            return sender()
-        except Exception as exc:  # pragma: no cover - network issues
-            return False, f"exception {exc}"
         finally:
-            with self._lock:
-                self.active = False
             if _global_lock.is_locked:
                 try:
                     _global_lock.release()

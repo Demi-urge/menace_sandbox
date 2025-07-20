@@ -197,3 +197,41 @@ def test_global_lock_across_clients(monkeypatch):
     finally:
         vac_mod._global_lock.release()
 
+
+def test_send_exception_releases_lock(monkeypatch, tmp_path):
+    lock_path = tmp_path / "lock"
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    vac_mod = _reload_client(monkeypatch)
+
+    def bad_post(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(post=bad_post),
+    )
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    ok, _ = client._send("http://x", "p")
+    assert not ok
+    assert not lock_path.exists()
+
+
+def test_revert_exception_releases_lock(monkeypatch, tmp_path):
+    lock_path = tmp_path / "lock2"
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    vac_mod = _reload_client(monkeypatch)
+
+    def bad_post(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(post=bad_post),
+    )
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    ok, _ = client._send_revert("http://x")
+    assert not ok
+    assert not lock_path.exists()
+
