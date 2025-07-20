@@ -80,7 +80,7 @@ def _atexit_save_cache() -> None:
     try:
         asyncio.run(asyncio.to_thread(_save_cache))
     except Exception:
-        pass
+        logger.exception("cache save failed")
 
 
 atexit.register(_atexit_save_cache)
