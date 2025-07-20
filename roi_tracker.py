@@ -192,8 +192,20 @@ class ROITracker:
 
     # ------------------------------------------------------------------
     def diminishing(self) -> float:
-        """Return the ROI delta threshold considered negligible."""
-        return float(self.tolerance)
+        """Return the ROI delta threshold considered negligible.
+
+        The base ``tolerance`` is scaled by the volatility of recent ROI
+        deltas.  The standard deviation of the last ``window`` entries of
+        :attr:`roi_history` is computed and used to adjust the threshold so
+        that noisier histories result in a larger threshold.
+        """
+
+        history = self.roi_history[-self.window :] if self.roi_history else []
+        if history:
+            stddev = float(np.std(history))
+        else:
+            stddev = 0.0
+        return float(self.tolerance * (1.0 + stddev))
 
     # ------------------------------------------------------------------
     def _regression(self) -> Tuple[Optional[int], List[float]]:
