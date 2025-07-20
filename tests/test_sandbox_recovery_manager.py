@@ -31,6 +31,40 @@ def test_restart_on_failure(monkeypatch):
     assert len(calls) == 2
 
 
+def test_logging_and_callback(monkeypatch, tmp_path):
+    calls = []
+
+    def fail_then_ok(preset, args):
+        calls.append("call")
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return "ok"
+
+    cb_calls = []
+
+    def cb(exc, runtime):
+        cb_calls.append((str(exc), runtime))
+
+    monotonic_counter = [0]
+
+    def fake_monotonic():
+        monotonic_counter[0] += 1
+        return monotonic_counter[0]
+
+    monkeypatch.setattr(srm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(srm.time, "monotonic", fake_monotonic)
+
+    mgr = srm.SandboxRecoveryManager(fail_then_ok, retry_delay=0, on_retry=cb)
+    args = argparse.Namespace(sandbox_data_dir=str(tmp_path))
+    result = mgr.run({}, args)
+
+    assert result == "ok"
+    assert len(calls) == 2
+    assert cb_calls and "boom" in cb_calls[0][0]
+    log_content = (tmp_path / "recovery.log").read_text()
+    assert "RuntimeError: boom" in log_content
+
+
 def test_run_autonomous_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     pkg = types.ModuleType("menace")
