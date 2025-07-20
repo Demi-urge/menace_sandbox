@@ -250,6 +250,49 @@ def safe_find_and_click(target_text, y_min=None, y_max=None, tolerance=100):
     return False
 
 
+def _wait_for_build(timeout: int, refresh: int) -> bool:
+    """Wait for Codex to finish building and trigger the PR view.
+
+    Args:
+        timeout: Maximum number of seconds to wait.
+        refresh: Interval in seconds to trigger a browser refresh.
+
+    Returns:
+        True if the build completed before timing out, False otherwise.
+    """
+    start = time.time()
+    last_refresh = time.time()
+
+    while True:
+        time.sleep(1)
+        img = capture_screen()
+        text = ocr_image(img)
+        print("[OCR TEXT]", text)
+        save_screenshot(img, "build_loop")
+
+        if "diff" in text.lower():
+            print("[READY] Found 'diff' – proceeding to PR.")
+            click_target(1746, 154)
+            time.sleep(20)
+            click_target(1746, 154)
+            time.sleep(3)
+            return True
+
+        if time.time() - start > timeout:
+            mins = timeout // 60
+            print(f"[TIMEOUT] Gave up after {mins} minutes. Returning nothing.")
+            return False
+
+        if time.time() - last_refresh >= refresh:
+            mins = refresh // 60
+            print(f"[CTRL+R] Refresh triggered after {mins} minutes.")
+            pyautogui.hotkey('ctrl', 'r')
+            last_refresh = time.time()
+
+        print("…still building – re-checking in 10 s")
+        time.sleep(10)
+
+
 def run_menace_pipeline(prompt: str, branch: str | None = None):
     try:
         if not safe_find_and_click(TRIGGERS['prompt']):
@@ -269,52 +312,8 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         time.sleep(0.5)
 
         # ② WAIT UNTIL Codex finishes building / thinking
-        start = time.time()
-        last_refresh = time.time()
-        TIMEOUT = 1800  # 30 minutes
-        last_refresh = time.time()
-        start = time.time()
-
-        while True:
-            time.sleep(1)
-            img = capture_screen()
-            text = ocr_image(img)
-            print("[OCR TEXT]", text)
-            save_screenshot(img, "build_loop")
-
-            if "diff" in text.lower():
-                print("[READY] Found 'diff' – proceeding to PR.")
-                click_target(1746, 154)
-                time.sleep(20)
-                click_target(1746, 154)
-                time.sleep(3)
-                break
-
-            if time.time() - start > TIMEOUT:
-                print("[TIMEOUT] Gave up after 30 minutes. Returning nothing.")
-                return  # ✨ quit the entire function with no further steps
-
-            if time.time() - last_refresh >= 1200:
-                print("[CTRL+R] Refresh triggered after 20 minutes.")
-                pyautogui.hotkey('ctrl', 'r')
-                last_refresh = time.time()
-
-            print("…still building – re-checking in 10 s")
-            time.sleep(10)
-
-            # 💡 Check for timeout
-            if time.time() - start > TIMEOUT:
-                print("[TIMEOUT] build never finished.")
-                return
-
-            # ⏱️ Inject ctrl+r every 20 minutes (1200 seconds)
-            if time.time() - last_refresh >= 1200:
-                print("[CTRL+R] Refresh triggered after 20 minutes.")
-                pyautogui.hotkey('ctrl', 'r')
-                last_refresh = time.time()
-
-            print("…still building – re-checking in 10 s")
-            time.sleep(10)
+        if not _wait_for_build(timeout=1800, refresh=1200):
+            return
 
         # Continue exactly as before
         click_target(562, 510)          # open the PR task row
