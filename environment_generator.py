@@ -129,7 +129,7 @@ class AdaptivePresetAgent:
 
         self.policy = SelfImprovementPolicy(path=path)
         self.state_file = f"{path}.state.json" if path else None
-        self.prev_state: tuple[int, int] | None = None
+        self.prev_state: tuple[int, int, int, int, int] | None = None
         self.prev_action: int | None = None
         self._load_state()
 
@@ -156,31 +156,47 @@ class AdaptivePresetAgent:
             pass
 
     # --------------------------------------------------------------
-    def _state(self, tracker: "ROITracker") -> tuple[int, int]:
-        """Return a compact representation of the current environment state."""
+    def _state(self, tracker: "ROITracker") -> tuple[int, int, int, int, int]:
+        """Return a compact representation of the current environment state.
+
+        The state encodes ROI and synergy trends along with recent CPU usage,
+        memory usage and threat intensity information obtained from
+        :class:`ROITracker`.
+        """
 
         roi_hist = tracker.roi_history
         syn_hist = tracker.metrics_history.get("synergy_roi", [])
+        cpu_hist = tracker.metrics_history.get("cpu_usage", [])
+        mem_hist = tracker.metrics_history.get("memory_usage", [])
+        threat_hist = tracker.metrics_history.get("threat_intensity", [])
 
-        roi_trend = 0.0
-        if len(roi_hist) >= 2:
-            roi_trend = roi_hist[-1] - roi_hist[-2]
+        def _trend(vals: list[float]) -> float:
+            if len(vals) >= 2:
+                return float(vals[-1] - vals[-2])
+            return float(vals[-1]) if vals else 0.0
 
-        syn_trend = 0.0
-        if len(syn_hist) >= 2:
-            syn_trend = syn_hist[-1] - syn_hist[-2]
-        elif syn_hist:
-            syn_trend = syn_hist[-1]
+        roi_trend = _trend(roi_hist)
+        syn_trend = _trend(syn_hist)
+        cpu_trend = _trend(cpu_hist)
+        mem_trend = _trend(mem_hist)
+        threat_trend = _trend(threat_hist)
 
-        roi_s = 1 if roi_trend > 0 else (-1 if roi_trend < 0 else 0)
-        syn_s = 1 if syn_trend > 0 else (-1 if syn_trend < 0 else 0)
-        return roi_s, syn_s
+        def _sign(val: float) -> int:
+            return 1 if val > 0 else (-1 if val < 0 else 0)
+
+        return (
+            _sign(roi_trend),
+            _sign(syn_trend),
+            _sign(cpu_trend),
+            _sign(mem_trend),
+            _sign(threat_trend),
+        )
 
     def _reward(self, tracker: "ROITracker") -> float:
-        """Return reward based on ROI and synergy improvement."""
+        """Return reward based on ROI, synergy and resource changes."""
 
-        hist = tracker.roi_history
-        roi_delta = hist[-1] - hist[-2] if len(hist) >= 2 else 0.0
+        roi_hist = tracker.roi_history
+        roi_delta = roi_hist[-1] - roi_hist[-2] if len(roi_hist) >= 2 else 0.0
 
         syn_hist = tracker.metrics_history.get("synergy_roi", [])
         syn_delta = 0.0
@@ -189,7 +205,18 @@ class AdaptivePresetAgent:
         elif syn_hist:
             syn_delta = syn_hist[-1]
 
-        return float(roi_delta + syn_delta)
+        cpu_hist = tracker.metrics_history.get("cpu_usage", [])
+        mem_hist = tracker.metrics_history.get("memory_usage", [])
+        threat_hist = tracker.metrics_history.get("threat_intensity", [])
+
+        cpu_delta = cpu_hist[-1] - cpu_hist[-2] if len(cpu_hist) >= 2 else 0.0
+        mem_delta = mem_hist[-1] - mem_hist[-2] if len(mem_hist) >= 2 else 0.0
+        threat_delta = (
+            threat_hist[-1] - threat_hist[-2] if len(threat_hist) >= 2 else 0.0
+        )
+
+        # Penalise increased resource usage and threat intensity
+        return float(roi_delta + syn_delta - cpu_delta - mem_delta - threat_delta)
 
     # --------------------------------------------------------------
     def decide(self, tracker: "ROITracker") -> Dict[str, int]:

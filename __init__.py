@@ -5,6 +5,8 @@ import logging
 import os
 import sys
 
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
 # If production mode is used with the default SQLite database, fall back to test
 if (
     os.getenv("MENACE_MODE", "test").lower() == "production"

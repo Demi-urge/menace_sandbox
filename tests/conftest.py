@@ -1,3 +1,4 @@
+import os
 import sys
 import logging
 from pathlib import Path
@@ -6,6 +7,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 # Add project root to import path
 ROOT = Path(__file__).resolve().parents[1]
