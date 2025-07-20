@@ -478,7 +478,10 @@ def adapt_presets(
     # Synergy-driven adjustments with prediction support
     syn_roi_vals = tracker.metrics_history.get("synergy_roi", [])
     try:
-        pred_synergy_roi = float(getattr(tracker, "predict_synergy")())
+        if hasattr(tracker, "forecast_synergy"):
+            pred_synergy_roi = float(getattr(tracker, "forecast_synergy")()[0])
+        else:
+            pred_synergy_roi = float(getattr(tracker, "predict_synergy")())
     except Exception:
         pred_synergy_roi = 0.0
     vals = syn_roi_vals[-3:]

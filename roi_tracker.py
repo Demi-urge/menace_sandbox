@@ -599,6 +599,20 @@ class ROITracker:
             history = self.metrics_history.get("synergy_roi")
         if history is None:
             history = []
+
+        if len(history) > 1:
+            try:
+                from statsmodels.tsa.statespace.sarimax import SARIMAX  # type: ignore
+
+                model = SARIMAX(history, order=(1, 1, 1), seasonal_order=(0, 0, 0, 0)).fit(disp=False)
+                res = model.get_forecast(steps=1)
+                mean = float(res.predicted_mean[0])
+                conf = res.conf_int(alpha=0.05).iloc[0]
+                lower, upper = float(conf[0]), float(conf[1])
+                return mean, (lower, upper)
+            except Exception:
+                pass
+
         return self._forecast_generic(history)
 
     def forecast_synergy_metric(self, name: str) -> Tuple[float, Tuple[float, float]]:
