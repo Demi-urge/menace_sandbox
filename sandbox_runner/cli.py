@@ -299,17 +299,36 @@ def _synergy_converged(
             stat_conf = 1.0 - float(adf_p)
         except Exception:
             pass
+
+        # rolling correlation of metric values against iteration index
+        roll_corr = 0.0
+        if n > 1:
+            corrs: list[float] = []
+            size = min(ma_window, n)
+            for i in range(n - size + 1):
+                sub = series[i : i + size]
+                if len(set(sub)) <= 1:
+                    corrs.append(0.0)
+                else:
+                    idx = list(range(size))
+                    c, _ = pearsonr(idx, sub)
+                    corrs.append(c)
+            if corrs:
+                roll_corr = max(abs(c) for c in corrs)
+
+        # combine EMA trend and variance confidence
+        var_factor = 1.0
+        if std_threshold > 0:
+            var_factor = 1.0 / (1.0 + std / std_threshold)
+        conf *= var_factor * (1.0 - abs(roll_corr))
         min_conf = min(min_conf, conf, stat_conf)
-        corr = 0.0
-        if n > 1 and std > 0:
-            idx = list(range(n))
-            corr, _ = pearsonr(idx, series[-n:])
+
         if (
             abs(ema) > threshold
             or std > std_threshold
             or conf < confidence
             or stat_conf < stationarity_confidence
-            or abs(corr) > 0.3
+            or roll_corr > 0.3
         ):
             return False, max_abs, min_conf
     return True, max_abs, min_conf
