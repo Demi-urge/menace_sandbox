@@ -68,3 +68,36 @@ def test_files_created(monkeypatch, tmp_path):
 
     assert Path(".env").exists()
     assert (tmp_path / "sandbox_data" / "presets.json").exists()
+
+
+def test_cli_overrides_env(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    captured = {}
+
+    def capture(*a, **k):
+        captured["roi"] = a[2]
+        return set(), None
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "_diminishing_modules", capture)
+    monkeypatch.setenv("ROI_THRESHOLD", "1.5")
+
+    mod.main(["--roi-threshold", "2.5"])
+
+    assert captured.get("roi") == 2.5
+
+
+def test_get_env_override(monkeypatch):
+    setup_stubs(monkeypatch)
+    mod = load_module()
+    monkeypatch.setenv("TEST_FLOAT", "1.25")
+    monkeypatch.setenv("TEST_INT", "7")
+
+    assert mod._get_env_override("TEST_FLOAT", None) == 1.25
+    assert mod._get_env_override("TEST_INT", None) == 7
+    assert mod._get_env_override("TEST_FLOAT", 3.5) == 3.5
+
