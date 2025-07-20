@@ -59,6 +59,8 @@ _FAKER = Faker() if Faker is not None else None
 
 from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
 from .input_history_db import InputHistoryDB
+from collections import Counter
+import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1370,6 +1372,45 @@ def _load_history(path: str | None) -> List[Dict[str, Any]]:
     return records
 
 
+def aggregate_history_stubs() -> Dict[str, Any]:
+    """Return aggregated example values from the entire history database."""
+    try:
+        db = _get_history_db()
+        with sqlite3.connect(db.path) as conn:
+            rows = conn.execute("SELECT data FROM history").fetchall()
+    except Exception:
+        logger.exception("failed to aggregate input history")
+        return {}
+
+    records: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            obj = json.loads(row[0])
+            if isinstance(obj, dict):
+                records.append(obj)
+        except Exception:
+            continue
+
+    if not records:
+        return {}
+
+    stats: dict[str, list[Any]] = {}
+    for rec in records:
+        for k, v in rec.items():
+            stats.setdefault(k, []).append(v)
+
+    result: dict[str, Any] = {}
+    for key, vals in stats.items():
+        if all(isinstance(v, (int, float)) for v in vals):
+            avg = sum(float(v) for v in vals) / len(vals)
+            if all(isinstance(v, int) for v in vals):
+                avg = int(round(avg))
+            result[key] = avg
+        else:
+            result[key] = Counter(vals).most_common(1)[0][0]
+    return result
+
+
 def _random_strategy(count: int, conf: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
     conf = conf or {}
     modes = conf.get("modes", ["default", "alt", "stress"])
@@ -1511,6 +1552,10 @@ def generate_input_stubs(
             )
             if templates:
                 stubs = [dict(random.choice(templates)) for _ in range(num)]
+            else:
+                agg = aggregate_history_stubs()
+                if agg:
+                    stubs = [dict(agg) for _ in range(num)]
 
         if stubs is None:
             if target is not None:
