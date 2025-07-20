@@ -91,8 +91,8 @@ class PredictionTrainingPipeline:
                 pred = model.forecast()[0]
                 return float(pred)
             except Exception as exc:
-                logger.warning(
-                    "ARIMA ROI forecast failed: %s; falling back to LinearRegression",
+                logger.exception(
+                    "ARIMA ROI forecast failed; falling back to LinearRegression",
                     exc,
                 )
                 from sklearn.linear_model import LinearRegression
@@ -103,7 +103,7 @@ class PredictionTrainingPipeline:
                 pred = model.predict([[len(df)]])[0]
                 return float(pred)
         except Exception as exc:
-            logger.warning("_roi_forecast failure: %s", exc)
+            logger.exception("_roi_forecast failure: %s", exc)
             return 0.0
 
     def train(self, bot_ids: Iterable[str]) -> List[TrainingOutcome]:

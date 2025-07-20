@@ -12,6 +12,10 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
+from .logging_utils import get_logger
+
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .resources_bot import ROIHistoryDB
     from .prediction_manager_bot import PredictionManager
@@ -142,7 +146,7 @@ class ROITracker:
                             vals.extend([0.0] * (5 - len(vals)))
                         self.resource_metrics.append(tuple(vals[:5]))
             except Exception:
-                pass
+                logger.exception("resource history fetch failed")
 
     # ------------------------------------------------------------------
     def register_metrics(self, *names: str) -> None:
@@ -463,7 +467,7 @@ class ROITracker:
                 self._next_prediction = mean
                 return mean, (lower, upper)
             except Exception:
-                pass
+                logger.exception("advanced ROI predictor failed")
         try:
             from statsmodels.tsa.arima.model import ARIMA  # type: ignore
 
@@ -484,6 +488,7 @@ class ROITracker:
                         ).fit()
                         scores.append((m.aic, m.bic, order, m))
                     except Exception:
+                        logger.exception("candidate ARIMA order failed")
                         continue
                 if scores:
                     scores.sort(key=lambda x: (x[0], x[1]))
@@ -508,7 +513,7 @@ class ROITracker:
             self._next_prediction = mean
             return mean, (lower, upper)
         except Exception:
-            pass
+            logger.exception("ARIMA forecast failed")
         try:
             X = np.arange(len(self.roi_history)).reshape(-1, 1)
             y = np.array(self.roi_history)
@@ -529,6 +534,7 @@ class ROITracker:
             self._next_prediction = mean
             return mean, (mean - delta, mean + delta)
         except Exception:
+            logger.exception("linear regression forecast failed")
             val = float(self.roi_history[-1])
             self._next_prediction = val
             return val, (val, val)
@@ -553,7 +559,7 @@ class ROITracker:
             lower, upper = float(conf[0]), float(conf[1])
             return mean, (lower, upper)
         except Exception:
-            pass
+            logger.exception("ARIMA forecast failed")
         try:
             X = np.arange(len(history)).reshape(-1, 1)
             y = np.array(history)
@@ -567,6 +573,7 @@ class ROITracker:
             delta = 1.96 * se
             return mean, (mean - delta, mean + delta)
         except Exception:
+            logger.exception("linear regression forecast failed")
             val = float(history[-1])
             return val, (val, val)
 
@@ -611,7 +618,7 @@ class ROITracker:
                 lower, upper = float(conf[0]), float(conf[1])
                 return mean, (lower, upper)
             except Exception:
-                pass
+                logger.exception("SARIMAX synergy forecast failed")
 
         return self._forecast_generic(history)
 
@@ -675,7 +682,7 @@ class ROITracker:
             try:
                 self.record_metric_prediction(metric, pred_value, float(actual))
             except Exception:
-                pass
+                logger.exception("prediction manager failed")
         return pred_value
 
     # ------------------------------------------------------------------
@@ -754,7 +761,7 @@ class ROITracker:
             res = model.get_forecast(steps=1, exog=np.array([next_row]))
             return float(round(float(res.predicted_mean[0]), 4))
         except Exception:
-            pass
+            logger.exception("ARIMA synergy forecast failed")
 
         try:
             model = LinearRegression().fit(arr_X, arr_y)
@@ -765,6 +772,7 @@ class ROITracker:
                 next_row.append(pred)
             return float(round(float(model.predict([next_row])[0]), 4))
         except Exception:
+            logger.exception("linear regression synergy forecast failed")
             return float(history[-1])
 
     # ------------------------------------------------------------------
@@ -837,7 +845,7 @@ class ROITracker:
             res = model.get_forecast(steps=1, exog=np.array([next_row]))
             return float(round(float(res.predicted_mean[0]), 4))
         except Exception:
-            pass
+            logger.exception("ARIMA synergy forecast failed")
 
         try:
             model = LinearRegression().fit(arr_X, arr_y)
@@ -848,6 +856,7 @@ class ROITracker:
                 next_row.append(pred)
             return float(round(float(model.predict([next_row])[0]), 4))
         except Exception:
+            logger.exception("linear regression synergy forecast failed")
             return float(history[-1])
 
     # ------------------------------------------------------------------
