@@ -23,6 +23,7 @@ from .self_coding_engine import SelfCodingEngine
 from .audit_trail import AuditTrail
 from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
+from .roi_tracker import ROITracker
 from typing import Callable
 
 
@@ -191,6 +192,29 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return 0.0
 
     # ------------------------------------------------------------------
+    def _recent_synergy_metrics(
+        self, tracker: ROITracker | None
+    ) -> tuple[float, float]:
+        """Return the latest synergy ROI and efficiency from ``tracker``."""
+        if not tracker:
+            return 0.0, 0.0
+        try:
+            roi_hist = tracker.synergy_metrics_history.get("synergy_roi")
+            if not roi_hist:
+                roi_hist = tracker.metrics_history.get("synergy_roi")
+            s_roi = float(roi_hist[-1]) if roi_hist else 0.0
+        except Exception:
+            s_roi = 0.0
+        try:
+            eff_hist = tracker.synergy_metrics_history.get("synergy_efficiency")
+            if not eff_hist:
+                eff_hist = tracker.metrics_history.get("synergy_efficiency")
+            s_eff = float(eff_hist[-1]) if eff_hist else 0.0
+        except Exception:
+            s_eff = 0.0
+        return s_roi, s_eff
+
+    # ------------------------------------------------------------------
     def _update_score_weights(
         self, patch_db: PatchHistoryDB | None = None, limit: int = 50
     ) -> None:
@@ -317,10 +341,22 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         flakiness: float,
         runtime_delta: float,
         complexity: float,
-        synergy_roi: float = 0.0,
-        synergy_efficiency: float = 0.0,
+        synergy_roi: float | None = None,
+        synergy_efficiency: float | None = None,
+        *,
+        tracker: ROITracker | None = None,
     ) -> float:
         """Return a composite score from multiple metrics."""
+        if tracker is not None:
+            s_roi, s_eff = self._recent_synergy_metrics(tracker)
+            if synergy_roi is None:
+                synergy_roi = s_roi
+            if synergy_efficiency is None:
+                synergy_efficiency = s_eff
+
+        synergy_roi = float(synergy_roi or 0.0)
+        synergy_efficiency = float(synergy_efficiency or 0.0)
+
         self._update_score_weights(self._score_db)
         mc = {k: s for k, s in self._metric_stats.items()}
         cov = coverage_delta / (mc.get("coverage", (0.0, 1.0))[1] + 1e-6)
@@ -395,7 +431,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
     # ------------------------------------------------------------------
     def analyse_and_fix(
-        self, patch_db: PatchHistoryDB | None = None, limit: int = 1
+        self,
+        patch_db: PatchHistoryDB | None = None,
+        limit: int = 1,
+        tracker: ROITracker | None = None,
     ) -> None:  # type: ignore[override]
         """Analyse telemetry and attempt fixes with retries."""
 
@@ -487,6 +526,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             result = "reverted"
                             reverted = True
                         if not reverted:
+                            syn_roi, syn_eff = self._recent_synergy_metrics(tracker)
                             score = self._composite_score(
                                 coverage_delta,
                                 error_delta,
@@ -494,6 +534,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 flakiness,
                                 runtime_delta,
                                 complexity,
+                                synergy_roi=syn_roi,
+                                synergy_efficiency=syn_eff,
+                                tracker=tracker,
                             )
                         else:
                             score = float("-inf")
@@ -513,8 +556,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             flakiness=flakiness,
                             runtime_impact=runtime_delta,
                             complexity=complexity,
-                            synergy_roi=0.0,
-                            synergy_efficiency=0.0,
+                            synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
+                            synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -558,6 +601,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                 complexity = self._code_complexity(root_test)
                 runtime_delta = after_runtime - before_runtime
+                syn_roi, syn_eff = self._recent_synergy_metrics(tracker)
                 patch_score = self._composite_score(
                     coverage_delta,
                     error_delta,
@@ -565,6 +609,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     flakiness,
                     runtime_delta,
                     complexity,
+                    synergy_roi=syn_roi,
+                    synergy_efficiency=syn_eff,
+                    tracker=tracker,
                 )
                 result = "reverted" if reverted else "success"
                 reason = None
@@ -604,8 +651,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     flakiness=flakiness if 'flakiness' in locals() else None,
                     runtime_impact=runtime_delta if 'runtime_delta' in locals() else None,
                     complexity=complexity if 'complexity' in locals() else None,
-                    synergy_roi=0.0,
-                    synergy_efficiency=0.0,
+                    synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
+                    synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
                     reason=reason,
                 )
                 root_test.unlink(missing_ok=True)
