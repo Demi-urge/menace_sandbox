@@ -18,7 +18,7 @@ from filelock import FileLock, Timeout
 from collections import deque
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
-API_TOKEN = "tombalolosvisualagent123"
+API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
 DEVICE_ID  = "desktop"
 
