@@ -393,6 +393,11 @@ python sandbox_runner.py run-complete presets.json --max-iterations 1
 The command forwards the presets to ``full_autonomous_run`` and starts the
 dashboard when ``--dashboard-port`` is supplied.
 
+When ``--auto-thresholds`` is enabled the loop recomputes the ROI and synergy
+thresholds each iteration. The thresholds are derived from the rolling standard
+deviation of recent metrics so manual ``--roi-threshold`` or
+``--synergy-threshold`` values are unnecessary.
+
 To execute multiple runs sequentially and launch the metrics dashboard run:
 
 ```
