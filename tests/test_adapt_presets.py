@@ -1,4 +1,5 @@
 import pickle
+import json
 from pathlib import Path
 
 import menace_sandbox.environment_generator as eg
@@ -184,3 +185,45 @@ def test_synergy_resilience_bandwidth_down(monkeypatch):
     assert new[0]["BANDWIDTH_LIMIT"] == "5Mbps"
     assert new[0]["MAX_BANDWIDTH"] == "5Mbps"
     assert new[0]["MIN_BANDWIDTH"] == "1Mbps"
+
+def test_generate_presets_from_history_calls_adapt(monkeypatch, tmp_path):
+    history = tmp_path / "roi_history.json"
+    data = {
+        "roi_history": [0.0, 0.1],
+        "metrics_history": {"security_score": [85, 85]},
+    }
+    history.write_text(json.dumps(data))
+    called = {}
+
+    def fake_generate(n=None, *, agent=None, tracker=None):
+        return [{"CPU_LIMIT": "1", "THREAT_INTENSITY": 30}]
+
+    def fake_adapt(tracker, presets):
+        called["roi"] = tracker.roi_history
+        presets[0]["ADAPTED"] = True
+        return presets
+
+    monkeypatch.setattr(eg, "generate_presets", fake_generate)
+    monkeypatch.setattr(eg, "adapt_presets", fake_adapt)
+
+    out = eg.generate_presets_from_history(str(tmp_path), 1)
+    assert called["roi"] == [0.0, 0.1]
+    assert out[0].get("ADAPTED")
+
+
+def test_generate_presets_from_history_missing(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_generate(n=None, *, agent=None, tracker=None):
+        return [{"CPU_LIMIT": "1"}]
+
+    def fake_adapt(tracker, presets):
+        calls.append(True)
+        return presets
+
+    monkeypatch.setattr(eg, "generate_presets", fake_generate)
+    monkeypatch.setattr(eg, "adapt_presets", fake_adapt)
+
+    out = eg.generate_presets_from_history(str(tmp_path), 1)
+    assert not calls
+    assert out == [{"CPU_LIMIT": "1"}]

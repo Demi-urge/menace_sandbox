@@ -1146,5 +1146,33 @@ def import_preset_policy(data: Dict[tuple[int, ...], Dict[int, float]]) -> None:
         agent.import_policy(data)
 
 
+def generate_presets_from_history(
+    data_dir: str = "sandbox_data", count: int | None = None
+) -> List[Dict[str, Any]]:
+    """Return presets adapted using ROI/security history from ``data_dir``."""
+
+    history = os.path.join(data_dir, "roi_history.json")
+    tracker = None
+    if os.path.exists(history):
+        try:
+            from .roi_tracker import ROITracker
+
+            tracker = ROITracker()
+            tracker.load_history(history)
+        except Exception:
+            tracker = None
+    presets = generate_presets(count)
+    if tracker and tracker.metrics_history.get("security_score"):
+        try:
+            presets = adapt_presets(tracker, presets)
+        except Exception:
+            logger.exception("preset evolution failed")
+    return presets
+
+
 __all__.append("adapt_presets")
-__all__.extend(["export_preset_policy", "import_preset_policy"])
+__all__.extend([
+    "export_preset_policy",
+    "import_preset_policy",
+    "generate_presets_from_history",
+])
