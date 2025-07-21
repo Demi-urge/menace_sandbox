@@ -198,11 +198,13 @@ class AdaptivePresetAgent:
     )
 
     def __init__(self, path: str | None = None, *, strategy: str | None = None) -> None:
-        from .self_improvement_policy import SelfImprovementPolicy
+        from .self_improvement_policy import SelfImprovementPolicy, strategy_factory
 
-        self.policy = SelfImprovementPolicy(
-            path=path, strategy=strategy or "q_learning"
-        )
+        if strategy is None:
+            strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY") or "q_learning"
+        rl_strategy = strategy_factory(strategy, env_var="SANDBOX_PRESET_RL_STRATEGY")
+
+        self.policy = SelfImprovementPolicy(path=path, strategy=rl_strategy)
         self.state_file = f"{path}.state.json" if path else None
         self.prev_state: tuple[int, ...] | None = None
         self.prev_action: int | None = None
