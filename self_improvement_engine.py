@@ -9,6 +9,7 @@ import asyncio
 import os
 import json
 import tempfile
+import math
 from pathlib import Path
 
 from .self_model_bootstrap import bootstrap
@@ -241,21 +242,75 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _weighted_synergy_adjustment(self, window: int = 3) -> float:
-        """Compute weighted synergy adjustment factor."""
+        """Compute weighted synergy adjustment factor.
+
+        The weights for each synergy metric are derived from recent patch
+        history when available.  Moving averages and variance normalise the
+        metric deltas so that the adjustment adapts to historical trends.
+        """
+
+        pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
+
+        base_weights = {
+            "synergy_roi": self.synergy_weight_roi,
+            "synergy_efficiency": self.synergy_weight_efficiency,
+            "synergy_resilience": self.synergy_weight_resilience,
+            "synergy_antifragility": self.synergy_weight_antifragility,
+        }
+
+        stats: dict[str, tuple[float, float]] = {}
+        weights = dict(base_weights)
+
+        if pdb:
+            try:
+                records = pdb.filter()
+                records.sort(key=lambda r: getattr(r, "ts", ""))
+                recent = records[-20:]
+                roi_vals: list[float] = []
+                hist: dict[str, list[float]] = {
+                    k: [] for k in base_weights
+                }
+                for rec in recent:
+                    roi_vals.append(float(getattr(rec, "roi_delta", 0.0)))
+                    for name in hist:
+                        hist[name].append(float(getattr(rec, name, 0.0)))
+
+                if len(roi_vals) >= 2:
+                    for name, vals in hist.items():
+                        if not vals:
+                            continue
+                        m = sum(vals) / len(vals)
+                        var = sum((v - m) ** 2 for v in vals) / len(vals)
+                        stats[name] = (m, math.sqrt(var) if var > 0 else 1.0)
+
+                        mx = m
+                        my = sum(roi_vals) / len(roi_vals)
+                        num = sum((a - mx) * (b - my) for a, b in zip(vals, roi_vals))
+                        den1 = sum((a - mx) ** 2 for a in vals)
+                        den2 = sum((b - my) ** 2 for b in roi_vals)
+                        corr = num / math.sqrt(den1 * den2) if den1 > 0 and den2 > 0 else 0.0
+                        weight = (1.0 / (var + 1e-6)) * (1.0 + max(0.0, corr))
+                        weights[name] = weight
+
+                    total = sum(weights.values())
+                    if total > 0:
+                        for k in weights:
+                            weights[k] = weights[k] / total * len(weights)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("synergy weight history processing failed: %s", exc)
+
+        def norm_delta(name: str) -> float:
+            val = self._metric_delta(name, window)
+            mean, std = stats.get(name, (0.0, 1.0))
+            return (val - mean) / (std + 1e-6)
+
         try:
-            syn_adj = (
-                self._metric_delta("synergy_roi", window)
-                * self.synergy_weight_roi
-                + self._metric_delta("synergy_efficiency", window)
-                * self.synergy_weight_efficiency
-                + self._metric_delta("synergy_resilience", window)
-                * self.synergy_weight_resilience
-                + self._metric_delta("synergy_antifragility", window)
-                * self.synergy_weight_antifragility
+            syn_adj = sum(
+                norm_delta(name) * weights.get(name, 0.0) for name in weights
             )
         except Exception:
             syn_adj = 0.0
-        return syn_adj
+        return float(syn_adj)
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
