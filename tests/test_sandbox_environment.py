@@ -71,3 +71,16 @@ def test_lifetime_cleanup(monkeypatch, tmp_path):
     assert cleaned == 0 and replaced == 1
     assert env._CLEANUP_METRICS["lifetime"] == 1
 
+
+def test_get_dir_usage_error_logged(monkeypatch, tmp_path, caplog):
+    path = tmp_path
+    (path / "f.txt").write_text("data")
+
+    def raise_error(_p):
+        raise OSError("fail")
+
+    monkeypatch.setattr(env.os.path, "getsize", raise_error)
+    caplog.set_level("WARNING")
+    assert env._get_dir_usage(str(path)) == 0
+    assert f"size check failed for {str(path)}" in caplog.text
+

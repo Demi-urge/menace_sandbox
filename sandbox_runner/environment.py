@@ -471,8 +471,8 @@ def _get_dir_usage(path: str) -> int:
         for fname in files:
             try:
                 total += os.path.getsize(os.path.join(root_dir, fname))
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.warning("size check failed for %s: %s", path, exc)
     return total
 
 
