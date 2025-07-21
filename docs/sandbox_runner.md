@@ -571,6 +571,11 @@ checks:
   adjust the significance thresholds for the Augmented Dickey–Fuller and
   Levene tests.
 
+When ``--synergy-threshold`` is omitted the runner reads ``synergy_history.json``
+from the data directory and derives the threshold using
+``_adaptive_synergy_threshold``. Likewise ``--synergy-cycles`` defaults to the
+length of this history with a minimum of ``3``.
+
 Example usage:
 
 ```bash
