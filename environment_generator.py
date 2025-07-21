@@ -198,11 +198,22 @@ class AdaptivePresetAgent:
     )
 
     def __init__(self, path: str | None = None, *, strategy: str | None = None) -> None:
-        from .self_improvement_policy import SelfImprovementPolicy, strategy_factory
+        from .self_improvement_policy import (
+            SelfImprovementPolicy,
+            strategy_factory,
+            DoubleDQNStrategy,
+            torch as _torch,
+            nn as _nn,
+        )
 
         if strategy is None:
             strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY") or "q_learning"
-        rl_strategy = strategy_factory(strategy, env_var="SANDBOX_PRESET_RL_STRATEGY")
+
+        name = str(strategy).replace("-", "_")
+        if name == "double_dqn" and _torch is not None and _nn is not None:
+            rl_strategy = DoubleDQNStrategy()
+        else:
+            rl_strategy = strategy_factory(strategy, env_var="SANDBOX_PRESET_RL_STRATEGY")
 
         self.policy = SelfImprovementPolicy(path=path, strategy=rl_strategy)
         self.state_file = f"{path}.state.json" if path else None
