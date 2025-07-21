@@ -424,6 +424,26 @@ This prints messages such as ``Starting autonomous run 1/2`` followed by the
 standard module rankings once each run finishes. Metrics from all runs are
 written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
 
+### Advanced sandbox commands
+
+- ``--auto-thresholds`` recomputes ROI and synergy thresholds every cycle so
+  manual ``--roi-threshold`` and ``--synergy-threshold`` values are optional.
+  Fine‑tune synergy convergence with ``--synergy-threshold-window`` and
+  ``--synergy-threshold-weight``.
+- ``menace_visual_agent_2.py --recover-queue`` reloads tasks from the persisted
+  queue after a restart. Use ``--flush-queue`` to drop stalled entries.
+- Inspect sandbox restart metrics via ``sandbox_recovery_manager.py --file
+  sandbox_data/recovery.json``.
+
+Troubleshooting tips:
+
+- Run ``./setup_env.sh`` followed by ``scripts/setup_tests.sh`` when tests fail
+  to ensure all dependencies are installed.
+- Delete ``sandbox_data/recovery.json`` if ``SandboxRecoveryManager`` keeps
+  restarting unexpectedly.
+- If synergy metrics diverge wildly, verify that ``synergy_history.json`` is
+  writable and consider adjusting ``--synergy-threshold-weight``.
+
 QEMU must be installed separately for cross-platform tests. Supply your own
 Windows or macOS disk images via the ``VM_SETTINGS`` keys ``windows_image`` or
 ``macos_image`` when running presets that set ``OS_TYPE`` accordingly.
