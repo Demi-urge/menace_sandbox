@@ -595,3 +595,41 @@ def test_lock_across_processes(tmp_path):
     (start1, end1), (start2, end2) = [sorted(v) for v in grouped.values()]
     assert start2[1] >= end1[1]
 
+
+def test_metrics_warning(monkeypatch, caplog):
+    monkeypatch.setenv("VISUAL_AGENT_QUEUE_THRESHOLD", "2")
+    monkeypatch.setenv("VISUAL_AGENT_METRICS_INTERVAL", "0.01")
+    vac_mod = _reload_client(monkeypatch)
+
+    class Resp:
+        def __init__(self, data):
+            self.status_code = 200
+            self._data = data
+
+        def json(self):
+            return self._data
+
+    calls = []
+
+    def fake_get(url, timeout=5):
+        if url.endswith("/metrics"):
+            calls.append(1)
+            return Resp({"queue": 5, "last_completed": 0})
+        return Resp({"active": False})
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(get=fake_get, post=lambda *a, **k: None),
+    )
+
+    caplog.set_level("WARNING")
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    time.sleep(0.05)
+    client._stop_event.set()
+    if client._metrics_thread is not None:
+        client._metrics_thread.join(timeout=1)
+
+    assert calls
+    assert "queue size" in caplog.text
+

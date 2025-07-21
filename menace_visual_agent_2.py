@@ -101,6 +101,7 @@ HASH_FILE = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".sha256")
 BACKUP_COUNT = 3
 task_queue = deque()
 job_status = {}
+last_completed_ts = 0.0
 _exit_event = threading.Event()
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,7 +109,12 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 def _save_state_locked() -> None:
     """Persist queue and status atomically."""
-    data = {"queue": list(task_queue), "status": job_status}
+    global last_completed_ts
+    data = {
+        "queue": list(task_queue),
+        "status": job_status,
+        "last_completed": last_completed_ts,
+    }
     QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data)
     with tempfile.NamedTemporaryFile(
@@ -154,6 +160,8 @@ def _recover_queue_file_locked() -> None:
             pass
     task_queue.clear()
     job_status.clear()
+    global last_completed_ts
+    last_completed_ts = 0.0
     _save_state_locked()
 
 
@@ -183,6 +191,8 @@ def _load_state_locked() -> None:
         _recover_queue_file_locked()
         return
 
+    global last_completed_ts
+
     raw_queue = data.get("queue")
     if not isinstance(raw_queue, list):
         raw_queue = []
@@ -190,6 +200,12 @@ def _load_state_locked() -> None:
     raw_status = data.get("status")
     if not isinstance(raw_status, dict):
         raw_status = {}
+
+    last_completed = data.get("last_completed")
+    if isinstance(last_completed, (int, float)):
+        last_completed_ts = float(last_completed)
+    else:
+        last_completed_ts = 0.0
 
     valid_queue = []
     for item in raw_queue:
@@ -259,11 +275,13 @@ def _queue_worker():
             continue
         job_status[tid]["status"] = "running"
         _save_state_locked()
+        success = False
         try:
             _current_job["active"] = True
             run_menace_pipeline(task["prompt"], task["branch"])
             job_status[tid]["status"] = "completed"
             job_status[tid].pop("error", None)
+            success = True
         except Exception as exc:
             logger.exception("run_menace_pipeline failed for task %s", tid)
             job_status[tid]["status"] = "failed"
@@ -272,6 +290,9 @@ def _queue_worker():
         finally:
             _current_job["active"] = False
             _running_lock.release()
+            if success:
+                global last_completed_ts
+                last_completed_ts = time.time()
             _save_state_locked()
             try:
                 _global_lock.release()
@@ -673,6 +694,11 @@ async def cancel_task(task_id: str, x_token: str = Header(default="")):
 @app.get("/status")
 async def status():
     return {"active": _current_job["active"], "queue": len(task_queue)}
+
+
+@app.get("/metrics")
+async def metrics():
+    return {"queue": len(task_queue), "last_completed": last_completed_ts}
 
 
 @app.get("/status/{task_id}")
