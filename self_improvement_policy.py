@@ -672,6 +672,15 @@ class SelfImprovementPolicy:
             raise
 
 
+class ConfigurableSelfImprovementPolicy(SelfImprovementPolicy):
+    """Policy selecting strategy from parameter or ``SELF_IMPROVEMENT_STRATEGY`` env."""
+
+    def __init__(self, *args: object, strategy: RLStrategy | str | None = None, **kwargs: object) -> None:
+        if strategy is None:
+            strategy = os.getenv("SELF_IMPROVEMENT_STRATEGY", "q_learning")
+        super().__init__(*args, strategy=strategy, **kwargs)
+
+
 __all__ = [
     "RLStrategy",
     "QLearningStrategy",
@@ -682,4 +691,5 @@ __all__ = [
     "DQNStrategy",
     "DoubleDQNStrategy",
     "SelfImprovementPolicy",
+    "ConfigurableSelfImprovementPolicy",
 ]
