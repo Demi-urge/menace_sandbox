@@ -1,5 +1,5 @@
-import environment_generator as eg
-import roi_tracker as rt
+import menace_sandbox.environment_generator as eg
+import menace_sandbox.roi_tracker as rt
 
 
 def _tracker_with_synergy(values):
@@ -84,3 +84,43 @@ def test_adapt_presets_synergy_prediction(monkeypatch):
     assert eg._MEMORY_LIMITS.index(new[0]["MEMORY_LIMIT"]) <= eg._MEMORY_LIMITS.index("512Mi")
     assert eg._BANDWIDTHS.index(new[0]["BANDWIDTH_LIMIT"]) >= eg._BANDWIDTHS.index("5Mbps")
     assert new[0]["THREAT_INTENSITY"] > 30
+
+
+def test_synergy_roi_positive(monkeypatch, tracker_factory):
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()), raising=False)
+    tracker = tracker_factory(
+        roi=[0.2, 0.1, 0.0],
+        metrics={
+            "security_score": [70, 70, 70],
+            "synergy_roi": [0.2, 0.3, 0.25],
+        }
+    )
+    presets = [
+        {"THREAT_INTENSITY": 30, "NETWORK_LATENCY_MS": 100, "MAX_BANDWIDTH": "10Mbps"}
+    ]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] > 30
+    assert new[0]["NETWORK_LATENCY_MS"] < 100
+    assert eg._BANDWIDTHS.index(new[0]["MAX_BANDWIDTH"]) > eg._BANDWIDTHS.index("10Mbps")
+
+
+def test_synergy_roi_negative(monkeypatch, tracker_factory):
+    monkeypatch.setattr(eg.adapt_presets, "_rl_agent", None, raising=False)
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", "")
+    monkeypatch.setattr(eg, "AdaptivePresetAgent", lambda *a, **k: (_ for _ in ()).throw(RuntimeError()), raising=False)
+    tracker = tracker_factory(
+        roi=[0.2, 0.1, 0.0],
+        metrics={
+            "security_score": [70, 70, 70],
+            "synergy_roi": [-0.3, -0.2, -0.25],
+        }
+    )
+    presets = [
+        {"THREAT_INTENSITY": 70, "NETWORK_LATENCY_MS": 50, "MAX_BANDWIDTH": "50Mbps"}
+    ]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["THREAT_INTENSITY"] < 70
+    assert new[0]["NETWORK_LATENCY_MS"] > 50
+    assert eg._BANDWIDTHS.index(new[0]["MAX_BANDWIDTH"]) < eg._BANDWIDTHS.index("50Mbps")

@@ -91,3 +91,37 @@ def _ensure_sqlalchemy():
         importlib.reload(_sa)
     except Exception:
         pass
+
+
+class _TrackerMock:
+    def __init__(self, roi, metrics, preds=None):
+        self.roi_history = list(roi)
+        self.metrics_history = {k: list(v) for k, v in metrics.items()}
+        self._preds = preds or {}
+
+    def diminishing(self):
+        return 0.01
+
+    def predict_synergy_metric(self, name: str) -> float:
+        return self._preds.get(name, 0.0)
+
+    def predict_synergy(self):
+        return self._preds.get("synergy_roi", 0.0)
+
+    def forecast_synergy(self):
+        return [self._preds.get("synergy_roi", 0.0)]
+
+
+@pytest.fixture
+def tracker_factory():
+    """Return a factory creating ROITracker mocks."""
+
+    def _make(roi=None, metrics=None, preds=None):
+        roi = roi or [0.0, 0.1, 0.2]
+        metrics = metrics or {
+            "security_score": [70, 70, 70],
+            "synergy_roi": [0.0, 0.0, 0.0],
+        }
+        return _TrackerMock(roi, metrics, preds)
+
+    return _make
