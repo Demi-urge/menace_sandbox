@@ -95,3 +95,26 @@ def test_synergy_converged_with_optional_deps(monkeypatch):
     hist_inc = [{"synergy_roi": 0.001 * i} for i in range(5)]
     ok, _, _ = cli._synergy_converged(hist_inc, 5, 0.01)
     assert ok is False
+
+
+def test_slow_convergence_without_statsmodels(monkeypatch):
+    cli = _import_cli(monkeypatch, with_deps=False)
+    hist = [
+        {"synergy_roi": 0.1},
+        {"synergy_roi": 0.08},
+        {"synergy_roi": 0.06},
+        {"synergy_roi": 0.05},
+        {"synergy_roi": 0.04},
+        {"synergy_roi": 0.035},
+        {"synergy_roi": 0.033},
+        {"synergy_roi": 0.031},
+        {"synergy_roi": 0.029},
+        {"synergy_roi": 0.03},
+        {"synergy_roi": 0.029},
+        {"synergy_roi": 0.03},
+    ]
+    ok, _, conf = cli._synergy_converged(
+        hist, 6, 0.03, ma_window=1, confidence=0.8
+    )
+    assert ok is True
+    assert conf > 0.8
