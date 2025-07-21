@@ -1,6 +1,7 @@
 import os
 import sys
 import types
+import asyncio
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 if "sqlalchemy" not in sys.modules:
@@ -284,4 +285,71 @@ def test_generate_input_stubs_history_fallback(monkeypatch, tmp_path):
 
     stubs = env.generate_input_stubs(1)
     assert stubs == [{"a": 10}]
+
+
+def _stub_docker_logs(holder):
+    class DummyExec:
+        def __init__(self):
+            self.exit_code = 0
+            self.output = (b"out", b"err")
+
+    class DummyContainer:
+        id = "dummy"
+        status = "running"
+
+        def exec_run(self, *a, **k):
+            return DummyExec()
+
+        def wait(self):
+            return {"StatusCode": 0}
+
+        def stats(self, stream=False):
+            return {
+                "blkio_stats": {"io_service_bytes_recursive": []},
+                "cpu_stats": {"cpu_usage": {"total_usage": 1}},
+                "memory_stats": {"max_usage": 1},
+                "networks": {},
+            }
+
+        def remove(self):
+            holder.append("removed")
+
+        def stop(self, timeout=0):
+            pass
+
+        def reload(self):
+            pass
+
+    class DummyContainers:
+        def run(self, image, cmd, **kwargs):
+            holder.append(image)
+            return DummyContainer()
+
+    class DummyClient:
+        containers = DummyContainers()
+
+    dummy = types.ModuleType("docker")
+    dummy.from_env = lambda: DummyClient()
+    dummy.types = types
+    sys.modules["docker"] = dummy
+
+
+def test_execute_in_container_logs_created(monkeypatch):
+    calls = []
+    _stub_docker_logs(calls)
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", None)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._CONTAINER_LAST_USED.clear()
+    env._WARMUP_TASKS.clear()
+    env._CLEANUP_TASK = None
+
+    res = asyncio.run(env._execute_in_container("print('hi')", {}))
+    assert res["exit_code"] == 0.0
+    assert os.path.exists(res["stdout_log"])
+    assert os.path.exists(res["stderr_log"])
+
+    env._cleanup_pools()
+    assert not os.path.exists(res["stdout_log"])
+    assert not os.path.exists(res["stderr_log"])
 
