@@ -42,6 +42,31 @@ def test_rl_agent_actions(monkeypatch, tmp_path):
     assert new[0]["BANDWIDTH_LIMIT"] != "5Mbps"
 
 
+def test_rl_agent_cpu_memory_threat(monkeypatch, tmp_path, tracker_factory):
+    path = tmp_path / "policy.pkl"
+    monkeypatch.setenv("SANDBOX_PRESET_RL_PATH", str(path))
+    monkeypatch.setattr(
+        eg.AdaptivePresetAgent,
+        "decide",
+        lambda self, t: {"cpu": 1, "memory": -1, "threat": 1},
+    )
+    monkeypatch.setattr(eg.AdaptivePresetAgent, "save", lambda self: None)
+    if hasattr(eg.adapt_presets, "_rl_agent"):
+        delattr(eg.adapt_presets, "_rl_agent")
+
+    tracker = tracker_factory(
+        metrics={
+            "security_score": [70, 70, 70],
+            "synergy_roi": [0.1, 0.1, 0.1],
+        }
+    )
+    presets = [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "512Mi", "THREAT_INTENSITY": 50}]
+    new = eg.adapt_presets(tracker, presets)
+    assert new[0]["CPU_LIMIT"] == "1"
+    assert new[0]["MEMORY_LIMIT"] == "128Mi"
+    assert new[0]["THREAT_INTENSITY"] == 70
+
+
 class DummyAdaptive:
     def __init__(self, path=None, *, strategy=None):
         self.path = path
