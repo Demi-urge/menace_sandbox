@@ -1,6 +1,97 @@
+import types
+import sys
+import importlib.util
+from pathlib import Path
+import importlib.machinery
 import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
-import menace.pre_execution_roi_bot as prb
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_mod():
+    if "menace" not in sys.modules:
+        pkg = types.ModuleType("menace")
+        pkg.__path__ = [str(ROOT)]
+        pkg.__spec__ = importlib.machinery.ModuleSpec("menace", loader=None, is_package=True)
+        sys.modules["menace"] = pkg
+    # Provide lightweight stubs for required submodules
+    if "menace.data_bot" not in sys.modules:
+        data_mod = types.ModuleType("menace.data_bot")
+        class DataBot:
+            def __init__(self, *a, **k):
+                self.db = types.SimpleNamespace(fetch=lambda n: [])
+            def complexity_score(self, df):
+                return 0.0
+        data_mod.DataBot = DataBot
+        sys.modules["menace.data_bot"] = data_mod
+    if "menace.task_handoff_bot" not in sys.modules:
+        thb = types.ModuleType("menace.task_handoff_bot")
+        class TaskInfo: ...
+        class TaskPackage: ...
+        class TaskHandoffBot:
+            def __init__(self, *a, **k):
+                pass
+            def compile(self, infos):
+                return TaskPackage()
+            def store_plan(self, *a, **k):
+                pass
+            def send_package(self, *a, **k):
+                pass
+        class WorkflowDB:
+            def __init__(self, *a, **k):
+                pass
+            def fetch(self):
+                return []
+        thb.TaskInfo = TaskInfo
+        thb.TaskPackage = TaskPackage
+        thb.TaskHandoffBot = TaskHandoffBot
+        thb.WorkflowDB = WorkflowDB
+        sys.modules["menace.task_handoff_bot"] = thb
+    if "menace.implementation_optimiser_bot" not in sys.modules:
+        mod = types.ModuleType("menace.implementation_optimiser_bot")
+        class ImplementationOptimiserBot:
+            pass
+        mod.ImplementationOptimiserBot = ImplementationOptimiserBot
+        sys.modules["menace.implementation_optimiser_bot"] = mod
+    if "menace.chatgpt_enhancement_bot" not in sys.modules:
+        mod = types.ModuleType("menace.chatgpt_enhancement_bot")
+        class EnhancementDB:
+            def __init__(self, *a, **k):
+                pass
+            def fetch(self):
+                return []
+        mod.EnhancementDB = EnhancementDB
+        sys.modules["menace.chatgpt_enhancement_bot"] = mod
+    if "menace.database_manager" not in sys.modules:
+        mod = types.ModuleType("menace.database_manager")
+        mod.DB_PATH = "db"
+        mod.update_model = lambda *a, **k: None
+        mod.init_db = lambda conn: None
+        sys.modules["menace.database_manager"] = mod
+    if "menace.prediction_manager_bot" not in sys.modules:
+        mod = types.ModuleType("menace.prediction_manager_bot")
+        class PredictionManager:
+            def __init__(self, *a, **k):
+                self.registry = {}
+            def assign_prediction_bots(self, _):
+                return []
+        mod.PredictionManager = PredictionManager
+        sys.modules["menace.prediction_manager_bot"] = mod
+    if "menace.unified_event_bus" not in sys.modules:
+        mod = types.ModuleType("menace.unified_event_bus")
+        class UnifiedEventBus:
+            pass
+        mod.UnifiedEventBus = UnifiedEventBus
+        sys.modules["menace.unified_event_bus"] = mod
+    path = ROOT / "pre_execution_roi_bot.py"
+    spec = importlib.util.spec_from_file_location("menace.pre_execution_roi_bot", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["menace.pre_execution_roi_bot"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+prb = load_mod()
 
 
 def _tasks():
@@ -94,3 +185,28 @@ def test_predict_metric_helper(tmp_path):
     val = bot.predict_metric("lucrativity", [1.0, 2.0])
     assert val == 42.0
     assert bot_obj.args[0] == "lucrativity"
+
+
+def test_scrape_bonus_no_requests(monkeypatch):
+    monkeypatch.setattr(prb, "requests", None)
+    bot = prb.PreExecutionROIBot()
+    assert bot._scrape_bonus() == 0.0
+
+
+def test_scrape_bonus_with_sentiment(monkeypatch):
+    class DummyBlob:
+        def __init__(self, text):
+            self.sentiment = types.SimpleNamespace(polarity=0.5)
+
+    tb = types.ModuleType("textblob")
+    tb.TextBlob = DummyBlob
+    monkeypatch.setitem(sys.modules, "textblob", tb)
+
+    monkeypatch.setattr(prb, "requests", types.SimpleNamespace(get=lambda *a, **k: None))
+
+    import asyncio
+    monkeypatch.setattr(asyncio, "run", lambda coro: ["good news"] * 3)
+
+    bot = prb.PreExecutionROIBot()
+    val = bot._scrape_bonus()
+    assert val > 0
