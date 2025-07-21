@@ -552,6 +552,14 @@ predicted and actual synergy metrics. ``--synergy-threshold-window`` controls
 how many recent values feed into the EMA while ``--synergy-threshold-weight``
 adjusts how strongly newer samples influence the result.
 
+``_adaptive_threshold`` and ``_adaptive_synergy_threshold`` return ``0`` when
+insufficient history is available. Otherwise they scale the exponentially
+weighted standard deviation of the last ``window`` values by ``factor`` to
+derive a dynamic bound. ``_synergy_converged`` builds on these thresholds to
+decide when synergy metrics have stabilised. When ``statsmodels`` and ``scipy``
+are installed the Augmented Dickey–Fuller and Levene tests refine the
+confidence score; otherwise simpler mean and variance comparisons are used.
+
 ```bash
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```
