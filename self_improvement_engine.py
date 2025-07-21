@@ -22,7 +22,10 @@ from .neuroplasticity import PathwayRecord, Outcome
 from .self_coding_engine import SelfCodingEngine
 from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
-from .self_improvement_policy import SelfImprovementPolicy
+from .self_improvement_policy import (
+    SelfImprovementPolicy,
+    ConfigurableSelfImprovementPolicy,
+)
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 
@@ -50,6 +53,7 @@ class SelfImprovementEngine:
         data_bot: DataBot | None = None,
         patch_db: PatchHistoryDB | None = None,
         policy: SelfImprovementPolicy | None = None,
+        policy_strategy: str | None = None,
         optimize_self: bool = False,
         meta_logger: object | None = None,
         module_index: "ModuleIndexDB" | None = None,
@@ -81,6 +85,8 @@ class SelfImprovementEngine:
         self.evolution_history = evolution_history
         self.data_bot = data_bot
         self.patch_db = patch_db or (data_bot.patch_db if data_bot else None)
+        if policy is None:
+            policy = ConfigurableSelfImprovementPolicy(strategy=policy_strategy)
         self.policy = policy
         if self.policy and getattr(self.policy, "path", None):
             try:
