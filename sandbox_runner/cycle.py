@@ -107,7 +107,10 @@ def _sandbox_cycle_runner(
         ctx.orchestrator.run_cycle(ctx.models)
         result = ctx.improver.run_cycle()
         ctx.tester._run_once()
-        ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
+        try:
+            ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
+        except TypeError:
+            ctx.sandbox.analyse_and_fix()
         roi = result.roi.roi if result.roi else 0.0
         if ctx.predicted_roi is not None:
             logger.info(
@@ -651,7 +654,13 @@ def _sandbox_cycle_runner(
         logger.info("cycle %d complete", idx)
         logger.info("cycle roi", extra={"iteration": idx, "roi": roi})
 
+    flagged = []
     if ctx.adapt_presets:
+        try:
+            flagged = ctx.meta_log.diminishing(tracker.diminishing())
+        except Exception:
+            flagged = []
+    if ctx.adapt_presets and flagged:
         try:
             from menace.environment_generator import adapt_presets
 
