@@ -16,9 +16,10 @@ class DummyContainer:
 class FailingContainers:
     def __init__(self):
         self.count = 0
+
     def run(self, *a, **k):
         self.count += 1
-        if self.count <= 2:
+        if self.count <= 4:
             raise RuntimeError("fail")
         return DummyContainer(self.count)
 
@@ -27,7 +28,7 @@ class DummyClient:
         self.containers = FailingContainers()
 
 
-def test_creation_backoff_and_metrics(monkeypatch):
+def test_creation_backoff_and_metrics(monkeypatch, caplog):
     dummy = DummyClient()
     monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
     env._CONTAINER_POOLS.clear()
@@ -43,16 +44,19 @@ def test_creation_backoff_and_metrics(monkeypatch):
     delays = []
     async def fake_sleep(d):
         delays.append(d)
-    monkeypatch.setattr(env.asyncio, "sleep", fake_sleep)
 
-    with pytest.raises(RuntimeError):
-        asyncio.run(env._get_pooled_container("img"))
-    with pytest.raises(RuntimeError):
-        asyncio.run(env._get_pooled_container("img"))
+    monkeypatch.setattr(env.asyncio, "sleep", fake_sleep)
+    caplog.set_level("WARNING")
+
+    for _ in range(4):
+        with pytest.raises(RuntimeError):
+            asyncio.run(env._get_pooled_container("img"))
+
     c, _ = asyncio.run(env._get_pooled_container("img"))
     assert isinstance(c, DummyContainer)
-    assert delays == [1.0, 2.0]
-    assert env._CREATE_FAILURES["img"] == 2
+    assert delays == [8.0, 16.0]
+    assert "backoff 8.00" in caplog.text
+    assert env._CREATE_FAILURES["img"] == 4
     assert env._CONSECUTIVE_CREATE_FAILURES["img"] == 0
     metrics = env.collect_metrics(0.0, 0.0, None)
-    assert metrics["container_failures_img"] == 2.0
+    assert metrics["container_failures_img"] == 4.0
