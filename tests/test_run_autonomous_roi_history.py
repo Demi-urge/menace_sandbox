@@ -35,6 +35,7 @@ def setup_stubs(monkeypatch):
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             self.roi_history = data.get("roi_history", [])
+            self.metrics_history = data.get("metrics_history", {})
 
         def diminishing(self):
             return 0.0
@@ -52,7 +53,7 @@ def setup_stubs(monkeypatch):
         data_dir.mkdir(parents=True, exist_ok=True)
         roi_file = data_dir / "roi_history.json"
         with open(roi_file, "w", encoding="utf-8") as fh:
-            json.dump({"roi_history": [0.1], "module_deltas": {}, "metrics_history": {}}, fh)
+            json.dump({"roi_history": [0.1], "module_deltas": {}, "metrics_history": {"synergy_roi": [0.05]}}, fh)
 
     cli_stub.full_autonomous_run = fake_run
     cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
@@ -80,3 +81,34 @@ def test_run_autonomous_writes_history(monkeypatch, tmp_path):
     assert history_file.exists()
     data = json.loads(history_file.read_text())
     assert data.get("roi_history") == [0.1]
+
+
+def test_synergy_history_reused(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    synergy_file = tmp_path / "synergy_history.json"
+    synergy_file.write_text(json.dumps([{"synergy_roi": 0.1}]))
+    captured = {}
+
+    def capture(history, *a, **k):
+        captured["len"] = len(history)
+        return True, 0.0, {}
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "_synergy_converged", capture)
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+    ])
+
+    new_hist = json.loads(synergy_file.read_text())
+    assert len(new_hist) == 2
+    assert captured.get("len") == 2

@@ -423,7 +423,8 @@ def main(argv: List[str] | None = None) -> None:
         finally:
             sandbox_runner._sandbox_main = recovery.sandbox_main
 
-        hist_file = Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
+        data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+        hist_file = data_dir / "roi_history.json"
         tracker = ROITracker()
         try:
             tracker.load_history(str(hist_file))
@@ -431,6 +432,24 @@ def main(argv: List[str] | None = None) -> None:
         except Exception:
             logger.exception("failed to load tracker history: %s", hist_file)
             continue
+
+        synergy_file = data_dir / "synergy_history.json"
+        if synergy_file.exists():
+            try:
+                loaded = json.loads(synergy_file.read_text())
+                if isinstance(loaded, list):
+                    synergy_history = [
+                        {str(k): float(v) for k, v in entry.items()}
+                        for entry in loaded
+                        if isinstance(entry, dict)
+                    ]
+                else:
+                    synergy_history = []
+            except Exception:
+                logger.exception("failed to load synergy history: %s", synergy_file)
+                synergy_history = []
+        else:
+            synergy_history = []
 
         for mod, vals in tracker.module_deltas.items():
             module_history.setdefault(mod, []).extend(vals)
@@ -442,6 +461,13 @@ def main(argv: List[str] | None = None) -> None:
         }
         if syn_vals:
             synergy_history.append(syn_vals)
+            try:
+                data_dir.mkdir(parents=True, exist_ok=True)
+                (data_dir / "synergy_history.json").write_text(
+                    json.dumps(synergy_history)
+                )
+            except Exception:
+                logger.exception("failed to save synergy history")
             ma_entry: dict[str, float] = {}
             for k in syn_vals:
                 vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
