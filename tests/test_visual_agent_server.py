@@ -427,3 +427,27 @@ def test_restart_recovers_pending(monkeypatch, tmp_path):
 
     va2 = _setup_va(monkeypatch, tmp_path)
     assert any(t["prompt"] == "b" for t in va2.task_queue)
+
+
+def test_state_roundtrip(monkeypatch, tmp_path):
+    va = _setup_va(monkeypatch, tmp_path)
+    va.job_status["x"] = {"status": "queued", "prompt": "p", "branch": None}
+    va.task_queue.append({"id": "x", "prompt": "p", "branch": None})
+    va._persist_state()
+
+    va2 = _setup_va(monkeypatch, tmp_path)
+    assert list(va2.task_queue)[0]["id"] == "x"
+    assert va2.job_status["x"]["status"] == "queued"
+
+
+def test_recover_malformed_file(monkeypatch, tmp_path):
+    path = tmp_path / "visual_agent_queue.json"
+    path.write_text("{bad json")
+    va = _setup_va(monkeypatch, tmp_path)
+    bak = tmp_path / "visual_agent_queue.json.bak"
+    assert bak.exists()
+    assert path.exists()
+    assert not va.task_queue
+    assert not va.job_status
+    data = json.loads(path.read_text())
+    assert data == {"queue": [], "status": {}}
