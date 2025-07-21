@@ -619,6 +619,67 @@ class SQLiteMaintenanceDB(MaintenanceStorageAdapter):
         return row[0] if row else None
 
 
+class PostgresMaintenanceDB(MaintenanceStorageAdapter):
+    """PostgreSQL-backed persistent store for maintenance logs."""
+
+    def __init__(self, dsn: str | None = None) -> None:
+        import psycopg2  # type: ignore
+
+        self.dsn = dsn or os.environ.get("MAINTENANCE_DB_URL")
+        if not self.dsn:
+            raise ValueError("MAINTENANCE_DB_URL is not set")
+        self.conn = psycopg2.connect(self.dsn)
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS maintenance(
+                    task TEXT,
+                    status TEXT,
+                    details TEXT,
+                    ts TEXT
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS state(
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+                """
+            )
+
+    def log(self, rec: MaintenanceRecord) -> None:
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO maintenance(task, status, details, ts) VALUES (%s,%s,%s,%s)",
+                (rec.task, rec.status, rec.details, rec.ts),
+            )
+
+    def fetch(self) -> List[Tuple[str, str, str, str]]:
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT task, status, details, ts FROM maintenance")
+            rows = cur.fetchall()
+        return [(r[0], r[1], r[2], r[3]) for r in rows]
+
+    def set_state(self, key: str, value: str) -> None:
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO state(key, value)
+                VALUES(%s, %s)
+                ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value
+                """,
+                (key, value),
+            )
+
+    def get_state(self, key: str) -> Optional[str]:
+        with self.conn, self.conn.cursor() as cur:
+            cur.execute("SELECT value FROM state WHERE key=%s", (key,))
+            row = cur.fetchone()
+        return row[0] if row else None
+
+
 class MaintenanceDB(MaintenanceStorageAdapter):
     """Persistent store for maintenance logs with environment-based backend."""
 
@@ -1024,7 +1085,20 @@ class CommunicationMaintenanceBot(AdminBotBase):
         )
         self.config = config or MaintenanceBotConfig()
         _validate_config(self.config)
-        self.db = db or SQLiteMaintenanceDB()
+        if db is not None:
+            self.db = db
+        else:
+            url = os.getenv("MAINTENANCE_DB_URL")
+            if url:
+                try:
+                    self.db = PostgresMaintenanceDB(url)
+                except Exception as exc:
+                    self.logger.warning(
+                        "PostgreSQL maintenance DB unavailable: %s", exc
+                    )
+                    self.db = SQLiteMaintenanceDB()
+            else:
+                self.db = SQLiteMaintenanceDB()
         self.error_bot = error_bot or ErrorBot(ErrorDB(self.config.error_db_path))
         repo_path = Path(repo_path or os.getenv("MAINTENANCE_REPO_PATH", "."))
         broker = broker or os.getenv("CELERY_BROKER_URL")
@@ -1913,6 +1987,7 @@ __all__ = [
     "RateLimitError",
     "MaintenanceStorageAdapter",
     "SQLiteMaintenanceDB",
+    "PostgresMaintenanceDB",
     "MaintenanceDB",
     "CommunicationLogHandler",
     "entry_expired",

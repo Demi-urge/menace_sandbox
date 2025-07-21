@@ -71,6 +71,8 @@ DEFAULT_ACCOUNT_PASSWORD = os.getenv("DEFAULT_ACCOUNT_PASSWORD", "Password123!")
 CHROMIUM_PATH = os.getenv('CHROMIUM_PATH', '/usr/bin/chromium-browser')
 BOT_PERFORMANCE_DB = os.getenv('BOT_PERFORMANCE_DB', 'bot_performance_history.db')
 MAINTENANCE_DB = os.getenv('MAINTENANCE_DB', 'maintenance.db')
+# Optional PostgreSQL connection string for Maintenance logs
+MAINTENANCE_DB_URL = os.getenv('MAINTENANCE_DB_URL')
 
 # Cloud configuration ---------------------------------------------------------
 # DATABASE_URL defines the persistent database connection string.  When unset
