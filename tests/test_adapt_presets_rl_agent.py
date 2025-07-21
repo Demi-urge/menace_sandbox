@@ -239,3 +239,26 @@ def test_adaptive_strategy_env_var(monkeypatch, tmp_path):
     expected = type(sp.strategy_factory("double_dqn"))
     assert any(isinstance(s, expected) for s in captured["strategies"])
 
+
+def test_adaptive_agent_env_default(monkeypatch):
+    captured = {"strategies": []}
+
+    class RecordPolicy:
+        def __init__(self, path=None, strategy=None, **k):
+            captured["strategies"].append(strategy)
+
+        def update(self, *a, **k):
+            return 0.0
+
+        def select_action(self, state):
+            return 0
+
+        def save(self):
+            pass
+
+    monkeypatch.setattr(sp, "SelfImprovementPolicy", RecordPolicy)
+    monkeypatch.setenv("SANDBOX_ADAPTIVE_AGENT_STRATEGY", "double_dqn")
+    agent = eg.AdaptivePresetAgent()
+    expected = type(sp.strategy_factory("double_dqn"))
+    assert any(isinstance(s, expected) for s in captured["strategies"])
+
