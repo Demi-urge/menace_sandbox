@@ -13,9 +13,17 @@ import time
 import traceback
 
 try:
-    from .metrics_exporter import CollectorRegistry
+    from .metrics_exporter import (
+        CollectorRegistry,
+        sandbox_restart_total,
+        sandbox_last_failure_ts,
+    )
 except Exception:  # pragma: no cover - module may not be a package
-    from metrics_exporter import CollectorRegistry  # type: ignore
+    from metrics_exporter import (
+        CollectorRegistry,  # type: ignore
+        sandbox_restart_total,  # type: ignore
+        sandbox_last_failure_ts,  # type: ignore
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +48,8 @@ class SandboxRecoveryManager:
         self.restart_count = 0
         self.last_failure_time: float | None = None
 
-        self._restart_gauge = None
-        self._failure_gauge = None
+        self._restart_gauge = sandbox_restart_total
+        self._failure_gauge = sandbox_last_failure_ts
         self._using_stub = False
         try:
             try:
@@ -50,20 +58,9 @@ class SandboxRecoveryManager:
                 import metrics_exporter as _me  # type: ignore
 
             self._using_stub = getattr(_me, "_USING_STUB", False)
-            Gauge = _me.Gauge
-
-            self._restart_gauge = Gauge(
-                "sandbox_restart_count",
-                "Number of sandbox restarts",
-                registry=registry,
-            )
-            self._failure_gauge = Gauge(
-                "sandbox_last_failure_time",
-                "Timestamp of last sandbox failure",
-                registry=registry,
-            )
         except Exception:  # pragma: no cover - optional dependency missing
-            pass
+            self._restart_gauge = None
+            self._failure_gauge = None
 
     # ------------------------------------------------------------------
     @property
