@@ -23,7 +23,22 @@ jinja = types.ModuleType("jinja2")
 jinja.Template = lambda *a, **k: None
 sys.modules.setdefault("jinja2", jinja)
 
-from menace.self_validation_dashboard import SelfValidationDashboard
+import importlib.util
+
+ROOT = Path(__file__).resolve().parents[1]
+pkg = types.ModuleType("menace")
+pkg.__path__ = [str(ROOT)]
+sys.modules["menace"] = pkg
+
+spec = importlib.util.spec_from_file_location(
+    "menace.self_validation_dashboard",
+    ROOT / "self_validation_dashboard.py",
+    submodule_search_locations=[str(ROOT)],
+)
+svd_mod = importlib.util.module_from_spec(spec)
+sys.modules["menace.self_validation_dashboard"] = svd_mod
+spec.loader.exec_module(svd_mod)
+SelfValidationDashboard = svd_mod.SelfValidationDashboard
 import json
 import threading
 
@@ -63,3 +78,30 @@ def test_scheduler_aggregates(monkeypatch, tmp_path):
     assert len(hist) == 2
     data = json.loads((tmp_path / "dash.json").read_text())
     assert data.get("aggregates", {}).get("roi_trend_avg") == 0.1
+
+
+def test_cli_generates_file(monkeypatch, tmp_path):
+    import menace.self_validation_dashboard as svd
+
+    class DummyBot:
+        def long_term_roi_trend(self, limit: int = 200) -> float:
+            return 0.2
+
+    class DummyForecaster:
+        def __init__(self, db):
+            pass
+
+        def forecast(self) -> float:
+            return 0.1
+
+    class DummyUpdater:
+        def _outdated(self):
+            return []
+
+    monkeypatch.setattr(svd, "DataBot", lambda: DummyBot())
+    monkeypatch.setattr(svd, "ErrorForecaster", lambda db: DummyForecaster(db))
+    monkeypatch.setattr(svd, "DependencyUpdater", lambda: DummyUpdater())
+
+    out = tmp_path / "dash.json"
+    svd.cli(["--interval", "0", "--output", str(out)])
+    assert out.exists()
