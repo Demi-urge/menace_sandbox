@@ -56,6 +56,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._bad_hashes: set[str] = set()
         self.score_threshold = score_threshold
         self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
+        env_runs = os.getenv("FLAKINESS_RUNS")
+        if env_runs is not None:
+            try:
+                flakiness_runs = int(env_runs)
+            except Exception:
+                self.logger.exception("invalid FLAKINESS_RUNS value")
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         self._score_db: PatchHistoryDB | None = None
@@ -72,7 +78,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_test_log: Path | None = None
 
     # ------------------------------------------------------------------
-    async def _coverage_percent(self, paths: list[Path], env: dict[str, str] | None = None) -> float:
+    async def _coverage_percent(
+        self, paths: list[Path], env: dict[str, str] | None = None
+    ) -> float:
         """Run tests for *paths* under coverage using parallel workers asynchronously."""
 
         async def run_one(idx: int, set_paths: list[Path]) -> tuple[Path, int]:
@@ -147,7 +155,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
-    def _run_tests(self, path: Path, env: dict[str, str] | None = None) -> tuple[float, float]:
+    def _run_tests(
+        self, path: Path, env: dict[str, str] | None = None
+    ) -> tuple[float, float]:
         """Return coverage percentage and runtime for tests at *path* with telemetry tests."""
         test_paths = [path]
         tmp: Path | None = None
@@ -166,7 +176,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("failed to create telemetry tests")
 
-        cov_file = tempfile.NamedTemporaryFile(delete=False, dir=sandbox_dir, suffix=".cov")
+        cov_file = tempfile.NamedTemporaryFile(
+            delete=False, dir=sandbox_dir, suffix=".cov"
+        )
         cov_file.close()
         p_env = dict(env or os.environ)
         p_env["COVERAGE_FILE"] = cov_file.name
@@ -196,7 +208,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         runtime = time.perf_counter() - start
 
         if rc != 0:
-            with tempfile.NamedTemporaryFile(delete=False, dir=sandbox_dir, suffix=".log", mode="w", encoding="utf-8") as lf:
+            with tempfile.NamedTemporaryFile(
+                delete=False, dir=sandbox_dir, suffix=".log", mode="w", encoding="utf-8"
+            ) as lf:
                 lf.write(output)
                 self._last_test_log = Path(lf.name)
 
@@ -208,7 +222,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
             xml_tmp.close()
             try:
-                cov.xml_report(outfile=xml_tmp.name, include=[str(p) for p in test_paths])
+                cov.xml_report(
+                    outfile=xml_tmp.name, include=[str(p) for p in test_paths]
+                )
                 percent = cov.report(include=[str(p) for p in test_paths], file=buf)
             except Exception:
                 self.logger.exception("coverage generation failed")
@@ -239,18 +255,39 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         """Return the standard error of coverage across multiple test runs."""
         n = max(1, int(runs if runs is not None else self.flakiness_runs))
 
-        async def _run_all() -> list[float]:
-            tasks = [
-                asyncio.to_thread(self._run_tests, path, env) for _ in range(n)
-            ]
-            results = await asyncio.gather(*tasks)
-            return [cov for cov, _ in results]
+        coverages: list[float] = []
 
-        coverages = asyncio.run(_run_all())
+        for i in range(n):
+            try:
+                cov, _ = self._run_tests(path, env)
+                self.logger.info(
+                    "flakiness run",
+                    extra={
+                        "run": i,
+                        "coverage": cov,
+                        "log": (
+                            str(self._last_test_log) if self._last_test_log else None
+                        ),
+                    },
+                )
+            except Exception:
+                self.logger.exception("flakiness run failed", extra={"run": i})
+                cov = 0.0
+            coverages.append(float(cov))
+
         if len(coverages) <= 1:
-            return 0.0
-        stdev = pstdev(coverages)
-        return stdev / math.sqrt(len(coverages))
+            flakiness = 0.0
+        else:
+            stdev = pstdev(coverages)
+            flakiness = stdev / math.sqrt(len(coverages))
+
+        if self._score_db:
+            try:
+                self._score_db.record_flakiness(str(path), flakiness)
+            except Exception:
+                self.logger.exception("flakiness history update failed")
+
+        return flakiness
 
     # ------------------------------------------------------------------
     def _code_complexity(self, path: Path) -> float:
@@ -357,7 +394,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             float(rec.get("coverage_delta") or 0.0),
                             float(rec.get("error_delta") or 0.0),
                             float(rec.get("roi_delta") or 0.0),
-                            float(rec.get("complexity") or rec.get("complexity_delta") or 0.0),
+                            float(
+                                rec.get("complexity")
+                                or rec.get("complexity_delta")
+                                or 0.0
+                            ),
                             float(rec.get("synergy_roi") or 0.0),
                             float(rec.get("synergy_efficiency") or 0.0),
                         )
@@ -405,9 +446,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             means[key] = m
             vars_[key] = v if v > 0 else 1e-6
 
-        self._metric_stats = {
-            k: (means[k], math.sqrt(vars_[k])) for k in data.keys()
-        }
+        self._metric_stats = {k: (means[k], math.sqrt(vars_[k])) for k in data.keys()}
 
         def _corr(xs: list[float], ys: list[float]) -> float:
             if len(xs) < 2 or len(ys) < 2:
@@ -430,14 +469,23 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "synergy_efficiency": _corr(data["synergy_efficiency"], roi_vals),
         }
 
-        weights = [1.0 / (vars_["coverage"] + 1e-6),
-                   1.0 / (vars_["error"] + 1e-6),
-                   1.0 / (vars_["roi"] + 1e-6),
-                   1.0 / (vars_["complexity"] + 1e-6),
-                   1.0 / (vars_["synergy_roi"] + 1e-6),
-                   1.0 / (vars_["synergy_efficiency"] + 1e-6)]
+        weights = [
+            1.0 / (vars_["coverage"] + 1e-6),
+            1.0 / (vars_["error"] + 1e-6),
+            1.0 / (vars_["roi"] + 1e-6),
+            1.0 / (vars_["complexity"] + 1e-6),
+            1.0 / (vars_["synergy_roi"] + 1e-6),
+            1.0 / (vars_["synergy_efficiency"] + 1e-6),
+        ]
 
-        keys = ["coverage", "error", "roi", "complexity", "synergy_roi", "synergy_efficiency"]
+        keys = [
+            "coverage",
+            "error",
+            "roi",
+            "complexity",
+            "synergy_roi",
+            "synergy_efficiency",
+        ]
         for i, key in enumerate(keys):
             if key in correlations:
                 weights[i] *= 1.0 + max(0.0, correlations[key])
@@ -452,7 +500,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         if weights_path:
             try:
                 with open(weights_path, "w", encoding="utf-8") as fh:
-                    json.dump({"weights": self.score_weights, "stats": self._metric_stats}, fh)
+                    json.dump(
+                        {"weights": self.score_weights, "stats": self._metric_stats}, fh
+                    )
             except Exception:
                 self.logger.exception("score weight persistence failed")
 
@@ -469,6 +519,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         synergy_efficiency: float | None = None,
         synergy_resilience: float | None = None,
         synergy_antifragility: float | None = None,
+        filename: str | None = None,
         *,
         tracker: ROITracker | None = None,
     ) -> float:
@@ -505,6 +556,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         syn_af = synergy_antifragility / (
             mc.get("synergy_antifragility", (0.0, 1.0))[1] + 1e-6
         )
+        hist_flak = 0.0
+        if filename and self._score_db:
+            try:
+                hist_flak = self._score_db.average_flakiness(filename)
+            except Exception:
+                self.logger.exception("flakiness history fetch failed")
+                hist_flak = 0.0
         x = (
             self.score_weights[0] * cov
             + self.score_weights[1] * err
@@ -514,6 +572,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             + self.score_weights[5] * syn_e
             - flakiness
             - runtime_delta
+            - hist_flak
         )
         try:
             return 1.0 / (1.0 + math.exp(-x))
@@ -612,7 +671,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         if code_hash:
                             if code_hash in self._bad_hashes:
                                 self.logger.info(
-                                    "skipping known bad patch", extra={"hash": code_hash}
+                                    "skipping known bad patch",
+                                    extra={"hash": code_hash},
                                 )
                                 return None
                             if patch_db:
@@ -628,7 +688,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                     self._bad_hashes.add(code_hash)
                                     return None
 
-                        subprocess.run(["pytest", "-q"], cwd=str(repo), check=True, env=env)
+                        subprocess.run(
+                            ["pytest", "-q"], cwd=str(repo), check=True, env=env
+                        )
                     except Exception:
                         self.logger.exception("sandbox tests failed")
                         return None
@@ -647,14 +709,24 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     runtime_delta = 0.0
                     reason = None
                     try:
-                        before_cov, before_runtime = await asyncio.to_thread(self._run_tests, root_test)
-                        before_err = getattr(self.engine, "_current_errors", lambda: 0)()
+                        before_cov, before_runtime = await asyncio.to_thread(
+                            self._run_tests, root_test
+                        )
+                        before_err = getattr(
+                            self.engine, "_current_errors", lambda: 0
+                        )()
                         pid, reverted, roi_delta = await asyncio.to_thread(
                             self.engine.apply_patch, root_test, "auto_debug"
                         )
-                        after_cov, after_runtime = await asyncio.to_thread(self._run_tests, root_test)
+                        after_cov, after_runtime = await asyncio.to_thread(
+                            self._run_tests, root_test
+                        )
                         after_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                        coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
+                        coverage_delta = (
+                            (after_cov - before_cov)
+                            if after_cov is not None and before_cov is not None
+                            else 0.0
+                        )
                         error_delta = before_err - after_err
                         flakiness = await asyncio.to_thread(
                             self._test_flakiness, root_test, runs=self.flakiness_runs
@@ -685,6 +757,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 complexity,
                                 synergy_roi=syn_roi,
                                 synergy_efficiency=syn_eff,
+                                filename=str(root_test),
                                 tracker=tracker,
                             )
                         else:
@@ -708,9 +781,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             flakiness=flakiness,
                             runtime_impact=runtime_delta,
                             complexity=complexity,
-                            synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
-                            synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
-                            log_path=str(self._last_test_log) if self._last_test_log else None,
+                            synergy_roi=syn_roi if "syn_roi" in locals() else 0.0,
+                            synergy_efficiency=(
+                                syn_eff if "syn_eff" in locals() else 0.0
+                            ),
+                            log_path=(
+                                str(self._last_test_log)
+                                if self._last_test_log
+                                else None
+                            ),
                         )
                         if pid is not None and result != "reverted":
                             try:
@@ -751,7 +830,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             try:
                 before_cov, before_runtime = self._run_tests(root_test)
                 before_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                pid, reverted, roi_delta = self.engine.apply_patch(root_test, "auto_debug")
+                pid, reverted, roi_delta = self.engine.apply_patch(
+                    root_test, "auto_debug"
+                )
                 if self.policy:
                     try:
                         state = self.state_getter() if self.state_getter else ()
@@ -760,7 +841,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         self.logger.exception("policy patch update failed", exc)
                 after_cov, after_runtime = self._run_tests(root_test)
                 after_err = getattr(self.engine, "_current_errors", lambda: 0)()
-                coverage_delta = (after_cov - before_cov) if after_cov is not None and before_cov is not None else 0.0
+                coverage_delta = (
+                    (after_cov - before_cov)
+                    if after_cov is not None and before_cov is not None
+                    else 0.0
+                )
                 error_delta = before_err - after_err
                 flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                 complexity = self._code_complexity(root_test)
@@ -775,6 +860,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     complexity,
                     synergy_roi=syn_roi,
                     synergy_efficiency=syn_eff,
+                    filename=str(root_test),
                     tracker=tracker,
                 )
                 result = "reverted" if reverted else "success"
@@ -813,12 +899,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     coverage_delta=coverage_delta,
                     error_delta=error_delta,
                     roi_delta=roi_delta,
-                    score=patch_score if 'patch_score' in locals() else None,
-                    flakiness=flakiness if 'flakiness' in locals() else None,
-                    runtime_impact=runtime_delta if 'runtime_delta' in locals() else None,
-                    complexity=complexity if 'complexity' in locals() else None,
-                    synergy_roi=syn_roi if 'syn_roi' in locals() else 0.0,
-                    synergy_efficiency=syn_eff if 'syn_eff' in locals() else 0.0,
+                    score=patch_score if "patch_score" in locals() else None,
+                    flakiness=flakiness if "flakiness" in locals() else None,
+                    runtime_impact=(
+                        runtime_delta if "runtime_delta" in locals() else None
+                    ),
+                    complexity=complexity if "complexity" in locals() else None,
+                    synergy_roi=syn_roi if "syn_roi" in locals() else 0.0,
+                    synergy_efficiency=syn_eff if "syn_eff" in locals() else 0.0,
                     log_path=str(self._last_test_log) if self._last_test_log else None,
                     reason=reason,
                 )
