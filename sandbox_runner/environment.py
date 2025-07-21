@@ -317,8 +317,10 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity``."""
     assert _DOCKER_CLIENT is not None
     fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
-    if fails:
-        await asyncio.sleep(_CREATE_BACKOFF_BASE * (2 ** (fails - 1)))
+    if fails >= 3:
+        delay = min(60.0, _CREATE_BACKOFF_BASE * (2 ** fails))
+        logger.warning("container creation backoff %.2fs after %s failures", delay, fails)
+        await asyncio.sleep(delay)
     td = tempfile.mkdtemp(prefix="pool_")
     try:
         container = await asyncio.to_thread(
