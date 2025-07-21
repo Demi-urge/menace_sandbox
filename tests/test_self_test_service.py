@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import types
+import time
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -398,3 +399,26 @@ def test_sqlite_history_persistence(tmp_path, monkeypatch):
     asyncio.run(svc._run_once())
     hist = svc.recent_history(1)
     assert hist and hist[0]["failed"] == 1
+
+
+def test_run_files_concurrently(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                await asyncio.sleep(0.05)
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService(pytest_args="a b", result_callback=lambda r: None)
+    start = time.perf_counter()
+    asyncio.run(svc._run_once())
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.1

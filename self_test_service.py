@@ -118,6 +118,7 @@ class SelfTestService:
         proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
 
         use_pipe = self.result_callback is not None or self.use_container
+
         for p in paths:
             tmp_name: str | None = None
             cmd = [
@@ -177,43 +178,44 @@ class SelfTestService:
                 )
                 proc_info.append((proc, tmp_name))
 
-        for proc, tmp_name in proc_info:
+        async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float]:
             await proc.wait()
+            report: dict[str, Any] = {}
             try:
                 if use_pipe:
                     assert proc.stdout is not None
                     out = await proc.stdout.read()
                     report = json.loads(out.decode() or "{}")
                 else:
-                    assert tmp_name is not None
-                    with open(tmp_name, "r", encoding="utf-8") as fh:
+                    assert tmp is not None
+                    with open(tmp, "r", encoding="utf-8") as fh:
                         report = json.load(fh)
-                summary = report.get("summary", {})
-                pcount = int(summary.get("passed", 0))
-                fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
-                passed += pcount
-                failed += fcount
-                cov_info = report.get("coverage", {}) or report.get("cov", {})
-                coverage_total += float(
-                    cov_info.get("percent")
-                    or cov_info.get("coverage")
-                    or cov_info.get("percent_covered")
-                    or 0.0
-                )
-                runtime_total += float(
-                    report.get("duration")
-                    or summary.get("duration")
-                    or summary.get("runtime")
-                    or 0.0
-                )
             except Exception:
                 self.logger.exception("failed to parse test report")
             finally:
-                if tmp_name:
+                if tmp:
                     try:
-                        os.unlink(tmp_name)
+                        os.unlink(tmp)
                     except Exception:
                         pass
+
+            summary = report.get("summary", {})
+            pcount = int(summary.get("passed", 0))
+            fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
+            cov_info = report.get("coverage", {}) or report.get("cov", {})
+            cov = float(
+                cov_info.get("percent")
+                or cov_info.get("coverage")
+                or cov_info.get("percent_covered")
+                or 0.0
+            )
+            runtime = float(
+                report.get("duration")
+                or summary.get("duration")
+                or summary.get("runtime")
+                or 0.0
+            )
+
             if proc.returncode != 0:
                 exc = RuntimeError(f"self tests failed with code {proc.returncode}")
                 self.logger.error("self tests failed: %s", exc)
@@ -221,6 +223,17 @@ class SelfTestService:
                     self.error_logger.log(exc, "self_tests", "sandbox")
                 except Exception:
                     self.logger.exception("error logging failed")
+
+            return pcount, fcount, cov, runtime
+
+        tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
+
+        for coro in asyncio.as_completed(tasks):
+            pcount, fcount, cov, runtime = await coro
+            passed += pcount
+            failed += fcount
+            coverage_total += cov
+            runtime_total += runtime
 
             if self.result_callback:
                 partial = {
