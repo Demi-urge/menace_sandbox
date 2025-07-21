@@ -250,3 +250,60 @@ def test_full_autonomous_updates_histories(monkeypatch, tmp_path):
     data = json.loads(roi_file.read_text())
     assert data.get("roi_history") == [0.1]
     assert data.get("synergy_history") == [{"synergy_roi": 0.2}]
+
+
+def test_visual_agent_busy_via_client(tmp_path, monkeypatch):
+    """Starting a run and immediately sending another should return 409."""
+    proc, port = _start_server(tmp_path)
+    url = f"http://127.0.0.1:{port}"
+    try:
+        import importlib
+        vac_mod = importlib.reload(importlib.import_module("menace.visual_agent_client"))
+
+        class DummyLock:
+            def acquire(self, timeout=0, poll_interval=0.05):
+                class G:
+                    def __enter__(self_inner):
+                        return self_inner
+                    def __exit__(self_inner, exc_type, exc, tb):
+                        pass
+                return G()
+
+            def release(self):
+                pass
+
+            @property
+            def is_locked(self):
+                return False
+
+        monkeypatch.setattr(vac_mod, "_global_lock", DummyLock())
+
+        client1 = vac_mod.VisualAgentClient(urls=[url], poll_interval=0.05, token="tombalolosvisualagent123")
+        client2 = vac_mod.VisualAgentClient(urls=[url], poll_interval=0.05, token="tombalolosvisualagent123")
+
+        def patched_poll(base: str):
+            observed = False
+            while True:
+                resp = requests.get(f"{base}/status", timeout=1)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("active"):
+                        observed = True
+                    elif observed:
+                        return True, "done"
+                time.sleep(0.05)
+
+        monkeypatch.setattr(client1, "_poll", patched_poll)
+        monkeypatch.setattr(client2, "_poll", patched_poll)
+
+        fut = client1.ask_async([{"content": "a"}])
+        time.sleep(0.01)
+        with pytest.raises(RuntimeError) as exc:
+            client2.ask([{"content": "b"}])
+        assert "409" in str(exc.value)
+        assert not fut.done()
+        fut.result(timeout=5)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
