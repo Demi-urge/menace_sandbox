@@ -1,4 +1,7 @@
 import asyncio
+import sys
+import types
+from pathlib import Path
 import sandbox_runner.environment as env
 
 class DummyContainer:
@@ -83,4 +86,54 @@ def test_get_dir_usage_error_logged(monkeypatch, tmp_path, caplog):
     caplog.set_level("WARNING")
     assert env._get_dir_usage(str(path)) == 0
     assert f"size check failed for {str(path)}" in caplog.text
+
+
+def test_qemu_invocation_and_cleanup(monkeypatch, tmp_path):
+    tmp_clone = tmp_path / "clone"
+    calls = []
+
+    monkeypatch.setenv("SANDBOX_DOCKER", "1")
+    tmp_clone.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
+
+    def fake_copytree(src, dst, dirs_exist_ok=True):
+        Path(dst).mkdir(parents=True, exist_ok=True)
+        (Path(dst) / "data").mkdir(exist_ok=True)
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+
+    monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
+    monkeypatch.setattr(env.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(env.shutil, "which", lambda n: "/usr/bin/qemu-system-x86_64")
+    monkeypatch.setattr(env, "_docker_available", lambda: False)
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[0] == "qemu-img":
+            Path(cmd[-1]).touch()
+        if "qemu-system" in cmd[0]:
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    class DummyTracker:
+        def __init__(self):
+            self.loaded = None
+
+        def load_history(self, path):
+            self.loaded = path
+
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
+
+    tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2", "memory": "1G", "timeout": 5}})
+
+    assert any("qemu-system" in c[0][0] for c in calls)
+    overlay = tmp_clone / "overlay.qcow2"
+    assert not overlay.exists()
+    qemu_call = [c for c in calls if "qemu-system" in c[0][0]][0]
+    cmd, kwargs = qemu_call
+    assert any("mount_tag=repo" in p for p in cmd)
+    assert str(overlay) in " ".join(cmd)
+    assert kwargs.get("timeout") == 5
+    assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
 

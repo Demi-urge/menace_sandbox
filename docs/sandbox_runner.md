@@ -42,6 +42,16 @@ in `VM_SETTINGS` pointing to your QEMU disk file. The VM runs `sandbox_runner.py
 just like the host or container. After shutdown the generated `roi_history.json`
 is read from the shared directory and merged into the main ROI tracker.
 
+Example configuration:
+
+```python
+VM_SETTINGS = {
+    "windows_image": "/var/lib/vms/windows.qcow2",
+    "memory": "2G",
+    "timeout": 600,
+}
+```
+
 ## Scenario Generation
 
 When no presets are supplied `run_repo_section_simulations` and `_run_sandbox`

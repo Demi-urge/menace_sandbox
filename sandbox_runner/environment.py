@@ -286,6 +286,18 @@ _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 
 
+def _docker_available() -> bool:
+    """Return ``True`` when Docker client is usable."""
+    try:
+        if docker is None:
+            return False
+        client = _DOCKER_CLIENT or docker.from_env()
+        client.ping()
+        return True
+    except Exception:
+        return False
+
+
 def _ensure_pool_size_async(image: str) -> None:
     """Warm up pool for ``image`` asynchronously."""
     if _DOCKER_CLIENT is None:
@@ -2339,6 +2351,9 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             "no",
             "",
         }
+        if use_docker and not _docker_available():
+            logger.warning("docker unavailable; falling back")
+            use_docker = False
         os_type = env.get("OS_TYPE", "").lower()
         vm_used = False
         if use_docker:
@@ -2370,35 +2385,63 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
             vm_settings = preset.get("VM_SETTINGS", {})
             image = vm_settings.get(f"{os_type}_image") or vm_settings.get("image")
             memory = str(vm_settings.get("memory", "2G"))
+            timeout = int(vm_settings.get("timeout", env.get("TIMEOUT", 300)))
             if vm and image:
                 vm_repo = "/repo"
                 sandbox_tmp = "/sandbox_tmp"
                 env["SANDBOX_DATA_DIR"] = f"{sandbox_tmp}/data"
-                cmd = [
-                    vm,
-                    "-m",
-                    memory,
-                    "-snapshot",
-                    "-drive",
-                    f"file={image},if=virtio",
-                    "-virtfs",
-                    f"local,path={repo_path},mount_tag=repo,security_model=none",
-                    "-virtfs",
-                    f"local,path={tmp_dir},mount_tag=sandbox_tmp,security_model=none",
-                    "-nographic",
-                    "-serial",
-                    "stdio",
-                    "-append",
-                    f"python {vm_repo}/sandbox_runner.py",
-                ]
+
+                overlay = Path(tmp_dir) / "overlay.qcow2"
                 try:
                     subprocess.run(
-                        cmd, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                        [
+                            "qemu-img",
+                            "create",
+                            "-f",
+                            "qcow2",
+                            "-b",
+                            image,
+                            str(overlay),
+                        ],
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                    )
+                    cmd = [
+                        vm,
+                        "-m",
+                        memory,
+                        "-drive",
+                        f"file={overlay},if=virtio",
+                        "-virtfs",
+                        f"local,path={repo_path},mount_tag=repo,security_model=none",
+                        "-virtfs",
+                        f"local,path={tmp_dir},mount_tag=sandbox_tmp,security_model=none",
+                        "-nographic",
+                        "-serial",
+                        "stdio",
+                        "-append",
+                        f"python {vm_repo}/sandbox_runner.py",
+                    ]
+                    subprocess.run(
+                        cmd,
+                        check=False,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        timeout=timeout,
                     )
                     vm_used = True
+                except subprocess.TimeoutExpired:
+                    logger.error("VM execution timed out")
+                    vm_used = False
                 except Exception:
                     logger.exception("VM execution failed, falling back to local run")
                     vm_used = False
+                finally:
+                    try:
+                        overlay.unlink()
+                    except Exception:
+                        pass
             else:
                 logger.warning("qemu binary or VM image missing, running locally")
 
