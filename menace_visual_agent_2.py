@@ -102,8 +102,13 @@ def _load_state_locked() -> None:
         _recover_queue_file_locked()
         return
 
-    raw_queue = data.get("queue", [])
-    raw_status = data.get("status", {})
+    raw_queue = data.get("queue")
+    if not isinstance(raw_queue, list):
+        raw_queue = []
+
+    raw_status = data.get("status")
+    if not isinstance(raw_status, dict):
+        raw_status = {}
 
     valid_queue = []
     for item in raw_queue:
@@ -545,7 +550,7 @@ async def cancel_task(task_id: str, x_token: str = Header(default="")):
 
 @app.get("/status")
 async def status():
-    return {"active": _current_job["active"]}
+    return {"active": _current_job["active"], "queue": len(task_queue)}
 
 
 @app.get("/status/{task_id}")
