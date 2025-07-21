@@ -297,6 +297,20 @@ def main(argv: List[str] | None = None) -> None:
         dest="disable_preset_evolution",
         help="disable adapting presets from previous run history",
     )
+    parser.add_argument(
+        "--save-synergy-history",
+        dest="save_synergy_history",
+        action="store_true",
+        default=None,
+        help="persist synergy metrics across runs",
+    )
+    parser.add_argument(
+        "--no-save-synergy-history",
+        dest="save_synergy_history",
+        action="store_false",
+        default=None,
+        help="do not persist synergy metrics",
+    )
     args = parser.parse_args(argv)
 
     roi_cycles_env = os.getenv("ROI_CYCLES")
@@ -313,6 +327,13 @@ def main(argv: List[str] | None = None) -> None:
         except Exception:
             logger.warning("Invalid SYNERGY_CYCLES value: %s", synergy_cycles_env)
 
+    if args.save_synergy_history is None:
+        env_val = os.getenv("SAVE_SYNERGY_HISTORY")
+        if env_val is not None:
+            args.save_synergy_history = env_val != "0"
+        else:
+            args.save_synergy_history = True
+
     logging.basicConfig(level=logging.INFO)
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
@@ -324,7 +345,10 @@ def main(argv: List[str] | None = None) -> None:
     data_dir = Path(
         args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
     )
-    synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
+    synergy_history: list[dict[str, float]] = []
+    synergy_ma_prev: list[dict[str, float]] = []
+    if args.save_synergy_history:
+        synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
 
@@ -507,23 +531,26 @@ def main(argv: List[str] | None = None) -> None:
             logger.exception("failed to load tracker history: %s", hist_file)
             continue
 
-        synergy_file = data_dir / "synergy_history.json"
-        if synergy_file.exists():
-            try:
-                loaded = json.loads(synergy_file.read_text())
-                if isinstance(loaded, list):
-                    synergy_history = [
-                        {str(k): float(v) for k, v in entry.items()}
-                        for entry in loaded
-                        if isinstance(entry, dict)
-                    ]
-                else:
+        if args.save_synergy_history:
+            synergy_file = data_dir / "synergy_history.json"
+            if synergy_file.exists():
+                try:
+                    loaded = json.loads(synergy_file.read_text())
+                    if isinstance(loaded, list):
+                        synergy_history = [
+                            {str(k): float(v) for k, v in entry.items()}
+                            for entry in loaded
+                            if isinstance(entry, dict)
+                        ]
+                    else:
+                        synergy_history = []
+                except Exception:
+                    logger.exception(
+                        "failed to load synergy history: %s", synergy_file
+                    )
                     synergy_history = []
-            except Exception:
-                logger.exception("failed to load synergy history: %s", synergy_file)
+            else:
                 synergy_history = []
-        else:
-            synergy_history = []
 
         for mod, vals in tracker.module_deltas.items():
             module_history.setdefault(mod, []).extend(vals)
@@ -535,13 +562,14 @@ def main(argv: List[str] | None = None) -> None:
         }
         if syn_vals:
             synergy_history.append(syn_vals)
-            try:
-                data_dir.mkdir(parents=True, exist_ok=True)
-                (data_dir / "synergy_history.json").write_text(
-                    json.dumps(synergy_history)
-                )
-            except Exception:
-                logger.exception("failed to save synergy history")
+            if args.save_synergy_history:
+                try:
+                    data_dir.mkdir(parents=True, exist_ok=True)
+                    (data_dir / "synergy_history.json").write_text(
+                        json.dumps(synergy_history)
+                    )
+                except Exception:
+                    logger.exception("failed to save synergy history")
             ma_entry: dict[str, float] = {}
             for k in syn_vals:
                 vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]

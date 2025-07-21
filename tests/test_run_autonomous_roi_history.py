@@ -198,3 +198,47 @@ def test_previous_synergy_initialises_threshold(monkeypatch, tmp_path):
     )
 
     assert lengths and lengths[0] == len(history) + 1
+
+
+def test_disable_synergy_history(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+            "--no-save-synergy-history",
+        ]
+    )
+
+    assert not (tmp_path / "synergy_history.json").exists()
+
+
+def test_env_disable_synergy_history(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("SAVE_SYNERGY_HISTORY", "0")
+
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert not (tmp_path / "synergy_history.json").exists()
