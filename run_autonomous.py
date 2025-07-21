@@ -13,6 +13,7 @@ import sys
 import subprocess
 import time
 import importlib
+from pydantic import BaseModel, ValidationError, validator
 
 # Default to test mode when using the bundled SQLite database.
 if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
@@ -58,6 +59,76 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
 
 logger = logging.getLogger(__name__)
+
+
+class PresetModel(BaseModel):
+    """Schema for environment presets."""
+
+    CPU_LIMIT: str
+    MEMORY_LIMIT: str
+
+    class Config:
+        extra = "allow"
+
+    @validator("CPU_LIMIT", pre=True)
+    def _cpu_numeric(cls, v):
+        try:
+            float(v)
+        except Exception as e:
+            raise ValueError("CPU_LIMIT must be numeric") from e
+        return str(v)
+
+    @validator("MEMORY_LIMIT", pre=True)
+    def _mem_numeric(cls, v):
+        val = str(v)
+        digits = "".join(ch for ch in val if ch.isdigit() or ch == ".")
+        if not digits:
+            raise ValueError("MEMORY_LIMIT must contain a numeric value")
+        try:
+            float(digits)
+        except Exception as e:
+            raise ValueError("MEMORY_LIMIT must contain a numeric value") from e
+        return val
+
+
+class SynergyEntry(BaseModel):
+    """Schema for synergy history entries."""
+
+    __root__: dict[str, float]
+
+    @validator("__root__", pre=True)
+    def _check_values(cls, v):
+        if not isinstance(v, dict):
+            raise ValueError("entry must be a dict")
+        out: dict[str, float] = {}
+        for k, val in v.items():
+            try:
+                out[str(k)] = float(val)
+            except Exception as e:
+                raise ValueError("synergy values must be numeric") from e
+        return out
+
+
+def validate_presets(presets: list[dict]) -> list[dict]:
+    """Validate preset dictionaries using :class:`PresetModel`."""
+    validated: list[dict] = []
+    for idx, p in enumerate(presets):
+        try:
+            validated.append(PresetModel.parse_obj(p).dict())
+        except ValidationError as exc:
+            sys.exit(f"Invalid preset at index {idx}: {exc}")
+    return validated
+
+
+def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
+    """Validate synergy history entries using :class:`SynergyEntry`."""
+    validated: list[dict[str, float]] = []
+    for idx, entry in enumerate(hist):
+        try:
+            validated.append(SynergyEntry.parse_obj(entry).__root__)
+        except ValidationError as exc:
+            sys.exit(f"Invalid synergy history entry at index {idx}: {exc}")
+    return validated
 
 
 def _check_dependencies() -> bool:
@@ -171,11 +242,14 @@ def load_previous_synergy(
     try:
         loaded = json.loads(path.read_text())
         if isinstance(loaded, list):
-            history = [
-                {str(k): float(v) for k, v in entry.items()}
-                for entry in loaded
-                if isinstance(entry, dict)
-            ]
+            history = validate_synergy_history(
+                [entry for entry in loaded if isinstance(entry, dict)]
+            )
+        else:
+            raise ValueError("synergy history must be a list")
+    except ValidationError as exc:
+        logger.error("invalid synergy history file %s: %s", path, exc)
+        sys.exit(1)
     except Exception:
         logger.exception("failed to load synergy history: %s", path)
         return [], []
@@ -361,22 +435,24 @@ def main(argv: List[str] | None = None) -> None:
         env_val = os.getenv("SANDBOX_ENV_PRESETS")
         if env_val:
             try:
-                presets = json.loads(env_val)
-                if isinstance(presets, dict):
-                    presets = [presets]
+                presets_raw = json.loads(env_val)
+                if isinstance(presets_raw, dict):
+                    presets_raw = [presets_raw]
+                presets = validate_presets(presets_raw)
             except Exception:
-                presets = generate_presets(args.preset_count)
+                presets = validate_presets(generate_presets(args.preset_count))
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         elif preset_file.exists():
             try:
-                presets = json.loads(preset_file.read_text())
-                if isinstance(presets, dict):
-                    presets = [presets]
+                presets_raw = json.loads(preset_file.read_text())
+                if isinstance(presets_raw, dict):
+                    presets_raw = [presets_raw]
+                presets = validate_presets(presets_raw)
             except Exception:
-                presets = generate_presets(args.preset_count)
+                presets = validate_presets(generate_presets(args.preset_count))
         else:
             if getattr(args, "disable_preset_evolution", False):
-                presets = generate_presets(args.preset_count)
+                presets = validate_presets(generate_presets(args.preset_count))
             else:
                 gen_func = getattr(
                     environment_generator,
@@ -384,9 +460,11 @@ def main(argv: List[str] | None = None) -> None:
                     generate_presets,
                 )
                 if gen_func is generate_presets:
-                    presets = generate_presets(args.preset_count)
+                    presets = validate_presets(generate_presets(args.preset_count))
                 else:
-                    presets = gen_func(str(data_dir), args.preset_count)
+                    presets = validate_presets(
+                        gen_func(str(data_dir), args.preset_count)
+                    )
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -491,10 +569,11 @@ def main(argv: List[str] | None = None) -> None:
             pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
             with open(pf, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            presets = [data] if isinstance(data, dict) else list(data)
+            presets_raw = [data] if isinstance(data, dict) else list(data)
+            presets = validate_presets(presets_raw)
         else:
             if getattr(args, "disable_preset_evolution", False):
-                presets = generate_presets(args.preset_count)
+                presets = validate_presets(generate_presets(args.preset_count))
             else:
                 gen_func = getattr(
                     environment_generator,
@@ -502,12 +581,14 @@ def main(argv: List[str] | None = None) -> None:
                     generate_presets,
                 )
                 if gen_func is generate_presets:
-                    presets = generate_presets(args.preset_count)
+                    presets = validate_presets(generate_presets(args.preset_count))
                 else:
                     data_dir = args.sandbox_data_dir or os.getenv(
                         "SANDBOX_DATA_DIR", "sandbox_data"
                     )
-                    presets = gen_func(str(data_dir), args.preset_count)
+                    presets = validate_presets(
+                        gen_func(str(data_dir), args.preset_count)
+                    )
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
@@ -537,13 +618,14 @@ def main(argv: List[str] | None = None) -> None:
                 try:
                     loaded = json.loads(synergy_file.read_text())
                     if isinstance(loaded, list):
-                        synergy_history = [
-                            {str(k): float(v) for k, v in entry.items()}
-                            for entry in loaded
-                            if isinstance(entry, dict)
-                        ]
+                        synergy_history = validate_synergy_history(
+                            [entry for entry in loaded if isinstance(entry, dict)]
+                        )
                     else:
-                        synergy_history = []
+                        raise ValueError("synergy history must be a list")
+                except ValidationError as exc:
+                    logger.error("invalid synergy history file %s: %s", synergy_file, exc)
+                    sys.exit(1)
                 except Exception:
                     logger.exception(
                         "failed to load synergy history: %s", synergy_file

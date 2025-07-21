@@ -114,3 +114,24 @@ def test_main_exits_on_failed_install(monkeypatch, tmp_path):
         mod.main([])
     assert exc.value.code != 0
 
+
+def test_invalid_preset_file_exits(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "presets.json").write_text('[{"CPU_LIMIT": "foo"}]')
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    with pytest.raises(SystemExit):
+        mod.main([
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ])
+
