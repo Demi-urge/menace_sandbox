@@ -676,6 +676,14 @@ class SelfImprovementPolicy:
         try:
             with open(fp, "wb") as fh:
                 pickle.dump(self.values, fh)
+            if torch is not None and hasattr(self.strategy, "model"):
+                base = os.path.splitext(fp)[0]
+                model = getattr(self.strategy, "model", None)
+                if model is not None:
+                    torch.save(model.state_dict(), base + ".pt")
+                target = getattr(self.strategy, "target_model", None)
+                if target is not None:
+                    torch.save(target.state_dict(), base + ".target.pt")
         except Exception:
             raise
 
