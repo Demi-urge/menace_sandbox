@@ -560,6 +560,25 @@ decide when synergy metrics have stabilised. When ``statsmodels`` and ``scipy``
 are installed the Augmented Dickey–Fuller and Levene tests refine the
 confidence score; otherwise simpler mean and variance comparisons are used.
 
+Additional environment variables offer fine grained control over these
+checks:
+
+- ``ROI_CYCLES`` and ``SYNERGY_CYCLES`` override ``--roi-cycles`` and
+  ``--synergy-cycles``.
+- ``SYNERGY_MA_WINDOW`` sets the rolling window for the EMA and stationarity
+  test.
+- ``SYNERGY_STATIONARITY_CONFIDENCE`` and ``SYNERGY_VARIANCE_CONFIDENCE``
+  adjust the significance thresholds for the Augmented Dickey–Fuller and
+  Levene tests.
+
+Example usage:
+
+```bash
+SYNERGY_MA_WINDOW=4 SYNERGY_STATIONARITY_CONFIDENCE=0.99 \
+SYNERGY_VARIANCE_CONFIDENCE=0.9 SYNERGY_CYCLES=5 \
+python run_autonomous.py --runs 1
+```
+
 ```bash
 python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 ```
