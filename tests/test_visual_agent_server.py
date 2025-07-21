@@ -305,7 +305,7 @@ async def test_uvicorn_sequential_requests(monkeypatch, tmp_path):
     assert len(va.job_status) == 1
 
 
-def _setup_va(monkeypatch, tmp_path):
+def _setup_va(monkeypatch, tmp_path, start_worker=False):
     heavy = ["cv2", "numpy", "mss", "pyautogui"]
     for name in heavy:
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
@@ -340,14 +340,15 @@ def _setup_va(monkeypatch, tmp_path):
     pt_mod.Output = types.SimpleNamespace(DICT=0)
     monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
 
-    class DummyThread:
-        def __init__(self, *a, **k):
-            pass
+    if not start_worker:
+        class DummyThread:
+            def __init__(self, *a, **k):
+                pass
 
-        def start(self):
-            pass
+            def start(self):
+                pass
 
-    monkeypatch.setattr(threading, "Thread", DummyThread)
+        monkeypatch.setattr(threading, "Thread", DummyThread)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     return importlib.reload(importlib.import_module("menace_visual_agent_2"))
 
@@ -378,3 +379,51 @@ async def test_flush_endpoint(monkeypatch, tmp_path):
     assert not va.task_queue
     assert not va.job_status
     assert not (tmp_path / "visual_agent_queue.json").exists()
+
+
+def test_corrupt_state_discard(monkeypatch, tmp_path):
+    bad = {
+        "queue": [
+            {"id": "a", "prompt": "p", "branch": None},
+            {"bad": 1}
+        ],
+        "status": {
+            "a": {"status": "queued", "prompt": "p", "branch": None},
+            "bad": "x"
+        },
+    }
+    path = tmp_path / "visual_agent_queue.json"
+    path.write_text(json.dumps(bad))
+    va = _setup_va(monkeypatch, tmp_path)
+    assert list(va.task_queue) == [{"id": "a", "prompt": "p", "branch": None}]
+    assert list(va.job_status) == ["a"]
+    loaded = json.loads(path.read_text())
+    assert loaded["queue"] == [{"id": "a", "prompt": "p", "branch": None}]
+    assert "bad" not in loaded["status"]
+
+
+def test_restart_recovers_pending(monkeypatch, tmp_path):
+    va = _setup_va(monkeypatch, tmp_path, start_worker=True)
+    calls = []
+    finished = threading.Event()
+
+    def fake_run(prompt: str, branch: str | None = None):
+        calls.append(prompt)
+        finished.set()
+
+    monkeypatch.setattr(va, "run_menace_pipeline", fake_run)
+
+    va.job_status.clear()
+    va.task_queue.clear()
+    va.job_status["a"] = {"status": "queued", "prompt": "a", "branch": None}
+    va.job_status["b"] = {"status": "queued", "prompt": "b", "branch": None}
+    va.task_queue.append({"id": "a", "prompt": "a", "branch": None})
+    va.task_queue.append({"id": "b", "prompt": "b", "branch": None})
+    va._persist_state()
+
+    finished.wait(timeout=1)
+    va._exit_event.set()
+    va._worker_thread.join(timeout=1)
+
+    va2 = _setup_va(monkeypatch, tmp_path)
+    assert any(t["prompt"] == "b" for t in va2.task_queue)
