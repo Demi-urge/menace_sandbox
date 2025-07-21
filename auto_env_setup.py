@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Dict, Iterable
 
@@ -168,12 +169,18 @@ def interactive_setup(
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("failed to read defaults file %s: %s", defaults_path, exc)
 
+    # answers pre-filled via environment variables
+    env_answers = {
+        key: os.getenv(f"MENACE_SETUP_{key}") for key in api_keys
+    }
+
+    missing: list[str] = []
     for key in api_keys:
         if os.getenv(key):
             manager.set(key.lower(), os.environ[key])
             continue
-        value = None
-        if vault:
+        value = env_answers.get(key)
+        if not value and vault:
             try:
                 value = vault.get(key.lower())
             except Exception as exc:  # pragma: no cover - best effort
@@ -184,10 +191,23 @@ def interactive_setup(
             value = defaults.get(key)
             if value:
                 manager.set(key.lower(), value)
+        if value:
+            os.environ[key] = value
+            continue
+        missing.append(key)
+
+    interactive = os.getenv("MENACE_NON_INTERACTIVE") != "1" and sys.stdin.isatty()
+    for key in missing:
+        value = env_answers.get(key)
+        if value is None and interactive:
+            try:
+                value = input(f"{key}: ").strip()
+            except EOFError:
+                value = ""
         if not value:
             value = manager.get(key.lower())
+        else:
+            manager.set(key.lower(), value)
         os.environ[key] = value
-
-
 
 __all__ = ["ensure_env", "key_needs_secret", "interactive_setup"]
