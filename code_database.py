@@ -68,8 +68,12 @@ SQL_CREATE_CODE_ERRORS_TABLE = _load_sql("create_code_errors_table.sql")
 
 SQL_CREATE_INDEX_CODE_BOTS_CODE = _load_sql("create_index_code_bots_code.sql")
 SQL_CREATE_INDEX_CODE_BOTS_BOT = _load_sql("create_index_code_bots_bot.sql")
-SQL_CREATE_INDEX_CODE_ENHANCEMENTS_CODE = _load_sql("create_index_code_enhancements_code.sql")
-SQL_CREATE_INDEX_CODE_ENHANCEMENTS_ENH = _load_sql("create_index_code_enhancements_enh.sql")
+SQL_CREATE_INDEX_CODE_ENHANCEMENTS_CODE = _load_sql(
+    "create_index_code_enhancements_code.sql"
+)
+SQL_CREATE_INDEX_CODE_ENHANCEMENTS_ENH = _load_sql(
+    "create_index_code_enhancements_enh.sql"
+)
 SQL_CREATE_INDEX_CODE_ERRORS_CODE = _load_sql("create_index_code_errors_code.sql")
 SQL_CREATE_INDEX_CODE_ERRORS_ERROR = _load_sql("create_index_code_errors_error.sql")
 SQL_CREATE_INDEX_CODE_SUMMARY = _load_sql("create_index_code_summary.sql")
@@ -264,7 +268,9 @@ class CodeDB:
             self._fts_failures += 1
             now = datetime.utcnow()
             self._fts_failure_times.append(now)
-            recent = [t for t in self._fts_failure_times if now - t < timedelta(minutes=30)]
+            recent = [
+                t for t in self._fts_failure_times if now - t < timedelta(minutes=30)
+            ]
             backoff = min(60, 2 ** (len(recent) - 1))
             logger.warning(
                 "fts operation failed (%s/%s): %s",
@@ -272,7 +278,7 @@ class CodeDB:
                 self.fts_retry_limit,
                 exc,
                 exc_info=True,
-                extra={"exc_class": exc.__class__.__name__, "sql": sql}
+                extra={"exc_class": exc.__class__.__name__, "sql": sql},
             )
             self._fts_disabled_until = now + timedelta(minutes=backoff)
             if self._fts_failures >= self.fts_retry_limit:
@@ -280,7 +286,7 @@ class CodeDB:
                 logger.error(
                     "disabling FTS after repeated failures for %s minutes",
                     backoff,
-                    extra={"exc_class": exc.__class__.__name__}
+                    extra={"exc_class": exc.__class__.__name__},
                 )
                 webhook = ALERT_CONFIG.get("discord_webhook")
                 if webhook:
@@ -316,13 +322,15 @@ class CodeDB:
         except Exception as exc:
             now = datetime.utcnow()
             self._fts_failure_times.append(now)
-            recent = [t for t in self._fts_failure_times if now - t < timedelta(minutes=30)]
+            recent = [
+                t for t in self._fts_failure_times if now - t < timedelta(minutes=30)
+            ]
             backoff = min(60, 2 ** (len(recent) - 1))
             logger.warning(
                 "fts reinitialisation failed: %s",
                 exc,
                 exc_info=True,
-                extra={"exc_class": exc.__class__.__name__}
+                extra={"exc_class": exc.__class__.__name__},
             )
             self.has_fts = False
             self._fts_disabled_until = now + timedelta(minutes=backoff)
@@ -340,7 +348,9 @@ class CodeDB:
                     self._execute(conn, stmt)
                 version = target
                 conn.execute(f"PRAGMA user_version = {version}")
-                cols = [r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()]
+                cols = [
+                    r[1] for r in conn.execute("PRAGMA table_info(code)").fetchall()
+                ]
 
         try:
             self._maybe_init_fts(conn)
@@ -401,7 +411,9 @@ class CodeDB:
                 self._maybe_init_fts(conn)
             if self.has_fts:
                 try:
-                    self._execute_fts(conn, SQL_INSERT_FTS, (rec.cid, rec.summary, rec.code))
+                    self._execute_fts(
+                        conn, SQL_INSERT_FTS, (rec.cid, rec.summary, rec.code)
+                    )
                 except Exception:
                     self.has_fts = False
                     self._fts_disabled_until = datetime.utcnow() + timedelta(minutes=5)
@@ -458,7 +470,9 @@ class CodeDB:
             params: list[Any] = []
             for key, value in fields.items():
                 col = mapping[key]
-                if col in {"code", "summary"} and (value is None or not str(value).strip()):
+                if col in {"code", "summary"} and (
+                    value is None or not str(value).strip()
+                ):
                     raise ValueError(f"{col} cannot be empty")
                 columns.append(f"{col}=?")
                 params.append(value)
@@ -501,6 +515,7 @@ class CodeDB:
 
     def fetch_all(self) -> List[Dict[str, Any]]:
         """Return all code records as a list of dictionaries."""
+
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
@@ -509,13 +524,17 @@ class CodeDB:
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
-    def by_complexity(self, min_score: float = 0.0, limit: int = 5) -> List[Dict[str, Any]]:
+    def by_complexity(
+        self, min_score: float = 0.0, limit: int = 5
+    ) -> List[Dict[str, Any]]:
         """Return code records sorted by complexity score."""
 
         def op(conn: Any) -> List[Dict[str, Any]]:
             if isinstance(conn, sqlite3.Connection):
                 conn.row_factory = sqlite3.Row
-            rows = self._execute(conn, SQL_SELECT_BY_COMPLEXITY, (min_score, limit)).fetchall()
+            rows = self._execute(
+                conn, SQL_SELECT_BY_COMPLEXITY, (min_score, limit)
+            ).fetchall()
             return [dict(r) for r in rows]
 
         return self._with_retry(lambda: self._conn_wrapper(op))
@@ -578,6 +597,7 @@ class CodeDB:
     # linking -----------------------------------------------------------
     def link_bot(self, code_id: int, bot_id: str) -> None:
         """Associate a code record with a bot."""
+
         def op(conn: Any) -> None:
             self._insert(conn, SQL_INSERT_CODE_BOT, (code_id, bot_id))
 
@@ -585,6 +605,7 @@ class CodeDB:
 
     def link_enhancement(self, code_id: int, enh_id: int) -> None:
         """Associate a code record with an enhancement."""
+
         def op(conn: Any) -> None:
             self._insert(conn, SQL_INSERT_CODE_ENHANCEMENT, (code_id, enh_id))
 
@@ -592,6 +613,7 @@ class CodeDB:
 
     def link_error(self, code_id: int, err_id: int) -> None:
         """Associate a code record with an error."""
+
         def op(conn: Any) -> None:
             self._insert(conn, SQL_INSERT_CODE_ERROR, (code_id, err_id))
 
@@ -651,7 +673,9 @@ class PatchRecord:
 class PatchHistoryDB:
     """SQLite-backed store for patch history."""
 
-    def __init__(self, path: Path | str | None = None, *, code_db: CodeDB | None = None) -> None:
+    def __init__(
+        self, path: Path | str | None = None, *, code_db: CodeDB | None = None
+    ) -> None:
         """Initialise the patch history database."""
         self.path = Path(
             path or _default_db_path("PATCH_HISTORY_DB_PATH", "patch_history.db")
@@ -701,6 +725,16 @@ class PatchHistoryDB:
             )
             """
             )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS flakiness_history(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT,
+                flakiness REAL,
+                ts TEXT
+            )
+            """
+            )
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
@@ -724,9 +758,16 @@ class PatchHistoryDB:
             for name, stmt in migrations.items():
                 if name not in cols:
                     conn.execute(stmt)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_filename ON patch_history(filename)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patch_filename ON patch_history(filename)"
+            )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_ts ON patch_history(ts)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_roi_delta ON patch_history(roi_delta)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patch_roi_delta ON patch_history(roi_delta)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_flaky_file ON flakiness_history(filename)"
+            )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
 
@@ -773,7 +814,8 @@ class PatchHistoryDB:
                         rec.code_id = matches[0]
                         if len(matches) > 1:
                             logger.warning(
-                                "multiple code records share hash", extra={"hash": rec.code_hash}
+                                "multiple code records share hash",
+                                extra={"hash": rec.code_hash},
                             )
                 except Exception:
                     pass
@@ -816,7 +858,11 @@ class PatchHistoryDB:
             patch_id = int(cur.lastrowid)
             logger.info(
                 "patch stored",
-                extra={"patch_id": patch_id, "filename": rec.filename, "code_id": rec.code_id},
+                extra={
+                    "patch_id": patch_id,
+                    "filename": rec.filename,
+                    "code_id": rec.code_id,
+                },
             )
             return patch_id
 
@@ -862,6 +908,7 @@ class PatchHistoryDB:
         reverted: bool | None = None,
     ) -> List[PatchRecord]:
         """Filter patches by filename and reverted flag."""
+
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             base = (
                 "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, "
@@ -882,7 +929,11 @@ class PatchHistoryDB:
             patches = [PatchRecord(*row) for row in rows]
             logger.info(
                 "patch filter",
-                extra={"filename": filename, "reverted": reverted, "count": len(patches)},
+                extra={
+                    "filename": filename,
+                    "reverted": reverted,
+                    "count": len(patches),
+                },
             )
             return patches
 
@@ -905,6 +956,7 @@ class PatchHistoryDB:
 
     def between_dates(self, start: datetime, end: datetime) -> List[PatchRecord]:
         """Return patches recorded between ``start`` and ``end``."""
+
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
                 "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history WHERE ts BETWEEN ? AND ?",
@@ -913,7 +965,11 @@ class PatchHistoryDB:
             patches = [PatchRecord(*row) for row in rows]
             logger.info(
                 "patch range",
-                extra={"start": start.isoformat(), "end": end.isoformat(), "count": len(patches)},
+                extra={
+                    "start": start.isoformat(),
+                    "end": end.isoformat(),
+                    "count": len(patches),
+                },
             )
             return patches
 
@@ -936,7 +992,9 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
-    def store_weights(self, weights: tuple[float, float, float, float, float, float]) -> None:
+    def store_weights(
+        self, weights: tuple[float, float, float, float, float, float]
+    ) -> None:
         """Persist score weights for later reuse."""
 
         def op(conn: sqlite3.Connection) -> None:
@@ -959,6 +1017,32 @@ class PatchHistoryDB:
         if row:
             return tuple(float(x) for x in row)
         return None
+
+    def record_flakiness(self, filename: str, flakiness: float) -> None:
+        """Store flakiness measurement for *filename*."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT INTO flakiness_history(filename, flakiness, ts) VALUES(?,?,?)",
+                (filename, float(flakiness), datetime.utcnow().isoformat()),
+            )
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def average_flakiness(self, filename: str, limit: int = 20) -> float:
+        """Return average flakiness for *filename* from recent history."""
+
+        def op(conn: sqlite3.Connection) -> list[tuple[float]]:
+            return conn.execute(
+                "SELECT flakiness FROM flakiness_history WHERE filename=? ORDER BY id DESC LIMIT ?",
+                (filename, limit),
+            ).fetchall()
+
+        rows = with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+        vals = [float(r[0]) for r in rows]
+        if not vals:
+            return 0.0
+        return float(sum(vals) / len(vals))
 
     def delete(self, patch_id: int) -> None:
         """Remove a patch record if it exists."""
