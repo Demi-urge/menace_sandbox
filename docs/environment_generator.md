@@ -50,6 +50,17 @@ for preset in presets:
 
 These presets can be passed directly to `run_repo_section_simulations` or `_run_sandbox` for scenario testing.
 
+`generate_presets` also accepts an optional `agent` and `tracker` argument:
+
+```python
+presets = generate_presets(3, agent=my_agent, tracker=my_tracker)
+```
+
+When provided and the tracker contains at least five ROI samples, the agent's
+`decide()` method adjusts `CPU_LIMIT`, `MEMORY_LIMIT`, `BANDWIDTH_LIMIT` and
+`THREAT_INTENSITY` for each preset. The agent's state is saved so future runs
+continue refining the policy based on previous ROI outcomes.
+
 ## Adaptive Presets
 
 `environment_generator.adapt_presets(tracker, presets)` adjusts an existing list
