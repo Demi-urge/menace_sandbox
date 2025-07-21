@@ -156,6 +156,8 @@ class VisualAgentClient:
         token: str | None = None,
         poll_interval: float | None = None,
         token_refresh_cmd: str | None = None,
+        queue_warning_threshold: int | None = None,
+        metrics_interval: float | None = None,
     ) -> None:
         default_urls = (
             os.getenv("VISUAL_AGENT_URLS")
@@ -169,6 +171,14 @@ class VisualAgentClient:
         self.token_refresh_cmd = token_refresh_cmd or os.getenv(
             "VISUAL_TOKEN_REFRESH_CMD"
         )
+        warn = queue_warning_threshold
+        if warn is None:
+            env_val = os.getenv("VISUAL_AGENT_QUEUE_THRESHOLD")
+            warn = int(env_val) if env_val and env_val.isdigit() else None
+        self.queue_warning_threshold = warn
+        self.metrics_interval = metrics_interval or float(
+            os.getenv("VISUAL_AGENT_METRICS_INTERVAL", "30")
+        )
         self.open_run_id: str | None = None
         self.active = False
         self._lock = threading.Lock()
@@ -176,6 +186,14 @@ class VisualAgentClient:
         self._cv = threading.Condition()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
+        self._stop_event = threading.Event()
+        if self.queue_warning_threshold is not None and self.urls and requests:
+            self._metrics_thread = threading.Thread(
+                target=self._metrics_loop, daemon=True
+            )
+            self._metrics_thread.start()
+        else:
+            self._metrics_thread = None
 
     # ------------------------------------------------------------------
     def _enqueue(self, func: Callable[[], Any]) -> Future:
@@ -197,6 +215,29 @@ class VisualAgentClient:
                 fut.set_result(result)
             except Exception as exc:
                 fut.set_exception(exc)
+
+    def _metrics_loop(self) -> None:
+        while not self._stop_event.wait(self.metrics_interval):
+            for base in self.urls:
+                try:
+                    resp = requests.get(f"{base}/metrics", timeout=5)
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    qsize = data.get("queue")
+                    if (
+                        isinstance(qsize, int)
+                        and self.queue_warning_threshold is not None
+                        and qsize > self.queue_warning_threshold
+                    ):
+                        logger.warning(
+                            "visual agent queue size %s exceeds threshold %s",
+                            qsize,
+                            self.queue_warning_threshold,
+                        )
+                    break
+                except Exception:
+                    continue
 
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
