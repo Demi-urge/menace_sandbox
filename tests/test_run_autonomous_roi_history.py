@@ -3,6 +3,7 @@ import sys
 import types
 import json
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -242,3 +243,23 @@ def test_env_disable_synergy_history(monkeypatch, tmp_path):
     )
 
     assert not (tmp_path / "synergy_history.json").exists()
+
+
+def test_invalid_synergy_history_exits(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    (tmp_path / "synergy_history.json").write_text('[{"synergy_roi": "bad"}]')
+
+    with pytest.raises(SystemExit):
+        mod.main([
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ])
