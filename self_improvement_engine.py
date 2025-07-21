@@ -6,6 +6,8 @@ import logging
 import time
 import asyncio
 import os
+import json
+import tempfile
 from pathlib import Path
 
 from .self_model_bootstrap import bootstrap
@@ -65,6 +67,7 @@ class SelfImprovementEngine:
         synergy_weight_efficiency: float | None = None,
         synergy_weight_resilience: float | None = None,
         synergy_weight_antifragility: float | None = None,
+        state_path: Path | str | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -119,6 +122,9 @@ class SelfImprovementEngine:
             if synergy_weight_antifragility is not None
             else float(os.getenv("SYNERGY_WEIGHT_ANTIFRAGILITY", "1.0"))
         )
+        self.state_path = Path(state_path) if state_path else None
+        self.roi_history: list[float] = []
+        self._load_state()
         from .module_index_db import ModuleIndexDB
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
@@ -138,6 +144,31 @@ class SelfImprovementEngine:
                 )
             except Exception as exc:
                 self.logger.exception("failed to subscribe to self_improve events: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _load_state(self) -> None:
+        if not self.state_path or not self.state_path.exists():
+            return
+        try:
+            with open(self.state_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.roi_history = [float(x) for x in data.get("roi_history", [])]
+            self.last_run = float(data.get("last_run", self.last_run))
+        except Exception as exc:
+            self.logger.exception("failed to load state: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _save_state(self) -> None:
+        if not self.state_path:
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("w", delete=False, dir=self.state_path.parent, encoding="utf-8") as fh:
+                json.dump({"roi_history": self.roi_history, "last_run": self.last_run}, fh)
+                tmp = Path(fh.name)
+            os.replace(tmp, self.state_path)
+        except Exception as exc:
+            self.logger.exception("failed to save state: %s", exc)
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
@@ -702,6 +733,8 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
+            self.roi_history.append(after_roi - before_roi)
+            self._save_state()
             if self.policy:
                 try:
                     next_state = self._policy_state()
