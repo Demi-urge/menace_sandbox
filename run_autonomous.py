@@ -274,13 +274,14 @@ def main(argv: List[str] | None = None) -> None:
         try:
             args.roi_cycles = int(roi_cycles_env)
         except Exception:
-            pass
+            logger.warning("Invalid ROI_CYCLES value: %s", roi_cycles_env)
+
     synergy_cycles_env = os.getenv("SYNERGY_CYCLES")
     if synergy_cycles_env is not None:
         try:
             args.synergy_cycles = int(synergy_cycles_env)
         except Exception:
-            pass
+            logger.warning("Invalid SYNERGY_CYCLES value: %s", synergy_cycles_env)
 
     logging.basicConfig(level=logging.INFO)
 
