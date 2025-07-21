@@ -123,7 +123,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> float:
         """Run tests for *paths* under coverage using parallel workers asynchronously."""
 
-        async def run_one(idx: int, set_paths: list[Path]) -> tuple[Path, int]:
+        async def run_one(idx: int, set_paths: list[Path]) -> tuple[Path, int, str]:
             data_file = tmp_dir / f".coverage.{idx}"
             p_env = dict(env or os.environ)
             p_env["COVERAGE_FILE"] = str(data_file)
@@ -143,15 +143,22 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 env=p_env,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-            await proc.wait()
+            out_b, err_b = await proc.communicate()
+            output = (out_b or b"") + (err_b or b"")
+            out_text = output.decode("utf-8", "replace")
             if proc.returncode != 0:
                 self.logger.error(
-                    "test run failed", extra=log_record(cmd=cmd, rc=proc.returncode)
+                    "test run failed",
+                    extra=log_record(cmd=cmd, rc=proc.returncode, output=out_text),
                 )
-            return data_file, int(proc.returncode)
+            else:
+                self.logger.debug(
+                    "test run output", extra=log_record(cmd=cmd, output=out_text)
+                )
+            return data_file, int(proc.returncode), out_text
 
         # Support a list of paths treated as individual test sets
         if paths and isinstance(paths[0], (list, tuple)):
@@ -166,8 +173,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             )
             coverage_files = [r[0] for r in results]
             returncodes = [r[1] for r in results]
+            outputs = [r[2] for r in results]
             if any(rc != 0 for rc in returncodes):
-                raise RuntimeError("test subprocess failed")
+                msg = "test subprocess failed" + "\n" + "\n".join(outputs)
+                raise RuntimeError(msg)
             cov = Coverage(data_file=str(tmp_dir / ".coverage"))
             cov.combine([str(f) for f in coverage_files])
             buf = io.StringIO()
@@ -183,8 +192,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     include=[str(p) for paths in sets for p in paths],
                     file=buf,
                 )
-            except Exception:
-                self.logger.exception("coverage generation failed")
+                self.logger.debug(
+                    "coverage report", extra=log_record(output=buf.getvalue())
+                )
+            except Exception as exc:
+                self.logger.exception(
+                    "coverage generation failed",
+                    extra=log_record(err=str(exc), output=buf.getvalue()),
+                )
             finally:
                 try:
                     os.unlink(xml_tmp.name)
