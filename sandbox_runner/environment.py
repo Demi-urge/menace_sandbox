@@ -511,25 +511,35 @@ async def _execute_in_container(
             env_vars.update({k: str(v) for k, v in env.items()})
 
             rlimit_ok = _rlimits_supported()
+            use_cgroup = False
+            cgroup_path: Path | None = None
+            if not rlimit_ok and not _psutil_rlimits_supported() and _cgroup_v2_supported():
+                cgroup_path = _create_cgroup(env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
+                use_cgroup = cgroup_path is not None
 
             def _limits() -> None:
-                if not rlimit_ok or resource is None:
-                    return
                 cpu = env.get("CPU_LIMIT")
                 mem = env.get("MEMORY_LIMIT")
-                try:
-                    if cpu:
-                        sec = int(float(cpu)) * 10
-                        resource.setrlimit(resource.RLIMIT_CPU, (sec, sec))
-                except Exception as exc:
-                    logger.warning("failed to set CPU limit: %s", exc)
-                try:
-                    if mem:
-                        size = _parse_size(mem)
-                        if size:
-                            resource.setrlimit(resource.RLIMIT_AS, (size, size))
-                except Exception as exc:
-                    logger.warning("failed to set memory limit: %s", exc)
+                if rlimit_ok and resource is not None:
+                    try:
+                        if cpu:
+                            sec = int(float(cpu)) * 10
+                            resource.setrlimit(resource.RLIMIT_CPU, (sec, sec))
+                    except Exception as exc:
+                        logger.warning("failed to set CPU limit: %s", exc)
+                    try:
+                        if mem:
+                            size = _parse_size(mem)
+                            if size:
+                                resource.setrlimit(resource.RLIMIT_AS, (size, size))
+                    except Exception as exc:
+                        logger.warning("failed to set memory limit: %s", exc)
+                if use_cgroup and cgroup_path is not None:
+                    try:
+                        with open(cgroup_path / "cgroup.procs", "w", encoding="utf-8") as fh:
+                            fh.write(str(os.getpid()))
+                    except Exception as exc:
+                        logger.warning("failed to join cgroup: %s", exc)
 
             start = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
             net_start = psutil.net_io_counters() if psutil else None
@@ -541,7 +551,7 @@ async def _execute_in_container(
                     text=True,
                     env=env_vars,
                     cwd=workdir or td,
-                    preexec_fn=_limits if rlimit_ok else None,
+                    preexec_fn=_limits if (rlimit_ok or use_cgroup) else None,
                 )
                 p = psutil.Process(proc.pid) if psutil else None
                 if p and not rlimit_ok:
@@ -553,6 +563,8 @@ async def _execute_in_container(
                 exit_code = -1
             end = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
             net_end = psutil.net_io_counters() if psutil else None
+            if cgroup_path is not None:
+                _cleanup_cgroup(cgroup_path)
 
             if p:
                 try:
@@ -922,6 +934,62 @@ def _psutil_rlimits_supported() -> bool:
         return hasattr(p, "rlimit")
     except Exception:
         return False
+
+
+_CGROUP_BASE = Path("/sys/fs/cgroup")
+
+
+def _cgroup_v2_supported() -> bool:
+    """Return ``True`` if cgroup v2 is available."""
+    return (_CGROUP_BASE / "cgroup.controllers").exists()
+
+
+def _create_cgroup(cpu: Any, mem: Any) -> Path | None:
+    """Create a cgroup with optional CPU and memory limits."""
+    path = _CGROUP_BASE / f"sandbox_{os.getpid()}_{random.randint(0, 9999)}"
+    try:
+        path.mkdir()
+        if cpu:
+            try:
+                quota = int(float(cpu) * 100000)
+                (path / "cpu.max").write_text(f"{quota} 100000")
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("failed to set cgroup cpu limit: %s", exc)
+        if mem:
+            size = _parse_size(mem)
+            if size:
+                try:
+                    (path / "memory.max").write_text(str(size))
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning("failed to set cgroup memory limit: %s", exc)
+        return path
+    except Exception as exc:  # pragma: no cover - unexpected failure
+        logger.warning("failed to create cgroup: %s", exc)
+        try:
+            if path.exists():
+                for f in path.iterdir():
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+                path.rmdir()
+        except Exception:
+            pass
+        return None
+
+
+def _cleanup_cgroup(path: Path) -> None:
+    """Remove ``path`` and contained files."""
+    try:
+        if path.exists():
+            for f in path.iterdir():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+            path.rmdir()
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("failed to remove cgroup: %s", exc)
 
 
 def _apply_psutil_rlimits(proc: Any, cpu: Any, mem: Any) -> None:
