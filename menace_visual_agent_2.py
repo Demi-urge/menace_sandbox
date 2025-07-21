@@ -68,8 +68,8 @@ def _remove_pid_file() -> None:
             existing = int(path.read_text().strip())
             if existing == os.getpid():
                 path.unlink()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("failed to remove pid file %s: %s", path, exc)
 
 
 def _setup_pid_file() -> None:
@@ -81,12 +81,12 @@ def _setup_pid_file() -> None:
                 raise SystemExit(
                     f"Another instance of menace_visual_agent_2 is running (PID {existing})"
                 )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed reading pid from %s: %s", path, exc)
         try:
             path.unlink()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to remove stale pid file %s: %s", path, exc)
     try:
         path.write_text(str(os.getpid()))
     finally:
@@ -236,8 +236,8 @@ def _persist_state() -> None:
     finally:
         try:
             _global_lock.release()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
 
 def _queue_worker():
@@ -275,8 +275,8 @@ def _queue_worker():
             _save_state_locked()
             try:
                 _global_lock.release()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
         _persist_state()
 
@@ -299,8 +299,8 @@ def _initialize_state() -> None:
     finally:
         try:
             _global_lock.release()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
 
 _worker_thread = None
@@ -339,8 +339,8 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
     finally:
         try:
             _global_lock.release()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
     return response
 
@@ -589,8 +589,8 @@ async def revert_patch(x_token: str = Header(default="")):
             _running_lock.release()
             try:
                 _global_lock.release()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
     threading.Thread(target=_revert_worker, daemon=True).start()
     return {"status": "revert triggered"}
@@ -626,8 +626,8 @@ async def clone_repo(x_token: str = Header(default="")):
             _running_lock.release()
             try:
                 _global_lock.release()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
 @app.post("/cancel/{task_id}", status_code=202)
 async def cancel_task(task_id: str, x_token: str = Header(default="")):
@@ -660,9 +660,15 @@ async def cancel_task(task_id: str, x_token: str = Header(default="")):
             _save_state_locked()
             return {"id": task_id, "status": "cancelled"}
         finally:
-            _global_lock.release()
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
     finally:
-        _running_lock.release()
+        try:
+            _running_lock.release()
+        except Exception as exc:
+            logger.warning("failed to release running lock: %s", exc)
 
 @app.get("/status")
 async def status():
@@ -692,7 +698,10 @@ async def flush_queue(x_token: str = Header(default="")):
         if QUEUE_FILE.exists():
             QUEUE_FILE.unlink()
     finally:
-        _global_lock.release()
+        try:
+            _global_lock.release()
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
     return {"status": "flushed"}
 
 
@@ -709,7 +718,10 @@ async def recover_queue(x_token: str = Header(default="")):
         job_status.clear()
         _load_state_locked()
     finally:
-        _global_lock.release()
+        try:
+            _global_lock.release()
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
     return {"status": "recovered", "queued": len(task_queue)}
 
 
@@ -737,7 +749,10 @@ if __name__ == "__main__":
             if QUEUE_FILE.exists():
                 QUEUE_FILE.unlink()
         finally:
-            _global_lock.release()
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         print("Queue flushed")
         sys.exit(0)
 
@@ -752,7 +767,10 @@ if __name__ == "__main__":
             job_status.clear()
             _load_state_locked()
         finally:
-            _global_lock.release()
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         print(f"Recovered {len(task_queue)} tasks")
         sys.exit(0)
 
