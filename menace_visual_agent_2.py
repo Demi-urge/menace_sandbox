@@ -21,6 +21,8 @@ from filelock import FileLock, Timeout
 from collections import deque
 import json
 from pathlib import Path
+import atexit
+import psutil
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
@@ -41,7 +43,9 @@ app = FastAPI(title="Menace-Visual-Agent")
 
 @app.on_event("startup")
 def _startup_load_state() -> None:
+    _setup_pid_file()
     _initialize_state()
+    _start_background_threads()
 
 _running_lock = threading.Lock()      # ensures only one job at a time
 _current_job  = {"active": False}
@@ -50,6 +54,43 @@ GLOBAL_LOCK_PATH = os.getenv(
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
 )
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
+
+# PID file setup
+PID_FILE_PATH = os.getenv(
+    "VISUAL_AGENT_PID_FILE",
+    os.path.join(tempfile.gettempdir(), "visual_agent.pid"),
+)
+
+def _remove_pid_file() -> None:
+    path = Path(PID_FILE_PATH)
+    try:
+        if path.exists():
+            existing = int(path.read_text().strip())
+            if existing == os.getpid():
+                path.unlink()
+    except Exception:
+        pass
+
+
+def _setup_pid_file() -> None:
+    path = Path(PID_FILE_PATH)
+    if path.exists():
+        try:
+            existing = int(path.read_text().strip())
+            if existing != os.getpid() and psutil.pid_exists(existing):
+                raise SystemExit(
+                    f"Another instance of menace_visual_agent_2 is running (PID {existing})"
+                )
+        except Exception:
+            pass
+        try:
+            path.unlink()
+        except Exception:
+            pass
+    try:
+        path.write_text(str(os.getpid()))
+    finally:
+        atexit.register(_remove_pid_file)
 
 # Queue management
 import hashlib
@@ -262,12 +303,17 @@ def _initialize_state() -> None:
             pass
 
 
-_initialize_state()
+_worker_thread = None
+_autosave_thread = None
 
-_worker_thread = threading.Thread(target=_queue_worker, daemon=True)
-_worker_thread.start()
-_autosave_thread = threading.Thread(target=_autosave_worker, daemon=True)
-_autosave_thread.start()
+def _start_background_threads() -> None:
+    global _worker_thread, _autosave_thread
+    if _worker_thread is not None:
+        return
+    _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
+    _worker_thread.start()
+    _autosave_thread = threading.Thread(target=_autosave_worker, daemon=True)
+    _autosave_thread.start()
 
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
@@ -677,7 +723,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
-    parser.add_argument("--resume", action="store_true", help="Resume queued tasks before starting server")
     args = parser.parse_args()
 
     if args.flush_queue:
@@ -711,20 +756,8 @@ if __name__ == "__main__":
         print(f"Recovered {len(task_queue)} tasks")
         sys.exit(0)
 
-    if args.resume:
-        try:
-            _global_lock.acquire(timeout=0)
-        except Timeout:
-            print("Agent busy", file=sys.stderr)
-            sys.exit(1)
-        try:
-            task_queue.clear()
-            job_status.clear()
-            _load_state_locked()
-        finally:
-            _global_lock.release()
-        print(f"Resumed {len(task_queue)} tasks")
 
+    _setup_pid_file()
     print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
 
     config = uvicorn.Config(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
@@ -740,5 +773,7 @@ if __name__ == "__main__":
 
     server.run()
     _exit_event.set()
-    _worker_thread.join()
-    _autosave_thread.join()
+    if _worker_thread:
+        _worker_thread.join()
+    if _autosave_thread:
+        _autosave_thread.join()
