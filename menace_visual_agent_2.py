@@ -41,8 +41,12 @@ GLOBAL_LOCK_PATH = os.getenv(
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
 
 # Queue management
+import hashlib
+
 DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.json"
+HASH_FILE = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".sha256")
+BACKUP_COUNT = 3
 task_queue = deque()
 job_status = {}
 _exit_event = threading.Event()
@@ -54,14 +58,16 @@ def _save_state_locked() -> None:
     """Persist queue and status atomically."""
     data = {"queue": list(task_queue), "status": job_status}
     QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(data)
     with tempfile.NamedTemporaryFile(
         "w", delete=False, dir=QUEUE_FILE.parent, encoding="utf-8"
     ) as fh:
-        json.dump(data, fh)
+        fh.write(payload)
         fh.flush()
         os.fsync(fh.fileno())
         tmp_path = Path(fh.name)
     os.replace(tmp_path, QUEUE_FILE)
+    HASH_FILE.write_text(hashlib.sha256(payload.encode("utf-8")).hexdigest())
 
 
 def _recover_queue_file_locked() -> None:
@@ -69,17 +75,29 @@ def _recover_queue_file_locked() -> None:
     if not QUEUE_FILE.exists():
         return
 
-    bak1 = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak1")
-    bak2 = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak2")
+    backups = [QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
+    hash_backups = [HASH_FILE.with_suffix(HASH_FILE.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
     try:
-        if bak1.exists():
-            if bak2.exists():
-                bak2.unlink()
-            os.replace(bak1, bak2)
-        os.replace(QUEUE_FILE, bak1)
+        for i in range(BACKUP_COUNT - 1, 0, -1):
+            if backups[i - 1].exists():
+                if backups[i].exists():
+                    backups[i].unlink()
+                os.replace(backups[i - 1], backups[i])
+            if hash_backups[i - 1].exists():
+                if hash_backups[i].exists():
+                    hash_backups[i].unlink()
+                os.replace(hash_backups[i - 1], hash_backups[i])
+        if QUEUE_FILE.exists():
+            os.replace(QUEUE_FILE, backups[0])
+        if HASH_FILE.exists():
+            os.replace(HASH_FILE, hash_backups[0])
     except OSError:
         try:
             QUEUE_FILE.unlink()
+        except OSError:
+            pass
+        try:
+            HASH_FILE.unlink()
         except OSError:
             pass
     task_queue.clear()
@@ -90,10 +108,16 @@ def _recover_queue_file_locked() -> None:
 def _load_state_locked() -> None:
     if not QUEUE_FILE.exists():
         return
+    if not HASH_FILE.exists():
+        _recover_queue_file_locked()
+        return
 
     try:
-        with open(QUEUE_FILE, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        expected = HASH_FILE.read_text().strip()
+        data_bytes = QUEUE_FILE.read_bytes()
+        if hashlib.sha256(data_bytes).hexdigest() != expected:
+            raise ValueError("checksum mismatch")
+        data = json.loads(data_bytes.decode("utf-8"))
     except Exception:
         _recover_queue_file_locked()
         return
@@ -192,6 +216,11 @@ def _queue_worker():
             break
 
 
+def _autosave_worker() -> None:
+    while not _exit_event.wait(5):
+        _persist_state()
+
+
 try:
     _global_lock.acquire(timeout=0)
     try:
@@ -203,6 +232,8 @@ except Timeout:
 
 _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
 _worker_thread.start()
+_autosave_thread = threading.Thread(target=_autosave_worker, daemon=True)
+_autosave_thread.start()
 
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
@@ -656,3 +687,4 @@ if __name__ == "__main__":
     server.run()
     _exit_event.set()
     _worker_thread.join()
+    _autosave_thread.join()
