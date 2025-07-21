@@ -271,10 +271,10 @@ def _synergy_converged(
     The check now also considers the correlation between the metric values and
     their sequence index and computes the confidence using the t-distribution
     when possible.  If ``statsmodels`` and ``scipy`` are installed the
-    Augmented Dickey-Fuller and Levene variance tests are included as
-    additional signals.  When these dependencies are missing a basic mean or
-    variance comparison is used as a fallback so that convergence can still be
-    estimated.
+    Augmented Dickey-Fuller test is applied over a rolling window along with a
+    Levene variance test.  When these dependencies are missing a lightweight
+    AR(1) residual estimate is used as a fallback so that convergence can still
+    be estimated.
     """
     if len(history) < window:
         return False, 0.0, 0.0
@@ -306,35 +306,23 @@ def _synergy_converged(
         try:  # pragma: no cover - optional dependency
             from statsmodels.tsa.stattools import adfuller
 
-            adf_p = adfuller(ma_series)[1]
-            stat_conf = 1.0 - float(adf_p)
+            adf_ps: list[float] = []
+            size = min(len(ma_series), ma_window)
+            if size >= 3:
+                for j in range(len(ma_series) - size + 1):
+                    p_val = adfuller(ma_series[j : j + size])[1]
+                    adf_ps.append(float(p_val))
+            if adf_ps:
+                stat_conf = 1.0 - max(adf_ps)
         except Exception:
-            # fallback when statsmodels is unavailable: compare mean of first
-            # and second halves using a simple t-test
-            half = len(ma_series) // 2
-            if half > 1 and len(ma_series) - half > 1:
-                m1 = sum(ma_series[:half]) / half
-                m2 = sum(ma_series[half:]) / (len(ma_series) - half)
-                v1 = sum((x - m1) ** 2 for x in ma_series[:half]) / (half - 1)
-                v2 = (
-                    sum((x - m2) ** 2 for x in ma_series[half:])
-                    / (len(ma_series) - half - 1)
-                )
-                pooled = math.sqrt(
-                    ((half - 1) * v1 + (len(ma_series) - half - 1) * v2)
-                    / (len(ma_series) - 2)
-                )
-                if pooled > 0:
-                    t_stat = abs(m1 - m2) / (
-                        pooled
-                        * math.sqrt(1 / half + 1 / (len(ma_series) - half))
-                    )
-                    p_val = 2 * (1 - t.cdf(t_stat, len(ma_series) - 2))
-                    stat_conf = 1.0 - float(p_val)
-                else:
-                    stat_conf = 1.0
-            else:
-                stat_conf = conf
+            # fallback when statsmodels is unavailable: AR(1) coefficient check
+            if len(ma_series) > 2:
+                x = ma_series[:-1]
+                y = ma_series[1:]
+                denom = sum(v * v for v in x)
+                if denom > 0:
+                    phi = sum(a * b for a, b in zip(x, y)) / denom
+                    stat_conf = max(0.0, 1.0 - min(1.0, abs(1.0 - phi)))
 
         var_change_conf = 0.0
         try:  # pragma: no cover - optional dependency
@@ -359,6 +347,8 @@ def _synergy_converged(
                     var_change_conf = min(1.0, ratio)
                 else:
                     var_change_conf = 0.0
+        if math.isnan(var_change_conf):
+            var_change_conf = 1.0
 
         # rolling correlation of metric values against iteration index
         roll_corr = 0.0
@@ -376,17 +366,25 @@ def _synergy_converged(
             if corrs:
                 roll_corr = max(abs(c) for c in corrs)
 
-        # combine EMA trend and variance confidence
+        # combine ADF, variance and correlation into weighted confidence
         var_factor = 1.0
         if std_threshold > 0:
-            var_factor = 1.0 / (1.0 + std / std_threshold)
-        conf *= var_factor * (1.0 - abs(roll_corr))
-        min_conf = min(min_conf, conf, stat_conf, 1.0 - var_change_conf)
+            var_factor = 1.0 / (1.0 + (std / std_threshold) ** 2)
+        trend_conf = conf * var_factor
+        combined = (
+            0.6 * stat_conf
+            + 0.3 * trend_conf
+            + 0.07 * (1.0 - var_change_conf)
+            + 0.03 * (1.0 - abs(roll_corr))
+        )
+        if math.isnan(combined):
+            combined = 0.0
+        min_conf = min(min_conf, combined)
 
         if (
             abs(ema) > threshold
             or std > std_threshold
-            or conf < confidence
+            or combined < confidence
             or stat_conf < stationarity_confidence
             or var_change_conf >= variance_confidence
             or roll_corr > 0.3
