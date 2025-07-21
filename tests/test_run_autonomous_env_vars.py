@@ -32,7 +32,7 @@ def _load_module(monkeypatch):
 
     sr_mod = types.ModuleType("sandbox_runner")
     cli_mod = types.ModuleType("sandbox_runner.cli")
-    cli_mod.full_autonomous_run = lambda args: None
+    cli_mod.full_autonomous_run = lambda args, **k: None
     sr_mod.cli = cli_mod
     sr_mod._sandbox_main = lambda p, a: None
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_mod)

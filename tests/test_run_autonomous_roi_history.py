@@ -48,7 +48,7 @@ def setup_stubs(monkeypatch):
     sr_stub = types.ModuleType("sandbox_runner")
     cli_stub = types.ModuleType("sandbox_runner.cli")
 
-    def fake_run(args):
+    def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
         data_dir = Path(args.sandbox_data_dir or "sandbox_data")
         data_dir.mkdir(parents=True, exist_ok=True)
         roi_file = data_dir / "roi_history.json"
@@ -163,3 +163,38 @@ def test_adaptive_synergy_threshold_default(monkeypatch, tmp_path):
     assert captured.get("len") == 6
     assert captured.get("thr") == 0.5
     assert captured.get("cycles") == 5
+
+
+def test_previous_synergy_initialises_threshold(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    history = [{"synergy_roi": 0.1}, {"synergy_roi": 0.2}]
+    (tmp_path / "synergy_history.json").write_text(json.dumps(history))
+
+    lengths: list[int] = []
+
+    def fake_thr(hist, *a, **k):
+        lengths.append(len(hist))
+        return 0.0
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "_adaptive_synergy_threshold", fake_thr)
+    monkeypatch.setattr(mod.sandbox_runner.cli, "_synergy_converged", lambda *a, **k: (True, 0.0, {}))
+
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--preset-count",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert lengths and lengths[0] == len(history) + 1

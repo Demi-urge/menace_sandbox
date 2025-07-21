@@ -43,7 +43,7 @@ def setup_stubs(monkeypatch):
 
     sr_stub = types.ModuleType("sandbox_runner")
     cli_stub = types.ModuleType("sandbox_runner.cli")
-    cli_stub.full_autonomous_run = lambda args: None
+    cli_stub.full_autonomous_run = lambda args, **k: None
     cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
     cli_stub._ema = lambda seq: (0.0, [])
     cli_stub._adaptive_threshold = lambda *a, **k: 0.0
@@ -89,7 +89,7 @@ def test_env_dashboard(monkeypatch, tmp_path):
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{}])
-    monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
+    monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     started = {}
     _setup_dashboard(monkeypatch, started)
@@ -106,7 +106,7 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{}])
-    monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
+    monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     started = {}
     _setup_dashboard(monkeypatch, started)
@@ -123,7 +123,7 @@ def test_no_dashboard(monkeypatch, tmp_path):
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{}])
-    monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
+    monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     started = {}
     _setup_dashboard(monkeypatch, started)

@@ -159,22 +159,37 @@ def _get_env_override(name: str, current):
     return None
 
 
-def load_previous_synergy(data_dir: str | Path) -> list[dict[str, float]]:
-    """Return synergy history from ``synergy_history.json`` under ``data_dir``."""
+def load_previous_synergy(
+    data_dir: str | Path,
+) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
+    """Return synergy history and moving averages from ``synergy_history.json``."""
+
     path = Path(data_dir) / "synergy_history.json"
     if not path.exists():
-        return []
+        return [], []
+    history: list[dict[str, float]] = []
     try:
         loaded = json.loads(path.read_text())
         if isinstance(loaded, list):
-            return [
+            history = [
                 {str(k): float(v) for k, v in entry.items()}
                 for entry in loaded
                 if isinstance(entry, dict)
             ]
     except Exception:
         logger.exception("failed to load synergy history: %s", path)
-    return []
+        return [], []
+
+    ma_history: list[dict[str, float]] = []
+    for idx, entry in enumerate(history):
+        ma_entry: dict[str, float] = {}
+        for k in entry:
+            vals = [h.get(k, 0.0) for h in history[: idx + 1]]
+            ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
+            ma_entry[k] = ema
+        ma_history.append(ma_entry)
+
+    return history, ma_history
 
 
 def main(argv: List[str] | None = None) -> None:
@@ -309,7 +324,7 @@ def main(argv: List[str] | None = None) -> None:
     data_dir = Path(
         args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
     )
-    synergy_history = load_previous_synergy(data_dir)
+    synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
 
@@ -403,7 +418,7 @@ def main(argv: List[str] | None = None) -> None:
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     roi_ma_history: list[float] = []
-    synergy_ma_history: list[dict[str, float]] = []
+    synergy_ma_history: list[dict[str, float]] = list(synergy_ma_prev)
     roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold)
     synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold)
     roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence)
@@ -474,7 +489,11 @@ def main(argv: List[str] | None = None) -> None:
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
         sandbox_runner._sandbox_main = recovery.run
         try:
-            full_autonomous_run(args)
+            full_autonomous_run(
+                args,
+                synergy_history=synergy_history,
+                synergy_ma_history=synergy_ma_history,
+            )
         finally:
             sandbox_runner._sandbox_main = recovery.sandbox_main
 
@@ -529,6 +548,7 @@ def main(argv: List[str] | None = None) -> None:
                 ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
                 ma_entry[k] = ema
             synergy_ma_history.append(ma_entry)
+            synergy_ma_prev = synergy_ma_history
         history = getattr(tracker, "roi_history", [])
         if history:
             ema, _ = cli._ema(history[-args.roi_cycles :])
