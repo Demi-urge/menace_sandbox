@@ -10,6 +10,7 @@ def test_simulate_full_environment_vm(monkeypatch, tmp_path):
     vm_calls = []
 
     monkeypatch.setenv("SANDBOX_DOCKER", "0")
+    tmp_clone.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
 
     def fake_copytree(src, dst, dirs_exist_ok=True):
@@ -22,7 +23,11 @@ def test_simulate_full_environment_vm(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         vm_calls.append(cmd)
-        (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        if cmd[0] == "qemu-img":
+            Path(cmd[-1]).touch()
+        else:
+            (tmp_clone / "data").mkdir(exist_ok=True)
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
         return types.SimpleNamespace()
     monkeypatch.setattr(env.subprocess, "run", fake_run)
 
@@ -34,8 +39,9 @@ def test_simulate_full_environment_vm(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "menace.roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
 
     tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2", "memory": "1G"}})
-    assert vm_calls and "qemu-system-x86_64" in vm_calls[0][0]
-    assert any("img.qcow2" in part for part in vm_calls[0])
+    assert vm_calls and any("qemu-system" in c[0] for c in vm_calls)
+    qemu_cmd = next(c for c in vm_calls if "qemu-system" in c[0])
+    assert any("overlay.qcow2" in part for part in qemu_cmd)
     assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
 
 
@@ -57,7 +63,8 @@ def test_simulate_full_environment_vm_fallback(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        if "qemu-system" in cmd[0]:
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
         return types.SimpleNamespace()
 
     monkeypatch.setattr(env.subprocess, "run", fake_run)
