@@ -207,7 +207,9 @@ def test_strategy_env_var(monkeypatch, tmp_path):
         delattr(eg.adapt_presets, "_rl_agent")
     tracker = _tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
-    assert "actor_critic" in captured["strategies"]
+    assert any(
+        isinstance(s, sp.ActorCriticStrategy) for s in captured["strategies"]
+    )
 
 
 def test_adaptive_strategy_env_var(monkeypatch, tmp_path):
@@ -234,5 +236,6 @@ def test_adaptive_strategy_env_var(monkeypatch, tmp_path):
         delattr(eg.adapt_presets, "_adaptive_agent")
     tracker = _long_tracker()
     eg.adapt_presets(tracker, [{"CPU_LIMIT": "1"}])
-    assert "double_dqn" in captured["strategies"]
+    expected = type(sp.strategy_factory("double_dqn"))
+    assert any(isinstance(s, expected) for s in captured["strategies"])
 

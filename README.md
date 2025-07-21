@@ -299,6 +299,7 @@ The deployment helpers use the following variables:
 - `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
 - `SANDBOX_OFFLINE_SUGGESTIONS` – enable heuristic patches when GPT is unavailable.
 - `SANDBOX_SUGGESTION_CACHE` – JSON file with cached suggestions.
+- `SANDBOX_PRESET_RL_STRATEGY` – RL algorithm used by `AdaptivePresetAgent` (default `q_learning`).
 - `OPENAI_FALLBACK_MODEL` – fallback GPT model name.
 - `OPENAI_FALLBACK_ATTEMPTS` – retry count for OpenAI calls.
 - `OPENAI_RETRY_DELAY` – delay in seconds between OpenAI retries.

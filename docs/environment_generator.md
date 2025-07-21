@@ -98,6 +98,9 @@ unset the policy is stored in ``sandbox_data/preset_policy.json`` and reloaded
 automatically on the next run. If history is too short the function falls back
 to the heuristics described above.
 
+Set ``SANDBOX_PRESET_RL_STRATEGY`` to choose the reinforcement learning
+algorithm. When unset the agent defaults to ``q_learning``.
+
 If ``SANDBOX_ADAPTIVE_AGENT_PATH`` is set, ``adapt_presets`` employs
 ``AdaptivePresetAgent`` to refine presets using a reinforcement learning
 policy. The algorithm can be selected via ``SANDBOX_ADAPTIVE_AGENT_STRATEGY``
