@@ -270,15 +270,20 @@ except Exception as exc:  # pragma: no cover - docker may be unavailable
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
 _POOL_CLEANUP_INTERVAL = float(os.getenv("SANDBOX_POOL_CLEANUP_INTERVAL", "60"))
+_CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
+_CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
+_CONTAINER_DISK_LIMIT = 0
 
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
+_CONTAINER_CREATED: Dict[str, float] = {}
 _WARMUP_TASKS: Dict[str, asyncio.Task] = {}
 _CLEANUP_TASK: asyncio.Task | None = None
 _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
+_CLEANUP_METRICS: Counter[str] = Counter()
 
 
 def _ensure_pool_size_async(image: str) -> None:
@@ -332,14 +337,21 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     _CONSECUTIVE_CREATE_FAILURES[image] = 0
     _CONTAINER_DIRS[container.id] = td
     _CONTAINER_LAST_USED[container.id] = time.time()
+    _CONTAINER_CREATED[container.id] = time.time()
     return container, td
 
 
 def _verify_container(container: Any) -> bool:
-    """Return ``True`` if ``container`` is running after reload."""
+    """Return ``True`` if ``container`` is healthy and running."""
     try:
         container.reload()
-        return getattr(container, "status", "running") == "running"
+        if getattr(container, "status", "running") != "running":
+            return False
+        attrs = getattr(container, "attrs", {})
+        health = attrs.get("State", {}).get("Health", {}).get("Status")
+        if health and health != "healthy":
+            return False
+        return True
     except Exception as exc:
         logger.warning("container reload failed: %s", exc)
         return False
@@ -409,11 +421,13 @@ def collect_metrics(
     roi: float,
     resources: Dict[str, float] | None,
 ) -> Dict[str, float]:
-    """Return metrics about container creation failures."""
-    return {
+    """Return metrics about container failures and cleanup."""
+    result = {
         f"container_failures_{img}": float(cnt)
         for img, cnt in _CREATE_FAILURES.items()
     }
+    result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
+    return result
 
 
 async def collect_metrics_async(
@@ -448,6 +462,30 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 time.sleep(base_delay * (2 ** attempt))
 
 
+def _get_dir_usage(path: str) -> int:
+    """Return total size of files under ``path`` in bytes."""
+    total = 0
+    for root_dir, _, files in os.walk(path):
+        for fname in files:
+            try:
+                total += os.path.getsize(os.path.join(root_dir, fname))
+            except Exception:
+                pass
+    return total
+
+
+def _check_disk_usage(cid: str) -> bool:
+    """Return ``True`` if container directory exceeds ``_CONTAINER_DISK_LIMIT``."""
+    td = _CONTAINER_DIRS.get(cid)
+    if not td:
+        return False
+    try:
+        return _get_dir_usage(td) > _CONTAINER_DISK_LIMIT
+    except Exception as exc:
+        logger.warning("disk usage check failed for %s: %s", td, exc)
+        return False
+
+
 def _cleanup_idle_containers() -> tuple[int, int]:
     """Remove idle or unhealthy containers.
 
@@ -463,7 +501,17 @@ def _cleanup_idle_containers() -> tuple[int, int]:
     for image, pool in list(_CONTAINER_POOLS.items()):
         for c in list(pool):
             last = _CONTAINER_LAST_USED.get(c.id, 0)
-            if now - last > _CONTAINER_IDLE_TIMEOUT or not _verify_container(c):
+            created = _CONTAINER_CREATED.get(c.id, last)
+            reason = None
+            if _CONTAINER_DISK_LIMIT and _check_disk_usage(c.id):
+                reason = "disk"
+            elif now - created > _CONTAINER_MAX_LIFETIME:
+                reason = "lifetime"
+            elif now - last > _CONTAINER_IDLE_TIMEOUT:
+                reason = "idle"
+            elif not _verify_container(c):
+                reason = "unhealthy"
+            if reason:
                 pool.remove(c)
                 _stop_and_remove(c)
                 td = _CONTAINER_DIRS.pop(c.id, None)
@@ -475,10 +523,12 @@ def _cleanup_idle_containers() -> tuple[int, int]:
                             "temporary directory removal failed for %s", td
                         )
                 _CONTAINER_LAST_USED.pop(c.id, None)
-                if now - last > _CONTAINER_IDLE_TIMEOUT:
+                _CONTAINER_CREATED.pop(c.id, None)
+                if reason == "idle":
                     cleaned += 1
                 else:
                     replaced += 1
+                _CLEANUP_METRICS[reason] += 1
                 _ensure_pool_size_async(image)
     return cleaned, replaced
 
@@ -530,6 +580,7 @@ def _cleanup_pools() -> None:
                         "temporary directory removal failed for %s", td
                     )
             _CONTAINER_LAST_USED.pop(c.id, None)
+            _CONTAINER_CREATED.pop(c.id, None)
     _CONTAINER_POOLS.clear()
 
 
@@ -1016,6 +1067,9 @@ def _parse_size(value: str | int | float) -> int:
         return int(float(s))
     except Exception:
         return 0
+
+
+_CONTAINER_DISK_LIMIT = _parse_size(_CONTAINER_DISK_LIMIT_STR)
 
 
 def _rlimits_supported() -> bool:
