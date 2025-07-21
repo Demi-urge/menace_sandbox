@@ -420,7 +420,12 @@ def _synergy_converged(
     return True, max_abs, min_conf
 
 
-def full_autonomous_run(args: argparse.Namespace) -> None:
+def full_autonomous_run(
+    args: argparse.Namespace,
+    *,
+    synergy_history: list[dict[str, float]] | None = None,
+    synergy_ma_history: list[dict[str, float]] | None = None,
+) -> None:
     """Execute sandbox cycles until all modules show diminishing returns."""
     if getattr(args, "dashboard_port", None):
         history_file = (
@@ -433,10 +438,10 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
-    synergy_history: list[dict[str, float]] = []
+    synergy_history = list(synergy_history or [])
     synergy_pred_history: list[dict[str, float]] = []
     roi_ma_history: list[float] = []
-    synergy_ma_history: list[dict[str, float]] = []
+    synergy_ma_history = list(synergy_ma_history or [])
     roi_threshold = getattr(args, "roi_threshold", None)
     env_val = os.getenv("ROI_THRESHOLD")
     if roi_threshold is None and env_val is not None:
