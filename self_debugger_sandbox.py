@@ -18,6 +18,7 @@ import io
 import math
 from statistics import pstdev
 from coverage import Coverage
+import sqlite3
 
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
@@ -66,6 +67,44 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         self._score_db: PatchHistoryDB | None = None
+        self._history_conn: sqlite3.Connection | None = None
+        self._history_records: list[tuple[float, float, float, float, float, float]] = []
+        try:
+            path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db"))
+            self._history_conn = sqlite3.connect(path)
+            self._history_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS flakiness_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    filename TEXT,
+                    flakiness REAL,
+                    ts TEXT
+                )
+                """
+            )
+            self._history_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS composite_history(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    coverage_delta REAL,
+                    error_delta REAL,
+                    roi_delta REAL,
+                    complexity REAL,
+                    synergy_roi REAL,
+                    synergy_efficiency REAL,
+                    synergy_resilience REAL,
+                    synergy_antifragility REAL,
+                    flakiness REAL,
+                    score REAL,
+                    ts TEXT
+                )
+                """
+            )
+            self._history_conn.commit()
+            self._load_history_stats()
+        except Exception:
+            self.logger.exception("score history init failed")
+            self._history_conn = None
         self._metric_stats: dict[str, tuple[float, float]] = {
             "coverage": (0.0, 1.0),
             "error": (0.0, 1.0),
@@ -288,6 +327,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             except Exception:
                 self.logger.exception("flakiness history update failed")
 
+        if self._history_conn:
+            try:
+                self._history_conn.execute(
+                    "INSERT INTO flakiness_history(filename, flakiness, ts) VALUES(?,?,?)",
+                    (str(path), float(flakiness), datetime.utcnow().isoformat()),
+                )
+                self._history_conn.commit()
+            except Exception:
+                self.logger.exception("local flakiness history update failed")
+
         return flakiness
 
     # ------------------------------------------------------------------
@@ -343,6 +392,33 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         return s_roi, s_eff, s_res, s_af
 
     # ------------------------------------------------------------------
+    def _load_history_stats(self, limit: int = 50) -> None:
+        """Load recent score records from the local history database."""
+        if not self._history_conn:
+            self._history_records = []
+            return
+        try:
+            cur = self._history_conn.execute(
+                "SELECT coverage_delta, error_delta, roi_delta, complexity, synergy_roi, synergy_efficiency FROM composite_history ORDER BY id DESC LIMIT ?",
+                (limit,),
+            )
+            rows = cur.fetchall()
+            self._history_records = [
+                (
+                    float(r[0] or 0.0),
+                    float(r[1] or 0.0),
+                    float(r[2] or 0.0),
+                    float(r[3] or 0.0),
+                    float(r[4] or 0.0),
+                    float(r[5] or 0.0),
+                )
+                for r in rows
+            ]
+        except Exception:
+            self.logger.exception("score history load failed")
+            self._history_records = []
+
+    # ------------------------------------------------------------------
     def _update_score_weights(
         self, patch_db: PatchHistoryDB | None = None, limit: int = 50
     ) -> None:
@@ -350,6 +426,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         records: list[tuple[float, float, float, float, float, float]] = []
         weights_path: Path | None = None
+
+        self._load_history_stats(limit)
+        if self._history_records:
+            records.extend(self._history_records[-limit:])
 
         if patch_db:
             weights_path = Path(getattr(patch_db, "path", "weights.db")).with_suffix(
@@ -576,9 +656,47 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             - hist_flak
         )
         try:
-            return 1.0 / (1.0 + math.exp(-x))
+            score = 1.0 / (1.0 + math.exp(-x))
         except Exception:
             return 0.0
+
+        if self._history_conn:
+            try:
+                self._history_conn.execute(
+                    """
+                    INSERT INTO composite_history(
+                        coverage_delta,
+                        error_delta,
+                        roi_delta,
+                        complexity,
+                        synergy_roi,
+                        synergy_efficiency,
+                        synergy_resilience,
+                        synergy_antifragility,
+                        flakiness,
+                        score,
+                        ts
+                    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        float(coverage_delta),
+                        float(error_delta),
+                        float(roi_delta),
+                        float(complexity),
+                        float(synergy_roi),
+                        float(synergy_efficiency),
+                        float(synergy_resilience),
+                        float(synergy_antifragility),
+                        float(flakiness),
+                        float(score),
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
+                self._history_conn.commit()
+            except Exception:
+                self.logger.exception("score history persistence failed")
+
+        return score
 
     # ------------------------------------------------------------------
     def _log_patch(
