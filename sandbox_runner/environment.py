@@ -276,6 +276,9 @@ _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
 _WARMUP_TASKS: Dict[str, asyncio.Task] = {}
 _CLEANUP_TASK: asyncio.Task | None = None
+_CREATE_FAILURES: Counter[str] = Counter()
+_CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
+_CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 
 
 def _ensure_pool_size_async(image: str) -> None:
@@ -308,15 +311,25 @@ def _ensure_pool_size_async(image: str) -> None:
 async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity``."""
     assert _DOCKER_CLIENT is not None
+    fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
+    if fails:
+        await asyncio.sleep(_CREATE_BACKOFF_BASE * (2 ** (fails - 1)))
     td = tempfile.mkdtemp(prefix="pool_")
-    container = await asyncio.to_thread(
-        _DOCKER_CLIENT.containers.run,
-        image,
-        ["sleep", "infinity"],
-        detach=True,
-        network_disabled=True,
-        volumes={td: {"bind": "/code", "mode": "rw"}},
-    )
+    try:
+        container = await asyncio.to_thread(
+            _DOCKER_CLIENT.containers.run,
+            image,
+            ["sleep", "infinity"],
+            detach=True,
+            network_disabled=True,
+            volumes={td: {"bind": "/code", "mode": "rw"}},
+        )
+    except Exception:
+        shutil.rmtree(td, ignore_errors=True)
+        _CREATE_FAILURES[image] += 1
+        _CONSECUTIVE_CREATE_FAILURES[image] = fails + 1
+        raise
+    _CONSECUTIVE_CREATE_FAILURES[image] = 0
     _CONTAINER_DIRS[container.id] = td
     _CONTAINER_LAST_USED[container.id] = time.time()
     return container, td
@@ -342,6 +355,7 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
             _ensure_pool_size_async(image)
             return c, _CONTAINER_DIRS[c.id]
         _stop_and_remove(c)
+        _CREATE_FAILURES[image] += 1
         td = _CONTAINER_DIRS.pop(c.id, None)
         if td:
             try:
@@ -388,6 +402,27 @@ def _release_container(image: str, container: Any) -> None:
                 logger.exception("temporary directory removal failed")
     finally:
         _ensure_pool_size_async(image)
+
+
+def collect_metrics(
+    prev_roi: float,
+    roi: float,
+    resources: Dict[str, float] | None,
+) -> Dict[str, float]:
+    """Return metrics about container creation failures."""
+    return {
+        f"container_failures_{img}": float(cnt)
+        for img, cnt in _CREATE_FAILURES.items()
+    }
+
+
+async def collect_metrics_async(
+    prev_roi: float,
+    roi: float,
+    resources: Dict[str, float] | None,
+) -> Dict[str, float]:
+    """Async wrapper for :func:`collect_metrics`."""
+    return collect_metrics(prev_roi, roi, resources)
 
 
 def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> None:
