@@ -71,9 +71,7 @@ def _check_dependencies() -> bool:
     missing: List[str] = []
 
     if sys.version_info[:2] < (3, 10):
-        msg = (
-            f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
-        )
+        msg = f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
         logger.error(msg)
         return False
 
@@ -161,6 +159,24 @@ def _get_env_override(name: str, current):
     return None
 
 
+def load_previous_synergy(data_dir: str | Path) -> list[dict[str, float]]:
+    """Return synergy history from ``synergy_history.json`` under ``data_dir``."""
+    path = Path(data_dir) / "synergy_history.json"
+    if not path.exists():
+        return []
+    try:
+        loaded = json.loads(path.read_text())
+        if isinstance(loaded, list):
+            return [
+                {str(k): float(v) for k, v in entry.items()}
+                for entry in loaded
+                if isinstance(entry, dict)
+            ]
+    except Exception:
+        logger.exception("failed to load synergy history: %s", path)
+    return []
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
     parser = argparse.ArgumentParser(
@@ -207,7 +223,6 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--synergy-cycles",
         type=int,
-        default=3,
         help="cycles below threshold before synergy convergence",
     )
     parser.add_argument(
@@ -291,10 +306,16 @@ def main(argv: List[str] | None = None) -> None:
     if created_env:
         logger.info("created env file at %s", env_file)
 
+    data_dir = Path(
+        args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+    )
+    synergy_history = load_previous_synergy(data_dir)
+    if args.synergy_cycles is None:
+        args.synergy_cycles = max(3, len(synergy_history))
+
     if args.preset_files is None:
         data_dir = Path(
-            args.sandbox_data_dir
-            or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+            args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
         )
         preset_file = data_dir / "presets.json"
         created_preset = False
@@ -381,13 +402,14 @@ def main(argv: List[str] | None = None) -> None:
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
-    synergy_history: list[dict[str, float]] = []
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = []
     roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold)
     synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold)
     roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence)
-    synergy_confidence = _get_env_override("SYNERGY_CONFIDENCE", args.synergy_confidence)
+    synergy_confidence = _get_env_override(
+        "SYNERGY_CONFIDENCE", args.synergy_confidence
+    )
     synergy_threshold_window = _get_env_override(
         "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window
     )
@@ -527,7 +549,7 @@ def main(argv: List[str] | None = None) -> None:
         )
         flagged.update(new_flags)
 
-        if getattr(args, "auto_thresholds", False):
+        if getattr(args, "auto_thresholds", False) or args.synergy_threshold is None:
             synergy_threshold = cli._adaptive_synergy_threshold(
                 synergy_history,
                 synergy_threshold_window,
