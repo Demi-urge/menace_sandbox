@@ -200,14 +200,27 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
     if x_token != API_TOKEN:
         raise HTTPException(status_code=401, detail="Bad token")
 
-    if _running_lock.locked() or getattr(_global_lock, "is_locked", False) or task_queue:
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
         raise HTTPException(status_code=409, detail="Agent busy")
 
-    task_id = secrets.token_hex(8)
-    job_status[task_id] = {"status": "queued", "prompt": task.prompt, "branch": task.branch}
-    task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
-    _persist_state()
-    return {"id": task_id, "status": "queued"}
+    try:
+        if _running_lock.locked() or task_queue:
+            raise HTTPException(status_code=409, detail="Agent busy")
+
+        task_id = secrets.token_hex(8)
+        job_status[task_id] = {"status": "queued", "prompt": task.prompt, "branch": task.branch}
+        task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
+        _save_state_locked()
+        response = {"id": task_id, "status": "queued"}
+    finally:
+        try:
+            _global_lock.release()
+        except Exception:
+            pass
+
+    return response
 
 # Tesseract path (change this if needed)
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
