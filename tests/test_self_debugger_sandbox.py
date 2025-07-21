@@ -69,14 +69,21 @@ import os
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
-import roi_tracker as rt
-
-sys.modules.setdefault("menace.roi_tracker", rt)
-
 # Create a lightweight menace package with stub modules used during import
 menace_pkg = types.ModuleType("menace")
 menace_pkg.__path__ = []
 sys.modules.setdefault("menace", menace_pkg)
+import logging_utils as _logging_utils
+sys.modules.setdefault("menace.logging_utils", _logging_utils)
+
+rt_spec = importlib.util.spec_from_file_location(
+    "menace.roi_tracker", Path(__file__).resolve().parents[1] / "roi_tracker.py"
+)
+rt = importlib.util.module_from_spec(rt_spec)
+assert rt_spec.loader is not None
+rt_spec.loader.exec_module(rt)
+sys.modules.setdefault("roi_tracker", rt)
+sys.modules.setdefault("menace.roi_tracker", rt)
 
 auto_dbg = types.ModuleType("menace.automated_debugger")
 
@@ -475,12 +482,13 @@ def test_run_tests_includes_telemetry(monkeypatch, tmp_path):
     assert any("telemetry" in p.name for p in called["paths"])
 
 
-def _stub_proc():
+def _stub_proc(rc=0, out=b"", err=b""):
     class P:
-        returncode = 0
+        def __init__(self):
+            self.returncode = rc
 
-        async def wait(self):
-            return None
+        async def communicate(self):
+            return out, err
 
     return P()
 
@@ -514,6 +522,7 @@ def test_coverage_xml_report_failure(monkeypatch, caplog):
     cov = asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
     assert cov == 0.0
     assert "coverage generation failed" in caplog.text
+    assert "boom" in caplog.text
 
 
 def test_coverage_report_failure(monkeypatch, caplog):
@@ -552,19 +561,14 @@ def test_coverage_subprocess_failure(monkeypatch):
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine)
 
     async def fail_exec(*a, **k):
-        class P:
-            returncode = 1
-
-            async def wait(self):
-                return None
-
-        return P()
+        return _stub_proc(1, b"boom", b"err")
 
     monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fail_exec)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError) as exc:
         asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
+    assert "boom" in str(exc.value)
 
 
 def test_flakiness_deterministic(monkeypatch):
