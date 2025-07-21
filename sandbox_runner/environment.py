@@ -322,14 +322,34 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     return container, td
 
 
+def _verify_container(container: Any) -> bool:
+    """Return ``True`` if ``container`` is running after reload."""
+    try:
+        container.reload()
+        return getattr(container, "status", "running") == "running"
+    except Exception as exc:
+        logger.warning("container reload failed: %s", exc)
+        return False
+
+
 async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
     pool = _CONTAINER_POOLS.setdefault(image, [])
-    if pool:
+    while pool:
         c = pool.pop()
         _CONTAINER_LAST_USED.pop(c.id, None)
+        if _verify_container(c):
+            _ensure_pool_size_async(image)
+            return c, _CONTAINER_DIRS[c.id]
+        _stop_and_remove(c)
+        td = _CONTAINER_DIRS.pop(c.id, None)
+        if td:
+            try:
+                shutil.rmtree(td)
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", td)
+        _CONTAINER_LAST_USED.pop(c.id, None)
         _ensure_pool_size_async(image)
-        return c, _CONTAINER_DIRS[c.id]
     container, td = await _create_pool_container(image)
     _ensure_pool_size_async(image)
     return container, td
@@ -393,19 +413,22 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 time.sleep(base_delay * (2 ** attempt))
 
 
-def _cleanup_idle_containers() -> int:
-    """Remove containers unused for longer than the idle timeout.
+def _cleanup_idle_containers() -> tuple[int, int]:
+    """Remove idle or unhealthy containers.
 
-    Returns the number of containers cleaned.
+    Returns a tuple ``(cleaned, replaced)`` where ``cleaned`` is the number of
+    idle containers removed and ``replaced`` is the number of unhealthy
+    containers purged.
     """
     if _DOCKER_CLIENT is None:
         return 0
     cleaned = 0
+    replaced = 0
     now = time.time()
     for image, pool in list(_CONTAINER_POOLS.items()):
         for c in list(pool):
             last = _CONTAINER_LAST_USED.get(c.id, 0)
-            if now - last > _CONTAINER_IDLE_TIMEOUT:
+            if now - last > _CONTAINER_IDLE_TIMEOUT or not _verify_container(c):
                 pool.remove(c)
                 _stop_and_remove(c)
                 td = _CONTAINER_DIRS.pop(c.id, None)
@@ -417,20 +440,34 @@ def _cleanup_idle_containers() -> int:
                             "temporary directory removal failed for %s", td
                         )
                 _CONTAINER_LAST_USED.pop(c.id, None)
-                cleaned += 1
-    return cleaned
+                if now - last > _CONTAINER_IDLE_TIMEOUT:
+                    cleaned += 1
+                else:
+                    replaced += 1
+                _ensure_pool_size_async(image)
+    return cleaned, replaced
 
 
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
-    total = 0
+    total_cleaned = 0
+    total_replaced = 0
     while True:
         await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
         try:
-            cleaned = _cleanup_idle_containers()
-            total += cleaned
+            cleaned, replaced = _cleanup_idle_containers()
+            total_cleaned += cleaned
+            total_replaced += replaced
             if cleaned:
-                logger.info("cleaned %d idle containers (total %d)", cleaned, total)
+                logger.info(
+                    "cleaned %d idle containers (total %d)", cleaned, total_cleaned
+                )
+            if replaced:
+                logger.info(
+                    "replaced %d unhealthy containers (total %d)",
+                    replaced,
+                    total_replaced,
+                )
         except Exception:
             logger.exception("idle container cleanup failed")
 
