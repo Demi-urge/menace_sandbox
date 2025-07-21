@@ -59,8 +59,14 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
 logger = logging.getLogger(__name__)
 
 
-def _check_dependencies() -> None:
-    """Install missing project dependencies and warn about binaries."""
+def _check_dependencies() -> bool:
+    """Install missing project dependencies and warn about binaries.
+
+    Returns
+    -------
+    bool
+        ``True`` if all dependencies are satisfied, otherwise ``False``.
+    """
     missing: List[str] = []
 
     if sys.version_info[:2] < (3, 10):
@@ -68,7 +74,7 @@ def _check_dependencies() -> None:
             f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
         )
         logger.error(msg)
-        raise RuntimeError(msg)
+        return False
 
     if shutil.which("docker") is None:
         logger.warning(
@@ -128,9 +134,10 @@ def _check_dependencies() -> None:
 
     if missing:
         logger.error("Missing dependencies: %s", ", ".join(missing))
-        raise RuntimeError("dependency installation failed")
-    else:
-        logger.info("All dependencies satisfied")
+        return False
+
+    logger.info("All dependencies satisfied")
+    return True
 
 
 def _get_env_override(name: str, current):
@@ -297,7 +304,8 @@ def main(argv: List[str] | None = None) -> None:
         if created_preset:
             logger.info("created preset file at %s", preset_file)
 
-    _check_dependencies()
+    if not _check_dependencies():
+        sys.exit("dependency installation failed")
 
     dash_port = args.dashboard_port
     if dash_port is None:

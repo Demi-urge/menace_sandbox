@@ -167,7 +167,7 @@ def test_autonomous_full_loop(monkeypatch, tmp_path):
 
     mod = load_module()
 
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
 
     popen_calls = []
     monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
