@@ -124,3 +124,56 @@ def test_run_repo_section_synergy(monkeypatch, tmp_path):
     for call in combined_calls:
         if "synergy_roi" in call["metrics"]:
             assert "synergy_profitability" in call["metrics"]
+
+
+def test_repo_section_synergy_cli(tmp_path, capsys):
+    import importlib
+    import types, sys
+    from pathlib import Path
+    sk_mod = types.ModuleType("sklearn")
+    lin_mod = types.ModuleType("sklearn.linear_model")
+    lin_mod.LinearRegression = lambda *a, **k: types.SimpleNamespace(coef_=[0, 0, 0], fit=lambda X, y: None, predict=lambda X: [0] * len(X))
+    pre_mod = types.ModuleType("sklearn.preprocessing")
+    pre_mod.PolynomialFeatures = lambda degree=2: types.SimpleNamespace(fit_transform=lambda x: x)
+    sk_mod.linear_model = lin_mod
+    sk_mod.preprocessing = pre_mod
+    sys.modules.setdefault("sklearn", sk_mod)
+    sys.modules.setdefault("sklearn.linear_model", lin_mod)
+    sys.modules.setdefault("sklearn.preprocessing", pre_mod)
+
+    ROOT = Path(__file__).resolve().parents[1]
+    menace_pkg = types.ModuleType("menace")
+    menace_pkg.__path__ = [str(ROOT)]
+    sys.modules.setdefault("menace", menace_pkg)
+    log_mod = types.ModuleType("menace.logging_utils")
+    log_mod.get_logger = lambda *a, **k: types.SimpleNamespace(
+        info=lambda *a, **k: None,
+        debug=lambda *a, **k: None,
+        warning=lambda *a, **k: None,
+        error=lambda *a, **k: None,
+        exception=lambda *a, **k: None,
+    )
+    sys.modules.setdefault("menace.logging_utils", log_mod)
+
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("menace.roi_tracker", Path("roi_tracker.py"))
+    rt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rt)
+    sys.modules.setdefault("menace.roi_tracker", rt)
+
+    cli = importlib.import_module("sandbox_runner.cli")
+
+    t1 = rt.ROITracker()
+    t1.scenario_synergy = {"dev": [{"synergy_roi": 0.4}], "prod": [{"synergy_roi": 0.2}]}
+    f1 = tmp_path / "a.json"
+    t1.save_history(str(f1))
+
+    t2 = rt.ROITracker()
+    t2.scenario_synergy = {"dev": [{"synergy_roi": 0.1}], "prod": [{"synergy_roi": 0.5}]}
+    f2 = tmp_path / "b.json"
+    t2.save_history(str(f2))
+
+    cli.rank_scenario_synergy([str(f1), str(f2)])
+    out = capsys.readouterr().out.strip().splitlines()
+    assert out and all("roi=" in line for line in out)
