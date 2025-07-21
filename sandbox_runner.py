@@ -14,6 +14,7 @@ import time
 import textwrap
 import argparse
 import logging
+from menace.logging_utils import log_record
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -474,7 +475,7 @@ class SandboxContext:
 
 def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxContext:
     tmp = tempfile.mkdtemp(prefix="menace_sandbox_")
-    logger.info("sandbox temporary directory", extra={"path": tmp})
+    logger.info("sandbox temporary directory", extra=log_record(path=tmp))
     repo = SANDBOX_REPO_PATH
     orig_cwd = Path.cwd()
 
@@ -485,7 +486,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     if not data_dir.is_absolute():
         data_dir = ROOT / data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("using data directory", extra={"path": str(data_dir)})
+    logger.info("using data directory", extra=log_record(path=str(data_dir)))
     policy_file = data_dir / "improvement_policy.pkl"
     patch_file = data_dir / "patch_history.db"
     module_map_file = data_dir / "module_map.json"
@@ -799,7 +800,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     from menace.roi_tracker import ROITracker
 
     global SANDBOX_ENV_PRESETS
-    logger.info("starting sandbox run", extra={"preset": preset})
+    logger.info("starting sandbox run", extra=log_record(preset=preset))
     ctx = _sandbox_init(preset, args)
 
     def _cycle(
@@ -817,7 +818,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             section_name = f"{mod}:{name}"
             if section_name in ctx.meta_log.flagged_sections:
                 continue
-            logger.info("processing section", extra={"section": section_name})
+            logger.info("processing section", extra=log_record(section=section_name))
             snippet = "\n".join(lines[:5])
             section_trackers: list[ROITracker] = []
             for p_idx, env_preset in enumerate(SANDBOX_ENV_PRESETS):
@@ -827,7 +828,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 scenario = env_preset.get("SCENARIO_NAME", f"scenario_{p_idx}")
                 logger.info(
                     "running scenario",
-                    extra={"section": section_name, "scenario": scenario},
+                    extra=log_record(section=section_name, scenario=scenario),
                 )
                 backups_p = {k: os.environ.get(k) for k in env_updates}
                 os.environ.update({k: str(v) for k, v in env_updates.items()})
@@ -957,10 +958,11 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 predicted = ctx.tracker.predict_synergy()
                 logger.info(
                     "synergy prediction",
-                    extra={
-                        "predicted_synergy_roi": predicted,
-                        "actual_synergy_roi": synergy_metrics.get("synergy_roi", 0.0),
-                    },
+                    extra=log_record(
+                        roi=predicted,
+                        module=section_name,
+                        actual_synergy_roi=synergy_metrics.get("synergy_roi", 0.0),
+                    ),
                 )
             except Exception:
                 logger.exception("synergy prediction failed")
@@ -1043,7 +1045,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                     if idea:
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
-                        logger.info("brainstorm", extra={"idea": idea})
+                        logger.info("brainstorm", extra=log_record(idea=idea))
                     if len(hist) > 6:
                         hist = hist[-6:]
                     ctx.conversations["brainstorm"] = hist
@@ -1080,9 +1082,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     ranking = ctx.meta_log.rankings()
     flags = ctx.meta_log.diminishing()
     if ranking:
-        logger.info("sandbox roi ranking", extra={"ranking": ranking})
+        logger.info("sandbox roi ranking", extra=log_record(ranking=ranking))
     if flags:
-        logger.info("sandbox diminishing", extra={"modules": flags})
+        logger.info("sandbox diminishing", extra=log_record(modules=flags))
     try:
         ctx.tracker.save_history(str(ctx.roi_history_file))
     except Exception:

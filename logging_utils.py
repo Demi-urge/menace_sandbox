@@ -46,4 +46,9 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-__all__ = ["setup_logging", "get_logger"]
+def log_record(**fields: Any) -> Dict[str, Any]:
+    """Return *fields* without ``None`` values for structured logging."""
+    return {k: v for k, v in fields.items() if v is not None}
+
+
+__all__ = ["setup_logging", "get_logger", "log_record"]
