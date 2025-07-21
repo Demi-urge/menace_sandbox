@@ -235,19 +235,29 @@ class SelfTestService:
             )
 
             if proc.returncode != 0:
-                exc = RuntimeError(f"self tests failed with code {proc.returncode}")
+                exc = RuntimeError(
+                    f"self tests failed with code {proc.returncode}"
+                )
                 self.logger.error("self tests failed: %s", exc)
                 try:
                     self.error_logger.log(exc, "self_tests", "sandbox")
                 except Exception:
                     self.logger.exception("error logging failed")
+                raise exc
 
             return pcount, fcount, cov, runtime
 
         tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
 
-        for coro in asyncio.as_completed(tasks):
-            pcount, fcount, cov, runtime = await coro
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        first_exc: Exception | None = None
+
+        for res in results:
+            if isinstance(res, Exception):
+                if first_exc is None:
+                    first_exc = res
+                continue
+            pcount, fcount, cov, runtime = res
             passed += pcount
             failed += fcount
             coverage_total += cov
@@ -300,6 +310,9 @@ class SelfTestService:
                 self.data_bot.db.log_eval("self_tests", "runtime", float(runtime))
             except Exception:
                 self.logger.exception("failed to store metrics")
+
+        if first_exc:
+            raise first_exc
 
     async def _schedule_loop(self, interval: float) -> None:
         assert self._async_stop is not None
@@ -377,4 +390,68 @@ class SelfTestService:
             self._task = None
 
 
-__all__ = ["SelfTestService"]
+__all__ = ["SelfTestService", "cli", "main"]
+
+
+def cli(argv: list[str] | None = None) -> int:
+    """Command line interface for running the self tests."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    run = sub.add_parser("run", help="Run self tests once")
+    run.add_argument("paths", nargs="*", help="Test paths or patterns")
+    run.add_argument("--workers", type=int, default=1, help="Number of pytest workers")
+    run.add_argument(
+        "--container-image",
+        default="python:3.11-slim",
+        help="Docker image when using containers",
+    )
+    run.add_argument(
+        "--use-container",
+        action="store_true",
+        help="Execute tests inside a Docker container",
+    )
+    run.add_argument(
+        "--history",
+        help="Path to JSON/DB file storing run history",
+    )
+    run.add_argument(
+        "--pytest-args",
+        default=None,
+        help="Additional arguments passed to pytest",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "run":
+        pytest_args = []
+        if args.pytest_args:
+            pytest_args.extend(shlex.split(args.pytest_args))
+        if args.paths:
+            pytest_args.extend(args.paths)
+        service = SelfTestService(
+            pytest_args=" ".join(pytest_args) if pytest_args else None,
+            workers=args.workers,
+            container_image=args.container_image,
+            use_container=args.use_container,
+            history_path=args.history,
+        )
+        try:
+            asyncio.run(service._run_once())
+        except Exception as exc:
+            print(f"self test run failed: {exc}", file=sys.stderr)
+            return 1
+        return 0
+
+    parser.error("unknown command")
+    return 1
+
+
+def main(argv: list[str] | None = None) -> None:
+    sys.exit(cli(argv))
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()
