@@ -51,20 +51,49 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _save_state_locked() -> None:
+    """Persist queue and status atomically."""
     data = {"queue": list(task_queue), "status": job_status}
-    tmp = QUEUE_FILE.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
+    QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", delete=False, dir=QUEUE_FILE.parent, encoding="utf-8") as fh:
         json.dump(data, fh)
-    os.replace(tmp, QUEUE_FILE)
+        tmp_path = Path(fh.name)
+    os.replace(tmp_path, QUEUE_FILE)
+
+
+def _recover_queue_file_locked() -> None:
+    """Backup corrupt queue file and reset state."""
+    if not QUEUE_FILE.exists():
+        return
+    backup = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak")
+    counter = 1
+    while backup.exists():
+        backup = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{counter}")
+        counter += 1
+    try:
+        QUEUE_FILE.replace(backup)
+    except OSError:
+        try:
+            QUEUE_FILE.unlink()
+        except OSError:
+            pass
+    task_queue.clear()
+    job_status.clear()
+    _save_state_locked()
 
 
 def _load_state_locked() -> None:
     if not QUEUE_FILE.exists():
         return
+
     try:
         with open(QUEUE_FILE, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception:
+        _recover_queue_file_locked()
+        return
+
+    if not isinstance(data, dict):
+        _recover_queue_file_locked()
         return
 
     raw_queue = data.get("queue", [])
