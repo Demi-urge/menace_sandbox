@@ -119,3 +119,21 @@ def test_dqn_value_uses_predict(monkeypatch):
     monkeypatch.setattr(strat, "predict", lambda s: torch.tensor([1.0, 2.0]))
     val = strat.value({}, (0, 0, 0))
     assert val == 2.0
+
+
+def test_configurable_policy_env(monkeypatch):
+    monkeypatch.setenv("SELF_IMPROVEMENT_STRATEGY", "sarsa")
+    policy = sip.ConfigurableSelfImprovementPolicy()
+    assert isinstance(policy.strategy, sip.SarsaStrategy)
+
+
+def test_configurable_policy_config_file(tmp_path, monkeypatch):
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text('{"strategy": "q_lambda"}')
+    monkeypatch.setenv("SELF_IMPROVEMENT_CONFIG", str(cfg))
+    policy = sip.ConfigurableSelfImprovementPolicy()
+    assert isinstance(policy.strategy, sip.QLambdaStrategy)
+
+
+def test_available_strategies_exposed():
+    assert "q_learning" in sip.ConfigurableSelfImprovementPolicy.available_strategies

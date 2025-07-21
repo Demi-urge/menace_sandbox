@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Dict, Tuple, Optional, Callable
 import pickle
 import os
+import json
 import random
 import math
 import statistics
@@ -493,6 +494,55 @@ class DeepQLearningStrategy(RLStrategy):
             return float(torch.max(self.model(torch.tensor(state, dtype=torch.float32))).item())
 
 
+# ---------------------------------------------------------------------------
+# RL strategy factory utilities
+# ---------------------------------------------------------------------------
+_STRATEGY_CLASSES: Dict[str, type[RLStrategy]] = {
+    "q_learning": QLearningStrategy,
+    "q-learning": QLearningStrategy,
+    "sarsa": SarsaStrategy,
+    "q_lambda": QLambdaStrategy,
+    "qlambda": QLambdaStrategy,
+    "actor_critic": ActorCriticStrategy,
+    "actor-critic": ActorCriticStrategy,
+    "deep_q": DeepQLearningStrategy,
+    "dqn": DQNStrategy,
+    "double_dqn": DoubleDQNStrategy,
+    "double-dqn": DoubleDQNStrategy,
+    "ddqn": DoubleDQNStrategy,
+}
+
+
+def strategy_factory(
+    strategy_name: str | None = None,
+    *,
+    config_path: str | None = None,
+    env_var: str = "SELF_IMPROVEMENT_STRATEGY",
+) -> RLStrategy:
+    """Instantiate an :class:`RLStrategy` from *strategy_name* or config."""
+
+    name = strategy_name
+    if not name:
+        cfg_path = config_path or os.getenv("SELF_IMPROVEMENT_CONFIG")
+        if cfg_path and os.path.isfile(cfg_path):
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as fh:
+                    cfg = json.load(fh)
+                name = cfg.get("strategy") or None
+            except Exception:
+                name = None
+        if not name:
+            name = os.getenv(env_var, "q_learning")
+
+    cls = _STRATEGY_CLASSES.get(str(name).lower(), QLearningStrategy)
+
+    if cls in {DeepQLearningStrategy, DQNStrategy, DoubleDQNStrategy} and (
+        torch is None or nn is None
+    ):
+        cls = QLearningStrategy
+    return cls()
+
+
 class SelfImprovementPolicy:
     """Tiny reinforcement learning helper for the self-improvement engine."""
 
@@ -519,29 +569,7 @@ class SelfImprovementPolicy:
         self.epsilon_schedule = epsilon_schedule
         self.temperature_schedule = temperature_schedule
         if isinstance(strategy, str):
-            if strategy.lower() == "sarsa":
-                self.strategy = SarsaStrategy()
-            elif strategy.lower() in {"q_lambda", "qlambda"}:
-                self.strategy = QLambdaStrategy()
-            elif strategy.lower() in {"actor_critic", "actor-critic"}:
-                self.strategy = ActorCriticStrategy()
-            elif strategy.lower() == "deep_q":
-                if torch is None or nn is None:
-                    self.strategy = QLearningStrategy()
-                else:
-                    self.strategy = DeepQLearningStrategy()
-            elif strategy.lower() == "dqn":
-                if torch is None or nn is None:
-                    self.strategy = QLearningStrategy()
-                else:
-                    self.strategy = DQNStrategy()
-            elif strategy.lower() in {"double_dqn", "double-dqn", "ddqn"}:
-                if torch is None or nn is None:
-                    self.strategy = QLearningStrategy()
-                else:
-                    self.strategy = DoubleDQNStrategy()
-            else:
-                self.strategy = QLearningStrategy()
+            self.strategy = strategy_factory(strategy)
         else:
             self.strategy = strategy
         self.values: Dict[Tuple[int, ...], Dict[int, float]] = {}
@@ -673,12 +701,22 @@ class SelfImprovementPolicy:
 
 
 class ConfigurableSelfImprovementPolicy(SelfImprovementPolicy):
-    """Policy selecting strategy from parameter or ``SELF_IMPROVEMENT_STRATEGY`` env."""
+    """Policy selecting strategy via factory using config or env variables."""
 
-    def __init__(self, *args: object, strategy: RLStrategy | str | None = None, **kwargs: object) -> None:
-        if strategy is None:
-            strategy = os.getenv("SELF_IMPROVEMENT_STRATEGY", "q_learning")
-        super().__init__(*args, strategy=strategy, **kwargs)
+    available_strategies = tuple(sorted(set(_STRATEGY_CLASSES.keys())))
+
+    def __init__(
+        self,
+        *args: object,
+        strategy: RLStrategy | str | None = None,
+        config_path: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        if isinstance(strategy, RLStrategy):
+            strat = strategy
+        else:
+            strat = strategy_factory(strategy, config_path=config_path)
+        super().__init__(*args, strategy=strat, **kwargs)
 
 
 __all__ = [
@@ -692,4 +730,5 @@ __all__ = [
     "DoubleDQNStrategy",
     "SelfImprovementPolicy",
     "ConfigurableSelfImprovementPolicy",
+    "strategy_factory",
 ]
