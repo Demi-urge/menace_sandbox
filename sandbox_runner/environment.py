@@ -649,9 +649,12 @@ async def _execute_in_container(
             rlimit_ok = _rlimits_supported()
             use_cgroup = False
             cgroup_path: Path | None = None
+            ipr = None
+            tc_idx = None
             if not rlimit_ok and not _psutil_rlimits_supported() and _cgroup_v2_supported():
                 cgroup_path = _create_cgroup(env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
                 use_cgroup = cgroup_path is not None
+            ipr, tc_idx = _setup_tc_netem(env_vars)
 
             def _limits() -> None:
                 cpu = env.get("CPU_LIMIT")
@@ -705,6 +708,7 @@ async def _execute_in_container(
             net_end = psutil.net_io_counters() if psutil else None
             if cgroup_path is not None:
                 _cleanup_cgroup(cgroup_path)
+            _cleanup_tc(ipr, tc_idx)
 
             if p:
                 try:
@@ -1179,6 +1183,61 @@ def _apply_psutil_rlimits(proc: Any, cpu: Any, mem: Any) -> None:
                 proc.rlimit(getattr(psutil, "RLIMIT_AS", 9), (size, size))
     except Exception as exc:
         logger.warning("failed to set memory limit via psutil: %s", exc)
+
+
+def _setup_tc_netem(env: Dict[str, Any]) -> tuple[Any | None, int | None]:
+    """Configure ``tc netem`` qdisc using pyroute2 based on environment vars."""
+    if IPRoute is None:
+        return None, None
+    latency = env.get("NETWORK_LATENCY_MS")
+    jitter = env.get("NETWORK_JITTER_MS")
+    loss = env.get("PACKET_LOSS")
+    dup = env.get("PACKET_DUPLICATION")
+    if not any((latency, jitter, loss, dup)):
+        return None, None
+    ipr = None
+    try:
+        ipr = IPRoute()
+        idx = ipr.link_lookup(ifname="lo")[0]
+        kwargs = {}
+        if latency or jitter:
+            parts = []
+            if latency:
+                parts.append(f"{latency}ms")
+            else:
+                parts.append("0ms")
+            if jitter:
+                parts.append(f"{jitter}ms")
+            kwargs["delay"] = " ".join(parts)
+        if loss:
+            kwargs["loss"] = float(loss)
+        if dup:
+            kwargs["duplicate"] = float(dup)
+        ipr.tc("add", "root", idx, "netem", **kwargs)
+        return ipr, idx
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("failed to apply netem: %s", exc)
+        if ipr is not None:
+            try:
+                ipr.close()
+            except Exception:
+                logger.exception("failed to close IPRoute")
+        return None, None
+
+
+def _cleanup_tc(ipr: Any | None, idx: int | None) -> None:
+    """Remove ``tc netem`` qdisc."""
+    if ipr is None or idx is None:
+        return
+    try:
+        ipr.tc("del", "root", idx, "netem")
+    except Exception as exc:  # pragma: no cover - best effort
+        logger.warning("failed to remove netem: %s", exc)
+    finally:
+        try:
+            ipr.close()
+        except Exception:
+            logger.exception("failed to close IPRoute")
 
 
 def _parse_failure_modes(value: Any) -> set[str]:
