@@ -315,6 +315,9 @@ def test_container_exec(monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    async def avail(self):
+        return True
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
 
     svc = mod.SelfTestService(use_container=True, container_image="img")
     asyncio.run(svc._run_once())
@@ -349,6 +352,9 @@ def test_container_metrics(tmp_path, monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    async def avail(self):
+        return True
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
 
     svc = mod.SelfTestService(
         db, data_bot=data_bot, use_container=True, container_image="img"
@@ -358,6 +364,37 @@ def test_container_metrics(tmp_path, monkeypatch):
     assert svc.results["runtime"] == 1.0
     names = [r[1] for r in metrics.fetch_eval("self_tests")]
     assert "coverage" in names and "runtime" in names
+
+
+def test_container_fallback(monkeypatch):
+    recorded = {}
+
+    async def fake_exec(*cmd, **kwargs):
+        recorded["cmd"] = cmd
+
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(
+                    json.dumps({"summary": {"passed": 0, "failed": 0}}).encode()
+                )
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return False
+
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+
+    svc = mod.SelfTestService(use_container=True)
+    asyncio.run(svc._run_once())
+    assert recorded["cmd"][0] != "docker"
 
 
 def _make_fake_exec(passed: int, failed: int):
