@@ -160,3 +160,33 @@ def test_run_complete_dashboard(monkeypatch):
 
     assert started.get("port") == 4321
 
+
+def test_adaptive_threshold_spike():
+    """Threshold should increase for sequences with spikes."""
+
+    base = cli._adaptive_threshold([0.1, 0.1, 0.1, 0.1], 4, factor=1.0)
+    spike = cli._adaptive_threshold([0.1, 0.1, 0.1, 1.0], 4, factor=1.0)
+    assert spike > base
+
+
+def test_synergy_converged_oscillation():
+    hist = [
+        {"synergy_roi": 0.05},
+        {"synergy_roi": -0.05},
+        {"synergy_roi": 0.05},
+        {"synergy_roi": -0.05},
+    ]
+    ok, _, conf = cli._synergy_converged(hist, 4, 0.01)
+    assert ok is False
+    assert conf < 0.95
+
+
+def test_synergy_converged_spike():
+    hist = [
+        {"synergy_roi": 0.02},
+        {"synergy_roi": 0.009},
+        {"synergy_roi": 1.0},
+    ]
+    ok, _, _ = cli._synergy_converged(hist, 3, 0.01)
+    assert ok is False
+
