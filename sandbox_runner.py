@@ -14,7 +14,7 @@ import time
 import textwrap
 import argparse
 import logging
-from menace.logging_utils import log_record
+from logging_utils import log_record
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -863,8 +863,10 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         agg.roi_history.extend(t.roi_history)
                         for m, vals in t.metrics_history.items():
                             agg.metrics_history.setdefault(m, []).extend(vals)
-                    SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
-                    os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+                    flagged = ctx.meta_log.diminishing(agg.diminishing())
+                    if flagged:
+                        SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
+                        os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
                 except Exception:
                     logger.exception("preset adaptation failed")
             if switched:
@@ -1060,7 +1062,13 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     ctx.predicted_roi = None
     _cycle(None, None, ctx.tracker)
 
+    flagged = []
     if ctx.adapt_presets:
+        try:
+            flagged = ctx.meta_log.diminishing(ctx.tracker.diminishing())
+        except Exception:
+            flagged = []
+    if ctx.adapt_presets and flagged:
         try:
             from menace.environment_generator import adapt_presets
 
