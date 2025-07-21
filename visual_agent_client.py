@@ -230,6 +230,7 @@ class VisualAgentClient:
                     except Exception:
                         self.open_run_id = None
                 delay = 1.0
+                retried = False
                 for attempt in range(3):
                     try:
                         resp = requests.post(
@@ -246,7 +247,10 @@ class VisualAgentClient:
                         continue
 
                     if resp.status_code == 401:
-                        self._refresh_token_async()
+                        if not retried:
+                            retried = True
+                            self._refresh_token_async()
+                            continue
                         return False, "unauthorized"
                     if resp.status_code == 202:
                         return self._poll(base)
@@ -277,6 +281,7 @@ class VisualAgentClient:
 
             def sender() -> tuple[bool, str]:
                 delay = 1.0
+                retried = False
                 for attempt in range(3):
                     try:
                         resp = requests.post(
@@ -292,7 +297,10 @@ class VisualAgentClient:
                         continue
 
                     if resp.status_code == 401:
-                        self._refresh_token_async()
+                        if not retried:
+                            retried = True
+                            self._refresh_token_async()
+                            continue
                         return False, "unauthorized"
                     if resp.status_code == 202:
                         return self._poll(base)

@@ -6,6 +6,7 @@ import types
 import runpy
 import filelock
 import pytest
+from concurrent.futures import Future
 
 
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
@@ -472,6 +473,7 @@ def test_main_runs_single_worker(monkeypatch):
         calls.update(kwargs)
 
     monkeypatch.setattr(uvicorn, "run", fake_run)
+    monkeypatch.setattr(sys, "argv", ["menace_visual_agent_2"])
 
     runpy.run_module("menace_visual_agent_2", run_name="__main__")
 
@@ -502,4 +504,52 @@ def test_dataset_dir_env(monkeypatch, tmp_path):
 
     assert va_mod.DATASET_DIR == str(data_dir)
     assert data_dir.exists()
+
+
+def test_unauthorized_retry(monkeypatch):
+    vac_mod = _reload_client(monkeypatch)
+
+    class Resp:
+        def __init__(self, status_code=202, data=None, text=""):
+            self.status_code = status_code
+            self._data = data or {}
+            self.text = text
+
+        def json(self):
+            return self._data
+
+    calls = []
+
+    def fake_post(url, headers=None, json=None, timeout=10):
+        calls.append(1)
+        if len(calls) == 1:
+            return Resp(401)
+        return Resp(202)
+
+    def fake_get(url, timeout=10):
+        return Resp(200, {"active": False, "status": "ok"})
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(post=fake_post, get=fake_get),
+    )
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+
+    refreshed = []
+
+    def fake_refresh_async(self):
+        fut = Future()
+        fut.set_result(True)
+        refreshed.append(True)
+        return fut
+
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_refresh_token_async", fake_refresh_async)
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    resp = client.ask([{"content": "p"}])
+
+    assert refreshed
+    assert len(calls) == 2
+    assert resp["choices"][0]["message"]["content"] == "ok"
 
