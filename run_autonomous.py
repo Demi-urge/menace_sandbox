@@ -262,6 +262,19 @@ def main(argv: List[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
+    roi_cycles_env = os.getenv("ROI_CYCLES")
+    if roi_cycles_env is not None:
+        try:
+            args.roi_cycles = int(roi_cycles_env)
+        except Exception:
+            pass
+    synergy_cycles_env = os.getenv("SYNERGY_CYCLES")
+    if synergy_cycles_env is not None:
+        try:
+            args.synergy_cycles = int(synergy_cycles_env)
+        except Exception:
+            pass
+
     logging.basicConfig(level=logging.INFO)
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))

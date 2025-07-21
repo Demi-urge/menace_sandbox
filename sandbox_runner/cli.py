@@ -9,7 +9,34 @@ from typing import Any, List
 import tempfile
 import shutil
 import math
-from scipy.stats import pearsonr, t
+try:  # optional dependency
+    from scipy.stats import pearsonr, t, levene
+except Exception:  # pragma: no cover - fallback when scipy is missing
+    import types
+
+    def pearsonr(x, y):  # type: ignore
+        n = len(x)
+        if n == 0:
+            return 0.0, 0.0
+        mx = sum(x) / n
+        my = sum(y) / n
+        num = sum((a - mx) * (b - my) for a, b in zip(x, y))
+        den_x = sum((a - mx) ** 2 for a in x)
+        den_y = sum((b - my) ** 2 for b in y)
+        denom = math.sqrt(den_x * den_y)
+        if denom == 0:
+            return 0.0, 0.0
+        return num / denom, 0.0
+
+    class _T:
+        @staticmethod
+        def cdf(val: float, df: float) -> float:
+            return 0.5 * (1.0 + math.erf(val / math.sqrt(2.0)))
+
+    t = _T()
+
+    def levene(*a, **k):  # type: ignore
+        return types.SimpleNamespace(pvalue=1.0)
 from threading import Thread
 
 from menace.metrics_dashboard import MetricsDashboard
@@ -485,7 +512,19 @@ def full_autonomous_run(args: argparse.Namespace) -> None:
     last_tracker = None
     iteration = 0
     roi_cycles = getattr(args, "roi_cycles", 3)
+    env_val = os.getenv("ROI_CYCLES")
+    if env_val is not None:
+        try:
+            roi_cycles = int(env_val)
+        except Exception:
+            pass
     synergy_cycles = getattr(args, "synergy_cycles", 3)
+    env_val = os.getenv("SYNERGY_CYCLES")
+    if env_val is not None:
+        try:
+            synergy_cycles = int(env_val)
+        except Exception:
+            pass
     if synergy_threshold_window is None:
         synergy_threshold_window = synergy_cycles
     if synergy_threshold_weight is None:
