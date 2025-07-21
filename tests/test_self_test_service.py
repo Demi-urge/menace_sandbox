@@ -1,9 +1,9 @@
+import asyncio
 import importlib.util
 import json
+import os
 import sys
 import types
-import os
-import asyncio
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -34,7 +34,7 @@ sys.modules.setdefault("sqlalchemy", types.ModuleType("sqlalchemy"))
 sys.modules.setdefault("sqlalchemy.engine", types.ModuleType("engine"))
 
 
-ROOT = __import__('pathlib').Path(__file__).resolve().parents[1]
+ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 
 spec = importlib.util.spec_from_file_location(
     "menace.self_test_service",
@@ -42,13 +42,15 @@ spec = importlib.util.spec_from_file_location(
 )
 mod = importlib.util.module_from_spec(spec)
 import sys
+
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 spec.loader.exec_module(mod)
+import types
+
 import menace.error_bot as eb
 from menace.data_bot import DataBot, MetricsDB
-import types
 
 
 def test_scheduler_start(monkeypatch):
@@ -58,7 +60,7 @@ def test_scheduler_start(monkeypatch):
         calls.append(None)
 
     svc = mod.SelfTestService()
-    monkeypatch.setattr(svc, '_run_once', fake_run_once)
+    monkeypatch.setattr(svc, "_run_once", fake_run_once)
 
     async def runner():
         loop = asyncio.get_running_loop()
@@ -84,10 +86,13 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 0, "failed": 1}}, fh)
+
         class P:
             returncode = 1
+
             async def wait(self):
                 return None
+
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
@@ -112,10 +117,13 @@ def test_success_logs_results(tmp_path, monkeypatch):
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 3, "failed": 0}}, fh)
+
         class P:
             returncode = 0
+
             async def wait(self):
                 return None
+
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", succeed_exec)
@@ -130,7 +138,7 @@ def test_custom_args(monkeypatch):
     recorded = {}
 
     async def fake_exec(*cmd, **kwargs):
-        recorded['cmd'] = cmd
+        recorded["cmd"] = cmd
         path = None
         for i, a in enumerate(cmd):
             s = str(a)
@@ -140,16 +148,21 @@ def test_custom_args(monkeypatch):
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
         class P:
             returncode = 0
+
             async def wait(self):
                 return None
+
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     svc = mod.SelfTestService(pytest_args="-k pattern")
     asyncio.run(svc._run_once())
-    assert any("-k" in str(x) for x in recorded['cmd']) and any("pattern" in str(x) for x in recorded['cmd'])
+    assert any("-k" in str(x) for x in recorded["cmd"]) and any(
+        "pattern" in str(x) for x in recorded["cmd"]
+    )
 
 
 def test_parallel_workers(monkeypatch):
@@ -166,10 +179,13 @@ def test_parallel_workers(monkeypatch):
         if path:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
         class P:
             returncode = 0
+
             async def wait(self):
                 return None
+
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
@@ -203,6 +219,7 @@ def test_records_coverage_and_runtime(tmp_path, monkeypatch):
                     },
                     fh,
                 )
+
         class P:
             returncode = 0
 
@@ -225,12 +242,15 @@ def test_json_pipe_when_callback(monkeypatch):
 
     async def fake_exec(*cmd, **kwargs):
         recorded["cmd"] = cmd
+
         class P:
             returncode = 0
             stdout = asyncio.StreamReader()
 
             async def wait(self):
-                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_data(
+                    json.dumps({"summary": {"passed": 0, "failed": 0}}).encode()
+                )
                 self.stdout.feed_eof()
                 return None
 
@@ -252,7 +272,9 @@ def test_callback_emits_partial_results(monkeypatch):
             stdout = asyncio.StreamReader()
 
             async def wait(self):
-                self.stdout.feed_data(json.dumps({"summary": {"passed": 1, "failed": 0}}).encode())
+                self.stdout.feed_data(
+                    json.dumps({"summary": {"passed": 1, "failed": 0}}).encode()
+                )
                 self.stdout.feed_eof()
                 return None
 
@@ -260,7 +282,9 @@ def test_callback_emits_partial_results(monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc = mod.SelfTestService(pytest_args="a b", result_callback=lambda r: calls.append(r.copy()))
+    svc = mod.SelfTestService(
+        pytest_args="a b", result_callback=lambda r: calls.append(r.copy())
+    )
     asyncio.run(svc._run_once())
 
     # two partial results plus final summary
@@ -275,12 +299,15 @@ def test_container_exec(monkeypatch):
 
     async def fake_exec(*cmd, **kwargs):
         recorded["cmd"] = cmd
+
         class P:
             returncode = 0
             stdout = asyncio.StreamReader()
 
             async def wait(self):
-                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_data(
+                    json.dumps({"summary": {"passed": 0, "failed": 0}}).encode()
+                )
                 self.stdout.feed_eof()
                 return None
 
@@ -322,10 +349,52 @@ def test_container_metrics(tmp_path, monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    svc = mod.SelfTestService(db, data_bot=data_bot, use_container=True, container_image="img")
+    svc = mod.SelfTestService(
+        db, data_bot=data_bot, use_container=True, container_image="img"
+    )
     asyncio.run(svc._run_once())
     assert svc.results["coverage"] == 75.0
     assert svc.results["runtime"] == 1.0
     names = [r[1] for r in metrics.fetch_eval("self_tests")]
     assert "coverage" in names and "runtime" in names
 
+
+def _make_fake_exec(passed: int, failed: int):
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": passed, "failed": failed}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    return fake_exec
+
+
+def test_json_history_persistence(tmp_path, monkeypatch):
+    path = tmp_path / "hist.json"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _make_fake_exec(2, 0))
+    svc = mod.SelfTestService(history_path=path)
+    asyncio.run(svc._run_once())
+    hist = svc.recent_history(1)
+    assert hist and hist[0]["passed"] == 2
+
+
+def test_sqlite_history_persistence(tmp_path, monkeypatch):
+    path = tmp_path / "hist.db"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _make_fake_exec(1, 1))
+    svc = mod.SelfTestService(history_path=path)
+    asyncio.run(svc._run_once())
+    hist = svc.recent_history(1)
+    assert hist and hist[0]["failed"] == 1
