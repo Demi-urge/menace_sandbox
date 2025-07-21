@@ -248,10 +248,43 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
             if match:
                 data = json.loads(match.group(0))
                 if isinstance(data, dict):
-                    _CACHE[key] = data
-                    changed = True
-                    new_stubs.append(dict(data))
-                    continue
+                    func = ctx.get("target")
+                    params: List[str] = []
+                    if func is not None:
+                        try:
+                            sig = inspect.signature(func)
+                            params = [
+                                n
+                                for n, p in sig.parameters.items()
+                                if p.kind
+                                in (
+                                    inspect.Parameter.POSITIONAL_ONLY,
+                                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                                    inspect.Parameter.KEYWORD_ONLY,
+                                )
+                            ]
+                        except Exception:
+                            params = []
+                    valid = True
+                    for p_name in params:
+                        if p_name not in data:
+                            valid = False
+                            break
+                        if (
+                            p_name in stub
+                            and stub[p_name] is not None
+                            and not isinstance(data[p_name], type(stub[p_name]))
+                        ):
+                            valid = False
+                            break
+                    if valid:
+                        _CACHE[key] = data
+                        changed = True
+                        new_stubs.append(dict(data))
+                        continue
+                    logger.warning(
+                        "invalid stub generated for %s", name
+                    )
         except Exception:  # pragma: no cover - generation failures
             logger.exception("stub generation failed")
         _CACHE[key] = stub
