@@ -1,6 +1,7 @@
 import importlib
 import sys
 import types
+import pytest
 
 
 def _stub_module(monkeypatch, name, **attrs):
@@ -60,6 +61,12 @@ def _import_cli(monkeypatch, with_deps: bool):
     return importlib.import_module("sandbox_runner.cli")
 
 
+@pytest.fixture(params=[False, True], ids=["no_deps", "with_deps"])
+def cli_mod(monkeypatch, request):
+    """Return sandbox_runner.cli with or without optional deps."""
+    return _import_cli(monkeypatch, with_deps=request.param)
+
+
 def test_adaptive_threshold_variance(monkeypatch):
     cli = _import_cli(monkeypatch, with_deps=False)
     low = [1.0, 1.1, 0.9, 1.0]
@@ -77,28 +84,19 @@ def test_adaptive_synergy_threshold_predictions(monkeypatch):
     assert thr == 0.0
 
 
-def test_synergy_converged_without_optional_deps(monkeypatch):
-    cli = _import_cli(monkeypatch, with_deps=False)
+def test_synergy_converged_constant(cli_mod):
     hist = [{"synergy_roi": 0.001}] * 5
-    ok, ema, conf = cli._synergy_converged(hist, 5, 0.01)
+    ok, _, _ = cli_mod._synergy_converged(hist, 5, 0.01)
     assert ok is True
+
+
+def test_synergy_converged_increasing(cli_mod):
     hist_inc = [{"synergy_roi": 0.001 * i} for i in range(5)]
-    ok, _, _ = cli._synergy_converged(hist_inc, 5, 0.01)
+    ok, _, _ = cli_mod._synergy_converged(hist_inc, 5, 0.01)
     assert ok is False
 
 
-def test_synergy_converged_with_optional_deps(monkeypatch):
-    cli = _import_cli(monkeypatch, with_deps=True)
-    hist = [{"synergy_roi": 0.001}] * 5
-    ok, ema, conf = cli._synergy_converged(hist, 5, 0.01)
-    assert ok is True
-    hist_inc = [{"synergy_roi": 0.001 * i} for i in range(5)]
-    ok, _, _ = cli._synergy_converged(hist_inc, 5, 0.01)
-    assert ok is False
-
-
-def test_slow_convergence_without_statsmodels(monkeypatch):
-    cli = _import_cli(monkeypatch, with_deps=False)
+def test_slow_convergence(cli_mod):
     hist = [
         {"synergy_roi": 0.1},
         {"synergy_roi": 0.08},
@@ -113,8 +111,24 @@ def test_slow_convergence_without_statsmodels(monkeypatch):
         {"synergy_roi": 0.029},
         {"synergy_roi": 0.03},
     ]
-    ok, _, conf = cli._synergy_converged(
+    ok, _, conf = cli_mod._synergy_converged(
         hist, 6, 0.03, ma_window=1, confidence=0.8
     )
     assert ok is True
     assert conf > 0.8
+
+
+def test_synergy_converged_insufficient_history(cli_mod):
+    hist = [{"synergy_roi": 0.01}, {"synergy_roi": 0.02}]
+    ok, _, _ = cli_mod._synergy_converged(hist, 3, 0.05)
+    assert ok is False
+
+
+def test_synergy_converged_prediction_metric(cli_mod):
+    hist = [
+        {"synergy_roi": 0.001, "pred_synergy_roi": 0.05},
+        {"synergy_roi": 0.001, "pred_synergy_roi": 0.05},
+        {"synergy_roi": 0.001, "pred_synergy_roi": 0.05},
+    ]
+    ok, _, _ = cli_mod._synergy_converged(hist, 3, 0.01)
+    assert ok is False

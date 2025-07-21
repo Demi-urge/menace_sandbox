@@ -190,3 +190,39 @@ def test_synergy_converged_spike():
     ok, _, _ = cli._synergy_converged(hist, 3, 0.01)
     assert ok is False
 
+
+def test_full_autonomous_run_auto_thresholds(monkeypatch):
+    monkeypatch.setattr(cli, "generate_presets", lambda n=None: [{"env": "dev"}])
+
+    class Tracker:
+        def __init__(self):
+            self.module_deltas = {"m": [0.0]}
+            self.metrics_history = {"synergy_roi": [0.0]}
+            self.roi_history = [0.0]
+
+        def diminishing(self):
+            return 0.0
+
+        def rankings(self):
+            return [("m", 0.0)]
+
+    monkeypatch.setattr(cli, "_capture_run", lambda p, a: Tracker())
+
+    logs: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(cli.logger, "info", lambda m, *a, **k: logs.append((m, k.get("extra"))))
+
+    cli.main([
+        "--preset-count",
+        "1",
+        "full-autonomous-run",
+        "--max-iterations",
+        "5",
+        "--roi-cycles",
+        "1",
+        "--synergy-cycles",
+        "1",
+        "--auto-thresholds",
+    ])
+
+    assert ("synergy convergence reached", {"iteration": 1, "ema": 0.0}) in logs
+
