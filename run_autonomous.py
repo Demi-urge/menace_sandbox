@@ -37,6 +37,7 @@ elif "menace" not in sys.modules:
 
 from menace.auto_env_setup import ensure_env
 
+import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
 from menace.startup_checks import verify_project_dependencies
 from menace.dependency_installer import install_packages
@@ -260,6 +261,12 @@ def main(argv: List[str] | None = None) -> None:
         dest="preset_files",
         help="JSON file defining environment presets; can be repeated",
     )
+    parser.add_argument(
+        "--no-preset-evolution",
+        action="store_true",
+        dest="disable_preset_evolution",
+        help="disable adapting presets from previous run history",
+    )
     args = parser.parse_args(argv)
 
     roi_cycles_env = os.getenv("ROI_CYCLES")
@@ -307,7 +314,18 @@ def main(argv: List[str] | None = None) -> None:
             except Exception:
                 presets = generate_presets(args.preset_count)
         else:
-            presets = generate_presets(args.preset_count)
+            if getattr(args, "disable_preset_evolution", False):
+                presets = generate_presets(args.preset_count)
+            else:
+                gen_func = getattr(
+                    environment_generator,
+                    "generate_presets_from_history",
+                    generate_presets,
+                )
+                if gen_func is generate_presets:
+                    presets = generate_presets(args.preset_count)
+                else:
+                    presets = gen_func(str(data_dir), args.preset_count)
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -413,7 +431,21 @@ def main(argv: List[str] | None = None) -> None:
                 data = json.load(fh)
             presets = [data] if isinstance(data, dict) else list(data)
         else:
-            presets = generate_presets(args.preset_count)
+            if getattr(args, "disable_preset_evolution", False):
+                presets = generate_presets(args.preset_count)
+            else:
+                gen_func = getattr(
+                    environment_generator,
+                    "generate_presets_from_history",
+                    generate_presets,
+                )
+                if gen_func is generate_presets:
+                    presets = generate_presets(args.preset_count)
+                else:
+                    data_dir = args.sandbox_data_dir or os.getenv(
+                        "SANDBOX_DATA_DIR", "sandbox_data"
+                    )
+                    presets = gen_func(str(data_dir), args.preset_count)
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
