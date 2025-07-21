@@ -83,4 +83,46 @@ class SelfValidationDashboard:
         self.timer.start()
 
 
-__all__ = ["SelfValidationDashboard"]
+__all__ = ["SelfValidationDashboard", "cli", "main"]
+
+
+def cli(argv: list[str] | None = None) -> None:
+    """Generate periodic self validation reports."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=86400,
+        help="Seconds between report generations",
+    )
+    parser.add_argument(
+        "--output",
+        default="dashboard.json",
+        help="Destination JSON file",
+    )
+    args = parser.parse_args(argv)
+
+    data_bot = DataBot()
+    try:
+        forecaster: ErrorForecaster | None = ErrorForecaster(data_bot.db)
+    except Exception:  # pragma: no cover - optional deps
+        forecaster = None
+    try:
+        updater: DependencyUpdater | None = DependencyUpdater()
+    except Exception:  # pragma: no cover - optional deps
+        updater = None
+
+    dash = SelfValidationDashboard(data_bot, forecaster, updater)
+    dash.generate_report(args.output)
+    if args.interval > 0:
+        dash.schedule(args.output, interval=args.interval)
+
+
+def main(argv: list[str] | None = None) -> None:
+    cli(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover - entry point
+    main()
