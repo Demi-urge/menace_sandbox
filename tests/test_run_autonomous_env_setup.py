@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -59,7 +60,7 @@ def test_files_created(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1"}])
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
@@ -74,7 +75,7 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     captured = {}
@@ -100,4 +101,16 @@ def test_get_env_override(monkeypatch):
     assert mod._get_env_override("TEST_FLOAT", None) == 1.25
     assert mod._get_env_override("TEST_INT", None) == 7
     assert mod._get_env_override("TEST_FLOAT", 3.5) == 3.5
+
+
+def test_main_exits_on_failed_install(monkeypatch, tmp_path):
+    """Verify main exits when dependency installation fails."""
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: False)
+    with pytest.raises(SystemExit) as exc:
+        mod.main([])
+    assert exc.value.code != 0
 

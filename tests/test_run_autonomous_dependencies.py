@@ -88,8 +88,7 @@ def test_abort_after_failed_installs(monkeypatch):
     monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
     monkeypatch.setattr(di.time, "sleep", lambda s: None)
     monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: (_ for _ in ()).throw(subprocess.CalledProcessError(1, a[0])))
-    with pytest.raises(RuntimeError):
-        mod._check_dependencies()
+    assert not mod._check_dependencies()
 
 
 def test_lock_file_used(monkeypatch, tmp_path):
@@ -123,8 +122,7 @@ def test_offline_mode_skips_install(monkeypatch):
     calls = []
     monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: calls.append(a))
     monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
-    with pytest.raises(RuntimeError):
-        mod._check_dependencies()
+    assert not mod._check_dependencies()
     assert calls == []
 
 
@@ -168,8 +166,7 @@ def test_python_version_requirement(monkeypatch):
         "VersionInfo", "major minor micro releaselevel serial"
     )
     monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 9, 0, "final", 0))
-    with pytest.raises(RuntimeError):
-        mod._check_dependencies()
+    assert not mod._check_dependencies()
 
 
 def test_missing_system_tools(monkeypatch):
@@ -179,8 +176,7 @@ def test_missing_system_tools(monkeypatch):
         "VersionInfo", "major minor micro releaselevel serial"
     )
     monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 10, 0, "final", 0))
-    with pytest.raises(RuntimeError):
-        mod._check_dependencies()
+    assert not mod._check_dependencies()
 
 
 def test_docker_group_membership(monkeypatch):
@@ -190,6 +186,5 @@ def test_docker_group_membership(monkeypatch):
         "VersionInfo", "major minor micro releaselevel serial"
     )
     monkeypatch.setattr(mod.sys, "version_info", VersionInfo(3, 10, 0, "final", 0))
-    with pytest.raises(RuntimeError):
-        mod._check_dependencies()
+    assert not mod._check_dependencies()
 

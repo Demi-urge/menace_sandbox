@@ -71,7 +71,7 @@ def test_run_autonomous_writes_history(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: None)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(["--max-iterations", "1", "--runs", "1", "--sandbox-data-dir", str(tmp_path)])
