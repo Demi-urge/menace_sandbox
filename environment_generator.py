@@ -63,7 +63,12 @@ def _select_failures() -> list[str]:
     return [mode] if mode else []
 
 
-def generate_presets(count: int | None = None) -> List[Dict[str, Any]]:
+def generate_presets(
+    count: int | None = None,
+    *,
+    agent: "AdaptivePresetAgent" | None = None,
+    tracker: "ROITracker" | None = None,
+) -> List[Dict[str, Any]]:
     """Return a list of random environment presets.
 
     Each preset sets ``CPU_LIMIT`` and ``MEMORY_LIMIT`` and may include one or
@@ -108,6 +113,66 @@ def generate_presets(count: int | None = None) -> List[Dict[str, Any]]:
         if failures:
             preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
         presets.append(preset)
+
+    if (
+        agent
+        and tracker
+        and len(getattr(tracker, "roi_history", [])) >= _ADAPTIVE_THRESHOLD
+    ):
+        try:
+            actions = agent.decide(tracker)
+
+            def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
+                lookup = [str(x) for x in seq]
+                try:
+                    idx = lookup.index(str(cur))
+                except ValueError:
+                    idx = 0
+                idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
+                return seq[idx]
+
+            def _lvl(val: int, up: bool) -> int:
+                levels = _THREAT_INTENSITIES
+                if up:
+                    for lvl in levels:
+                        if lvl > val:
+                            return lvl
+                    return levels[-1]
+                for lvl in reversed(levels):
+                    if lvl < val:
+                        return lvl
+                return levels[0]
+
+            for p in presets:
+                if actions.get("cpu"):
+                    p["CPU_LIMIT"] = _nxt(
+                        _CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), actions["cpu"] > 0
+                    )
+                if actions.get("memory"):
+                    mem = str(p.get("MEMORY_LIMIT", _MEMORY_LIMITS[0]))
+                    p["MEMORY_LIMIT"] = _nxt(_MEMORY_LIMITS, mem, actions["memory"] > 0)
+                if actions.get("bandwidth"):
+                    bw = str(p.get("BANDWIDTH_LIMIT", _BANDWIDTHS[0]))
+                    p["BANDWIDTH_LIMIT"] = _nxt(
+                        _BANDWIDTHS, bw, actions["bandwidth"] > 0
+                    )
+                    p["MAX_BANDWIDTH"] = _nxt(
+                        _BANDWIDTHS,
+                        str(p.get("MAX_BANDWIDTH", bw)),
+                        actions["bandwidth"] > 0,
+                    )
+                    p["MIN_BANDWIDTH"] = _nxt(
+                        _BANDWIDTHS,
+                        str(p.get("MIN_BANDWIDTH", bw)),
+                        actions["bandwidth"] > 0,
+                    )
+                if actions.get("threat"):
+                    cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
+                    p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
+            agent.save()
+        except Exception:
+            logger.exception("preset adaptation failed")
+
     return presets
 
 
@@ -135,7 +200,9 @@ class AdaptivePresetAgent:
     def __init__(self, path: str | None = None, *, strategy: str | None = None) -> None:
         from .self_improvement_policy import SelfImprovementPolicy
 
-        self.policy = SelfImprovementPolicy(path=path, strategy=strategy or "q_learning")
+        self.policy = SelfImprovementPolicy(
+            path=path, strategy=strategy or "q_learning"
+        )
         self.state_file = f"{path}.state.json" if path else None
         self.prev_state: tuple[int, ...] | None = None
         self.prev_action: int | None = None
@@ -220,8 +287,16 @@ class AdaptivePresetAgent:
             syn_delta = syn_hist[-1] - syn_hist[-2]
         elif syn_hist:
             syn_delta = syn_hist[-1]
-        eff_delta = eff_hist[-1] - eff_hist[-2] if len(eff_hist) >= 2 else (eff_hist[-1] if eff_hist else 0.0)
-        res_delta = res_hist[-1] - res_hist[-2] if len(res_hist) >= 2 else (res_hist[-1] if res_hist else 0.0)
+        eff_delta = (
+            eff_hist[-1] - eff_hist[-2]
+            if len(eff_hist) >= 2
+            else (eff_hist[-1] if eff_hist else 0.0)
+        )
+        res_delta = (
+            res_hist[-1] - res_hist[-2]
+            if len(res_hist) >= 2
+            else (res_hist[-1] if res_hist else 0.0)
+        )
 
         cpu_hist = tracker.metrics_history.get("cpu_usage", [])
         mem_hist = tracker.metrics_history.get("memory_usage", [])
@@ -234,7 +309,15 @@ class AdaptivePresetAgent:
         )
 
         # Penalise increased resource usage and threat intensity
-        return float(roi_delta + syn_delta + eff_delta + res_delta - cpu_delta - mem_delta - threat_delta)
+        return float(
+            roi_delta
+            + syn_delta
+            + eff_delta
+            + res_delta
+            - cpu_delta
+            - mem_delta
+            - threat_delta
+        )
 
     # --------------------------------------------------------------
     def decide(self, tracker: "ROITracker") -> Dict[str, int]:
@@ -257,9 +340,7 @@ class AdaptivePresetAgent:
 
         return {k: dict(v) for k, v in self.policy.values.items()}
 
-    def import_policy(
-        self, data: Dict[tuple[int, ...], Dict[int, float]]
-    ) -> None:
+    def import_policy(self, data: Dict[tuple[int, ...], Dict[int, float]]) -> None:
         """Load policy values from ``data``."""
 
         new_table: Dict[tuple[int, ...], Dict[int, float]] = {}
@@ -267,8 +348,6 @@ class AdaptivePresetAgent:
             tup = tuple(key) if not isinstance(key, tuple) else key
             new_table[tup] = {int(a): float(q) for a, q in val.items()}
         self.policy.values = new_table
-
-
 
 
 def adapt_presets(
@@ -290,8 +369,13 @@ def adapt_presets(
         os.makedirs(os.path.dirname(rl_path), exist_ok=True)
         try:
             agent = getattr(adapt_presets, "_rl_agent", None)
-            strat_name = (getattr(getattr(agent, "policy", None), "strategy", None).__class__.__name__.lower()
-                if agent else None)
+            strat_name = (
+                getattr(
+                    getattr(agent, "policy", None), "strategy", None
+                ).__class__.__name__.lower()
+                if agent
+                else None
+            )
             if (
                 agent is None
                 or getattr(getattr(agent, "policy", None), "path", None) != rl_path
@@ -393,7 +477,11 @@ def adapt_presets(
 
     # --------------------------------------------------------------
     # Use reinforcement learning when sufficient history is available
-    if agent and len(tracker.roi_history) >= 3 and tracker.metrics_history.get("synergy_roi"):
+    if (
+        agent
+        and len(tracker.roi_history) >= 3
+        and tracker.metrics_history.get("synergy_roi")
+    ):
         try:
             actions = agent.decide(tracker)
 
@@ -408,15 +496,27 @@ def adapt_presets(
 
             for p in presets:
                 if actions.get("cpu"):
-                    p["CPU_LIMIT"] = _nxt(_CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), actions["cpu"] > 0)
+                    p["CPU_LIMIT"] = _nxt(
+                        _CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), actions["cpu"] > 0
+                    )
                 if actions.get("memory"):
                     mem = str(p.get("MEMORY_LIMIT", _MEMORY_LIMITS[0]))
                     p["MEMORY_LIMIT"] = _nxt(_MEMORY_LIMITS, mem, actions["memory"] > 0)
                 if actions.get("bandwidth"):
                     bw = str(p.get("BANDWIDTH_LIMIT", _BANDWIDTHS[0]))
-                    p["BANDWIDTH_LIMIT"] = _nxt(_BANDWIDTHS, bw, actions["bandwidth"] > 0)
-                    p["MAX_BANDWIDTH"] = _nxt(_BANDWIDTHS, str(p.get("MAX_BANDWIDTH", bw)), actions["bandwidth"] > 0)
-                    p["MIN_BANDWIDTH"] = _nxt(_BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), actions["bandwidth"] > 0)
+                    p["BANDWIDTH_LIMIT"] = _nxt(
+                        _BANDWIDTHS, bw, actions["bandwidth"] > 0
+                    )
+                    p["MAX_BANDWIDTH"] = _nxt(
+                        _BANDWIDTHS,
+                        str(p.get("MAX_BANDWIDTH", bw)),
+                        actions["bandwidth"] > 0,
+                    )
+                    p["MIN_BANDWIDTH"] = _nxt(
+                        _BANDWIDTHS,
+                        str(p.get("MIN_BANDWIDTH", bw)),
+                        actions["bandwidth"] > 0,
+                    )
                 if actions.get("threat"):
                     cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
 
@@ -458,9 +558,7 @@ def adapt_presets(
                     )
                 if actions.get("memory"):
                     mem = str(p.get("MEMORY_LIMIT", _MEMORY_LIMITS[0]))
-                    p["MEMORY_LIMIT"] = _nxt(
-                        _MEMORY_LIMITS, mem, actions["memory"] > 0
-                    )
+                    p["MEMORY_LIMIT"] = _nxt(_MEMORY_LIMITS, mem, actions["memory"] > 0)
                 if actions.get("threat"):
                     cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
 
