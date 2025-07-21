@@ -67,14 +67,38 @@ def _load_state_locked() -> None:
     except Exception:
         return
 
-    for item in data.get("queue", []):
+    raw_queue = data.get("queue", [])
+    raw_status = data.get("status", {})
+
+    valid_queue = []
+    for item in raw_queue:
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and isinstance(item.get("prompt"), str):
+            branch = item.get("branch") if isinstance(item.get("branch"), str) or item.get("branch") is None else None
+            valid_queue.append({"id": item["id"], "prompt": item["prompt"], "branch": branch})
+
+    valid_status = {}
+    for tid, info in raw_status.items():
+        if not isinstance(tid, str) or not isinstance(info, dict):
+            continue
+        status = info.get("status", "queued")
+        if status not in {"queued", "running", "completed", "cancelled", "failed"}:
+            status = "queued"
+        prompt = info.get("prompt", "") if isinstance(info.get("prompt", ""), str) else ""
+        branch = info.get("branch") if isinstance(info.get("branch"), str) or info.get("branch") is None else None
+        valid_status[tid] = {"status": status, "prompt": prompt, "branch": branch}
+
+    task_queue.clear()
+    job_status.clear()
+    for item in valid_queue:
         task_queue.append(item)
-    job_status.update(data.get("status", {}))
+    job_status.update(valid_status)
     for tid, info in job_status.items():
         if info.get("status") not in {"completed", "cancelled", "failed"}:
             info["status"] = "queued"
             if not any(t.get("id") == tid for t in task_queue):
                 task_queue.append({"id": tid, "prompt": info.get("prompt", ""), "branch": info.get("branch")})
+
+    _save_state_locked()
 
 
 def _persist_state() -> None:
@@ -121,6 +145,8 @@ def _queue_worker():
                 _global_lock.release()
             except Exception:
                 pass
+
+        _persist_state()
 
         if _exit_event.is_set():
             break
