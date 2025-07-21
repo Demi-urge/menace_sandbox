@@ -31,7 +31,7 @@ from .self_improvement_policy import (
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
 
-POLICY_STATE_LEN = 19
+POLICY_STATE_LEN = 21
 
 
 class SelfImprovementEngine:
@@ -68,6 +68,7 @@ class SelfImprovementEngine:
         synergy_weight_resilience: float | None = None,
         synergy_weight_antifragility: float | None = None,
         state_path: Path | str | None = None,
+        roi_ema_alpha: float | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -122,8 +123,14 @@ class SelfImprovementEngine:
             if synergy_weight_antifragility is not None
             else float(os.getenv("SYNERGY_WEIGHT_ANTIFRAGILITY", "1.0"))
         )
+        self.roi_ema_alpha = (
+            roi_ema_alpha
+            if roi_ema_alpha is not None
+            else float(os.getenv("ROI_EMA_ALPHA", "0.1"))
+        )
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
+        self.roi_delta_ema: float = 0.0
         self._load_state()
         from .module_index_db import ModuleIndexDB
         self.module_index = module_index or ModuleIndexDB()
@@ -154,6 +161,7 @@ class SelfImprovementEngine:
                 data = json.load(fh)
             self.roi_history = [float(x) for x in data.get("roi_history", [])]
             self.last_run = float(data.get("last_run", self.last_run))
+            self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -164,7 +172,7 @@ class SelfImprovementEngine:
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile("w", delete=False, dir=self.state_path.parent, encoding="utf-8") as fh:
-                json.dump({"roi_history": self.roi_history, "last_run": self.last_run}, fh)
+                json.dump({"roi_history": self.roi_history, "last_run": self.last_run, "roi_delta_ema": self.roi_delta_ema}, fh)
                 tmp = Path(fh.name)
             os.replace(tmp, self.state_path)
         except Exception as exc:
@@ -316,6 +324,10 @@ class SelfImprovementEngine:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("evolution history stats failed: %s", exc)
                 avg_roi_delta = avg_eff = 0.0
+        short_avg = 0.0
+        if self.roi_history:
+            n = min(len(self.roi_history), 5)
+            short_avg = float(sum(self.roi_history[-n:]) / n)
         return (
             int(round(profit)),
             int(round(energy * 10)),
@@ -332,6 +344,8 @@ class SelfImprovementEngine:
             int(kw_recent),
             int(round(avg_roi_delta * 10)),
             int(round(avg_eff)),
+            int(round(short_avg * 10)),
+            int(round(self.roi_delta_ema * 10)),
             int(round(syn_roi * 10)),
             int(round(syn_eff * 10)),
             int(round(syn_res * 10)),
@@ -543,6 +557,11 @@ class SelfImprovementEngine:
                         energy = int(round(energy * (1.0 + syn_adj)))
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("synergy energy adjustment failed: %s", exc)
+            try:
+                roi_scale = 1.0 + max(0.0, self.roi_delta_ema)
+                energy = int(round(energy * roi_scale))
+            except Exception as exc:
+                self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
             model_id = bootstrap()
             self.logger.info("model bootstrapped", extra={"model_id": model_id})
@@ -733,7 +752,9 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
-            self.roi_history.append(after_roi - before_roi)
+            delta = after_roi - before_roi
+            self.roi_delta_ema = (1 - self.roi_ema_alpha) * self.roi_delta_ema + self.roi_ema_alpha * delta
+            self.roi_history.append(delta)
             self._save_state()
             if self.policy:
                 try:
