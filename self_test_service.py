@@ -2,17 +2,21 @@ from __future__ import annotations
 
 """Service running self tests on a schedule."""
 
+import asyncio
+import json
 import logging
 import os
 import shlex
-import json
-import tempfile
-import asyncio
+import sqlite3
 import sys
-from typing import Callable, Any
+import tempfile
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Callable
+
+from .data_bot import DataBot
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
-from .data_bot import DataBot
 
 
 class SelfTestService:
@@ -34,6 +38,7 @@ class SelfTestService:
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
         container_image: str = "python:3.11-slim",
         use_container: bool = False,
+        history_path: str | Path | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
@@ -42,6 +47,22 @@ class SelfTestService:
         self.container_image = container_image
         self.use_container = use_container
         self.results: dict[str, Any] | None = None
+        self.history_path = Path(history_path) if history_path else None
+        self._history_db: sqlite3.Connection | None = None
+        if self.history_path and self.history_path.suffix == ".db":
+            self._history_db = sqlite3.connect(self.history_path)
+            self._history_db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_history(
+                    passed INTEGER,
+                    failed INTEGER,
+                    coverage REAL,
+                    runtime REAL,
+                    ts TEXT
+                )
+                """
+            )
+            self._history_db.commit()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._async_stop: asyncio.Event | None = None
@@ -52,6 +73,36 @@ class SelfTestService:
             self.workers = int(env_workers) if env_workers is not None else 1
         except ValueError:
             self.workers = 1
+
+    def _store_history(self, rec: dict[str, Any]) -> None:
+        if not self.history_path:
+            return
+        try:
+            if self._history_db:
+                self._history_db.execute(
+                    "INSERT INTO test_history(passed, failed, coverage, runtime, ts) VALUES(?,?,?,?,?)",
+                    (
+                        int(rec["passed"]),
+                        int(rec["failed"]),
+                        float(rec["coverage"]),
+                        float(rec["runtime"]),
+                        rec["ts"],
+                    ),
+                )
+                self._history_db.commit()
+            else:
+                data = []
+                if self.history_path.exists():
+                    with open(self.history_path, "r", encoding="utf-8") as fh:
+                        try:
+                            data = json.load(fh) or []
+                        except Exception:
+                            data = []
+                data.append(rec)
+                with open(self.history_path, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh)
+        except Exception:
+            self.logger.exception("failed to store history")
 
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
@@ -106,14 +157,22 @@ class SelfTestService:
                 docker_cmd.extend(cmd)
                 proc = await asyncio.create_subprocess_exec(
                     *docker_cmd,
-                    stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
+                    stdout=(
+                        asyncio.subprocess.PIPE
+                        if use_pipe
+                        else asyncio.subprocess.DEVNULL
+                    ),
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 proc_info.append((proc, tmp_name))
             else:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
-                    stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
+                    stdout=(
+                        asyncio.subprocess.PIPE
+                        if use_pipe
+                        else asyncio.subprocess.DEVNULL
+                    ),
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 proc_info.append((proc, tmp_name))
@@ -188,6 +247,15 @@ class SelfTestService:
             "coverage": coverage,
             "runtime": runtime,
         }
+        self._store_history(
+            {
+                "passed": passed,
+                "failed": failed,
+                "coverage": coverage,
+                "runtime": runtime,
+                "ts": datetime.utcnow().isoformat(),
+            }
+        )
 
         if self.result_callback:
             try:
@@ -213,6 +281,37 @@ class SelfTestService:
                 await asyncio.wait_for(self._async_stop.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass
+
+    # ------------------------------------------------------------------
+    def recent_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        if not self.history_path:
+            return []
+        try:
+            if self._history_db:
+                cur = self._history_db.execute(
+                    "SELECT passed, failed, coverage, runtime, ts FROM test_history ORDER BY ts DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = cur.fetchall()
+                return [
+                    {
+                        "passed": int(r[0]),
+                        "failed": int(r[1]),
+                        "coverage": float(r[2]),
+                        "runtime": float(r[3]),
+                        "ts": r[4],
+                    }
+                    for r in rows
+                ]
+            else:
+                if not self.history_path.exists():
+                    return []
+                with open(self.history_path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh) or []
+                return list(reversed(data))[:limit]
+        except Exception:
+            self.logger.exception("failed to read history")
+            return []
 
     # ------------------------------------------------------------------
     def run_continuous(
