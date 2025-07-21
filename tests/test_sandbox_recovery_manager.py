@@ -65,6 +65,22 @@ def test_logging_and_callback(monkeypatch, tmp_path):
     assert "RuntimeError: boom" in log_content
 
 
+def test_metrics_property(monkeypatch):
+    def fail_then_ok(preset, args):
+        if not getattr(fail_then_ok, "called", False):
+            fail_then_ok.called = True
+            raise RuntimeError("boom")
+        return "ok"
+
+    monkeypatch.setattr(srm.time, "sleep", lambda s: None)
+    mgr = srm.SandboxRecoveryManager(fail_then_ok, retry_delay=0)
+    result = mgr.run({}, argparse.Namespace())
+    assert result == "ok"
+    metrics = mgr.metrics
+    assert metrics["restart_count"] == 1.0
+    assert isinstance(metrics["last_failure_time"], float)
+
+
 def test_run_autonomous_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
     pkg = types.ModuleType("menace")

@@ -567,3 +567,21 @@ Each iteration prints a `Starting autonomous run` message. The loop ends early
 whenever ROI deltas remain below the tracker threshold for the configured
 number of cycles. The dashboard remains available throughout to monitor
 aggregated metrics.
+
+## Monitoring Recovery Status
+
+`SandboxRecoveryManager` tracks how often the sandbox has been restarted and the
+timestamp of the last failure. These values are available via the
+`metrics` property and can be exported with the built in metrics server:
+
+```python
+from menace.metrics_exporter import start_metrics_server
+from sandbox_recovery_manager import SandboxRecoveryManager
+
+start_metrics_server(8001)
+recovery = SandboxRecoveryManager(main)
+```
+
+Prometheus will expose two gauges named `sandbox_restart_count` and
+`sandbox_last_failure_time`. The latter holds a Unix timestamp or `0` when no
+failure has occurred yet.
