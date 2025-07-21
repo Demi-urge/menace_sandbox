@@ -8,12 +8,24 @@ import time
 import logging
 import threading
 import tempfile
+import errno
+from contextlib import suppress
 from collections import deque
 from concurrent.futures import Future
 from typing import Iterable, Dict, Any, Callable, Deque, Tuple
 
 from .audit_logger import log_event
-from filelock import FileLock
+from filelock import FileLock, Timeout
+
+try:  # pragma: no cover - platform specific
+    import fcntl
+except Exception:  # pragma: no cover - win32
+    fcntl = None  # type: ignore
+
+try:  # pragma: win32 cover
+    import msvcrt  # type: ignore
+except Exception:  # pragma: no cover - posix
+    msvcrt = None  # type: ignore
 
 
 class _ContextFileLock(FileLock):
@@ -41,27 +53,65 @@ class _ContextFileLock(FileLock):
             return False
         return True
 
-    def acquire(self, *args, **kwargs):  # type: ignore[override]
+    def _is_lock_stale(self, path: str) -> bool:
+        """Return ``True`` if the lock file refers to a dead process or is old."""
+        try:
+            with open(path, "r") as fh:
+                data = fh.read().strip().split(",")
+            pid = int(data[0])
+            ts = float(data[1]) if len(data) > 1 else 0.0
+        except Exception:
+            return True
+        if not self._pid_running(pid):
+            return True
+        if ts and time.time() - ts > 3600:
+            return True
+        return False
+
+    def acquire(self, timeout: float | None = None, poll_interval: float = 0.05):  # type: ignore[override]
         lock_path = getattr(self, "lock_file", None)
-        if lock_path and os.path.exists(lock_path):
-            try:
-                with open(lock_path, "r") as fh:
-                    pid = int(fh.read().strip() or "0")
-                if not self._pid_running(pid):
-                    os.remove(lock_path)
-            except Exception:
+        if lock_path and os.path.exists(lock_path) and self._is_lock_stale(lock_path):
+            with suppress(Exception):
+                os.remove(lock_path)
+
+        if not hasattr(self, "_context"):
+            super().acquire(timeout=timeout)
+            return self._Guard(self)
+
+        if fcntl or msvcrt:
+            if timeout is None:
+                timeout = self._context.timeout
+            start = time.perf_counter()
+            while True:
+                fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, getattr(self._context, "mode", 0o644))
+                with suppress(PermissionError):
+                    os.fchmod(fd, getattr(self._context, "mode", 0o644))
                 try:
-                    os.remove(lock_path)
-                except Exception:
-                    pass
-        super().acquire(*args, **kwargs)
-        if lock_path:
-            try:
-                with open(lock_path, "w") as fh:
-                    fh.write(str(os.getpid()))
-            except Exception:
-                pass
-        return self._Guard(self)
+                    if fcntl:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    else:
+                        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    self._context.lock_file_fd = fd
+                    break
+                except OSError as exc:  # pragma: no cover - rare race conditions
+                    os.close(fd)
+                    if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                        raise
+                    if timeout >= 0 and time.perf_counter() - start >= timeout:
+                        raise Timeout(lock_path)
+                    time.sleep(poll_interval)
+            if lock_path:
+                with suppress(Exception):
+                    with open(lock_path, "w") as fh:
+                        fh.write(f"{os.getpid()},{time.time()}")
+            return self._Guard(self)
+        else:  # pragma: no cover - fallback
+            result = super().acquire(timeout=timeout, poll_interval=poll_interval)
+            if lock_path:
+                with suppress(Exception):
+                    with open(lock_path, "w") as fh:
+                        fh.write(f"{os.getpid()},{time.time()}")
+            return result
 
     def release(self, *args, **kwargs) -> None:  # type: ignore[override]
         try:

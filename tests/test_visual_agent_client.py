@@ -5,6 +5,7 @@ import time
 import types
 import runpy
 import filelock
+import multiprocessing
 import pytest
 from concurrent.futures import Future
 
@@ -469,10 +470,18 @@ def test_main_runs_single_worker(monkeypatch):
 
     calls = {}
 
-    def fake_run(*args, **kwargs):
-        calls.update(kwargs)
+    class DummyServer:
+        def __init__(self, config):
+            calls.update({"workers": getattr(config, "workers", None)})
 
-    monkeypatch.setattr(uvicorn, "run", fake_run)
+        def install_signal_handlers(self):
+            pass
+
+        def run(self):
+            pass
+
+    monkeypatch.setattr(uvicorn, "Config", lambda *a, **k: types.SimpleNamespace(**k))
+    monkeypatch.setattr(uvicorn, "Server", DummyServer)
     monkeypatch.setattr(sys, "argv", ["menace_visual_agent_2"])
 
     runpy.run_module("menace_visual_agent_2", run_name="__main__")
@@ -552,4 +561,37 @@ def test_unauthorized_retry(monkeypatch):
     assert refreshed
     assert len(calls) == 2
     assert resp["choices"][0]["message"]["content"] == "ok"
+
+
+def _proc_worker(lock_path: str, q):
+    import os
+    import time
+    from menace.visual_agent_client import _global_lock
+
+    os.environ["VISUAL_AGENT_LOCK_FILE"] = lock_path
+    with _global_lock.acquire():
+        q.put((os.getpid(), "start", time.time()))
+        time.sleep(0.2)
+        q.put((os.getpid(), "end", time.time()))
+
+
+def test_lock_across_processes(tmp_path):
+    lock_path = str(tmp_path / "proc.lock")
+    q = multiprocessing.Queue()
+
+    p1 = multiprocessing.Process(target=_proc_worker, args=(lock_path, q))
+    p2 = multiprocessing.Process(target=_proc_worker, args=(lock_path, q))
+    p1.start()
+    time.sleep(0.05)
+    p2.start()
+    p1.join()
+    p2.join()
+
+    records = [q.get() for _ in range(4)]
+    grouped: dict[int, list[tuple[str, float]]] = {}
+    for pid, name, t in records:
+        grouped.setdefault(pid, []).append((name, t))
+
+    (start1, end1), (start2, end2) = [sorted(v) for v in grouped.values()]
+    assert start2[1] >= end1[1]
 
