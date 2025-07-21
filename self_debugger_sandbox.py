@@ -3,6 +3,7 @@ from __future__ import annotations
 """Self-debugging workflow with sandboxed patch testing."""
 
 import logging
+from .logging_utils import log_record
 import os
 import shutil
 import subprocess
@@ -109,7 +110,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             await proc.wait()
             if proc.returncode != 0:
                 self.logger.error(
-                    "test run failed", extra={"cmd": cmd, "rc": proc.returncode}
+                    "test run failed", extra=log_record(cmd=cmd, rc=proc.returncode)
                 )
             return data_file, int(proc.returncode)
 
@@ -262,16 +263,16 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 cov, _ = self._run_tests(path, env)
                 self.logger.info(
                     "flakiness run",
-                    extra={
-                        "run": i,
-                        "coverage": cov,
-                        "log": (
-                            str(self._last_test_log) if self._last_test_log else None
-                        ),
-                    },
+                    extra=log_record(
+                        run=i,
+                        coverage=cov,
+                        log=str(self._last_test_log) if self._last_test_log else None,
+                    ),
                 )
             except Exception:
-                self.logger.exception("flakiness run failed", extra={"run": i})
+                self.logger.exception(
+                    "flakiness run failed", extra=log_record(run=i)
+                )
                 cov = 0.0
             coverages.append(float(cov))
 
@@ -672,7 +673,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             if code_hash in self._bad_hashes:
                                 self.logger.info(
                                     "skipping known bad patch",
-                                    extra={"hash": code_hash},
+                                    extra=log_record(hash=code_hash),
                                 )
                                 return None
                             if patch_db:
@@ -683,7 +684,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 if any(r.reverted or r.roi_delta <= 0 for r in records):
                                     self.logger.info(
                                         "skipping patch due to negative history",
-                                        extra={"hash": code_hash},
+                                        extra=log_record(hash=code_hash),
                                     )
                                     self._bad_hashes.add(code_hash)
                                     return None
