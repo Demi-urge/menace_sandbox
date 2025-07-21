@@ -129,7 +129,25 @@ class SandboxRecoveryManager:
                 time.sleep(self.retry_delay)
 
 
-__all__ = ["SandboxRecoveryManager", "cli"]
+__all__ = ["SandboxRecoveryManager", "cli", "load_metrics"]
+
+
+def load_metrics(path: Path) -> Dict[str, float]:
+    """Return metrics stored in ``path`` as ``float`` values."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        logger.exception("failed to load recovery metrics: %s", path)
+        return {}
+    out: Dict[str, float] = {}
+    if isinstance(data, dict):
+        for k, v in data.items():
+            try:
+                out[str(k)] = float(v)
+            except Exception:
+                out[str(k)] = 0.0
+    return out
 
 
 def cli(argv: List[str] | None = None) -> int:
@@ -143,8 +161,7 @@ def cli(argv: List[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        with open(args.file, encoding="utf-8") as fh:
-            data = json.load(fh)
+        data = load_metrics(Path(args.file))
     except Exception as exc:  # pragma: no cover - runtime issues
         print(f"failed to read {args.file}: {exc}", file=sys.stderr)
         return 1

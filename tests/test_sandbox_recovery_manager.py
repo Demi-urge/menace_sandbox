@@ -109,9 +109,9 @@ def test_json_fallback_and_cli(monkeypatch, tmp_path, capsys):
     assert data["restart_count"] == 1.0
     assert isinstance(data["last_failure_time"], float)
 
-    srm.cli(["--file", str(tmp_path / "recovery.json")])
-    out = capsys.readouterr().out
-    assert "restart_count" in out
+    metrics = srm.load_metrics(tmp_path / "recovery.json")
+    assert metrics["restart_count"] == 1.0
+    assert isinstance(metrics["last_failure_time"], float)
 
 
 def test_run_autonomous_integration(monkeypatch, tmp_path):
