@@ -1,9 +1,24 @@
 import os
 import sys
 import types
+from pathlib import Path
 import pytest
 
 os.environ["MENACE_LIGHT_IMPORTS"] = "1"
+
+# provide minimal menace package for relative imports
+ROOT = Path(__file__).resolve().parents[1]
+menace_pkg = types.ModuleType("menace")
+menace_pkg.__path__ = [str(ROOT)]
+sys.modules.setdefault("menace", menace_pkg)
+log_stub = types.ModuleType("menace.logging_utils")
+log_stub.get_logger = lambda *a, **k: types.SimpleNamespace(
+    info=lambda *a, **k: None,
+    debug=lambda *a, **k: None,
+    warning=lambda *a, **k: None,
+    error=lambda *a, **k: None,
+)
+sys.modules.setdefault("menace.logging_utils", log_stub)
 
 stub = types.ModuleType("stub")
 stats_stub = types.SimpleNamespace(
@@ -200,3 +215,93 @@ def test_async_synergy_prediction(monkeypatch):
     tracker.update(0.1, 0.2, metrics=metrics)
 
     assert "pred_synergy_roi" in tracker.metrics_history
+
+
+def test_autonomous_synergy_no_convergence(monkeypatch):
+    """Oscillating synergy values should prevent convergence."""
+
+    monkeypatch.setattr(cli, "generate_presets", lambda n=None: [{"env": "A"}, {"env": "B"}])
+
+    tracker = DummyTracker()
+    calls = []
+    values = iter([
+        (0.1, 0.1),
+        (0.1, -0.1),
+        (0.02, 0.1),
+        (0.02, -0.1),
+        (0.005, 0.1),
+        (0.005, -0.1),
+    ])
+
+    def fake_capture(preset, args):
+        calls.append(preset)
+        delta, syn = next(values)
+        tracker.update(delta, syn)
+        return tracker
+
+    monkeypatch.setattr(cli, "_capture_run", fake_capture)
+
+    log_calls = []
+
+    def fake_info(msg, *a, **k):
+        log_calls.append(msg)
+
+    monkeypatch.setattr(cli.logger, "info", fake_info)
+
+    args = argparse.Namespace(
+        sandbox_data_dir=None,
+        preset_count=2,
+        max_iterations=3,
+        dashboard_port=None,
+        roi_cycles=2,
+        synergy_cycles=2,
+    )
+
+    cli.full_autonomous_run(args)
+
+    assert "synergy convergence reached" not in log_calls
+
+
+def test_autonomous_synergy_spike(monkeypatch):
+    """Sudden synergy spike should reset convergence."""
+
+    monkeypatch.setattr(cli, "generate_presets", lambda n=None: [{"env": "A"}, {"env": "B"}])
+
+    tracker = DummyTracker()
+    calls = []
+    values = iter([
+        (0.1, 0.05),
+        (0.1, 0.04),
+        (0.02, 0.03),
+        (0.02, 0.02),
+        (0.005, 0.009),
+        (0.005, 1.0),
+    ])
+
+    def fake_capture(preset, args):
+        calls.append(preset)
+        delta, syn = next(values)
+        tracker.update(delta, syn)
+        return tracker
+
+    monkeypatch.setattr(cli, "_capture_run", fake_capture)
+
+    log_calls = []
+
+    def fake_info(msg, *a, **k):
+        log_calls.append(msg)
+
+    monkeypatch.setattr(cli.logger, "info", fake_info)
+
+    args = argparse.Namespace(
+        sandbox_data_dir=None,
+        preset_count=2,
+        max_iterations=3,
+        dashboard_port=None,
+        roi_cycles=2,
+        synergy_cycles=2,
+    )
+
+    cli.full_autonomous_run(args)
+
+    assert "synergy convergence reached" not in log_calls
