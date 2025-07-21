@@ -115,3 +115,10 @@ python preset_policy_cli.py import policy.json
 ```
 
 The tool calls `export_preset_policy` and `import_preset_policy` under the hood, encoding the policy table as JSON.
+
+## OpenAI stub generation
+
+When `SANDBOX_STUB_MODEL=openai` and `OPENAI_API_KEY` are set the sandbox
+generates input stubs via the OpenAI Completion API. Generated objects are cached
+alongside locally produced stubs under `SANDBOX_STUB_CACHE`. This fallback is
+used whenever the `transformers` pipeline cannot be loaded.
