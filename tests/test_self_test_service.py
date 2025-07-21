@@ -5,6 +5,7 @@ import os
 import sys
 import types
 import time
+import pytest
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -97,7 +98,8 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
         return P()
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
-    asyncio.run(svc._run_once())
+    with pytest.raises(RuntimeError):
+        asyncio.run(svc._run_once())
     cur = db.conn.execute("SELECT COUNT(*) FROM telemetry")
     assert cur.fetchone()[0] == 1
     row = db.conn.execute("SELECT passed, failed FROM test_results").fetchone()
@@ -323,6 +325,8 @@ def test_container_exec(monkeypatch):
     asyncio.run(svc._run_once())
     assert recorded["cmd"][0] == "docker"
     assert "img" in recorded["cmd"]
+    assert any(f"{os.getcwd()}:{os.getcwd()}:ro" in str(x) for x in recorded["cmd"])
+    assert "pytest" in recorded["cmd"]
     assert any("--json-report-file=-" in str(x) for x in recorded["cmd"])
 
 

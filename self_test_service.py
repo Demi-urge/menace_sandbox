@@ -166,24 +166,23 @@ class SelfTestService:
                     "--rm",
                     "-i",
                     "-v",
-                    f"{os.getcwd()}:{os.getcwd()}",
+                    f"{os.getcwd()}:{os.getcwd()}:ro",
                     "-w",
                     os.getcwd(),
                 ]
                 for k, v in os.environ.items():
                     docker_cmd.extend(["-e", f"{k}={v}"])
                 docker_cmd.append(self.container_image)
-                docker_cmd.extend(cmd)
+
+                container_cmd = cmd[2:]
+
                 proc = await asyncio.create_subprocess_exec(
                     *docker_cmd,
-                    stdout=(
-                        asyncio.subprocess.PIPE
-                        if use_pipe
-                        else asyncio.subprocess.DEVNULL
-                    ),
-                    stderr=asyncio.subprocess.DEVNULL,
+                    *container_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
                 )
-                proc_info.append((proc, tmp_name))
+                proc_info.append((proc, None))
             else:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
@@ -196,26 +195,37 @@ class SelfTestService:
                 )
                 proc_info.append((proc, tmp_name))
 
-        async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float]:
-            await proc.wait()
+        async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float, bool]:
             report: dict[str, Any] = {}
-            try:
-                if use_pipe:
-                    assert proc.stdout is not None
-                    out = await proc.stdout.read()
-                    report = json.loads(out.decode() or "{}")
+            if use_pipe:
+                if hasattr(proc, "communicate"):
+                    out, err = await proc.communicate()
                 else:
+                    out = b""
+                    err = b""
+                    if proc.stdout:
+                        out = await proc.stdout.read()
+                    if getattr(proc, "stderr", None):
+                        err = await proc.stderr.read()
+                    await proc.wait()
+                data = (out or b"") + (err or b"")
+                try:
+                    report = json.loads(data.decode() or "{}")
+                except Exception:
+                    self.logger.exception("failed to parse test report")
+            else:
+                await proc.wait()
+                try:
                     assert tmp is not None
                     with open(tmp, "r", encoding="utf-8") as fh:
                         report = json.load(fh)
-            except Exception:
-                self.logger.exception("failed to parse test report")
-            finally:
-                if tmp:
-                    try:
-                        os.unlink(tmp)
-                    except Exception:
-                        pass
+                except Exception:
+                    self.logger.exception("failed to parse test report")
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
 
             summary = report.get("summary", {})
             pcount = int(summary.get("passed", 0))
@@ -234,7 +244,8 @@ class SelfTestService:
                 or 0.0
             )
 
-            if proc.returncode != 0:
+            failed_flag = proc.returncode != 0
+            if failed_flag:
                 exc = RuntimeError(
                     f"self tests failed with code {proc.returncode}"
                 )
@@ -243,21 +254,22 @@ class SelfTestService:
                     self.error_logger.log(exc, "self_tests", "sandbox")
                 except Exception:
                     self.logger.exception("error logging failed")
-                raise exc
 
-            return pcount, fcount, cov, runtime
+            return pcount, fcount, cov, runtime, failed_flag
 
         tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
-
+        
         results = await asyncio.gather(*tasks, return_exceptions=True)
         first_exc: Exception | None = None
+        any_failed = False
 
         for res in results:
             if isinstance(res, Exception):
                 if first_exc is None:
                     first_exc = res
                 continue
-            pcount, fcount, cov, runtime = res
+            pcount, fcount, cov, runtime, failed_flag = res
+            any_failed = any_failed or failed_flag
             passed += pcount
             failed += fcount
             coverage_total += cov
@@ -313,6 +325,8 @@ class SelfTestService:
 
         if first_exc:
             raise first_exc
+        if any_failed:
+            raise RuntimeError("self tests failed")
 
     async def _schedule_loop(self, interval: float) -> None:
         assert self._async_stop is not None
