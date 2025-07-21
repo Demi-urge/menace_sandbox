@@ -17,6 +17,8 @@ registry.run_all_cycles()
 
 When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
 
+Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas and the timestamp of the last cycle are written to this JSON file and reloaded on startup.
+
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
 ## Reinforcement-learning policy
