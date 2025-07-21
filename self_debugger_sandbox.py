@@ -331,6 +331,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             float(getattr(rec, "synergy_efficiency", 0.0)),
                         )
                     )
+                db_weights = patch_db.get_weights()
+                if db_weights:
+                    self.score_weights = db_weights
             except Exception:
                 self.logger.exception("score weight update failed from patch DB")
 
@@ -406,15 +409,46 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             k: (means[k], math.sqrt(vars_[k])) for k in data.keys()
         }
 
+        def _corr(xs: list[float], ys: list[float]) -> float:
+            if len(xs) < 2 or len(ys) < 2:
+                return 0.0
+            mx = sum(xs) / len(xs)
+            my = sum(ys) / len(ys)
+            num = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
+            den1 = sum((a - mx) ** 2 for a in xs)
+            den2 = sum((b - my) ** 2 for b in ys)
+            if den1 <= 0 or den2 <= 0:
+                return 0.0
+            return num / math.sqrt(den1 * den2)
+
+        roi_vals = data["roi"]
+        correlations = {
+            "coverage": _corr(data["coverage"], roi_vals),
+            "error": _corr(data["error"], roi_vals),
+            "complexity": _corr(data["complexity"], roi_vals),
+            "synergy_roi": _corr(data["synergy_roi"], roi_vals),
+            "synergy_efficiency": _corr(data["synergy_efficiency"], roi_vals),
+        }
+
         weights = [1.0 / (vars_["coverage"] + 1e-6),
                    1.0 / (vars_["error"] + 1e-6),
                    1.0 / (vars_["roi"] + 1e-6),
                    1.0 / (vars_["complexity"] + 1e-6),
                    1.0 / (vars_["synergy_roi"] + 1e-6),
                    1.0 / (vars_["synergy_efficiency"] + 1e-6)]
+
+        keys = ["coverage", "error", "roi", "complexity", "synergy_roi", "synergy_efficiency"]
+        for i, key in enumerate(keys):
+            if key in correlations:
+                weights[i] *= 1.0 + max(0.0, correlations[key])
         total = sum(weights)
         if total > 0:
             self.score_weights = tuple(w / total * 6.0 for w in weights)
+        if patch_db:
+            try:
+                patch_db.store_weights(self.score_weights)
+            except Exception:
+                self.logger.exception("score weight DB persistence failed")
         if weights_path:
             try:
                 with open(weights_path, "w", encoding="utf-8") as fh:

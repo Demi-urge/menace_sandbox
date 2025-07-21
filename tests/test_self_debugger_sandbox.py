@@ -648,13 +648,58 @@ def test_weights_update_from_patch_db(tmp_path):
 
     dbg._update_score_weights(patch_db)
     after = dbg.score_weights[4]
-    assert after < before
+    assert after > before
 
-    weight_file = patch_db.path.with_suffix(".weights.json")
-    assert weight_file.exists()
-    with open(weight_file, "r", encoding="utf-8") as fh:
-        data = json.load(fh)
-    assert tuple(data["weights"]) == dbg.score_weights
+    assert patch_db.get_weights() == dbg.score_weights
+
+
+def test_weight_updates_affect_score(tmp_path):
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+
+    base = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.5, 0.5)
+
+    patch_db.add(
+        types.SimpleNamespace(
+            ts="1",
+            errors_before=5,
+            errors_after=1,
+            roi_delta=0.5,
+            complexity_delta=0.1,
+            synergy_roi=1.0,
+            synergy_efficiency=1.0,
+            coverage_delta=0.0,
+        )
+    )
+
+    dbg._update_score_weights(patch_db)
+    dbg._score_db = patch_db
+    updated = dbg._composite_score(0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.5, 0.5)
+
+    assert updated > base
+
+
+def test_weights_persist_across_instances(tmp_path):
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    dbg1 = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    patch_db.add(
+        types.SimpleNamespace(
+            ts="1",
+            errors_before=4,
+            errors_after=2,
+            roi_delta=0.3,
+            complexity_delta=0.1,
+            synergy_roi=0.6,
+            synergy_efficiency=0.6,
+            coverage_delta=0.0,
+        )
+    )
+    dbg1._update_score_weights(patch_db)
+    saved = dbg1.score_weights
+
+    dbg2 = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    dbg2._update_score_weights(patch_db)
+    assert dbg2.score_weights == saved
 
 
 def test_composite_score_uses_tracker_synergy():

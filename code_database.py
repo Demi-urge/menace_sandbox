@@ -687,6 +687,20 @@ class PatchHistoryDB:
             )
             """
             )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS score_weights(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                w1 REAL,
+                w2 REAL,
+                w3 REAL,
+                w4 REAL,
+                w5 REAL,
+                w6 REAL,
+                ts TEXT
+            )
+            """
+            )
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
@@ -921,6 +935,30 @@ class PatchHistoryDB:
             return patches
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def store_weights(self, weights: tuple[float, float, float, float, float, float]) -> None:
+        """Persist score weights for later reuse."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "INSERT INTO score_weights(w1, w2, w3, w4, w5, w6, ts) VALUES(?,?,?,?,?,?,?)",
+                (*weights, datetime.utcnow().isoformat()),
+            )
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def get_weights(self) -> tuple[float, float, float, float, float, float] | None:
+        """Return the most recently stored score weights."""
+
+        def op(conn: sqlite3.Connection) -> tuple | None:
+            return conn.execute(
+                "SELECT w1, w2, w3, w4, w5, w6 FROM score_weights ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+
+        row = with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+        if row:
+            return tuple(float(x) for x in row)
+        return None
 
     def delete(self, patch_id: int) -> None:
         """Remove a patch record if it exists."""
