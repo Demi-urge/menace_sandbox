@@ -277,7 +277,7 @@ class DoubleDQNStrategy(RLStrategy):
         lr: float = 1e-3,
         batch_size: int = 32,
         capacity: int = 1000,
-        target_update: int = 10,
+        target_sync: int = 10,
     ) -> None:
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -285,7 +285,7 @@ class DoubleDQNStrategy(RLStrategy):
         self.lr = lr
         self.batch_size = batch_size
         self.capacity = capacity
-        self.target_update = target_update
+        self.target_sync = target_sync
         self.memory: List[Tuple[torch.Tensor, int, float, Optional[torch.Tensor], bool]] = []
         self.model: Optional[nn.Module] = None
         self.target_model: Optional[nn.Module] = None
@@ -383,7 +383,7 @@ class DoubleDQNStrategy(RLStrategy):
         self.optimizer.step()
 
         self.steps += 1
-        if self.steps % self.target_update == 0:
+        if self.steps % self.target_sync == 0:
             self.target_model.load_state_dict(self.model.state_dict())
 
         with torch.no_grad():

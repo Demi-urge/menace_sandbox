@@ -207,13 +207,22 @@ class AdaptivePresetAgent:
         )
 
         if strategy is None:
-            strategy = os.getenv("SANDBOX_PRESET_RL_STRATEGY") or "q_learning"
+            strategy = (
+                os.getenv("SANDBOX_ADAPTIVE_AGENT_STRATEGY")
+                or os.getenv("SANDBOX_PRESET_RL_STRATEGY")
+                or "q_learning"
+            )
 
         name = str(strategy).replace("-", "_")
         if name == "double_dqn" and _torch is not None and _nn is not None:
             rl_strategy = DoubleDQNStrategy()
         else:
-            rl_strategy = strategy_factory(strategy, env_var="SANDBOX_PRESET_RL_STRATEGY")
+            env_var = (
+                "SANDBOX_ADAPTIVE_AGENT_STRATEGY"
+                if os.getenv("SANDBOX_ADAPTIVE_AGENT_STRATEGY") is not None
+                else "SANDBOX_PRESET_RL_STRATEGY"
+            )
+            rl_strategy = strategy_factory(strategy, env_var=env_var)
 
         self.policy = SelfImprovementPolicy(path=path, strategy=rl_strategy)
         self.state_file = f"{path}.state.json" if path else None
