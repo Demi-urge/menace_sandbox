@@ -539,24 +539,28 @@ async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
     total_replaced = 0
-    while True:
-        await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
-        try:
-            cleaned, replaced = _cleanup_idle_containers()
-            total_cleaned += cleaned
-            total_replaced += replaced
-            if cleaned:
-                logger.info(
-                    "cleaned %d idle containers (total %d)", cleaned, total_cleaned
-                )
-            if replaced:
-                logger.info(
-                    "replaced %d unhealthy containers (total %d)",
-                    replaced,
-                    total_replaced,
-                )
-        except Exception:
-            logger.exception("idle container cleanup failed")
+    try:
+        while True:
+            await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            try:
+                cleaned, replaced = _cleanup_idle_containers()
+                total_cleaned += cleaned
+                total_replaced += replaced
+                if cleaned:
+                    logger.info(
+                        "cleaned %d idle containers (total %d)", cleaned, total_cleaned
+                    )
+                if replaced:
+                    logger.info(
+                        "replaced %d unhealthy containers (total %d)",
+                        replaced,
+                        total_replaced,
+                    )
+            except Exception:
+                logger.exception("idle container cleanup failed")
+    except asyncio.CancelledError:  # pragma: no cover - cancellation path
+        logger.debug("cleanup worker cancelled")
+        raise
 
 
 def _cleanup_pools() -> None:
@@ -592,9 +596,14 @@ def _await_cleanup_task() -> None:
     task = _CLEANUP_TASK
     if not task:
         return
-    task.cancel()
+    async def _cancel_and_wait() -> None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:  # pragma: no cover - expected on cancel
+            pass
     try:
-        asyncio.run(task)
+        asyncio.run(_cancel_and_wait())
     except Exception:
         logger.exception("cleanup task awaiting failed")
     _CLEANUP_TASK = None
