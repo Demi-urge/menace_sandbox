@@ -249,50 +249,95 @@ class PreExecutionROIBot:
             return 0.0
 
     def _scrape_bonus(self) -> float:
+        """Return a small bonus value based on recent Python community sentiment."""
+
         if requests is None:
             return 0.0
+
+        import asyncio
+        import importlib
+
         try:
-            from bs4 import BeautifulSoup
-        except Exception:
-            return 0.0
+            aiohttp = importlib.import_module("aiohttp")
+        except Exception:  # pragma: no cover - optional dependency
+            aiohttp = None  # type: ignore
+
+        try:
+            from textblob import TextBlob  # type: ignore
+        except Exception:  # pragma: no cover - optional dependency
+            TextBlob = None  # type: ignore
+
         urls = [
             "https://www.python.org",
             "https://pypi.org",
             "https://planetpython.org",
         ]
-        pos_words = [
-            "release",
-            "success",
-            "growth",
-            "improvement",
-            "stable",
-            "up",
-        ]
-        neg_words = [
-            "error",
-            "deprecated",
-            "warning",
-            "downtime",
-            "failure",
-            "bug",
-        ]
-        pos = neg = total_text = 0
-        for url in urls:
+
+        async def _fetch(session: Any, url: str) -> str:
             try:
-                resp = requests.get(url, timeout=3)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, "html.parser")
-                text = soup.get_text(" ", strip=True).lower()
-                total_text += len(text.split())
-                pos += sum(text.count(w) for w in pos_words)
-                neg += sum(text.count(w) for w in neg_words)
-            except Exception:
-                continue
-        total = pos + neg
-        if total == 0 or total_text == 0:
+                if aiohttp is not None and session is not None:
+                    async with session.get(url, timeout=3) as resp:
+                        resp.raise_for_status()
+                        return await resp.text()
+                loop = asyncio.get_running_loop()
+
+                def _get() -> str:
+                    resp = requests.get(url, timeout=3)
+                    resp.raise_for_status()
+                    return resp.text
+
+                return await loop.run_in_executor(None, _get)
+            except Exception:  # pragma: no cover - network issues
+                return ""
+
+        async def _gather() -> List[str]:
+            if aiohttp is not None:
+                async with aiohttp.ClientSession() as sess:
+                    return await asyncio.gather(*[_fetch(sess, u) for u in urls])
+            return await asyncio.gather(*[_fetch(None, u) for u in urls])
+
+        try:
+            texts = asyncio.run(_gather())
+        except Exception as exc:  # pragma: no cover - network failure
+            logger.warning("_scrape_bonus network failure: %s", exc)
             return 0.0
-        sentiment = (pos - neg) / (total + 1)
-        volume = min(total_text / 10000.0, 1.0)
+
+        text = " ".join(t for t in texts if t)
+        if not text:
+            return 0.0
+
+        sentiment = 0.0
+        if TextBlob is not None:
+            try:
+                sentiment = TextBlob(text).sentiment.polarity
+            except Exception as exc:  # pragma: no cover - sentiment failure
+                logger.warning("_scrape_bonus sentiment failure: %s", exc)
+                sentiment = 0.0
+        else:
+            pos_words = [
+                "release",
+                "success",
+                "growth",
+                "improvement",
+                "stable",
+                "up",
+            ]
+            neg_words = [
+                "error",
+                "deprecated",
+                "warning",
+                "downtime",
+                "failure",
+                "bug",
+            ]
+            low = text.lower()
+            pos = sum(low.count(w) for w in pos_words)
+            neg = sum(low.count(w) for w in neg_words)
+            total = pos + neg
+            if total:
+                sentiment = (pos - neg) / total
+
+        volume = min(len(text.split()) / 10000.0, 1.0)
         return float(sentiment * volume)
 
     def estimate_cost(self, tasks: Iterable[BuildTask]) -> float:
