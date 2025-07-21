@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Optional, List
 import sqlite3
 import threading
+from filelock import FileLock
 
 
 @dataclass
@@ -22,9 +23,11 @@ class PatchSuggestionDB:
     def __init__(self, path: Path | str = "suggestions.db") -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
+        self._file_lock = FileLock(str(self.path) + ".lock")
+        with self._file_lock:
+            with sqlite3.connect(self.path) as conn:
+                conn.execute(
+                    """
             CREATE TABLE IF NOT EXISTS suggestions(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 module TEXT,
@@ -39,13 +42,14 @@ class PatchSuggestionDB:
             conn.commit()
 
     def add(self, rec: SuggestionRecord) -> None:
-        with self._lock:
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    "INSERT INTO suggestions(module, description, ts) VALUES(?,?,?)",
-                    (rec.module, rec.description, rec.ts),
-                )
-                conn.commit()
+        with self._file_lock:
+            with self._lock:
+                with sqlite3.connect(self.path) as conn:
+                    conn.execute(
+                        "INSERT INTO suggestions(module, description, ts) VALUES(?,?,?)",
+                        (rec.module, rec.description, rec.ts),
+                    )
+                    conn.commit()
 
     def history(self, module: str, limit: int = 10) -> List[str]:
         with self._lock:

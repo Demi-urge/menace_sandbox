@@ -26,7 +26,10 @@ from menace.self_improvement_policy import SelfImprovementPolicy
 from menace.self_improvement_engine import SelfImprovementEngine
 from menace.self_test_service import SelfTestService
 from menace.code_database import PatchHistoryDB, CodeDB
-from menace.patch_suggestion_db import PatchSuggestionDB
+try:  # patch suggestion DB may reside at top level during tests
+    from menace.patch_suggestion_db import PatchSuggestionDB
+except Exception:  # pragma: no cover - fallback for test stubs
+    from patch_suggestion_db import PatchSuggestionDB
 from menace.audit_trail import AuditTrail
 from menace.error_bot import ErrorBot, ErrorDB
 from menace.data_bot import MetricsDB, DataBot
@@ -59,6 +62,7 @@ _TPL: Template | None = None
 _AUTO_PROMPTS_DIR = ROOT / "templates" / "auto_prompts"
 # Loaded auto templates cached globally to avoid repeated disk reads
 _AUTO_TEMPLATES: list[tuple[str, Template]] | None = None
+_SUGGESTION_DB: PatchSuggestionDB | None = None
 _prompt_len = os.getenv("GPT_SECTION_PROMPT_MAX_LENGTH")
 try:
     GPT_SECTION_PROMPT_MAX_LENGTH: int | None = (
@@ -730,9 +734,11 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         except Exception:
             logger.exception("failed to load suggestion cache: %s", cache_path)
             suggestion_cache = {}
-    suggestion_db = PatchSuggestionDB(
-        suggestion_cache.get("db", str(data_dir / "module_suggestions.db"))
-    )
+    global _SUGGESTION_DB
+    suggestion_db_path = suggestion_cache.get("db", str(data_dir / "module_suggestions.db"))
+    if _SUGGESTION_DB is None or _SUGGESTION_DB.path != Path(suggestion_db_path):
+        _SUGGESTION_DB = PatchSuggestionDB(suggestion_db_path)
+    suggestion_db = _SUGGESTION_DB
 
     return SandboxContext(
         tmp=tmp,
