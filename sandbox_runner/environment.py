@@ -506,6 +506,8 @@ async def _execute_in_container(
         with tempfile.TemporaryDirectory(prefix="sim_local_") as td:
             path = Path(td) / "snippet.py"
             path.write_text(code_str, encoding="utf-8")
+            stdout_path = Path(td) / "stdout.log"
+            stderr_path = Path(td) / "stderr.log"
 
             env_vars = os.environ.copy()
             env_vars.update({k: str(v) for k, v in env.items()})
@@ -556,10 +558,14 @@ async def _execute_in_container(
                 p = psutil.Process(proc.pid) if psutil else None
                 if p and not rlimit_ok:
                     _apply_psutil_rlimits(p, env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
-                proc.communicate(timeout=int(env.get("TIMEOUT", "30")))
+                out, err = proc.communicate(timeout=int(env.get("TIMEOUT", "30")))
+                stdout_path.write_text(out, encoding="utf-8")
+                stderr_path.write_text(err, encoding="utf-8")
                 exit_code = proc.returncode
             except subprocess.TimeoutExpired:
                 proc.kill()
+                stdout_path.write_text("", encoding="utf-8")
+                stderr_path.write_text("timeout", encoding="utf-8")
                 exit_code = -1
             end = resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
             net_end = psutil.net_io_counters() if psutil else None
@@ -619,6 +625,8 @@ async def _execute_in_container(
                 "disk_io": float(disk_io),
                 "net_io": float(net_io),
                 "gpu_usage": float(gpu_usage),
+                "stdout_log": str(stdout_path),
+                "stderr_log": str(stderr_path),
             }
 
     try:
@@ -700,6 +708,16 @@ async def _execute_in_container(
                     )
 
                     result = container.wait()
+                    stdout_path = Path(td) / "stdout.log"
+                    stderr_path = Path(td) / "stderr.log"
+                    try:
+                        out = container.logs(stdout=True, stderr=False)
+                        err = container.logs(stdout=False, stderr=True)
+                        stdout_path.write_bytes(out or b"")
+                        stderr_path.write_bytes(err or b"")
+                    except Exception:
+                        stdout_path.write_text("", encoding="utf-8")
+                        stderr_path.write_text("", encoding="utf-8")
                     stats = container.stats(stream=False)
                     container.remove()
 
@@ -737,6 +755,8 @@ async def _execute_in_container(
                         "disk_io": disk_io,
                         "net_io": net_io,
                         "gpu_usage": gpu_usage,
+                        "stdout_log": str(stdout_path),
+                        "stderr_log": str(stderr_path),
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
                 logger.exception("container execution failed: %s", exc)
@@ -781,7 +801,18 @@ async def _execute_in_container(
                     ["python", "/code/snippet.py"],
                     environment={k: str(v) for k, v in env.items()},
                     workdir=workdir,
+                    demux=True,
                 )
+
+                stdout_path = Path(td) / "stdout.log"
+                stderr_path = Path(td) / "stderr.log"
+                try:
+                    out, err = result.output or (b"", b"")
+                    stdout_path.write_bytes(out or b"")
+                    stderr_path.write_bytes(err or b"")
+                except Exception:
+                    stdout_path.write_text("", encoding="utf-8")
+                    stderr_path.write_text("", encoding="utf-8")
 
                 stats = container.stats(stream=False)
 
@@ -821,6 +852,8 @@ async def _execute_in_container(
                 "disk_io": disk_io,
                 "net_io": net_io,
                 "gpu_usage": gpu_usage,
+                "stdout_log": str(stdout_path),
+                "stderr_log": str(stderr_path),
             }
         except Exception as exc:  # pragma: no cover - runtime failures
             logger.exception("container execution failed: %s", exc)
