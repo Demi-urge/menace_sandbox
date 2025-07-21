@@ -104,6 +104,23 @@ class SelfTestService:
         except Exception:
             self.logger.exception("failed to store history")
 
+    async def _docker_available(self) -> bool:
+        """Return ``True`` if the docker CLI is available."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "--version",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            return proc.returncode == 0
+        except FileNotFoundError:
+            return False
+        except Exception:
+            self.logger.exception("docker check failed")
+            return False
+
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
@@ -117,7 +134,8 @@ class SelfTestService:
         runtime_total = 0.0
         proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
 
-        use_pipe = self.result_callback is not None or self.use_container
+        use_container = self.use_container and await self._docker_available()
+        use_pipe = self.result_callback is not None or use_container
 
         for p in paths:
             tmp_name: str | None = None
@@ -141,7 +159,7 @@ class SelfTestService:
             if p:
                 cmd.append(p)
 
-            if self.use_container:
+            if use_container:
                 docker_cmd = [
                     "docker",
                     "run",
