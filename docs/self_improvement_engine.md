@@ -17,7 +17,7 @@ registry.run_all_cycles()
 
 When a `SelfCodingEngine` is supplied, the engine may patch helper code before running the automation pipeline. See [self_coding_engine.md](self_coding_engine.md) for more information.
 
-Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas and the timestamp of the last cycle are written to this JSON file and reloaded on startup.
+Persisting cycle data across runs is possible by providing `state_path` when creating the engine. ROI deltas, an exponential moving average of those deltas (`roi_delta_ema`) and the timestamp of the last cycle are written to this JSON file and reloaded on startup. The smoothing factor for the EMA can be set with `roi_ema_alpha` (default `0.1`).
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
@@ -28,6 +28,11 @@ The policy learns from previous evolution cycles via Q‑learning and predicts
 whether running another cycle is likely to increase ROI. `_should_trigger()`
 consults this policy in addition to diagnostic checks and the predicted value
 also scales the `energy` passed to the automation pipeline.
+
+In addition to policy predictions, the engine tracks rolling averages of ROI
+deltas. A short term mean and an exponential moving average influence the
+energy allocated to each cycle. Positive averages boost the energy budget while
+negative values reduce it.
 
 Recent sandbox runs record ROI deltas per module via ``sandbox_runner._SandboxMetaLogger``.
 Passing the logger to `SelfImprovementEngine` exposes `rankings()` and
