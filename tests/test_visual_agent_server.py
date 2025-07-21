@@ -538,10 +538,36 @@ def test_recover_malformed_file(monkeypatch, tmp_path):
     path = tmp_path / "visual_agent_queue.json"
     path.write_text("{bad json")
     va = _setup_va(monkeypatch, tmp_path)
-    bak = tmp_path / "visual_agent_queue.json.bak"
-    assert bak.exists()
+    bak1 = tmp_path / "visual_agent_queue.json.bak1"
+    assert bak1.exists()
     assert path.exists()
     assert not va.task_queue
     assert not va.job_status
     data = json.loads(path.read_text())
     assert data == {"queue": [], "status": {}}
+
+
+def test_recover_truncated_file(monkeypatch, tmp_path):
+    """Truncated queue file should be backed up and reset."""
+    content = json.dumps({
+        "queue": [{"id": "a", "prompt": "p", "branch": None}],
+        "status": {"a": {"status": "queued", "prompt": "p", "branch": None}},
+    })
+    path = tmp_path / "visual_agent_queue.json"
+
+    truncated1 = content[: len(content) // 2]
+    path.write_text(truncated1)
+    va = _setup_va(monkeypatch, tmp_path)
+    bak1 = tmp_path / "visual_agent_queue.json.bak1"
+    assert bak1.exists()
+    assert bak1.read_text() == truncated1
+    assert json.loads(path.read_text()) == {"queue": [], "status": {}}
+
+    truncated2 = content[: len(content) // 3]
+    path.write_text(truncated2)
+    va = _setup_va(monkeypatch, tmp_path)
+    bak2 = tmp_path / "visual_agent_queue.json.bak2"
+    assert bak1.read_text() == truncated2
+    assert bak2.read_text() == truncated1
+    assert len(list(tmp_path.glob("visual_agent_queue.json.bak*"))) == 2
+    assert json.loads(path.read_text()) == {"queue": [], "status": {}}

@@ -54,8 +54,12 @@ def _save_state_locked() -> None:
     """Persist queue and status atomically."""
     data = {"queue": list(task_queue), "status": job_status}
     QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", delete=False, dir=QUEUE_FILE.parent, encoding="utf-8") as fh:
+    with tempfile.NamedTemporaryFile(
+        "w", delete=False, dir=QUEUE_FILE.parent, encoding="utf-8"
+    ) as fh:
         json.dump(data, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
         tmp_path = Path(fh.name)
     os.replace(tmp_path, QUEUE_FILE)
 
@@ -64,13 +68,15 @@ def _recover_queue_file_locked() -> None:
     """Backup corrupt queue file and reset state."""
     if not QUEUE_FILE.exists():
         return
-    backup = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak")
-    counter = 1
-    while backup.exists():
-        backup = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{counter}")
-        counter += 1
+
+    bak1 = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak1")
+    bak2 = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + ".bak2")
     try:
-        QUEUE_FILE.replace(backup)
+        if bak1.exists():
+            if bak2.exists():
+                bak2.unlink()
+            os.replace(bak1, bak2)
+        os.replace(QUEUE_FILE, bak1)
     except OSError:
         try:
             QUEUE_FILE.unlink()
