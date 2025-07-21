@@ -606,8 +606,8 @@ start_metrics_server(8001)
 recovery = SandboxRecoveryManager(main)
 ```
 
-Prometheus will expose two gauges named `sandbox_restart_count` and
-`sandbox_last_failure_time`. The latter holds a Unix timestamp or `0` when no
+Prometheus will expose two gauges named `sandbox_restart_total` and
+`sandbox_last_failure_ts`. The latter holds a Unix timestamp or `0` when no
 failure has occurred yet.
 
 When the `prometheus_client` package isn't available the recovery manager falls

@@ -231,6 +231,12 @@ learning_engine_exceptions = Gauge(
     "learning_engine_exceptions_total",
     "Exceptions encountered in UnifiedLearningEngine"
 )
+sandbox_restart_total = Gauge(
+    "sandbox_restart_total", "Total number of sandbox restarts"
+)
+sandbox_last_failure_ts = Gauge(
+    "sandbox_last_failure_ts", "Timestamp of last sandbox failure"
+)
 
 
 _METRICS_SERVER: "HTTPServer" | None = None
@@ -284,4 +290,6 @@ __all__ = [
     "efficiency_gauge",
     "flexibility_gauge",
     "projected_lucrativity_gauge",
+    "sandbox_restart_total",
+    "sandbox_last_failure_ts",
 ]
