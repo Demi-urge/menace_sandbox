@@ -23,6 +23,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
+from contextlib import asynccontextmanager
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -334,6 +335,16 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
     return container, td
 
 
+@asynccontextmanager
+async def pooled_container(image: str) -> Any:
+    """Async context manager yielding a pooled container."""
+    container, td = await _get_pooled_container(image)
+    try:
+        yield container, td
+    finally:
+        _release_container(image, container)
+
+
 def _release_container(image: str, container: Any) -> None:
     """Return ``container`` to the pool for ``image``."""
     try:
@@ -449,6 +460,20 @@ def _cleanup_pools() -> None:
             _CONTAINER_LAST_USED.pop(c.id, None)
     _CONTAINER_POOLS.clear()
 
+
+def _await_cleanup_task() -> None:
+    """Cancel ``_CLEANUP_TASK`` if running and await completion."""
+    global _CLEANUP_TASK
+    task = _CLEANUP_TASK
+    if not task:
+        return
+    task.cancel()
+    try:
+        asyncio.run(task)
+    except Exception:
+        pass
+    _CLEANUP_TASK = None
+
 import atexit
 
 if _DOCKER_CLIENT is not None:
@@ -456,6 +481,7 @@ if _DOCKER_CLIENT is not None:
     _ensure_pool_size_async(default_img)
     if _CLEANUP_TASK is None:
         _CLEANUP_TASK = asyncio.create_task(_cleanup_worker())
+    atexit.register(_await_cleanup_task)
     atexit.register(_cleanup_pools)
 
 
@@ -735,19 +761,17 @@ async def _execute_in_container(
                         f"SANDBOX_CONTAINER_IMAGE_{os_type.upper()}", image
                     )
 
-            container, td = await _get_pooled_container(image)
-            path = Path(td) / "snippet.py"
-            path.write_text(code_str, encoding="utf-8")
+            async with pooled_container(image) as (container, td):
+                path = Path(td) / "snippet.py"
+                path.write_text(code_str, encoding="utf-8")
 
-            result = container.exec_run(
-                ["python", "/code/snippet.py"],
-                environment={k: str(v) for k, v in env.items()},
-                workdir=workdir,
-            )
+                result = container.exec_run(
+                    ["python", "/code/snippet.py"],
+                    environment={k: str(v) for k, v in env.items()},
+                    workdir=workdir,
+                )
 
-            stats = container.stats(stream=False)
-            _release_container(image, container)
-            _ensure_pool_size_async(image)
+                stats = container.stats(stream=False)
 
             blk = (
                 stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
