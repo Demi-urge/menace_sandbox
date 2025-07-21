@@ -32,11 +32,15 @@ class SelfTestService:
         workers: int | None = None,
         data_bot: DataBot | None = None,
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
+        container_image: str = "python:3.11-slim",
+        use_container: bool = False,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
         self.data_bot = data_bot
         self.result_callback = result_callback
+        self.container_image = container_image
+        self.use_container = use_container
         self.results: dict[str, Any] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
@@ -62,7 +66,7 @@ class SelfTestService:
         runtime_total = 0.0
         proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
 
-        use_pipe = self.result_callback is not None
+        use_pipe = self.result_callback is not None or self.use_container
         for p in paths:
             tmp_name: str | None = None
             cmd = [
@@ -85,12 +89,34 @@ class SelfTestService:
             if p:
                 cmd.append(p)
 
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            proc_info.append((proc, tmp_name))
+            if self.use_container:
+                docker_cmd = [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "-i",
+                    "-v",
+                    f"{os.getcwd()}:{os.getcwd()}",
+                    "-w",
+                    os.getcwd(),
+                ]
+                for k, v in os.environ.items():
+                    docker_cmd.extend(["-e", f"{k}={v}"])
+                docker_cmd.append(self.container_image)
+                docker_cmd.extend(cmd)
+                proc = await asyncio.create_subprocess_exec(
+                    *docker_cmd,
+                    stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                proc_info.append((proc, tmp_name))
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE if use_pipe else asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                proc_info.append((proc, tmp_name))
 
         for proc, tmp_name in proc_info:
             await proc.wait()

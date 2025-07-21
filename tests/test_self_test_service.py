@@ -269,3 +269,63 @@ def test_callback_emits_partial_results(monkeypatch):
     assert passes == [1, 2]
     assert calls[-1] == svc.results
 
+
+def test_container_exec(monkeypatch):
+    recorded = {}
+
+    async def fake_exec(*cmd, **kwargs):
+        recorded["cmd"] = cmd
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService(use_container=True, container_image="img")
+    asyncio.run(svc._run_once())
+    assert recorded["cmd"][0] == "docker"
+    assert "img" in recorded["cmd"]
+    assert any("--json-report-file=-" in str(x) for x in recorded["cmd"])
+
+
+def test_container_metrics(tmp_path, monkeypatch):
+    db = eb.ErrorDB(tmp_path / "e4.db")
+    metrics = MetricsDB(tmp_path / "m2.db")
+    data_bot = DataBot(metrics)
+
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(
+                    json.dumps(
+                        {
+                            "summary": {"passed": 1, "failed": 0, "duration": 1.0},
+                            "coverage": {"percent": 75.0},
+                            "duration": 1.0,
+                        }
+                    ).encode()
+                )
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService(db, data_bot=data_bot, use_container=True, container_image="img")
+    asyncio.run(svc._run_once())
+    assert svc.results["coverage"] == 75.0
+    assert svc.results["runtime"] == 1.0
+    names = [r[1] for r in metrics.fetch_eval("self_tests")]
+    assert "coverage" in names and "runtime" in names
+
