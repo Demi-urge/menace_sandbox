@@ -428,8 +428,10 @@ Windows or macOS disk images via the ``VM_SETTINGS`` keys ``windows_image`` or
 
 ### Maintenance logs and audit signing
 
-- `MAINTENANCE_DB` – path or URL for the maintenance log database. Defaults to
+- `MAINTENANCE_DB` – path for the SQLite maintenance log database. Defaults to
   `maintenance.db` when unset.
+- `MAINTENANCE_DB_URL` – optional PostgreSQL connection string used instead of
+  SQLite. The bot falls back to SQLite if the connection fails.
 - `AUDIT_PRIVKEY` – base64-encoded Ed25519 private key used to sign audit
   entries. Both raw 32-byte keys and DER-encoded keys are supported. The
   following command generates a DER-encoded key that can be used directly:
