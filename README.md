@@ -344,9 +344,10 @@ Override any value via the command line using ``menace_master.py --env VAR=VALUE
 or by editing the generated ``.env`` file.
 
 ``auto_env_setup.interactive_setup`` obtains missing API keys automatically via
-``SecretsManager`` and optional vault providers without user prompts.
-Default values can be provided in a file referenced by the
-``MENACE_DEFAULTS_FILE`` environment variable.
+``SecretsManager`` and optional vault providers. It loads defaults from the file
+referenced by ``MENACE_DEFAULTS_FILE`` and only prompts for values that remain
+unset. Answers can be pre-filled with environment variables named
+``MENACE_SETUP_<KEY>`` (e.g. ``MENACE_SETUP_OPENAI_API_KEY``).
 
 ### First-run sandbox
 
