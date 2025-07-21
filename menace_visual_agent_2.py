@@ -39,6 +39,10 @@ class TaskIn(BaseModel):
 
 app = FastAPI(title="Menace-Visual-Agent")
 
+@app.on_event("startup")
+def _startup_load_state() -> None:
+    _initialize_state()
+
 _running_lock = threading.Lock()      # ensures only one job at a time
 _current_job  = {"active": False}
 GLOBAL_LOCK_PATH = os.getenv(
@@ -116,18 +120,23 @@ def _load_state_locked() -> None:
     if not QUEUE_FILE.exists():
         return
     if not HASH_FILE.exists():
-        _recover_queue_file_locked()
-        return
-
-    try:
-        expected = HASH_FILE.read_text().strip()
-        data_bytes = QUEUE_FILE.read_bytes()
-        if hashlib.sha256(data_bytes).hexdigest() != expected:
-            raise ValueError("checksum mismatch")
-        data = json.loads(data_bytes.decode("utf-8"))
-    except Exception:
-        _recover_queue_file_locked()
-        return
+        try:
+            data_bytes = QUEUE_FILE.read_bytes()
+            data = json.loads(data_bytes.decode("utf-8"))
+            HASH_FILE.write_text(hashlib.sha256(data_bytes).hexdigest())
+        except Exception:
+            _recover_queue_file_locked()
+            return
+    else:
+        try:
+            expected = HASH_FILE.read_text().strip()
+            data_bytes = QUEUE_FILE.read_bytes()
+            if hashlib.sha256(data_bytes).hexdigest() != expected:
+                raise ValueError("checksum mismatch")
+            data = json.loads(data_bytes.decode("utf-8"))
+        except Exception:
+            _recover_queue_file_locked()
+            return
 
     if not isinstance(data, dict):
         _recover_queue_file_locked()
@@ -196,6 +205,9 @@ def _queue_worker():
             _exit_event.wait(0.1)
             continue
         task = task_queue.popleft()
+        if _exit_event.is_set():
+            task_queue.appendleft(task)
+            break
         tid = task["id"]
         _running_lock.acquire()
         try:
@@ -236,14 +248,21 @@ def _autosave_worker() -> None:
         _persist_state()
 
 
-try:
-    _global_lock.acquire(timeout=0)
+def _initialize_state() -> None:
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        return
     try:
         _load_state_locked()
     finally:
-        _global_lock.release()
-except Timeout:
-    pass
+        try:
+            _global_lock.release()
+        except Exception:
+            pass
+
+
+_initialize_state()
 
 _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
 _worker_thread.start()
@@ -393,6 +412,7 @@ def _wait_for_build(timeout: int, refresh: int) -> bool:
     last_refresh = time.time()
 
     while True:
+        _persist_state()
         time.sleep(1)
         img = capture_screen()
         text = ocr_image(img)
@@ -423,6 +443,7 @@ def _wait_for_build(timeout: int, refresh: int) -> bool:
 
 
 def run_menace_pipeline(prompt: str, branch: str | None = None):
+    _persist_state()
     try:
         if not safe_find_and_click(TRIGGERS['prompt']):
             print("[ERROR] Could not locate prompt field.")
@@ -463,6 +484,7 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
             pyautogui.moveTo(x, y)
             pyautogui.click()
             print(f"Clicked at: ({x}, {y})")
+            _persist_state()
             time.sleep(delay_between_clicks)
 
         print("✅ Sweep complete. Surely Balolos-coded.")
@@ -480,6 +502,7 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         pyautogui.hotkey('win', '1')
         time.sleep(2)
         print("Menace pipeline run completed.")
+        _persist_state()
 
 
     except Exception as e:
@@ -487,6 +510,7 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         time.sleep(1)
         img = capture_screen()
         save_screenshot(img, "fatal_error")
+        _persist_state()
 
 @app.post("/revert", status_code=202)
 async def revert_patch(x_token: str = Header(default="")):
@@ -653,6 +677,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
+    parser.add_argument("--resume", action="store_true", help="Resume queued tasks before starting server")
     args = parser.parse_args()
 
     if args.flush_queue:
@@ -685,6 +710,20 @@ if __name__ == "__main__":
             _global_lock.release()
         print(f"Recovered {len(task_queue)} tasks")
         sys.exit(0)
+
+    if args.resume:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            print("Agent busy", file=sys.stderr)
+            sys.exit(1)
+        try:
+            task_queue.clear()
+            job_status.clear()
+            _load_state_locked()
+        finally:
+            _global_lock.release()
+        print(f"Resumed {len(task_queue)} tasks")
 
     print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
 
