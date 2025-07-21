@@ -633,3 +633,37 @@ def test_metrics_warning(monkeypatch, caplog):
     assert calls
     assert "queue size" in caplog.text
 
+
+def test_tasks_survive_restart(tmp_path, monkeypatch):
+    pytest.importorskip("fastapi")
+    pytest.importorskip("uvicorn")
+    requests = pytest.importorskip("requests")
+    from tests.test_visual_agent_subprocess_recovery import _start_server
+
+    proc, port = _start_server(tmp_path)
+    url = f"http://127.0.0.1:{port}"
+    try:
+        vac_mod = _reload_client(monkeypatch)
+        monkeypatch.setattr(vac_mod, "log_event", lambda *a, **k: "id")
+        monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+        client = vac_mod.VisualAgentClient(urls=[url], poll_interval=0.05)
+        client.ask_async([{"content": "p"}])
+        time.sleep(0.1)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+    proc2, port2 = _start_server(tmp_path)
+    url2 = f"http://127.0.0.1:{port2}"
+    try:
+        for _ in range(50):
+            r = requests.get(f"{url2}/status", timeout=1)
+            if r.status_code == 200 and r.json().get("queue") == 0:
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("task did not resume")
+    finally:
+        proc2.terminate()
+        proc2.wait(timeout=5)
+
