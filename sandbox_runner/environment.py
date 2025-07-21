@@ -596,7 +596,7 @@ def _await_cleanup_task() -> None:
     try:
         asyncio.run(task)
     except Exception:
-        pass
+        logger.exception("cleanup task awaiting failed")
     _CLEANUP_TASK = None
 
 import atexit
@@ -1131,11 +1131,11 @@ def _create_cgroup(cpu: Any, mem: Any) -> Path | None:
                 for f in path.iterdir():
                     try:
                         f.unlink()
-                    except Exception:
-                        pass
+                    except Exception as exc2:
+                        logger.exception("failed to remove cgroup file %s", f)
                 path.rmdir()
-        except Exception:
-            pass
+        except Exception as exc2:
+            logger.exception("failed to remove cgroup directory %s", path)
         return None
 
 
@@ -1147,7 +1147,7 @@ def _cleanup_cgroup(path: Path) -> None:
                 try:
                     f.unlink()
                 except Exception:
-                    pass
+                    logger.exception("failed to remove cgroup file %s", f)
             path.rmdir()
     except Exception as exc:  # pragma: no cover - best effort
         logger.warning("failed to remove cgroup: %s", exc)
@@ -1341,7 +1341,7 @@ async def _section_worker(
                             try:
                                 netns.remove(_ns_name)
                             except Exception:
-                                pass
+                                logger.exception("failed to remove netns %s", _ns_name)
                             _ns_name = None
                     _use_netem = False
             elif netem_args:
