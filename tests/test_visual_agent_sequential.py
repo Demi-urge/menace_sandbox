@@ -7,6 +7,8 @@ import time
 import threading
 from pathlib import Path
 import importlib.util
+import argparse
+import json
 import pytest
 
 pytest.importorskip("fastapi")
@@ -151,3 +153,100 @@ def test_sequential_clients(tmp_path, monkeypatch):
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_queue_runs_sequentially(tmp_path, monkeypatch):
+    """Tasks enqueued via ``ask_async`` should run one after another."""
+
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(tmp_path / "lock"))
+    vac_mod = importlib.reload(importlib.import_module("menace.visual_agent_client"))
+
+    active = 0
+    overlap = []
+
+    def fake_send(self, base, prompt):
+        nonlocal active, overlap
+        # lock file should exist while the task executes
+        assert os.path.exists(vac_mod.GLOBAL_LOCK_PATH)
+        active += 1
+        if active > 1:
+            overlap.append(True)
+        time.sleep(0.05)
+        active -= 1
+        return True, "ok"
+
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_send", fake_send)
+    client = vac_mod.VisualAgentClient(urls=["http://x"], poll_interval=0.01)
+
+    futs = [client.ask_async([{"content": str(i)}]) for i in range(3)]
+    results = [f.result(timeout=2) for f in futs]
+
+    assert all(r["choices"][0]["message"]["content"] == "ok" for r in results)
+    assert not overlap
+    assert not os.path.exists(vac_mod.GLOBAL_LOCK_PATH)
+
+
+def test_full_autonomous_updates_histories(monkeypatch, tmp_path):
+    """ROI and synergy histories should grow during autonomous runs."""
+
+    import sandbox_runner.cli as cli
+    dummy_preset = {"env": "dev"}
+    monkeypatch.setattr(cli, "generate_presets", lambda n=None: [dummy_preset])
+
+    class DummyTracker:
+        def __init__(self):
+            self.module_deltas = {"m": [0.1]}
+            self.metrics_history = {"synergy_roi": [0.2]}
+            self.roi_history = [0.1]
+            self.synergy_history = [{"synergy_roi": 0.2}]
+            self.synergy_metrics_history = {}
+            self.predicted_roi = []
+            self.actual_roi = []
+            self.predicted_metrics = {}
+            self.actual_metrics = {}
+            self.scenario_synergy = {}
+
+        def save_history(self, path):
+            Path(path).write_text(
+                json.dumps(
+                    {
+                        "roi_history": self.roi_history,
+                        "module_deltas": self.module_deltas,
+                        "metrics_history": self.metrics_history,
+                        "synergy_history": self.synergy_history,
+                    }
+                )
+            )
+
+        def diminishing(self):
+            return 0.01
+
+        def rankings(self):
+            return [("m", 0.1)]
+
+    def fake_capture(preset, args):
+        t = DummyTracker()
+        Path(args.sandbox_data_dir).mkdir(parents=True, exist_ok=True)
+        t.save_history(str(Path(args.sandbox_data_dir) / "roi_history.json"))
+        return t
+
+    monkeypatch.setattr(cli, "_capture_run", fake_capture)
+
+    hist: list[dict[str, float]] = []
+    ma_hist: list[dict[str, float]] = []
+
+    args = argparse.Namespace(
+        sandbox_data_dir=str(tmp_path),
+        preset_count=1,
+        max_iterations=1,
+        dashboard_port=None,
+        roi_cycles=1,
+        synergy_cycles=1,
+    )
+
+    cli.full_autonomous_run(args, synergy_history=hist, synergy_ma_history=ma_hist)
+
+    roi_file = Path(args.sandbox_data_dir) / "roi_history.json"
+    data = json.loads(roi_file.read_text())
+    assert data.get("roi_history") == [0.1]
+    assert data.get("synergy_history") == [{"synergy_roi": 0.2}]
