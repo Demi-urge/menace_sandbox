@@ -162,3 +162,61 @@ def test_atexit_cache_failure_logged(monkeypatch, caplog):
     gsp_mod._atexit_save_cache()
 
     assert "cache save failed" in caplog.text
+
+
+def test_generated_stub_missing_fields(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    class MissingGen:
+        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            return [{"generated_text": "{\"x\": 1}"}]
+
+    dummy = MissingGen()
+
+    async def loader():
+        return dummy
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    gsp_mod._CACHE = {}
+
+    def target(x: int, y: int) -> None:
+        pass
+
+    caplog.set_level(logging.WARNING)
+    res = gsp_mod.generate_stubs([
+        {"x": 0, "y": 0}
+    ], {"strategy": "synthetic", "target": target})
+
+    assert res == [{"x": 0, "y": 0}]
+    assert "invalid stub generated" in caplog.text
+
+
+def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
+    path = tmp_path / "cache.json"
+    monkeypatch.setenv("SANDBOX_STUB_CACHE", str(path))
+    gsp_mod = importlib.reload(gsp)
+
+    class TypeGen:
+        def __call__(self, prompt, max_length=64, num_return_sequences=1):
+            return [{"generated_text": "{\"x\": \"bad\", \"y\": 2}"}]
+
+    dummy = TypeGen()
+
+    async def loader():
+        return dummy
+
+    monkeypatch.setattr(gsp_mod, "_aload_generator", loader)
+    gsp_mod._CACHE = {}
+
+    def target(x: int, y: int) -> None:
+        pass
+
+    caplog.set_level(logging.WARNING)
+    res = gsp_mod.generate_stubs([
+        {"x": 0, "y": 0}
+    ], {"strategy": "synthetic", "target": target})
+
+    assert res == [{"x": 0, "y": 0}]
+    assert "invalid stub generated" in caplog.text
