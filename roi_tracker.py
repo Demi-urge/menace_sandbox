@@ -731,6 +731,18 @@ class ROITracker:
         if not history or len(history) < 2:
             return 0.0
 
+        model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
+        if model_name and len(history) > 10:
+            try:
+                from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                if model_name.lower() == "arima":
+                    return float(ARIMASynergyPredictor().predict(history))
+                if model_name.lower() == "lstm":
+                    return float(LSTMSynergyPredictor().predict(history))
+            except Exception:
+                logger.exception("synergy predictor failed")
+
         n = min(len(history), window, len(self.roi_history))
         metrics = [m for m in self.metrics_history if not m.startswith("synergy_")]
 
@@ -811,6 +823,18 @@ class ROITracker:
                 return float(val)
             except Exception:
                 pass
+
+        model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
+        if model_name and len(history) > 10:
+            try:
+                from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                if model_name.lower() == "arima":
+                    return float(ARIMASynergyPredictor().predict(history))
+                if model_name.lower() == "lstm":
+                    return float(LSTMSynergyPredictor().predict(history))
+            except Exception:
+                logger.exception("synergy predictor failed")
 
         if not history or len(history) < 2:
             return 0.0

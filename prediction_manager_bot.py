@@ -167,8 +167,20 @@ class AverageSynergyMetricBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or self.metric not in df.columns:
                     return 0.0
-                return float(df[self.metric].mean())
-            vals = [float(r.get(self.metric, 0.0)) for r in df]
+                vals = [float(v) for v in df[self.metric].tolist()]
+            else:
+                vals = [float(r.get(self.metric, 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logging.getLogger(__name__).exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logging.getLogger(__name__).exception("synergy metric prediction failed")
