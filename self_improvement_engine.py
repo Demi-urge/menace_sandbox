@@ -12,8 +12,15 @@ import tempfile
 from pathlib import Path
 
 from .self_model_bootstrap import bootstrap
-from .research_aggregator_bot import ResearchAggregatorBot, ResearchItem, InfoDB
-from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
+from .research_aggregator_bot import (
+    ResearchAggregatorBot,
+    ResearchItem,
+    InfoDB,
+)
+from .model_automation_pipeline import (
+    ModelAutomationPipeline,
+    AutomationResult,
+)
 from .diagnostic_manager import DiagnosticManager
 from .error_bot import ErrorBot, ErrorDB
 from .data_bot import MetricsDB, DataBot
@@ -74,13 +81,17 @@ class SelfImprovementEngine:
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
-        self.aggregator = ResearchAggregatorBot([bot_name], info_db=self.info_db)
+        self.aggregator = ResearchAggregatorBot(
+            [bot_name], info_db=self.info_db
+        )
         self.pipeline = pipeline or ModelAutomationPipeline(
             aggregator=self.aggregator, action_planner=action_planner
         )
         err_bot = ErrorBot(ErrorDB(), MetricsDB())
         self.error_bot = err_bot
-        self.diagnostics = diagnostics or DiagnosticManager(MetricsDB(), err_bot)
+        self.diagnostics = diagnostics or DiagnosticManager(
+            MetricsDB(), err_bot
+        )
         self.last_run = 0.0
         self.capital_bot = capital_bot
         self.energy_threshold = energy_threshold
@@ -91,7 +102,9 @@ class SelfImprovementEngine:
         self.data_bot = data_bot
         self.patch_db = patch_db or (data_bot.patch_db if data_bot else None)
         if policy is None:
-            policy = ConfigurableSelfImprovementPolicy(strategy=policy_strategy)
+            policy = ConfigurableSelfImprovementPolicy(
+                strategy=policy_strategy
+            )
         self.policy = policy
         if self.policy and getattr(self.policy, "path", None):
             try:
@@ -101,9 +114,15 @@ class SelfImprovementEngine:
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
         self.pre_roi_bot = pre_roi_bot
-        self.pre_roi_scale = pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
-        self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
-        self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
+        self.pre_roi_scale = (
+            pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
+        )
+        self.pre_roi_bias = (
+            pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
+        )
+        self.pre_roi_cap = (
+            pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
+        )
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
@@ -134,6 +153,7 @@ class SelfImprovementEngine:
         self.roi_delta_ema: float = 0.0
         self._load_state()
         from .module_index_db import ModuleIndexDB
+
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("SelfImprovementEngine")
@@ -143,15 +163,21 @@ class SelfImprovementEngine:
         if self.event_bus:
             if self.learning_engine:
                 try:
-                    self.event_bus.subscribe("pathway:new", self._on_new_pathway)
+                    self.event_bus.subscribe(
+                        "pathway:new", self._on_new_pathway
+                    )
                 except Exception as exc:
-                    self.logger.exception("failed to subscribe to pathway events: %s", exc)
+                    self.logger.exception(
+                        "failed to subscribe to pathway events: %s", exc
+                    )
             try:
                 self.event_bus.subscribe(
                     "evolve:self_improve", lambda *_: self.run_cycle()
                 )
             except Exception as exc:
-                self.logger.exception("failed to subscribe to self_improve events: %s", exc)
+                self.logger.exception(
+                    "failed to subscribe to self_improve events: %s", exc
+                )
 
     # ------------------------------------------------------------------
     def _load_state(self) -> None:
@@ -162,7 +188,9 @@ class SelfImprovementEngine:
                 data = json.load(fh)
             self.roi_history = [float(x) for x in data.get("roi_history", [])]
             self.last_run = float(data.get("last_run", self.last_run))
-            self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
+            self.roi_delta_ema = float(
+                data.get("roi_delta_ema", self.roi_delta_ema)
+            )
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -172,12 +200,62 @@ class SelfImprovementEngine:
             return
         try:
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile("w", delete=False, dir=self.state_path.parent, encoding="utf-8") as fh:
-                json.dump({"roi_history": self.roi_history, "last_run": self.last_run, "roi_delta_ema": self.roi_delta_ema}, fh)
+            with tempfile.NamedTemporaryFile(
+                "w", delete=False, dir=self.state_path.parent, encoding="utf-8"
+            ) as fh:
+                json.dump(
+                    {
+                        "roi_history": self.roi_history,
+                        "last_run": self.last_run,
+                        "roi_delta_ema": self.roi_delta_ema,
+                    },
+                    fh,
+                )
                 tmp = Path(fh.name)
             os.replace(tmp, self.state_path)
         except Exception as exc:
             self.logger.exception("failed to save state: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _metric_delta(self, name: str, window: int = 3) -> float:
+        """Return rolling average delta for *name* metric."""
+        tracker = getattr(self, "tracker", None)
+        if tracker is None:
+            return 0.0
+        try:
+            vals = tracker.metrics_history.get(name, [])
+        except Exception:
+            return 0.0
+        if not vals:
+            return 0.0
+        w = min(window, len(vals))
+        current_avg = sum(vals[-w:]) / w
+        if len(vals) > w:
+            prev_w = min(w, len(vals) - w)
+            prev_avg = sum(vals[-w - prev_w : -w]) / prev_w
+        elif len(vals) >= 2:
+            prev_avg = vals[-2]
+        else:
+            return float(vals[-1])
+        return float(current_avg - prev_avg)
+
+    # ------------------------------------------------------------------
+    def _weighted_synergy_adjustment(self, window: int = 3) -> float:
+        """Compute weighted synergy adjustment factor."""
+        try:
+            syn_adj = (
+                self._metric_delta("synergy_roi", window)
+                * self.synergy_weight_roi
+                + self._metric_delta("synergy_efficiency", window)
+                * self.synergy_weight_efficiency
+                + self._metric_delta("synergy_resilience", window)
+                * self.synergy_weight_resilience
+                + self._metric_delta("synergy_antifragility", window)
+                * self.synergy_weight_antifragility
+            )
+        except Exception:
+            syn_adj = 0.0
+        return syn_adj
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
@@ -186,7 +264,10 @@ class SelfImprovementEngine:
         if self.capital_bot:
             try:
                 energy = self.capital_bot.energy_score(
-                    load=0.0, success_rate=1.0, deploy_eff=1.0, failure_rate=0.0
+                    load=0.0,
+                    success_rate=1.0,
+                    deploy_eff=1.0,
+                    failure_rate=0.0,
                 )
             except Exception as exc:
                 self.logger.exception("energy_score failed: %s", exc)
@@ -210,12 +291,13 @@ class SelfImprovementEngine:
                 if hasattr(df, "empty"):
                     if not getattr(df, "empty", True):
                         df["roi"] = df["revenue"] - df["expense"]
-                        anomaly = float(len(DataBot.detect_anomalies(df, "roi"))) / len(
-                            df
-                        )
+                        anomaly = float(
+                            len(DataBot.detect_anomalies(df, "roi"))
+                        ) / len(df)
                 elif isinstance(df, list) and df:
                     rois = [
-                        float(r.get("revenue", 0.0) - r.get("expense", 0.0)) for r in df
+                        float(r.get("revenue", 0.0) - r.get("expense", 0.0))
+                        for r in df
                     ]
                     df_list = [{"roi": r} for r in rois]
                     anomaly = float(
@@ -228,7 +310,9 @@ class SelfImprovementEngine:
                 try:
                     patch_rate = self.data_bot.patch_db.success_rate()
                 except Exception as exc:
-                    self.logger.exception("patch success rate lookup failed: %s", exc)
+                    self.logger.exception(
+                        "patch success rate lookup failed: %s", exc
+                    )
                     patch_rate = 0.0
         avg_roi = avg_complex = revert_rate = 0.0
         module_idx = 0
@@ -238,44 +322,21 @@ class SelfImprovementEngine:
         syn_roi = syn_eff = syn_res = syn_af = 0.0
         if tracker is not None:
             try:
-                vals = tracker.metrics_history.get("synergy_roi", [])
-                if vals:
-                    syn_roi = float(vals[-1])
-                    if len(vals) >= 2:
-                        syn_roi = float(vals[-1] - vals[-2])
+                syn_roi = self._metric_delta("synergy_roi")
+                syn_eff = self._metric_delta("synergy_efficiency")
+                syn_res = self._metric_delta("synergy_resilience")
+                syn_af = self._metric_delta("synergy_antifragility")
             except Exception:
-                syn_roi = 0.0
-            try:
-                eff_vals = tracker.metrics_history.get("synergy_efficiency", [])
-                if eff_vals:
-                    syn_eff = float(eff_vals[-1])
-                    if len(eff_vals) >= 2:
-                        syn_eff = float(eff_vals[-1] - eff_vals[-2])
-            except Exception:
-                syn_eff = 0.0
-            try:
-                res_vals = tracker.metrics_history.get("synergy_resilience", [])
-                if res_vals:
-                    syn_res = float(res_vals[-1])
-                    if len(res_vals) >= 2:
-                        syn_res = float(res_vals[-1] - res_vals[-2])
-            except Exception:
-                syn_res = 0.0
-            try:
-                af_vals = tracker.metrics_history.get("synergy_antifragility", [])
-                if af_vals:
-                    syn_af = float(af_vals[-1])
-                    if len(af_vals) >= 2:
-                        syn_af = float(af_vals[-1] - af_vals[-2])
-            except Exception:
-                syn_af = 0.0
+                syn_roi = syn_eff = syn_res = syn_af = 0.0
         syn_roi *= self.synergy_weight_roi
         syn_eff *= self.synergy_weight_efficiency
         syn_res *= self.synergy_weight_resilience
         syn_af *= self.synergy_weight_antifragility
         profit += syn_roi
         energy = max(0.0, energy + syn_eff)
-        pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
+        pdb = self.patch_db or (
+            self.data_bot.patch_db if self.data_bot else None
+        )
         if pdb:
             try:
                 with pdb._connect() as conn:
@@ -287,7 +348,9 @@ class SelfImprovementEngine:
                 if rows:
                     avg_roi = float(sum(r[0] for r in rows) / len(rows))
                     avg_complex = float(sum(r[1] for r in rows) / len(rows))
-                    revert_rate = float(sum(1 for r in rows if r[2]) / len(rows))
+                    revert_rate = float(
+                        sum(1 for r in rows if r[2]) / len(rows)
+                    )
                     mod_name = Path(rows[0][3]).name
                     module_idx = self.module_index.get(mod_name)
                     try:
@@ -300,11 +363,21 @@ class SelfImprovementEngine:
                         module_trend = 0.0
                     if self.meta_logger:
                         try:
-                            dim_flag = 1 if mod_name in self.meta_logger.diminishing() else 0
+                            dim_flag = (
+                                1
+                                if mod_name in self.meta_logger.diminishing()
+                                else 0
+                            )
                             if module_trend == 0.0:
-                                module_trend = dict(self.meta_logger.rankings()).get(mod_name, 0.0)
-                        except Exception as exc:  # pragma: no cover - best effort
-                            self.logger.exception("meta logger stats failed: %s", exc)
+                                module_trend = dict(
+                                    self.meta_logger.rankings()
+                                ).get(mod_name, 0.0)
+                        except (
+                            Exception
+                        ) as exc:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "meta logger stats failed: %s", exc
+                            )
             except Exception as exc:
                 self.logger.exception("patch metrics failed: %s", exc)
                 avg_roi = avg_complex = revert_rate = 0.0
@@ -323,7 +396,9 @@ class SelfImprovementEngine:
                 avg_roi_delta = float(stats.get("avg_roi_delta", 0.0))
                 avg_eff = float(stats.get("avg_efficiency", 0.0))
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("evolution history stats failed: %s", exc)
+                self.logger.exception(
+                    "evolution history stats failed: %s", exc
+                )
                 avg_roi_delta = avg_eff = 0.0
         short_avg = 0.0
         if self.roi_history:
@@ -365,7 +440,9 @@ class SelfImprovementEngine:
                 self.logger.exception("policy scoring failed: %s", exc)
         if self.pre_roi_bot:
             try:
-                forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
+                forecast = self.pre_roi_bot.predict_model_roi(
+                    self.bot_name, []
+                )
                 if forecast.roi > self.pre_roi_bias:
                     return True
             except Exception as exc:
@@ -400,7 +477,9 @@ class SelfImprovementEngine:
                 try:
                     self.info_db.add(item)
                 except Exception as exc:
-                    self.logger.exception("failed to record error item: %s", exc)
+                    self.logger.exception(
+                        "failed to record error item: %s", exc
+                    )
 
     def _evaluate_learning(self) -> None:
         """Benchmark the learning engine via cross-validation."""
@@ -414,14 +493,18 @@ class SelfImprovementEngine:
                     try:
                         self.learning_engine.persist_evaluation(result)
                     except Exception as exc:
-                        self.logger.exception("persist_evaluation failed: %s", exc)
+                        self.logger.exception(
+                            "persist_evaluation failed: %s", exc
+                        )
             else:
                 X, y = self.learning_engine._dataset()  # type: ignore[attr-defined]
                 if not X or len(set(y)) < 2:
                     return
                 from sklearn.model_selection import cross_val_score
 
-                scores = cross_val_score(self.learning_engine.model, X, y, cv=3)
+                scores = cross_val_score(
+                    self.learning_engine.model, X, y, cv=3
+                )
                 mean_score = float(scores.mean())
                 if hasattr(self.learning_engine, "persist_evaluation"):
                     try:
@@ -433,7 +516,9 @@ class SelfImprovementEngine:
                             }
                         )
                     except Exception as exc:
-                        self.logger.exception("persist_evaluation failed: %s", exc)
+                        self.logger.exception(
+                            "persist_evaluation failed: %s", exc
+                        )
         except Exception as exc:
             self.logger.exception("learning evaluation failed: %s", exc)
             mean_score = 0.0
@@ -478,18 +563,26 @@ class SelfImprovementEngine:
                 )
                 self.learning_engine.partial_train(rec)
             except Exception as exc:
-                self.logger.exception("failed to process pathway record: %s", exc)
+                self.logger.exception(
+                    "failed to process pathway record: %s", exc
+                )
 
     # ------------------------------------------------------------------
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
         try:
-            state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
+            state = (
+                self._policy_state()
+                if self.policy
+                else (0,) * POLICY_STATE_LEN
+            )
             predicted = self.policy.score(state) if self.policy else 0.0
             self.logger.info(
                 "cycle start",
-                extra=log_record(energy=energy, predicted_roi=predicted, state=state),
+                extra=log_record(
+                    energy=energy, predicted_roi=predicted, state=state
+                ),
             )
             before_roi = 0.0
             if self.capital_bot:
@@ -523,47 +616,51 @@ class SelfImprovementEngine:
                     energy = 1
             if self.policy:
                 try:
-                    energy = max(1, int(round(energy * (1 + max(0.0, predicted)))))
+                    energy = max(
+                        1, int(round(energy * (1 + max(0.0, predicted))))
+                    )
                     self.logger.info(
-                        "policy adjusted energy", extra=log_record(value=energy)
+                        "policy adjusted energy",
+                        extra=log_record(value=energy),
                     )
                 except Exception as exc:
-                    self.logger.exception("policy energy adjustment failed: %s", exc)
+                    self.logger.exception(
+                        "policy energy adjustment failed: %s", exc
+                    )
             if self.pre_roi_bot:
                 try:
-                    forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
+                    forecast = self.pre_roi_bot.predict_model_roi(
+                        self.bot_name, []
+                    )
                     roi_pred = float(getattr(forecast, "roi", 0.0))
-                    scale = 1 + max(0.0, roi_pred + self.pre_roi_bias) * self.pre_roi_scale
+                    scale = (
+                        1
+                        + max(0.0, roi_pred + self.pre_roi_bias)
+                        * self.pre_roi_scale
+                    )
                     if self.pre_roi_cap:
                         scale = min(scale, self.pre_roi_cap)
                     energy = max(1, int(round(energy * scale)))
                     self.logger.info(
                         "pre_roi adjusted energy",
-                        extra=log_record(value=energy, roi_prediction=roi_pred),
+                        extra=log_record(
+                            value=energy, roi_prediction=roi_pred
+                        ),
                     )
                 except Exception as exc:
-                    self.logger.exception("pre ROI energy adjustment failed: %s", exc)
+                    self.logger.exception(
+                        "pre ROI energy adjustment failed: %s", exc
+                    )
             tracker = getattr(self, "tracker", None)
             if tracker is not None:
                 try:
-                    def _delta(name: str) -> float:
-                        vals = tracker.metrics_history.get(name, [])
-                        if not vals:
-                            return 0.0
-                        if len(vals) >= 2:
-                            return float(vals[-1] - vals[-2])
-                        return float(vals[-1])
-
-                    syn_adj = (
-                        _delta("synergy_roi") * self.synergy_weight_roi
-                        + _delta("synergy_efficiency") * self.synergy_weight_efficiency
-                        + _delta("synergy_resilience") * self.synergy_weight_resilience
-                        + _delta("synergy_antifragility") * self.synergy_weight_antifragility
-                    )
+                    syn_adj = self._weighted_synergy_adjustment()
                     if syn_adj:
                         energy = int(round(energy * (1.0 + syn_adj)))
                 except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("synergy energy adjustment failed: %s", exc)
+                    self.logger.exception(
+                        "synergy energy adjustment failed: %s", exc
+                    )
             try:
                 roi_scale = 1.0 + max(0.0, self.roi_delta_ema)
                 energy = int(round(energy * roi_scale))
@@ -571,7 +668,9 @@ class SelfImprovementEngine:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
             model_id = bootstrap()
-            self.logger.info("model bootstrapped", extra=log_record(model_id=model_id))
+            self.logger.info(
+                "model bootstrapped", extra=log_record(model_id=model_id)
+            )
             self.info_db.set_current_model(model_id)
             self._record_state()
             if self.learning_engine:
@@ -580,14 +679,16 @@ class SelfImprovementEngine:
                     self.learning_engine.train()
                     self._evaluate_learning()
                 except Exception as exc:
-                    self.logger.exception("learning engine run failed: %s", exc)
+                    self.logger.exception(
+                        "learning engine run failed: %s", exc
+                    )
             self.logger.info(
                 "running automation pipeline", extra=log_record(energy=energy)
             )
             result = self.pipeline.run(self.bot_name, energy=energy)
             self.logger.info(
                 "pipeline complete",
-                extra=log_record(roi=getattr(result.roi, 'roi', 0.0)),
+                extra=log_record(roi=getattr(result.roi, "roi", 0.0)),
             )
             trending_topic = getattr(result, "trending_topic", None)
             patch_id = None
@@ -598,10 +699,12 @@ class SelfImprovementEngine:
                         "applying helper patch",
                         extra=log_record(trending_topic=trending_topic),
                     )
-                    patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                        Path("auto_helpers.py"),
-                        "helper",
-                        trending_topic=trending_topic,
+                    patch_id, reverted, delta = (
+                        self.self_coding_engine.apply_patch(
+                            Path("auto_helpers.py"),
+                            "helper",
+                            trending_topic=trending_topic,
+                        )
                     )
                     if self.policy:
                         try:
@@ -624,8 +727,12 @@ class SelfImprovementEngine:
                             if getattr(self.policy, "path", None):
                                 try:
                                     self.policy.save()
-                                except Exception as exc:  # pragma: no cover - best effort
-                                    self.logger.exception("policy save failed: %s", exc)
+                                except (
+                                    Exception
+                                ) as exc:  # pragma: no cover - best effort
+                                    self.logger.exception(
+                                        "policy save failed: %s", exc
+                                    )
                         except Exception as exc:
                             self.logger.exception(
                                 "policy patch update failed: %s", exc
@@ -641,7 +748,9 @@ class SelfImprovementEngine:
                     self.error_bot.auto_patch_recurrent_errors()
                     self.logger.info("error auto-patching complete")
                 except Exception as exc:
-                    self.logger.exception("auto patch recurrent errors failed: %s", exc)
+                    self.logger.exception(
+                        "auto patch recurrent errors failed: %s", exc
+                    )
             after_roi = before_roi
             if self.capital_bot:
                 try:
@@ -651,7 +760,9 @@ class SelfImprovementEngine:
                         extra=log_record(before=before_roi, after=after_roi),
                     )
                 except Exception as exc:
-                    self.logger.exception("post-cycle profit lookup failed: %s", exc)
+                    self.logger.exception(
+                        "post-cycle profit lookup failed: %s", exc
+                    )
                     after_roi = before_roi
             roi_value = result.roi.roi if result.roi else 0.0
             if self.evolution_history:
@@ -669,7 +780,9 @@ class SelfImprovementEngine:
                         )
                     )
                 except Exception as exc:
-                    self.logger.exception("evolution history logging failed: %s", exc)
+                    self.logger.exception(
+                        "evolution history logging failed: %s", exc
+                    )
             if self.data_bot:
                 eff = bottleneck = patch_rate = trend = anomaly = 0.0
                 try:
@@ -692,15 +805,21 @@ class SelfImprovementEngine:
                     self.self_coding_engine, "patch_db", None
                 ):
                     try:
-                        patch_rate = self.self_coding_engine.patch_db.success_rate()
+                        patch_rate = (
+                            self.self_coding_engine.patch_db.success_rate()
+                        )
                     except Exception as exc:
-                        self.logger.exception("self_coding patch rate lookup failed: %s", exc)
+                        self.logger.exception(
+                            "self_coding patch rate lookup failed: %s", exc
+                        )
                         patch_rate = 0.0
                 if getattr(self.data_bot, "patch_db", None) and not patch_rate:
                     try:
                         patch_rate = self.data_bot.patch_db.success_rate()
                     except Exception as exc:
-                        self.logger.exception("data_bot patch rate lookup failed: %s", exc)
+                        self.logger.exception(
+                            "data_bot patch rate lookup failed: %s", exc
+                        )
                         patch_rate = 0.0
                 try:
                     trend = self.data_bot.long_term_roi_trend(limit=200)
@@ -711,13 +830,17 @@ class SelfImprovementEngine:
                     df_anom = self.data_bot.db.fetch(100)
                     if hasattr(df_anom, "empty"):
                         if not getattr(df_anom, "empty", True):
-                            df_anom["roi"] = df_anom["revenue"] - df_anom["expense"]
+                            df_anom["roi"] = (
+                                df_anom["revenue"] - df_anom["expense"]
+                            )
                             anomaly = float(
                                 len(DataBot.detect_anomalies(df_anom, "roi"))
                             ) / len(df_anom)
                     elif isinstance(df_anom, list) and df_anom:
                         rois = [
-                            float(r.get("revenue", 0.0) - r.get("expense", 0.0))
+                            float(
+                                r.get("revenue", 0.0) - r.get("expense", 0.0)
+                            )
                             for r in df_anom
                         ]
                         df_list = [{"roi": r} for r in rois]
@@ -725,7 +848,9 @@ class SelfImprovementEngine:
                             len(DataBot.detect_anomalies(df_list, "roi"))
                         ) / len(rois)
                 except Exception as exc:
-                    self.logger.exception("anomaly calculation failed: %s", exc)
+                    self.logger.exception(
+                        "anomaly calculation failed: %s", exc
+                    )
                     anomaly = 0.0
                 try:
                     self.data_bot.log_evolution_cycle(
@@ -761,12 +886,18 @@ class SelfImprovementEngine:
                                 after_roi,
                             )
                         except Exception as exc:
-                            self.logger.exception("capital bot evolution log failed: %s", exc)
+                            self.logger.exception(
+                                "capital bot evolution log failed: %s", exc
+                            )
                 except Exception as exc:
-                    self.logger.exception("data_bot evolution logging failed: %s", exc)
+                    self.logger.exception(
+                        "data_bot evolution logging failed: %s", exc
+                    )
             self.last_run = time.time()
             delta = after_roi - before_roi
-            self.roi_delta_ema = (1 - self.roi_ema_alpha) * self.roi_delta_ema + self.roi_ema_alpha * delta
+            self.roi_delta_ema = (
+                1 - self.roi_ema_alpha
+            ) * self.roi_delta_ema + self.roi_ema_alpha * delta
             self.roi_history.append(delta)
             self._save_state()
             if self.policy:
@@ -783,10 +914,15 @@ class SelfImprovementEngine:
                     if getattr(self.policy, "path", None):
                         try:
                             self.policy.save()
-                        except Exception as exc:  # pragma: no cover - best effort
-                            self.logger.exception("policy save failed: %s", exc)
+                        except (
+                            Exception
+                        ) as exc:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "policy save failed: %s", exc
+                            )
                     self.logger.info(
-                        "policy updated", extra=log_record(reward=after_roi - before_roi)
+                        "policy updated",
+                        extra=log_record(reward=after_roi - before_roi),
                     )
                 except Exception as exc:
                     self.logger.exception("policy update failed: %s", exc)
@@ -814,7 +950,10 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("energy check failed: %s", exc)
                     current_energy = energy
-            if current_energy >= self.energy_threshold and not self._cycle_running:
+            if (
+                current_energy >= self.energy_threshold
+                and not self._cycle_running
+            ):
                 try:
                     await asyncio.to_thread(
                         self.run_cycle, energy=int(round(current_energy * 5))
@@ -827,7 +966,9 @@ class SelfImprovementEngine:
                     )
             await asyncio.sleep(self.interval)
 
-    def schedule(self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None) -> asyncio.Task:
+    def schedule(
+        self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None
+    ) -> asyncio.Task:
         """Start the scheduling loop in the background."""
         if self._schedule_task and not self._schedule_task.done():
             return self._schedule_task
@@ -856,7 +997,9 @@ class ImprovementEngineRegistry:
     def __init__(self) -> None:
         self.engines: dict[str, SelfImprovementEngine] = {}
 
-    def register_engine(self, name: str, engine: SelfImprovementEngine) -> None:
+    def register_engine(
+        self, name: str, engine: SelfImprovementEngine
+    ) -> None:
         """Add *engine* under *name*."""
         self.engines[name] = engine
 
@@ -872,15 +1015,20 @@ class ImprovementEngineRegistry:
                 results[name] = eng.run_cycle(energy=energy)
         return results
 
-    async def run_all_cycles_async(self, energy: int = 1) -> dict[str, AutomationResult]:
+    async def run_all_cycles_async(
+        self, energy: int = 1
+    ) -> dict[str, AutomationResult]:
         """Asynchronously execute ``run_cycle`` on all registered engines."""
+
         async def _run(name: str, eng: SelfImprovementEngine):
             if eng._should_trigger():
                 res = await asyncio.to_thread(eng.run_cycle, energy=energy)
                 return name, res
             return None
 
-        tasks = [asyncio.create_task(_run(n, e)) for n, e in self.engines.items()]
+        tasks = [
+            asyncio.create_task(_run(n, e)) for n, e in self.engines.items()
+        ]
         results: dict[str, AutomationResult] = {}
         for t in tasks:
             out = await t
@@ -888,7 +1036,9 @@ class ImprovementEngineRegistry:
                 results[out[0]] = out[1]
         return results
 
-    def schedule_all(self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None) -> list[asyncio.Task]:
+    def schedule_all(
+        self, energy: int = 1, *, loop: asyncio.AbstractEventLoop | None = None
+    ) -> list[asyncio.Task]:
         """Start schedules for all engines and return the created tasks."""
         tasks: list[asyncio.Task] = []
         for eng in self.engines.values():
@@ -948,7 +1098,9 @@ class ImprovementEngineRegistry:
             self.register_engine(name, factory(name))
             return
         if (
-            energy <= remove_energy or trend <= roi_threshold or projected_roi <= 0.0
+            energy <= remove_energy
+            or trend <= roi_threshold
+            or projected_roi <= 0.0
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
             self.unregister_engine(name)
