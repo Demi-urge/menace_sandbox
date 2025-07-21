@@ -2,6 +2,7 @@ import argparse
 import importlib.util
 import sys
 import subprocess
+import json
 from pathlib import Path
 
 import types
@@ -79,6 +80,38 @@ def test_metrics_property(monkeypatch):
     metrics = mgr.metrics
     assert metrics["restart_count"] == 1.0
     assert isinstance(metrics["last_failure_time"], float)
+
+
+def test_json_fallback_and_cli(monkeypatch, tmp_path, capsys):
+    stub = types.ModuleType("metrics_exporter")
+    stub._USING_STUB = True
+    class DummyGauge:
+        def __init__(self, *a, **k):
+            pass
+        def set(self, v):
+            pass
+    stub.Gauge = DummyGauge
+    stub.CollectorRegistry = object
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+
+    def fail_then_ok(preset, args):
+        if not getattr(fail_then_ok, "called", False):
+            fail_then_ok.called = True
+            raise RuntimeError("boom")
+        return "ok"
+
+    monkeypatch.setattr(srm.time, "sleep", lambda s: None)
+    mgr = srm.SandboxRecoveryManager(fail_then_ok, retry_delay=0)
+    args = argparse.Namespace(sandbox_data_dir=str(tmp_path))
+    mgr.run({}, args)
+
+    data = json.loads((tmp_path / "recovery.json").read_text())
+    assert data["restart_count"] == 1.0
+    assert isinstance(data["last_failure_time"], float)
+
+    srm.cli(["--file", str(tmp_path / "recovery.json")])
+    out = capsys.readouterr().out
+    assert "restart_count" in out
 
 
 def test_run_autonomous_integration(monkeypatch, tmp_path):

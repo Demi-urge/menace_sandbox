@@ -2,11 +2,13 @@ from __future__ import annotations
 
 """Restart sandbox runs when unexpected failures occur."""
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List
 import argparse
+import json
 import logging
 import os
 from pathlib import Path
+import sys
 import time
 import traceback
 
@@ -40,8 +42,15 @@ class SandboxRecoveryManager:
 
         self._restart_gauge = None
         self._failure_gauge = None
+        self._using_stub = False
         try:
-            from .metrics_exporter import Gauge
+            try:
+                from . import metrics_exporter as _me
+            except Exception:  # pragma: no cover - package not available
+                import metrics_exporter as _me  # type: ignore
+
+            self._using_stub = getattr(_me, "_USING_STUB", False)
+            Gauge = _me.Gauge
 
             self._restart_gauge = Gauge(
                 "sandbox_restart_count",
@@ -107,9 +116,47 @@ class SandboxRecoveryManager:
                     except Exception:  # pragma: no cover - runtime issues
                         self.logger.exception("failed to update metrics")
 
+                if self._using_stub:
+                    try:
+                        metrics_file = log_dir / "recovery.json"
+                        with open(metrics_file, "w", encoding="utf-8") as fh:
+                            json.dump(self.metrics, fh)
+                    except Exception:  # pragma: no cover - runtime issues
+                        self.logger.exception("failed to write recovery metrics")
+
                 if self.max_retries is not None and attempts >= self.max_retries:
                     raise
                 time.sleep(self.retry_delay)
 
 
-__all__ = ["SandboxRecoveryManager"]
+__all__ = ["SandboxRecoveryManager", "cli"]
+
+
+def cli(argv: List[str] | None = None) -> int:
+    """Print sandbox recovery metrics."""
+    parser = argparse.ArgumentParser(description=cli.__doc__)
+    parser.add_argument(
+        "--file",
+        default=str(Path("sandbox_data") / "recovery.json"),
+        help="Path to recovery.json",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        with open(args.file, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception as exc:  # pragma: no cover - runtime issues
+        print(f"failed to read {args.file}: {exc}", file=sys.stderr)
+        return 1
+
+    for k, v in data.items():
+        print(f"{k}: {v}")
+    return 0
+
+
+def main(argv: List[str] | None = None) -> None:
+    sys.exit(cli(argv))
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()
