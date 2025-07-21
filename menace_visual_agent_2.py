@@ -1,18 +1,21 @@
+# Standard library imports
+import logging
+import os
+import time
+from datetime import datetime
+
+# Third party imports
 import cv2
 import numpy as np
 import pytesseract
 import mss
-import time
 import pyautogui
-import os
-from datetime import datetime
 # --- new imports ---
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 import threading
 import uvicorn
 import secrets
-import os
 import tempfile
 from filelock import FileLock, Timeout
 from collections import deque
@@ -23,6 +26,10 @@ from pathlib import Path
 API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
 DEVICE_ID  = "desktop"
+
+# Logger setup
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------
 # 1️⃣  FASTAPI SCHEMA ----------------------------------------------
@@ -149,7 +156,11 @@ def _load_state_locked() -> None:
             status = "queued"
         prompt = info.get("prompt", "") if isinstance(info.get("prompt", ""), str) else ""
         branch = info.get("branch") if isinstance(info.get("branch"), str) or info.get("branch") is None else None
-        valid_status[tid] = {"status": status, "prompt": prompt, "branch": branch}
+        error_msg = info.get("error") if isinstance(info.get("error"), str) else None
+        entry = {"status": status, "prompt": prompt, "branch": branch}
+        if error_msg:
+            entry["error"] = error_msg
+        valid_status[tid] = entry
 
     task_queue.clear()
     job_status.clear()
@@ -199,8 +210,12 @@ def _queue_worker():
             _current_job["active"] = True
             run_menace_pipeline(task["prompt"], task["branch"])
             job_status[tid]["status"] = "completed"
-        except Exception:
+            job_status[tid].pop("error", None)
+        except Exception as exc:
+            logger.exception("run_menace_pipeline failed for task %s", tid)
             job_status[tid]["status"] = "failed"
+            job_status[tid]["error"] = str(exc)
+            _save_state_locked()
         finally:
             _current_job["active"] = False
             _running_lock.release()
