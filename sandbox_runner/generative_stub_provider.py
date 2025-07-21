@@ -26,6 +26,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pipeline = None  # type: ignore
 
+try:
+    import openai  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    openai = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 _GENERATOR = None
@@ -96,13 +101,23 @@ def _cache_key(func_name: str, stub: Dict[str, Any]) -> Tuple[str, str]:
 
 
 async def _aload_generator():
-    """Return a text generation pipeline or ``None`` when unavailable."""
+    """Return a text generation pipeline, the OpenAI module or ``None``."""
     global _GENERATOR
     if _GENERATOR is not None:
         return _GENERATOR
+    model = os.getenv("SANDBOX_STUB_MODEL")
+
+    if model == "openai" and os.getenv("OPENAI_API_KEY"):
+        if openai is None:
+            logger.error("openai library unavailable")
+            return None
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        _GENERATOR = openai
+        return _GENERATOR
+
     if pipeline is None:
         return None
-    model = os.getenv("SANDBOX_STUB_MODEL")
+
     candidates = ["gpt2-large", "distilgpt2"] if model is None else [model]
     for name in candidates:
         try:
@@ -166,6 +181,13 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
         return stubs
 
     gen = await _aload_generator()
+    use_openai = False
+    if gen is openai:
+        use_openai = True
+    elif gen is None and os.getenv("SANDBOX_STUB_MODEL") == "openai" and os.getenv("OPENAI_API_KEY") and openai:
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        gen = openai
+        use_openai = True
     if gen is None:
         return stubs
 
@@ -197,7 +219,19 @@ async def async_generate_stubs(stubs: List[Dict[str, Any]], ctx: dict) -> List[D
             gen_kwargs["top_p"] = top_p
 
         try:
-            if use_stream and hasattr(gen, "stream"):
+            if use_openai:
+                comp_kwargs = {
+                    "model": os.getenv("OPENAI_STUB_COMPLETION_MODEL", "text-davinci-003"),
+                    "prompt": prompt,
+                    "max_tokens": 64,
+                }
+                if temperature is not None:
+                    comp_kwargs["temperature"] = temperature
+                if top_p is not None:
+                    comp_kwargs["top_p"] = top_p
+                result = await asyncio.to_thread(gen.Completion.create, **comp_kwargs)
+                text = result["choices"][0]["text"]  # type: ignore
+            elif use_stream and hasattr(gen, "stream"):
                 stream_res = gen.stream(prompt, **gen_kwargs)
                 if inspect.isasyncgen(stream_res):
                     parts = [p async for p in stream_res]
