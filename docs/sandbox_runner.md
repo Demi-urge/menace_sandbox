@@ -585,3 +585,11 @@ recovery = SandboxRecoveryManager(main)
 Prometheus will expose two gauges named `sandbox_restart_count` and
 `sandbox_last_failure_time`. The latter holds a Unix timestamp or `0` when no
 failure has occurred yet.
+
+When the `prometheus_client` package isn't available the recovery manager falls
+back to writing these metrics to `sandbox_data/recovery.json`. Use the included
+CLI to inspect the file:
+
+```bash
+python sandbox_recovery_manager.py --file sandbox_data/recovery.json
+```
