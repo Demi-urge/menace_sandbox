@@ -130,8 +130,20 @@ class FutureSynergyProfitBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or name not in df.columns:
                     return 0.0
-                return float(df[name].mean())
-            vals = [float(r.get(name, 0.0)) for r in df]
+                vals = [float(v) for v in df[name].tolist()]
+            else:
+                vals = [float(r.get(name, 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logger.exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logger.exception("synergy profit prediction failed")
@@ -158,8 +170,20 @@ class FutureSynergyMaintainabilityBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or "synergy_maintainability" not in df.columns:
                     return 0.0
-                return float(df["synergy_maintainability"].mean())
-            vals = [float(r.get("synergy_maintainability", 0.0)) for r in df]
+                vals = [float(v) for v in df["synergy_maintainability"].tolist()]
+            else:
+                vals = [float(r.get("synergy_maintainability", 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logger.exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logger.exception("synergy maintainability prediction failed")
@@ -186,8 +210,20 @@ class FutureSynergyCodeQualityBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or "synergy_code_quality" not in df.columns:
                     return 0.0
-                return float(df["synergy_code_quality"].mean())
-            vals = [float(r.get("synergy_code_quality", 0.0)) for r in df]
+                vals = [float(v) for v in df["synergy_code_quality"].tolist()]
+            else:
+                vals = [float(r.get("synergy_code_quality", 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logger.exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logger.exception("synergy code quality prediction failed")
@@ -214,8 +250,20 @@ class FutureSynergyNetworkLatencyBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or "synergy_network_latency" not in df.columns:
                     return 0.0
-                return float(df["synergy_network_latency"].mean())
-            vals = [float(r.get("synergy_network_latency", 0.0)) for r in df]
+                vals = [float(v) for v in df["synergy_network_latency"].tolist()]
+            else:
+                vals = [float(r.get("synergy_network_latency", 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logger.exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logger.exception("synergy network latency prediction failed")
@@ -242,8 +290,20 @@ class FutureSynergyThroughputBot:
             if hasattr(df, "empty"):
                 if getattr(df, "empty", True) or "synergy_throughput" not in df.columns:
                     return 0.0
-                return float(df["synergy_throughput"].mean())
-            vals = [float(r.get("synergy_throughput", 0.0)) for r in df]
+                vals = [float(v) for v in df["synergy_throughput"].tolist()]
+            else:
+                vals = [float(r.get("synergy_throughput", 0.0)) for r in df]
+            if len(vals) > 10 and os.getenv("SANDBOX_SYNERGY_MODEL"):
+                try:
+                    from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+
+                    model = os.getenv("SANDBOX_SYNERGY_MODEL", "").lower()
+                    if model == "arima":
+                        return float(ARIMASynergyPredictor().predict(vals))
+                    if model == "lstm":
+                        return float(LSTMSynergyPredictor().predict(vals))
+                except Exception:
+                    logger.exception("synergy predictor failed")
             return sum(vals) / len(vals) if vals else 0.0
         except Exception:
             logger.exception("synergy throughput prediction failed")
