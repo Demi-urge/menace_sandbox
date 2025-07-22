@@ -289,9 +289,56 @@ def _save_state_locked() -> None:
 
 
 def _recover_queue_file_locked() -> None:
-    """Backup corrupt queue file and reset state."""
+    """Attempt to restore queue/state from backups or reset."""
     if not STATE_FILE.exists() and not QUEUE_FILE.exists():
         return
+
+    global last_completed_ts
+
+    def _validate_backup(state_b: Path, hash_b: Path, queue_b: Path) -> bool:
+        try:
+            if state_b.exists():
+                data_bytes = state_b.read_bytes()
+                if hash_b.exists():
+                    expected = hash_b.read_text().strip()
+                    if hashlib.sha256(data_bytes).hexdigest() != expected:
+                        return False
+                data = json.loads(data_bytes.decode("utf-8"))
+                if not isinstance(data, dict):
+                    return False
+            if queue_b.exists():
+                with open(queue_b, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        item = json.loads(line)
+                        if not isinstance(item, dict):
+                            return False
+            return True
+        except Exception:
+            return False
+
+    for i in range(1, BACKUP_COUNT + 1):
+        state_b = STATE_FILE.with_suffix(STATE_FILE.suffix + f".bak{i}")
+        hash_b = HASH_FILE.with_suffix(HASH_FILE.suffix + f".bak{i}")
+        queue_b = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{i}")
+        if _validate_backup(state_b, hash_b, queue_b):
+            try:
+                if state_b.exists():
+                    os.replace(state_b, STATE_FILE)
+                if hash_b.exists():
+                    os.replace(hash_b, HASH_FILE)
+                if queue_b.exists():
+                    os.replace(queue_b, QUEUE_FILE)
+                task_queue.clear()
+                job_status.clear()
+                last_completed_ts = 0.0
+                _load_state_locked()
+                _log_recovery_metrics(len(task_queue))
+                return
+            except Exception:
+                pass
 
     for p in (STATE_FILE, QUEUE_FILE, HASH_FILE):
         try:
@@ -303,7 +350,6 @@ def _recover_queue_file_locked() -> None:
                 pass
     task_queue.clear()
     job_status.clear()
-    global last_completed_ts
     last_completed_ts = 0.0
     _save_state_locked()
 
