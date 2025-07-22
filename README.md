@@ -606,6 +606,18 @@ The command reads videos from the `videos` directory and writes short clips
 to `output_clips`. Both folders are created automatically if they don't
 already exist.
 
+### Synergy weight management
+
+Synergy weights influence how the self‑improvement engine balances ROI,
+efficiency, resilience and antifragility. Use the helper CLI to inspect or
+persist these values:
+
+```bash
+python synergy_weight_cli.py show
+python synergy_weight_cli.py export --out weights.json
+python synergy_weight_cli.py import weights.json
+```
+
 ### Dependency provisioning
 
 
