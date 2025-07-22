@@ -581,7 +581,7 @@ def test_coverage_subprocess_failure(monkeypatch):
     monkeypatch.setattr(sds.asyncio, "create_subprocess_exec", fail_exec)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
 
-    with pytest.raises(RuntimeError) as exc:
+    with pytest.raises(sds.CoverageSubprocessError) as exc:
         asyncio.run(dbg._coverage_percent([Path("dummy.py")]))
     assert "boom" in str(exc.value)
 
@@ -858,31 +858,13 @@ def test_run_tests_logs_output(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
-    def fake_run(cmd, capture_output=True, text=True, env=None):
-        class R:
-            returncode = 1
-            stdout = "out"
-            stderr = "err"
+    async def fake_cov(paths, env=None):
+        raise sds.CoverageSubprocessError("boom")
 
-        return R()
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
 
-    class Cov:
-        def __init__(self, *a, **k):
-            pass
-
-        def load(self):
-            pass
-
-        def report(self, include=None, file=None):
-            return 0.0
-
-        def xml_report(self, outfile=None, include=None):
-            return 0
-
-    monkeypatch.setattr(sds.subprocess, "run", fake_run)
-    monkeypatch.setattr(sds, "Coverage", Cov)
-
-    dbg._run_tests(Path("test_dummy.py"))
+    with pytest.raises(RuntimeError):
+        dbg._run_tests(Path("test_dummy.py"))
 
     assert dbg._last_test_log is not None
     assert dbg._last_test_log.exists()

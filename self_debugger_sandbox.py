@@ -18,6 +18,14 @@ import io
 import math
 from statistics import pstdev
 from coverage import Coverage
+
+
+class CoverageSubprocessError(RuntimeError):
+    """Raised when a test subprocess exits with a non-zero code."""
+
+    def __init__(self, output: str) -> None:
+        super().__init__(output)
+        self.output = output
 import sqlite3
 import threading
 
@@ -201,7 +209,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             outputs = [r[2] for r in results]
             if any(rc != 0 for rc in returncodes):
                 msg = "test subprocess failed" + "\n" + "\n".join(outputs)
-                raise RuntimeError(msg)
+                raise CoverageSubprocessError(msg)
             cov = Coverage(data_file=str(tmp_dir / ".coverage"))
             cov.combine([str(f) for f in coverage_files])
             buf = io.StringIO()
@@ -259,10 +267,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         start = time.perf_counter()
         try:
             percent = asyncio.run(self._coverage_percent(test_paths, env))
+        except CoverageSubprocessError as exc:
+            runtime = time.perf_counter() - start
+            log_file = sandbox_dir / f"fail_{int(time.time()*1000)}.log"
+            try:
+                log_file.write_text(str(exc.output))
+                self._last_test_log = log_file
+            except Exception:
+                self.logger.exception("failed to write test log")
+            raise RuntimeError("test subprocess failed") from exc
         except Exception:
             percent = 0.0
+            runtime = time.perf_counter() - start
             self.logger.exception("coverage generation failed")
-        runtime = time.perf_counter() - start
+        else:
+            runtime = time.perf_counter() - start
 
         if tmp:
             tmp.unlink(missing_ok=True)
