@@ -33,6 +33,9 @@ if not _token:
 API_TOKEN = _token
 API_TOKEN_HASH = hashlib.sha256(API_TOKEN.encode()).hexdigest()
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
+# Optional TLS configuration
+SSL_CERT_PATH = os.getenv("VISUAL_AGENT_SSL_CERT")
+SSL_KEY_PATH = os.getenv("VISUAL_AGENT_SSL_KEY")
 DEVICE_ID  = "desktop"
 
 # Logger setup
@@ -1065,7 +1068,14 @@ if __name__ == "__main__":
         API_TOKEN[:8],
     )
 
-    config = uvicorn.Config(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=HTTP_PORT,
+        workers=1,
+        ssl_certfile=SSL_CERT_PATH,
+        ssl_keyfile=SSL_KEY_PATH,
+    )
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
 

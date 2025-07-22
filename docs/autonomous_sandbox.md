@@ -24,6 +24,8 @@ Most of these packages are installed automatically when using the provided Docke
 - `AUTO_DASHBOARD_PORT=8001` – start the metrics dashboard
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
 - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
+- `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
+- `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
@@ -50,6 +52,9 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
 
 - `VISUAL_AGENT_TOKEN` – shared secret for the visual agent service.
+- `VISUAL_AGENT_SSL_CERT` – path to the TLS certificate served by
+  `menace_visual_agent_2.py` when running over HTTPS.
+- `VISUAL_AGENT_SSL_KEY` – path to the private key for the certificate.
 - `SANDBOX_DATA_DIR` – directory where ROI history, presets and patch records are stored. Defaults to `sandbox_data`.
 - `DATABASE_URL` – connection string for the primary database. Defaults to `sqlite:///menace.db`.
 - `BOT_DB_PATH` – location of the bot registry database, default `bots.db`.
@@ -60,6 +65,8 @@ The sandbox reads several paths and authentication tokens from environment varia
 
 ```dotenv
 VISUAL_AGENT_TOKEN=my-secret-token
+VISUAL_AGENT_SSL_CERT=/path/to/cert.pem
+VISUAL_AGENT_SSL_KEY=/path/to/key.pem
 SANDBOX_DATA_DIR=~/menace_data
 DATABASE_URL=sqlite:///menace.db
 BOT_DB_PATH=bots.db
