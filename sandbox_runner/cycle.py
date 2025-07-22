@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 from .environment import SANDBOX_ENV_PRESETS
+from .resource_tuner import ResourceTuner
 
 
 def _choose_suggestion(ctx: Any, module: str) -> str:
@@ -98,11 +99,18 @@ def _sandbox_cycle_runner(
         except Exception:
             logger.exception("failed to reload presets")
 
+    tuner = ResourceTuner()
+
     low_roi_streak = 0
     resilience_history: list[float] = []
     prev_res_avg: float | None = None
     failure_start: float | None = None
     for idx in range(ctx.cycles):
+        try:
+            SANDBOX_ENV_PRESETS = tuner.adjust(tracker, SANDBOX_ENV_PRESETS)
+            os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+        except Exception:
+            logger.exception("resource tuning failed")
         logger.info("sandbox cycle %d starting", idx)
         ctx.orchestrator.run_cycle(ctx.models)
         result = ctx.improver.run_cycle()
