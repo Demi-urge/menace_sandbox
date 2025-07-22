@@ -13,6 +13,8 @@ pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 requests = pytest.importorskip("requests")
 
+TOKEN = "tombalolosvisualagent123"
+
 pkg_path = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
     "menace", pkg_path / "__init__.py", submodule_search_locations=[str(pkg_path)]
@@ -66,6 +68,7 @@ def _start_server(tmp_path: Path):
     env = os.environ.copy()
     env["MENACE_AGENT_PORT"] = str(port)
     env["SANDBOX_DATA_DIR"] = str(tmp_path)
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
 

@@ -27,7 +27,10 @@ import atexit
 import psutil
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
-API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
+_token = os.getenv("VISUAL_AGENT_TOKEN")
+if not _token:
+    raise RuntimeError("VISUAL_AGENT_TOKEN environment variable is required")
+API_TOKEN = _token
 API_TOKEN_HASH = hashlib.sha256(API_TOKEN.encode()).hexdigest()
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
 DEVICE_ID  = "desktop"

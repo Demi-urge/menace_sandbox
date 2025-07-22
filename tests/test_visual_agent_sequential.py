@@ -16,6 +16,8 @@ pytest.importorskip("uvicorn")
 requests = pytest.importorskip("requests")
 from fastapi.testclient import TestClient
 
+TOKEN = "tombalolosvisualagent123"
+
 # Ensure the menace package is importable
 pkg_path = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location(
@@ -76,6 +78,7 @@ def _start_server(tmp_path: Path):
     env = os.environ.copy()
     env["MENACE_AGENT_PORT"] = str(port)
     env["SANDBOX_DATA_DIR"] = str(tmp_path)
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
 

@@ -357,7 +357,10 @@ class VisualAgentClient:
                             retried = True
                             self._refresh_token_async()
                             continue
-                        return False, "unauthorized"
+                        raise PermissionError("unauthorized")
+                    if resp.status_code == 409:
+                        self._poll(base)
+                        continue
                     if resp.status_code == 202:
                         return self._poll(base)
                     if resp.status_code >= 500 and attempt < 2:
@@ -370,6 +373,8 @@ class VisualAgentClient:
 
         try:
             return sender()
+        except PermissionError:
+            raise
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
         finally:
@@ -407,7 +412,10 @@ class VisualAgentClient:
                             retried = True
                             self._refresh_token_async()
                             continue
-                        return False, "unauthorized"
+                        raise PermissionError("unauthorized")
+                    if resp.status_code == 409:
+                        self._poll(base)
+                        continue
                     if resp.status_code == 202:
                         return self._poll(base)
                     if resp.status_code >= 500 and attempt < 2:
@@ -420,6 +428,8 @@ class VisualAgentClient:
 
         try:
             return sender()
+        except PermissionError:
+            raise
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
         finally:
