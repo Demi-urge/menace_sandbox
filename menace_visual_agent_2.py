@@ -45,6 +45,9 @@ app = FastAPI(title="Menace-Visual-Agent")
 def _startup_load_state() -> None:
     _setup_pid_file()
     _initialize_state()
+    if AUTO_RECOVER_ON_STARTUP and task_queue:
+        logger.info("auto recovered %s queued tasks", len(task_queue))
+        _log_recovery_metrics(len(task_queue))
     _start_background_threads()
 
 _running_lock = threading.Lock()      # ensures only one job at a time
@@ -107,7 +110,39 @@ DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"
 STATE_FILE = DATA_DIR / "visual_agent_state.json"
 HASH_FILE = STATE_FILE.with_suffix(STATE_FILE.suffix + ".sha256")
+RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
 BACKUP_COUNT = 3
+AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1"
+
+
+def _rotate_backups(path: Path) -> None:
+    """Rotate backup files for ``path``."""
+    backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
+    for i in range(BACKUP_COUNT - 1, 0, -1):
+        if backups[i - 1].exists():
+            if backups[i].exists():
+                backups[i].unlink()
+            os.replace(backups[i - 1], backups[i])
+    if path.exists():
+        os.replace(path, backups[0])
+
+
+def _log_recovery_metrics(count: int) -> None:
+    """Update recovery metrics file."""
+    metrics = {"recovery_count": 0, "last_recovery_time": 0.0, "last_recovered": 0}
+    try:
+        if RECOVERY_METRICS_FILE.exists():
+            metrics.update(json.loads(RECOVERY_METRICS_FILE.read_text()))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading metrics %s: %s", RECOVERY_METRICS_FILE, exc)
+    metrics["recovery_count"] = float(metrics.get("recovery_count", 0)) + 1
+    metrics["last_recovery_time"] = time.time()
+    metrics["last_recovered"] = count
+    try:
+        RECOVERY_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RECOVERY_METRICS_FILE.write_text(json.dumps(metrics))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing metrics %s: %s", RECOVERY_METRICS_FILE, exc)
 
 
 class PersistentQueue:
@@ -145,6 +180,8 @@ class PersistentQueue:
         with open(tmp, "w", encoding="utf-8") as fh:
             for item in self._queue:
                 fh.write(json.dumps(item) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, self.path)
 
     def append(self, item: dict) -> None:
@@ -195,6 +232,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 def _save_state_locked() -> None:
     """Persist queue and status atomically."""
     global last_completed_ts
+    _rotate_backups(QUEUE_FILE)
+    _rotate_backups(STATE_FILE)
+    _rotate_backups(HASH_FILE)
     task_queue.save()
     data = {
         "status": job_status,
@@ -218,31 +258,10 @@ def _recover_queue_file_locked() -> None:
     if not STATE_FILE.exists() and not QUEUE_FILE.exists():
         return
 
-    backups = [STATE_FILE.with_suffix(STATE_FILE.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
-    queue_backups = [QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
-    hash_backups = [HASH_FILE.with_suffix(HASH_FILE.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
-    try:
-        for i in range(BACKUP_COUNT - 1, 0, -1):
-            if backups[i - 1].exists():
-                if backups[i].exists():
-                    backups[i].unlink()
-                os.replace(backups[i - 1], backups[i])
-            if queue_backups[i - 1].exists():
-                if queue_backups[i].exists():
-                    queue_backups[i].unlink()
-                os.replace(queue_backups[i - 1], queue_backups[i])
-            if hash_backups[i - 1].exists():
-                if hash_backups[i].exists():
-                    hash_backups[i].unlink()
-                os.replace(hash_backups[i - 1], hash_backups[i])
-        if STATE_FILE.exists():
-            os.replace(STATE_FILE, backups[0])
-        if QUEUE_FILE.exists():
-            os.replace(QUEUE_FILE, queue_backups[0])
-        if HASH_FILE.exists():
-            os.replace(HASH_FILE, hash_backups[0])
-    except OSError:
-        for p in (STATE_FILE, QUEUE_FILE, HASH_FILE):
+    for p in (STATE_FILE, QUEUE_FILE, HASH_FILE):
+        try:
+            _rotate_backups(p)
+        except OSError:
             try:
                 p.unlink()
             except OSError:
@@ -842,6 +861,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
+    parser.add_argument("--auto-recover", action="store_true", help="Recover queued tasks on startup")
     args = parser.parse_args()
 
     if args.flush_queue:
@@ -884,6 +904,9 @@ if __name__ == "__main__":
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         print(f"Recovered {len(task_queue)} tasks")
         sys.exit(0)
+
+    if args.auto_recover:
+        AUTO_RECOVER_ON_STARTUP = True
 
 
     _setup_pid_file()
