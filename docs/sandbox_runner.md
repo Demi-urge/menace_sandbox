@@ -652,3 +652,11 @@ CLI to inspect the file:
 ```bash
 python sandbox_recovery_manager.py --file sandbox_data/recovery.json
 ```
+
+## Container Pool Failures
+
+Each time a pooled container fails to start the counters `failures` and
+`consecutive` are written to `sandbox_data/pool_failures.json`. A warning is
+logged when the consecutive count reaches `SANDBOX_POOL_FAIL_THRESHOLD`
+(default `5`). Review this file and the warnings to identify images that are
+consistently failing to launch.

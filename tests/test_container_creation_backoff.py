@@ -1,4 +1,5 @@
 import asyncio
+import json
 import pytest
 import sandbox_runner.environment as env
 
@@ -28,7 +29,7 @@ class DummyClient:
         self.containers = FailingContainers()
 
 
-def test_creation_backoff_and_metrics(monkeypatch, caplog):
+def test_creation_backoff_and_metrics(monkeypatch, tmp_path, caplog):
     dummy = DummyClient()
     monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
     env._CONTAINER_POOLS.clear()
@@ -40,6 +41,8 @@ def test_creation_backoff_and_metrics(monkeypatch, caplog):
 
     monkeypatch.setattr(env, "_ensure_pool_size_async", lambda img: None)
     monkeypatch.setattr(env, "_CREATE_BACKOFF_BASE", 1.0)
+    monkeypatch.setattr(env, "_POOL_METRICS_FILE", tmp_path / "pool.json")
+    monkeypatch.setattr(env, "_FAILURE_WARNING_THRESHOLD", 2)
 
     delays = []
     async def fake_sleep(d):
@@ -62,3 +65,7 @@ def test_creation_backoff_and_metrics(monkeypatch, caplog):
     assert metrics["container_failures_img"] == 4.0
     assert metrics["consecutive_failures_img"] == 0.0
     assert metrics["container_backoff_base"] == 1.0
+    data = json.loads((tmp_path / "pool.json").read_text())
+    assert data["img"]["failures"] == 4.0
+    assert data["img"]["consecutive"] == 0.0
+    assert "failing 3 times consecutively" in caplog.text
