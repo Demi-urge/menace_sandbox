@@ -92,6 +92,9 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
         class P:
             returncode = 1
 
+            async def communicate(self):
+                return b"out-msg", b"err-msg"
+
             async def wait(self):
                 return None
 
@@ -104,6 +107,8 @@ def test_failure_logs_telemetry(tmp_path, monkeypatch):
     assert cur.fetchone()[0] == 1
     row = db.conn.execute("SELECT passed, failed FROM test_results").fetchone()
     assert row == (0, 1)
+    assert "out-msg" in svc.results.get("stdout", "")
+    assert "err-msg" in svc.results.get("stderr", "")
 
 
 def test_success_logs_results(tmp_path, monkeypatch):
