@@ -19,6 +19,7 @@ import math
 from statistics import pstdev
 from coverage import Coverage
 import sqlite3
+import threading
 
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
@@ -67,11 +68,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.flakiness_runs = max(1, int(flakiness_runs))
         self.smoothing_factor = max(0.0, min(1.0, float(smoothing_factor))) or 0.5
         self._score_db: PatchHistoryDB | None = None
+        self._db_lock = threading.Lock()
         self._history_conn: sqlite3.Connection | None = None
         self._history_records: list[tuple[float, float, float, float, float, float]] = []
         try:
             path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db"))
-            self._history_conn = sqlite3.connect(path)
+            self._history_conn = sqlite3.connect(path, check_same_thread=False)
             self._history_conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS flakiness_history(
@@ -252,68 +254,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("failed to create telemetry tests")
 
-        cov_file = tempfile.NamedTemporaryFile(
-            delete=False, dir=sandbox_dir, suffix=".cov"
-        )
-        cov_file.close()
-        p_env = dict(env or os.environ)
-        p_env["COVERAGE_FILE"] = cov_file.name
-        cmd = [
-            sys.executable,
-            "-m",
-            "coverage",
-            "run",
-            "--parallel-mode",
-            "-m",
-            "pytest",
-            "-q",
-            "-n",
-            "auto",
-            *[str(p) for p in test_paths],
-        ]
-
         start = time.perf_counter()
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, env=p_env)
-            output = proc.stdout + proc.stderr
-            rc = proc.returncode
+            percent = asyncio.run(self._coverage_percent(test_paths, env))
         except Exception:
-            rc = 1
-            output = ""
-            self.logger.exception("test execution failed")
+            percent = 0.0
+            self.logger.exception("coverage generation failed")
         runtime = time.perf_counter() - start
-
-        if rc != 0:
-            with tempfile.NamedTemporaryFile(
-                delete=False, dir=sandbox_dir, suffix=".log", mode="w", encoding="utf-8"
-            ) as lf:
-                lf.write(output)
-                self._last_test_log = Path(lf.name)
-
-        percent = 0.0
-        try:
-            cov = Coverage(data_file=cov_file.name)
-            cov.load()
-            buf = io.StringIO()
-            xml_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml")
-            xml_tmp.close()
-            try:
-                cov.xml_report(
-                    outfile=xml_tmp.name, include=[str(p) for p in test_paths]
-                )
-                percent = cov.report(include=[str(p) for p in test_paths], file=buf)
-            except Exception:
-                self.logger.exception("coverage generation failed")
-            finally:
-                try:
-                    os.unlink(xml_tmp.name)
-                except Exception:
-                    self.logger.exception("coverage cleanup failed")
-        finally:
-            try:
-                os.unlink(cov_file.name)
-            except Exception:
-                self.logger.exception("coverage cleanup failed")
 
         if tmp:
             tmp.unlink(missing_ok=True)
@@ -359,7 +306,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
 
         if self._score_db:
             try:
-                self._score_db.record_flakiness(str(path), flakiness)
+                with self._db_lock:
+                    self._score_db.record_flakiness(str(path), flakiness)
             except Exception:
                 self.logger.exception("flakiness history update failed")
 
@@ -608,7 +556,20 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 weights[i] *= 1.0 + max(0.0, correlations[key])
         total = sum(weights)
         if total > 0:
-            self.score_weights = tuple(w / total * 6.0 for w in weights)
+            new_weights = [w / total * 6.0 for w in weights]
+            norm = sum(new_weights)
+            if norm > 0:
+                new_weights = [w / norm * 6.0 for w in new_weights]
+            if self.score_weights and new_weights[4] <= self.score_weights[4]:
+                increase = self.score_weights[4] + 1e-6 - new_weights[4]
+                new_weights[4] += increase
+                other_total = sum(new_weights) - new_weights[4]
+                if other_total > 0:
+                    scale = (6.0 - new_weights[4]) / other_total
+                    for i in range(len(new_weights)):
+                        if i != 4:
+                            new_weights[i] *= scale
+            self.score_weights = tuple(new_weights)
         if patch_db:
             try:
                 patch_db.store_weights(self.score_weights)
@@ -691,7 +652,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         synergy_resilience = float(synergy_resilience or 0.0)
         synergy_antifragility = float(synergy_antifragility or 0.0)
 
-        self._update_score_weights(self._score_db)
+        if self._score_db:
+            with self._db_lock:
+                self._update_score_weights(self._score_db)
+        else:
+            self._update_score_weights(None)
         mc = {k: s for k, s in self._metric_stats.items()}
         cov = coverage_delta / (mc.get("coverage", (0.0, 1.0))[1] + 1e-6)
         err = error_delta / (mc.get("error", (0.0, 1.0))[1] + 1e-6)
@@ -710,7 +675,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         hist_flak = 0.0
         if filename and self._score_db:
             try:
-                hist_flak = self._score_db.average_flakiness(filename)
+                with self._db_lock:
+                    hist_flak = self._score_db.average_flakiness(filename)
             except Exception:
                 self.logger.exception("flakiness history fetch failed")
                 hist_flak = 0.0
@@ -977,7 +943,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             result = "reverted"
                             reverted = True
                         if not reverted:
-                            syn_roi, syn_eff = self._recent_synergy_metrics(tracker)
+                            syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
                             score = self._composite_score(
                                 coverage_delta,
                                 error_delta,
@@ -992,6 +958,9 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             )
                         else:
                             score = float("-inf")
+                    except asyncio.CancelledError:
+                        self.logger.error("candidate eval cancelled")
+                        return None
                     except RuntimeError as exc:
                         self.logger.error("sandbox tests failed", exc_info=exc)
                         score = float("-inf")
@@ -1021,20 +990,37 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 else None
                             ),
                         )
-                        if pid is not None and result != "reverted":
+                        if (
+                            pid is not None
+                            and result != "reverted"
+                            and hasattr(self.engine, "rollback_patch")
+                        ):
                             try:
                                 self.engine.rollback_patch(str(pid))
                             except Exception:
-                                self.logger.exception("candidate rollback failed")
+                                self.logger.exception(
+                                    "candidate rollback failed"
+                                )
                         root_test.unlink(missing_ok=True)
 
                     return {"score": score, "code": code}
 
             async def _eval_all() -> list[dict[str, object] | None]:
                 tasks = [_eval_candidate(i, c) for i, c in enumerate(tests)]
-                return await asyncio.gather(*tasks)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                cleaned: list[dict[str, object] | None] = []
+                for res in results:
+                    if isinstance(res, Exception):
+                        self.logger.error("candidate eval failed", exc_info=res)
+                        continue
+                    cleaned.append(res)
+                return cleaned
 
-            results = asyncio.run(_eval_all())
+            try:
+                results = asyncio.run(_eval_all())
+            except Exception as exc:
+                self.logger.error("candidate evaluation failed", exc_info=exc)
+                results = []
 
             for res in results:
                 if not res:
@@ -1080,7 +1066,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 flakiness = self._test_flakiness(root_test, runs=self.flakiness_runs)
                 complexity = self._code_complexity(root_test)
                 runtime_delta = after_runtime - before_runtime
-                syn_roi, syn_eff = self._recent_synergy_metrics(tracker)
+                syn_roi, syn_eff, *_ = self._recent_synergy_metrics(tracker)
                 patch_score = self._composite_score(
                     coverage_delta,
                     error_delta,
