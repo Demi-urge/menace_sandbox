@@ -8,6 +8,7 @@ import time
 import asyncio
 import os
 import json
+import pickle
 import tempfile
 import math
 from pathlib import Path
@@ -37,6 +38,8 @@ from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
     DQNStrategy,
+    DoubleDQNStrategy,
+    ActorCriticStrategy,
     torch as sip_torch,
 )
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
@@ -108,9 +111,24 @@ class SynergyWeightLearner:
 class DQNSynergyLearner(SynergyWeightLearner):
     """Learner using a simple DQN to adapt synergy weights."""
 
-    def __init__(self, path: Path | None = None, lr: float = 1e-3) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        lr: float = 1e-3,
+        *,
+        strategy: str | None = None,
+    ) -> None:
         super().__init__(path, lr)
-        self.strategy = DQNStrategy(action_dim=4, lr=lr)
+        name = (strategy or "dqn").lower()
+        if name in {"double", "double_dqn", "double-dqn", "ddqn"}:
+            self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr)
+            self.strategy_name = "double_dqn"
+        elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic"}:
+            self.strategy = ActorCriticStrategy()
+            self.strategy_name = "policy_gradient"
+        else:
+            self.strategy = DQNStrategy(action_dim=4, lr=lr)
+            self.strategy_name = "dqn"
         self._state: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
 
     # ------------------------------------------------------------------
@@ -118,30 +136,49 @@ class DQNSynergyLearner(SynergyWeightLearner):
         super().load()
         if not self.path:
             return
+        base = os.path.splitext(self.path)[0]
         if self.path and sip_torch is not None:
             try:
-                base = os.path.splitext(self.path)[0]
-                pt = base + ".pt"
-                if os.path.exists(pt):
+                if hasattr(self.strategy, "_ensure_model"):
                     self.strategy._ensure_model(4)
+                pt = base + ".pt"
+                if os.path.exists(pt) and hasattr(self.strategy, "model"):
                     state_dict = sip_torch.load(pt)
                     assert self.strategy.model is not None
                     self.strategy.model.load_state_dict(state_dict)
+                tgt = base + ".target.pt"
+                if os.path.exists(tgt) and hasattr(self.strategy, "target_model"):
+                    assert self.strategy.target_model is not None
+                    self.strategy.target_model.load_state_dict(sip_torch.load(tgt))
             except Exception:
                 pass
+        try:
+            pkl = base + ".policy.pkl"
+            if os.path.exists(pkl):
+                with open(pkl, "rb") as fh:
+                    self.strategy = pickle.load(fh)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def save(self) -> None:
         super().save()
         if not self.path:
             return
+        base = os.path.splitext(self.path)[0]
         if self.path and sip_torch is not None:
             try:
-                base = os.path.splitext(self.path)[0]
-                if self.strategy.model is not None:
+                if hasattr(self.strategy, "model") and self.strategy.model is not None:
                     sip_torch.save(self.strategy.model.state_dict(), base + ".pt")
+                if hasattr(self.strategy, "target_model") and self.strategy.target_model is not None:
+                    sip_torch.save(self.strategy.target_model.state_dict(), base + ".target.pt")
             except Exception:
                 pass
+        try:
+            with open(base + ".policy.pkl", "wb") as fh:
+                pickle.dump(self.strategy, fh)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
@@ -152,10 +189,16 @@ class DQNSynergyLearner(SynergyWeightLearner):
             "synergy_antifragility",
         ]
         self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
+        q_vals_list: list[float] = []
         for idx, name in enumerate(names):
             reward = roi_delta * self._state[idx]
-            self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
-        q_vals = self.strategy.predict(self._state)
+            q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
+            q_vals_list.append(float(q))
+        if hasattr(self.strategy, "predict"):
+            q_vals = self.strategy.predict(self._state)
+            q_vals_list = [
+                float(v.item() if hasattr(v, "item") else v) for v in q_vals
+            ]
         mapping = {
             "roi": 0,
             "efficiency": 1,
@@ -163,7 +206,7 @@ class DQNSynergyLearner(SynergyWeightLearner):
             "antifragility": 3,
         }
         for key, idx in mapping.items():
-            val = float(q_vals[idx].item() if hasattr(q_vals[idx], "item") else q_vals[idx])
+            val = q_vals_list[idx]
             self.weights[key] = max(0.0, min(val, 10.0))
         self.save()
 
