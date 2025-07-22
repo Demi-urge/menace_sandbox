@@ -42,6 +42,7 @@ from sandbox_settings import SandboxSettings
 
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
+from menace.synergy_exporter import start_synergy_exporter, SynergyExporter
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
@@ -425,6 +426,18 @@ def main(argv: List[str] | None = None) -> None:
     if args.save_synergy_history and dash_env is not None:
         synergy_dash_port = dash_env + 1
 
+    synergy_exporter: SynergyExporter | None = None
+    if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
+        port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
+        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
+        try:
+            synergy_exporter = start_synergy_exporter(
+                history_file=str(history_file),
+                port=port,
+            )
+        except Exception:
+            logger.exception("failed to start synergy exporter")
+
     if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
@@ -680,6 +693,12 @@ def main(argv: List[str] | None = None) -> None:
         except Exception:
             logger.exception("failed to shutdown visual agent")
         agent_proc = None
+
+    if synergy_exporter is not None:
+        try:
+            synergy_exporter.stop()
+        except Exception:
+            logger.exception("failed to stop synergy exporter")
 
 
 if __name__ == "__main__":
