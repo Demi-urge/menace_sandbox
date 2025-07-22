@@ -13,6 +13,7 @@ import sys
 import subprocess
 import time
 import importlib
+from filelock import FileLock
 from pydantic import BaseModel, ValidationError, validator
 
 # Default to test mode when using the bundled SQLite database.
@@ -647,9 +648,9 @@ def main(argv: List[str] | None = None) -> None:
             if args.save_synergy_history:
                 try:
                     data_dir.mkdir(parents=True, exist_ok=True)
-                    (data_dir / "synergy_history.json").write_text(
-                        json.dumps(synergy_history)
-                    )
+                    sy_path = data_dir / "synergy_history.json"
+                    with FileLock(str(sy_path) + ".lock"):
+                        sy_path.write_text(json.dumps(synergy_history))
                 except Exception:
                     logger.exception("failed to save synergy history")
             ma_entry: dict[str, float] = {}
