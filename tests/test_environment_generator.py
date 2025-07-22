@@ -108,6 +108,8 @@ class _DummyTracker:
         synergy_cpu=None,
         synergy_mem=None,
         synergy_long_lucr=None,
+        synergy_netlat=None,
+        synergy_tp=None,
     ):
         self.metrics_history = {"security_score": scores}
         if synergy_roi is not None:
@@ -144,6 +146,10 @@ class _DummyTracker:
             self.metrics_history["synergy_memory_usage"] = synergy_mem
         if synergy_long_lucr is not None:
             self.metrics_history["synergy_long_term_lucrativity"] = synergy_long_lucr
+        if synergy_netlat is not None:
+            self.metrics_history["synergy_network_latency"] = synergy_netlat
+        if synergy_tp is not None:
+            self.metrics_history["synergy_throughput"] = synergy_tp
 
 
 class _ResourceTracker:
@@ -320,6 +326,24 @@ def test_generate_presets_synergy_efficiency_positive():
     new = eg.generate_presets(1, tracker=tracker)[0]
     assert new["NETWORK_LATENCY_MS"] <= base["NETWORK_LATENCY_MS"]
     assert eg._BANDWIDTHS.index(new["BANDWIDTH_LIMIT"]) >= eg._BANDWIDTHS.index(base["BANDWIDTH_LIMIT"])
+
+
+def test_generate_presets_network_latency_history():
+    tracker = _DummyTracker([70, 70, 70], synergy_netlat=[2.0, 2.5, 2.0])
+    random.seed(3)
+    base = eg.generate_presets(1)[0]
+    random.seed(3)
+    new = eg.generate_presets(1, tracker=tracker)[0]
+    assert new["NETWORK_LATENCY_MS"] >= base["NETWORK_LATENCY_MS"]
+
+
+def test_generate_presets_throughput_history():
+    tracker = _DummyTracker([70, 70, 70], synergy_tp=[-6.0, -7.0, -5.0])
+    random.seed(4)
+    base = eg.generate_presets(1)[0]
+    random.seed(4)
+    new = eg.generate_presets(1, tracker=tracker)[0]
+    assert eg._BANDWIDTHS.index(new["MAX_BANDWIDTH"]) <= eg._BANDWIDTHS.index(base["MAX_BANDWIDTH"])
 
 
 def test_synergy_adaptability_adjusts_resources():
