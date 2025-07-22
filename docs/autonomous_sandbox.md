@@ -1,17 +1,60 @@
 # Autonomous Sandbox
 
-This guide describes the prerequisites and environment variables used when running the fully autonomous sandbox.
+This guide describes the prerequisites and environment variables used when
+running the fully autonomous sandbox.
+
+## First-time setup
+
+Follow these steps when launching the sandbox for the first time:
+
+1. **Clone the repository** and switch into it:
+
+   ```bash
+   git clone https://example.com/menace_sandbox.git
+   cd menace_sandbox
+   ```
+
+2. **Install system dependencies**. The required packages are listed below.
+   On Debian-based systems you can run:
+
+   ```bash
+   sudo apt install ffmpeg tesseract-ocr chromium-browser qemu-system-x86
+   ```
+
+3. **Install Python packages**. Use the helper script which installs
+   everything from `requirements.txt` and sets up a development environment:
+
+   ```bash
+   ./setup_env.sh
+   ```
+
+4. **Create a `.env` file** with sensible defaults. The easiest way is:
+
+   ```bash
+   python -c 'import auto_env_setup as a; a.ensure_env()'
+   ```
+
+   Edit the resulting `.env` to add missing API keys.
+
+5. **Start the visual agent** in one terminal and the autonomous loop in
+   another as described below.
 
 ## System packages
 
-The sandbox relies on several system utilities in addition to the Python dependencies listed in `pyproject.toml`:
+The sandbox relies on several system utilities in addition to the Python
+dependencies listed in `pyproject.toml`:
 
 - `ffmpeg` – audio extraction for video clips
 - `tesseract-ocr` – OCR based bots
 - `chromium-browser` or any Chromium based browser for web automation
 - `qemu-system-x86` – optional virtualization backend used for cross platform presets
 
-Most of these packages are installed automatically when using the provided Dockerfile. On bare metal they must be installed manually via your package manager.
+Most of these packages are installed automatically when using the provided
+Dockerfile. On bare metal they must be installed manually via your package
+manager.
+
+After the system tools are in place install the Python requirements via
+`./setup_env.sh` or `pip install -r requirements.txt`.
 
 ## Recommended environment variables
 
@@ -51,6 +94,15 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    The script verifies system dependencies, creates default presets using `environment_generator` and invokes the sandbox runner. The metrics dashboard is available at `http://localhost:${AUTO_DASHBOARD_PORT}` once started.
    If the previous run terminated unexpectedly you can append `--recover` to reload the last recorded ROI and synergy histories.
 
+## Visual agent queueing
+
+`menace_visual_agent_2.py` only processes **one connection at a time**. When the
+`/run` endpoint returns HTTP `409` the agent is busy with another task. Keep a
+local queue of requests and retry them once `/status` reports `{"active": false}`.
+The `/status` response also includes the length of the internal queue so you can
+monitor progress. This behaviour avoids race conditions in the underlying visual
+pipeline.
+
 ## Local run essentials
 
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
@@ -76,6 +128,7 @@ DATABASE_URL=sqlite:///menace.db
 BOT_DB_PATH=bots.db
 BOT_PERFORMANCE_DB=bot_performance_history.db
 MAINTENANCE_DB=maintenance.db
+OPENAI_API_KEY=sk-xxxxx
 ```
 
 ## Logging
@@ -101,3 +154,14 @@ scripts/run_sandbox_container.sh
 The run script mounts `sandbox_data/` for persistent metrics and loads
 environment variables from `.env` so the container behaves the same as a
 local installation.
+
+## Troubleshooting
+
+- **Missing dependencies** – run `./setup_env.sh` again to ensure all Python
+  packages are installed. On bare metal verify that `ffmpeg` and `tesseract`
+  are present in your `$PATH`.
+- **Visual agent returns 409** – the service only accepts one request at a time.
+  Wait until `/status` shows `{"active": false}` or queue the job for later.
+- **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
+  firewall blocks the connection. The dashboard starts automatically once the
+  sandbox loop begins.
