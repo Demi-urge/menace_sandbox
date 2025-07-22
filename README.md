@@ -72,6 +72,7 @@
 - Automatic first-run sandbox improving the codebase before live execution
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
+Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md).
 
 ## Self-Optimisation Loop
 
