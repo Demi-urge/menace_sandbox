@@ -114,6 +114,12 @@ scripts/start_autonomous.sh
 The helper creates a `.env` file with safe defaults via `auto_env_setup.ensure_env` and then
 starts `run_autonomous.py`.
 
+To automatically start a local visual agent before running the sandbox use:
+
+```bash
+python scripts/launch_personal.py
+```
+
 To run the sandbox directly with metrics visualisation, use the convenience
 script which installs dependencies via `setup_env.sh` before launching the
 dashboard:
