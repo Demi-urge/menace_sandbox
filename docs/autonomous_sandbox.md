@@ -66,3 +66,16 @@ BOT_DB_PATH=bots.db
 BOT_PERFORMANCE_DB=bot_performance_history.db
 MAINTENANCE_DB=maintenance.db
 ```
+
+## Docker usage
+
+Build the sandbox image and run it inside a container using the helper scripts:
+
+```bash
+scripts/build_sandbox_image.sh
+scripts/run_sandbox_container.sh
+```
+
+The run script mounts `sandbox_data/` for persistent metrics and loads
+environment variables from `.env` so the container behaves the same as a
+local installation.
