@@ -242,6 +242,23 @@ performed with:
 docker build -t <bot>:latest .
 ```
 
+### Docker Compose setup
+
+Use the provided `docker-compose.yml` to launch the autonomous stack:
+
+```bash
+docker compose up --build
+```
+
+QEMU images can be mounted by placing them in `./qemu_images` and adding:
+
+```
+VM_SETTINGS={"windows_image":"/vm-images/windows.qcow2","macos_image":"/vm-images/macos.qcow2","memory":"4G"}
+```
+
+to your `.env` file. `run_autonomous.py` reads this configuration automatically.
+
+
 ### Production configuration
 
 Set `MENACE_MODE=production` and provide a PostgreSQL `DATABASE_URL` for
@@ -450,10 +467,7 @@ Troubleshooting tips:
   restarting unexpectedly.
 - If synergy metrics diverge wildly, verify that ``synergy_history.json`` is
   writable and consider adjusting ``--synergy-threshold-weight``.
-
-QEMU must be installed separately for cross-platform tests. Supply your own
-Windows or macOS disk images via the ``VM_SETTINGS`` keys ``windows_image`` or
-``macos_image`` when running presets that set ``OS_TYPE`` accordingly.
+QEMU must be installed separately for cross-platform tests. Place your QCOW2 files in `qemu_images` and reference them via `VM_SETTINGS` so presets with `OS_TYPE` `windows` or `macos` boot automatically.
 
 ### Maintenance logs and audit signing
 
