@@ -1125,6 +1125,49 @@ def _parse_size(value: str | int | float) -> int:
         return 0
 
 
+def _parse_bandwidth(value: str | int | float) -> int:
+    """Return ``value`` interpreted as bits per second."""
+    try:
+        s = str(value).strip().lower()
+        if s.endswith("kbps"):
+            return int(float(s[:-4]) * 1_000)
+        if s.endswith("mbps"):
+            return int(float(s[:-4]) * 1_000_000)
+        if s.endswith("gbps"):
+            return int(float(s[:-4]) * 1_000_000_000)
+        return int(float(s))
+    except Exception:
+        return 0
+
+
+def validate_preset(preset: Dict[str, Any]) -> bool:
+    """Return ``True`` if numeric values in ``preset`` are sane."""
+    try:
+        cpu = preset.get("CPU_LIMIT")
+        if cpu is not None:
+            val = float(cpu)
+            if val <= 0 or val > 64:
+                raise ValueError("CPU_LIMIT out of range")
+
+        mem = preset.get("MEMORY_LIMIT")
+        if mem is not None:
+            size = _parse_size(mem)
+            if size <= 0 or size > 64 * 1024 * 1024 * 1024:
+                raise ValueError("MEMORY_LIMIT out of range")
+
+        for key in ("BANDWIDTH_LIMIT", "MIN_BANDWIDTH", "MAX_BANDWIDTH"):
+            bw = preset.get(key)
+            if bw is not None:
+                bw_val = _parse_bandwidth(bw)
+                if bw_val <= 0 or bw_val > 10_000_000_000:
+                    raise ValueError(f"{key} out of range")
+
+        return True
+    except Exception as exc:
+        logger.warning("invalid preset skipped: %s", exc)
+        return False
+
+
 _CONTAINER_DISK_LIMIT = _parse_size(_CONTAINER_DISK_LIMIT_STR)
 
 

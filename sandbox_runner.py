@@ -85,6 +85,7 @@ from sandbox_runner.environment import (
     run_repo_section_simulations,
     run_workflow_simulations,
     _section_worker,
+    validate_preset,
 )
 from sandbox_runner.cycle import _sandbox_cycle_runner
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
@@ -828,6 +829,8 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             snippet = "\n".join(lines[:5])
             section_trackers: list[ROITracker] = []
             for p_idx, env_preset in enumerate(SANDBOX_ENV_PRESETS):
+                if not validate_preset(env_preset):
+                    continue
                 env_updates = {
                     k: v for k, v in env_preset.items() if k != "SANDBOX_ENV_PRESETS"
                 }
