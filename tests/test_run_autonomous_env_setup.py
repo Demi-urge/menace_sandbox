@@ -23,7 +23,7 @@ def setup_stubs(monkeypatch):
     sc_mod.verify_project_dependencies = lambda: []
     sc_mod._parse_requirement = lambda r: r
     eg_mod = types.ModuleType("menace.environment_generator")
-    eg_mod.generate_presets = lambda n=None: [{}]
+    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}]
     tracker_mod = types.ModuleType("menace.roi_tracker")
 
     class DummyTracker:
@@ -50,6 +50,7 @@ def setup_stubs(monkeypatch):
     cli_stub._adaptive_threshold = lambda *a, **k: 0.0
     cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
     cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+    cli_stub.adaptive_synergy_convergence = lambda *a, **k: (True, 0.0, {})
     sr_stub._sandbox_main = lambda p, a: None
     sr_stub.cli = cli_stub
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
@@ -62,7 +63,7 @@ def test_files_created(monkeypatch, tmp_path):
     mod = load_module()
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
-    monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1"}])
+    monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}])
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main([])
@@ -132,6 +133,6 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
             "--runs",
             "1",
             "--sandbox-data-dir",
-            str(tmp_path),
+            str(data_dir),
         ])
 

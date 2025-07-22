@@ -24,7 +24,7 @@ def setup_startup(monkeypatch, missing_pkg="pkg"):
     sc_mod.verify_project_dependencies = lambda: [missing_pkg]
     sc_mod._parse_requirement = lambda r: missing_pkg
     eg_mod = types.ModuleType("menace.environment_generator")
-    eg_mod.generate_presets = lambda n=None: [{}]
+    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}]
     tracker_mod = types.ModuleType("menace.roi_tracker")
     class DummyTracker:
         def __init__(self, *a, **k):
@@ -51,6 +51,7 @@ def setup_startup(monkeypatch, missing_pkg="pkg"):
     cli_stub = types.ModuleType("sandbox_runner.cli")
     cli_stub.full_autonomous_run = lambda args: None
     cli_stub._diminishing_modules = lambda *a, **k: set()
+    cli_stub.adaptive_synergy_convergence = lambda *a, **k: (True, 0.0, {})
     sr_stub._sandbox_main = lambda p, a: None
     sr_stub.cli = cli_stub
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
@@ -116,14 +117,31 @@ def test_offline_mode_skips_install(monkeypatch):
     setup_startup(monkeypatch)
     mod = load_module()
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    _patch_tools(monkeypatch, mod)
+    _patch_tools(monkeypatch, mod, git=False)
     di = sys.modules["menace.dependency_installer"]
     monkeypatch.setattr(di.importlib, "import_module", lambda n: (_ for _ in ()).throw(ImportError()))
-    calls = []
-    monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: calls.append(a))
+    pip_calls = []
+    monkeypatch.setattr(di.subprocess, "check_call", lambda *a, **k: pip_calls.append(a))
+    apt_calls = []
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, check=False: apt_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
     monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
     assert not mod._check_dependencies()
-    assert calls == []
+    assert pip_calls == []
+    assert apt_calls == []
+
+
+def test_install_missing_system_tool(monkeypatch):
+    mod = _setup_base(monkeypatch)
+    _patch_tools(monkeypatch, mod, git=False)
+    calls = []
+
+    def record(cmd, check=False):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(mod.subprocess, "run", record)
+    mod._check_dependencies()
+    assert ["apt-get", "install", "-y", "git"] in calls
 
 
 def _setup_base(monkeypatch):

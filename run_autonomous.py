@@ -71,7 +71,7 @@ class PresetModel(BaseModel):
     class Config:
         extra = "allow"
 
-    @validator("CPU_LIMIT", pre=True)
+    @validator("CPU_LIMIT", pre=True, allow_reuse=True)
     def _cpu_numeric(cls, v):
         try:
             float(v)
@@ -79,7 +79,7 @@ class PresetModel(BaseModel):
             raise ValueError("CPU_LIMIT must be numeric") from e
         return str(v)
 
-    @validator("MEMORY_LIMIT", pre=True)
+    @validator("MEMORY_LIMIT", pre=True, allow_reuse=True)
     def _mem_numeric(cls, v):
         val = str(v)
         digits = "".join(ch for ch in val if ch.isdigit() or ch == ".")
@@ -97,7 +97,7 @@ class SynergyEntry(BaseModel):
 
     __root__: dict[str, float]
 
-    @validator("__root__", pre=True)
+    @validator("__root__", pre=True, allow_reuse=True)
     def _check_values(cls, v):
         if not isinstance(v, dict):
             raise ValueError("entry must be a dict")
@@ -141,6 +141,32 @@ def _check_dependencies() -> bool:
         ``True`` if all dependencies are satisfied, otherwise ``False``.
     """
     missing: List[str] = []
+    offline = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+
+    def apt_install(pkg: str) -> bool:
+        if offline:
+            logger.info("offline mode; skipping apt-get install %s", pkg)
+            return False
+        if shutil.which("apt-get") is None:
+            return False
+        try:
+            subprocess.run(["apt-get", "update"], check=False)
+            subprocess.run(["apt-get", "install", "-y", pkg], check=True)
+            return True
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("apt-get install %s failed: %s", pkg, exc)
+            return False
+
+    def pip_install(pkg: str) -> bool:
+        if offline:
+            logger.info("offline mode; skipping pip install %s", pkg)
+            return False
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+            return True
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("pip install %s failed: %s", pkg, exc)
+            return False
 
     if sys.version_info[:2] < (3, 10):
         msg = f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
@@ -148,30 +174,49 @@ def _check_dependencies() -> bool:
         return False
 
     if shutil.which("docker") is None:
-        logger.warning(
-            "Docker not found. Install using: sudo apt-get install docker.io"
-        )
-        missing.append("docker")
+        if apt_install("docker.io") and shutil.which("docker") is not None:
+            logger.info("installed docker successfully")
+        else:
+            logger.warning(
+                "Docker not found. Install using: sudo apt-get install docker.io"
+            )
+            missing.append("docker")
     try:  # pragma: no cover - optional
         import docker  # type: ignore
     except Exception:
-        missing.append("docker python package")
+        if pip_install("docker"):
+            try:
+                import docker  # type: ignore
+                logger.info("installed docker python package")
+            except Exception:
+                missing.append("docker python package")
+        else:
+            missing.append("docker python package")
 
     if shutil.which("qemu-system-x86_64") is None:
-        logger.warning(
-            "qemu-system-x86_64 not found. Install using: sudo apt-get install qemu-system-x86"
-        )
-        missing.append("qemu-system-x86_64")
+        if apt_install("qemu-system-x86") and shutil.which("qemu-system-x86_64") is not None:
+            logger.info("installed qemu-system-x86_64 successfully")
+        else:
+            logger.warning(
+                "qemu-system-x86_64 not found. Install using: sudo apt-get install qemu-system-x86"
+            )
+            missing.append("qemu-system-x86_64")
 
     if shutil.which("git") is None:
-        logger.warning("git not found. Install using your system package manager")
-        missing.append("git")
+        if apt_install("git") and shutil.which("git") is not None:
+            logger.info("installed git successfully")
+        else:
+            logger.warning("git not found. Install using your system package manager")
+            missing.append("git")
 
     if shutil.which("pytest") is None:
-        logger.warning(
-            "pytest not found. Install using: pip install pytest or system package"
-        )
-        missing.append("pytest")
+        if pip_install("pytest") and shutil.which("pytest") is not None:
+            logger.info("installed pytest successfully")
+        else:
+            logger.warning(
+                "pytest not found. Install using: pip install pytest or system package"
+            )
+            missing.append("pytest")
 
     # verify docker group membership if docker command exists
     if shutil.which("docker") is not None:
@@ -190,7 +235,6 @@ def _check_dependencies() -> bool:
 
     missing_pkgs = verify_project_dependencies()
     if missing_pkgs:
-        offline = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
         errors = install_packages(missing_pkgs, offline=offline)
         if offline and missing_pkgs:
             logger.info(
