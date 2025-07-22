@@ -15,7 +15,7 @@ def test_load_state_logs_failure(monkeypatch, tmp_path, caplog):
     orig_open = builtins.open
 
     def bad_open(file, *args, **kwargs):
-        if str(file) == str(state_file):
+        if str(file) in {str(state_file), str(state_file) + ".tmp"}:
             raise IOError("boom")
         return orig_open(file, *args, **kwargs)
 
@@ -35,7 +35,7 @@ def test_save_state_logs_failure(monkeypatch, tmp_path, caplog):
     orig_open = builtins.open
 
     def bad_open(file, *args, **kwargs):
-        if str(file) == str(state_file):
+        if str(file) in {str(state_file), str(state_file) + ".tmp"}:
             raise IOError("boom")
         return orig_open(file, *args, **kwargs)
 
