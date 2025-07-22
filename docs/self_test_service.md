@@ -41,3 +41,10 @@ python -m menace.self_test_service run \
     --docker-host ssh://user@remote.example.com/run/podman.sock \
     tests/unit
 ```
+
+## Offline Workflow
+
+Set `MENACE_OFFLINE_INSTALL=1` when dependencies and container images are
+available locally.  If `--use-container` is specified the service loads a
+prebuilt image tarball before running the tests.  Provide the tarball path via
+`MENACE_SELF_TEST_IMAGE_TAR`.

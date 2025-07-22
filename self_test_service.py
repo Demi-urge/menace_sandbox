@@ -68,6 +68,8 @@ class SelfTestService:
         self._lock_acquired = False
         self.container_runtime = container_runtime
         self.docker_host = docker_host
+        self.offline_install = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+        self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
         if self.history_path and self.history_path.suffix == ".db":
             self._history_db = sqlite3.connect(self.history_path)
             self._history_db.execute(
@@ -181,6 +183,30 @@ class SelfTestService:
                 rem = self.workers % len(paths)
                 workers_list = [base + (1 if i < rem else 0) for i in range(len(paths))]
                 workers_list = [max(w, 1) for w in workers_list]
+
+            if use_container and self.offline_install and self.image_tar_path:
+                docker_cmd = [self.container_runtime]
+                if self.docker_host:
+                    docker_cmd.extend(
+                        [
+                            "-H" if self.container_runtime == "docker" else "--url",
+                            self.docker_host,
+                        ]
+                    )
+                docker_cmd.extend(["load", "-i", self.image_tar_path])
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *docker_cmd,
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.wait()
+                    if proc.returncode != 0:
+                        self.logger.error("docker load failed: %s", self.image_tar_path)
+                        use_container = False
+                except Exception:
+                    self.logger.exception("docker load failed")
+                    use_container = False
 
             for idx, p in enumerate(paths):
                 tmp_name: str | None = None

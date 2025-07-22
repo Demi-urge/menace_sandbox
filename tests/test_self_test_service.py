@@ -540,3 +540,41 @@ def test_run_files_concurrently(monkeypatch):
     asyncio.run(svc._run_once())
     elapsed = time.perf_counter() - start
     assert elapsed < 0.1
+
+
+def test_offline_container_load(monkeypatch, tmp_path):
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(cmd)
+
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                if "load" not in cmd:
+                    self.stdout.feed_data(
+                        json.dumps({"summary": {"passed": 0, "failed": 0}}).encode()
+                    )
+                    self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return True
+
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+
+    tar_path = tmp_path / "img.tar"
+    tar_path.write_text("dummy")
+    monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
+    monkeypatch.setenv("MENACE_SELF_TEST_IMAGE_TAR", str(tar_path))
+
+    svc = mod.SelfTestService(use_container=True, container_image="img")
+    asyncio.run(svc._run_once())
+
+    assert any(c[0] == "docker" and "load" in c for c in calls)
