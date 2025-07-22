@@ -94,8 +94,12 @@ See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching
 
 ## Installation
 
+Run the setup helper to install the required system tools and Python
+dependencies.  When ``MENACE_OFFLINE_INSTALL=1`` is set the script
+installs packages from ``MENACE_WHEEL_DIR`` instead of contacting PyPI.
+
 ```bash
-pip install -e .
+scripts/setup_autonomous.sh
 ```
 
 ## Getting Started
