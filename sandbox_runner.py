@@ -1,10 +1,40 @@
 from __future__ import annotations
 
+import importlib.util
+import shutil
+import sys
+
+
+REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
+REQUIRED_PYTHON_PKGS = ["pydantic", "dotenv"]
+
+
+def _verify_required_dependencies() -> None:
+    missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
+    missing_py = [p for p in REQUIRED_PYTHON_PKGS if importlib.util.find_spec(p) is None]
+    if missing_sys or missing_py:
+        messages: list[str] = []
+        if missing_sys:
+            messages.append(
+                "Missing system packages: "
+                + ", ".join(missing_sys)
+                + ". Install them using your package manager."
+            )
+        if missing_py:
+            messages.append(
+                "Missing Python packages: "
+                + ", ".join(missing_py)
+                + ". Install them with 'pip install <package>'."
+            )
+        raise SystemExit("\n".join(messages))
+
+
+_verify_required_dependencies()
+
 import ast
 import json
 import os
 import re
-import shutil
 import subprocess
 import tempfile
 import concurrent.futures
