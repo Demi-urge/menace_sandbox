@@ -284,6 +284,10 @@ _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 _CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
+_POOL_METRICS_FILE = Path(
+    os.getenv("SANDBOX_POOL_METRICS_FILE", str(ROOT / "sandbox_data" / "pool_failures.json"))
+)
+_FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 
 
@@ -332,7 +336,9 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
     if fails >= 3:
         delay = min(60.0, _CREATE_BACKOFF_BASE * (2 ** fails))
-        logger.warning("container creation backoff %.2fs after %s failures", delay, fails)
+        logger.warning(
+            "container creation backoff %.2fs after %s failures", delay, fails
+        )
         await asyncio.sleep(delay)
     td = tempfile.mkdtemp(prefix="pool_")
     try:
@@ -347,9 +353,16 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     except Exception:
         shutil.rmtree(td, ignore_errors=True)
         _CREATE_FAILURES[image] += 1
-        _CONSECUTIVE_CREATE_FAILURES[image] = fails + 1
+        fails += 1
+        _CONSECUTIVE_CREATE_FAILURES[image] = fails
+        if fails >= _FAILURE_WARNING_THRESHOLD:
+            logger.warning(
+                "container creation failing %s times consecutively for %s", fails, image
+            )
+        _log_pool_metrics(image)
         raise
     _CONSECUTIVE_CREATE_FAILURES[image] = 0
+    _log_pool_metrics(image)
     _CONTAINER_DIRS[container.id] = td
     _CONTAINER_LAST_USED[container.id] = time.time()
     _CONTAINER_CREATED[container.id] = time.time()
@@ -482,6 +495,25 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 logger.error("failed to remove container %s: %s", cid, exc)
             else:
                 time.sleep(base_delay * (2 ** attempt))
+
+
+def _log_pool_metrics(image: str) -> None:
+    """Persist container failure metrics for ``image``."""
+    metrics: Dict[str, Any] = {}
+    try:
+        if _POOL_METRICS_FILE.exists():
+            metrics = json.loads(_POOL_METRICS_FILE.read_text())
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading pool metrics %s: %s", _POOL_METRICS_FILE, exc)
+    img = metrics.get(image, {})
+    img["failures"] = float(_CREATE_FAILURES.get(image, 0))
+    img["consecutive"] = float(_CONSECUTIVE_CREATE_FAILURES.get(image, 0))
+    metrics[image] = img
+    try:
+        _POOL_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _POOL_METRICS_FILE.write_text(json.dumps(metrics))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing pool metrics %s: %s", _POOL_METRICS_FILE, exc)
 
 
 def _get_dir_usage(path: str) -> int:
