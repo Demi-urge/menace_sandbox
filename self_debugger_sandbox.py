@@ -420,20 +420,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 ".weights.json"
             )
             try:
-                patches = patch_db.filter()
-                patches.sort(key=lambda r: r.ts)
-                for rec in patches[-limit:]:
-                    records.append(
-                        (
-                            float(getattr(rec, "coverage_delta", 0.0)),
-                            float(rec.errors_before - rec.errors_after),
-                            float(rec.roi_delta),
-                            float(rec.complexity_delta),
-                            float(getattr(rec, "synergy_roi", 0.0)),
-                            float(getattr(rec, "synergy_efficiency", 0.0)),
+                with self._db_lock:
+                    patches = patch_db.filter()
+                    patches.sort(key=lambda r: r.ts)
+                    for rec in patches[-limit:]:
+                        records.append(
+                            (
+                                float(getattr(rec, "coverage_delta", 0.0)),
+                                float(rec.errors_before - rec.errors_after),
+                                float(rec.roi_delta),
+                                float(rec.complexity_delta),
+                                float(getattr(rec, "synergy_roi", 0.0)),
+                                float(getattr(rec, "synergy_efficiency", 0.0)),
+                            )
                         )
-                    )
-                db_weights = patch_db.get_weights()
+                    db_weights = patch_db.get_weights()
                 if db_weights:
                     self.score_weights = db_weights
             except Exception:
@@ -572,7 +573,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.score_weights = tuple(new_weights)
         if patch_db:
             try:
-                patch_db.store_weights(self.score_weights)
+                with self._db_lock:
+                    patch_db.store_weights(self.score_weights)
             except Exception:
                 self.logger.exception("score weight DB persistence failed")
         if weights_path:
@@ -873,8 +875,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 return None
                             if patch_db:
                                 try:
-                                    records = patch_db.by_hash(code_hash)
+                                    with self._db_lock:
+                                        records = patch_db.by_hash(code_hash)
                                 except Exception:
+                                    self.logger.exception("patch history lookup failed")
                                     records = []
                                 if any(r.reverted or r.roi_delta <= 0 for r in records):
                                     self.logger.info(
@@ -1006,7 +1010,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     return {"score": score, "code": code}
 
             async def _eval_all() -> list[dict[str, object] | None]:
-                tasks = [_eval_candidate(i, c) for i, c in enumerate(tests)]
+                tasks = [asyncio.create_task(_eval_candidate(i, c)) for i, c in enumerate(tests)]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 cleaned: list[dict[str, object] | None] = []
                 for res in results:
