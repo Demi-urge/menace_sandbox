@@ -331,42 +331,62 @@ def _ensure_pool_size_async(image: str) -> None:
     _WARMUP_TASKS[image] = task
 
 async def _create_pool_container(image: str) -> tuple[Any, str]:
-    """Create a long-lived container running ``sleep infinity``."""
+    """Create a long-lived container running ``sleep infinity`` with retries."""
     assert _DOCKER_CLIENT is not None
-    fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
-    if fails >= 3:
-        delay = min(60.0, _CREATE_BACKOFF_BASE * (2 ** fails))
-        logger.warning(
-            "container creation backoff %.2fs after %s failures", delay, fails
-        )
-        await asyncio.sleep(delay)
-    td = tempfile.mkdtemp(prefix="pool_")
-    try:
-        container = await asyncio.to_thread(
-            _DOCKER_CLIENT.containers.run,
-            image,
-            ["sleep", "infinity"],
-            detach=True,
-            network_disabled=True,
-            volumes={td: {"bind": "/code", "mode": "rw"}},
-        )
-    except Exception:
-        shutil.rmtree(td, ignore_errors=True)
-        _CREATE_FAILURES[image] += 1
-        fails += 1
-        _CONSECUTIVE_CREATE_FAILURES[image] = fails
-        if fails >= _FAILURE_WARNING_THRESHOLD:
+    attempt = 0
+    delay = _CREATE_BACKOFF_BASE
+    last_exc: Exception | None = None
+    while attempt < _CREATE_RETRY_LIMIT:
+        fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
+        if attempt or fails >= 3:
+            wait = min(60.0, delay * (2 ** max(attempt, fails)))
             logger.warning(
-                "container creation failing %s times consecutively for %s", fails, image
+                "container creation backoff %.2fs before attempt %s/%s for %s",
+                wait,
+                attempt + 1,
+                _CREATE_RETRY_LIMIT,
+                image,
             )
-        _log_pool_metrics(image)
-        raise
-    _CONSECUTIVE_CREATE_FAILURES[image] = 0
-    _log_pool_metrics(image)
-    _CONTAINER_DIRS[container.id] = td
-    _CONTAINER_LAST_USED[container.id] = time.time()
-    _CONTAINER_CREATED[container.id] = time.time()
-    return container, td
+            await asyncio.sleep(wait)
+        td = tempfile.mkdtemp(prefix="pool_")
+        try:
+            container = await asyncio.to_thread(
+                _DOCKER_CLIENT.containers.run,
+                image,
+                ["sleep", "infinity"],
+                detach=True,
+                network_disabled=True,
+                volumes={td: {"bind": "/code", "mode": "rw"}},
+            )
+            _CONSECUTIVE_CREATE_FAILURES[image] = 0
+            _log_pool_metrics(image)
+            _CONTAINER_DIRS[container.id] = td
+            _CONTAINER_LAST_USED[container.id] = time.time()
+            _CONTAINER_CREATED[container.id] = time.time()
+            return container, td
+        except Exception as exc:
+            last_exc = exc
+            shutil.rmtree(td, ignore_errors=True)
+            _CREATE_FAILURES[image] += 1
+            fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
+            _CONSECUTIVE_CREATE_FAILURES[image] = fails
+            logger.warning(
+                "docker run failed on attempt %s/%s: %s; cmd: docker run %s sleep infinity",
+                attempt + 1,
+                _CREATE_RETRY_LIMIT,
+                exc,
+                image,
+            )
+            if fails >= _FAILURE_WARNING_THRESHOLD:
+                logger.warning(
+                    "container creation failing %s times consecutively for %s",
+                    fails,
+                    image,
+                )
+            _log_pool_metrics(image)
+            attempt += 1
+    assert last_exc is not None
+    raise last_exc
 
 
 def _verify_container(container: Any) -> bool:
@@ -2474,8 +2494,8 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 + "')\n"
             )
             attempt = 0
-            delay = 0.5
-            while True:
+            delay = _CREATE_BACKOFF_BASE
+            while attempt < _CREATE_RETRY_LIMIT:
                 try:
                     asyncio.run(
                         _execute_in_container(
@@ -2488,8 +2508,11 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     break
                 except Exception as exc:
                     diagnostics["docker_error"] = str(exc)
-                    logger.exception("docker execution failed: %s", exc)
-                    if attempt >= 2:
+                    logger.exception(
+                        "docker execution failed: %s; cmd: docker run <image> python sandbox_runner.py",
+                        exc,
+                    )
+                    if attempt >= _CREATE_RETRY_LIMIT - 1:
                         logger.error("docker repeatedly failed; running locally")
                         diagnostics["local_execution"] = "docker"
                         use_docker = False
@@ -2512,8 +2535,8 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 overlay = Path(tmp_dir) / "overlay.qcow2"
                 try:
                     attempt = 0
-                    delay = 0.5
-                    while True:
+                    delay = _CREATE_BACKOFF_BASE
+                    while attempt < _CREATE_RETRY_LIMIT:
                         try:
                             subprocess.run(
                                 [
@@ -2556,22 +2579,22 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                             break
                         except subprocess.TimeoutExpired:
                             diagnostics["vm_error"] = "timeout"
-                            logger.error("VM execution timed out")
+                            logger.error("VM execution timed out; cmd: %s", " ".join(cmd))
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                         except (FileNotFoundError, PermissionError) as exc:
                             diagnostics["vm_error"] = str(exc)
-                            logger.error("VM setup failed: %s", exc)
+                            logger.error("VM setup failed: %s; cmd: %s", exc, " ".join(cmd))
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                             break
                         except Exception as exc:
                             diagnostics["vm_error"] = str(exc)
-                            logger.exception("VM execution failed: %s", exc)
+                            logger.exception("VM execution failed: %s; cmd: %s", exc, " ".join(cmd))
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
-                        if vm_used or attempt >= 2:
-                            if attempt >= 2 and not vm_used:
+                        if vm_used or attempt >= _CREATE_RETRY_LIMIT - 1:
+                            if attempt >= _CREATE_RETRY_LIMIT - 1 and not vm_used:
                                 diagnostics.setdefault("local_execution", "vm")
                             break
                         attempt += 1
