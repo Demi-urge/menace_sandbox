@@ -231,6 +231,12 @@ values using these statistics and applies adaptive weights. Metrics with a
 consistent improvement (low variance) have a stronger influence while
 increased complexity is penalised based on how volatile it usually is.
 
+When the test subprocess exits with a non-zero status `_coverage_percent`
+raises `CoverageSubprocessError`. `_run_tests` catches this, writes the
+combined output to `SANDBOX_DATA_DIR` and re-raises a `RuntimeError` so the
+patch attempt is marked as failed. Score history entries are skipped for
+these attempts.
+
 ## Metrics Plugins
 
 Custom metric collectors can be added without modifying `sandbox_runner.py`. Set
