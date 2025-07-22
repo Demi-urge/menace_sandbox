@@ -46,6 +46,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    ```
 
    The script verifies system dependencies, creates default presets using `environment_generator` and invokes the sandbox runner. The metrics dashboard is available at `http://localhost:${AUTO_DASHBOARD_PORT}` once started.
+   If the previous run terminated unexpectedly you can append `--recover` to reload the last recorded ROI and synergy histories.
 
 ## Local run essentials
 

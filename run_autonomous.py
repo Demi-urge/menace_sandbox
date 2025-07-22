@@ -319,6 +319,11 @@ def main(argv: List[str] | None = None) -> None:
         help="do not persist synergy metrics",
     )
     parser.add_argument(
+        "--recover",
+        action="store_true",
+        help="reload last ROI and synergy histories before running",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -357,10 +362,11 @@ def main(argv: List[str] | None = None) -> None:
     data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     synergy_history: list[dict[str, float]] = []
     synergy_ma_prev: list[dict[str, float]] = []
-    if args.save_synergy_history:
+    if args.save_synergy_history or args.recover:
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
+
 
     if args.preset_files is None:
         data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
@@ -496,7 +502,37 @@ def main(argv: List[str] | None = None) -> None:
         synergy_std_threshold = 1e-3
     if synergy_variance_confidence is None:
         synergy_variance_confidence = synergy_confidence or 0.95
-    last_tracker = None
+
+    if args.recover:
+        tracker = SandboxRecoveryManager.load_last_tracker(data_dir)
+        if tracker:
+            last_tracker = tracker
+            for mod, vals in tracker.module_deltas.items():
+                module_history.setdefault(mod, []).extend(vals)
+            missing = tracker.synergy_history[len(synergy_history) :]
+            for entry in missing:
+                synergy_history.append(entry)
+                ma_entry: dict[str, float] = {}
+                for k in entry:
+                    vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
+                    ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
+                    ma_entry[k] = ema
+                synergy_ma_history.append(ma_entry)
+            if missing:
+                synergy_ma_prev = synergy_ma_history
+            if missing and args.save_synergy_history:
+                try:
+                    data_dir.mkdir(parents=True, exist_ok=True)
+                    sy_path = data_dir / "synergy_history.json"
+                    with FileLock(str(sy_path) + ".lock"):
+                        sy_path.write_text(json.dumps(synergy_history))
+                except Exception:
+                    logger.exception("failed to save synergy history")
+            if tracker.roi_history:
+                ema, _ = cli._ema(tracker.roi_history[-args.roi_cycles :])
+                roi_ma_history.append(ema)
+    else:
+        last_tracker = None
 
     run_idx = 0
     while args.runs is None or run_idx < args.runs:

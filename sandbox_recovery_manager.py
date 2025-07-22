@@ -72,6 +72,24 @@ class SandboxRecoveryManager:
         }
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def load_last_tracker(data_dir: str | Path):
+        """Return :class:`ROITracker` loaded from ``data_dir`` or ``None``."""
+        try:
+            from menace.roi_tracker import ROITracker
+        except Exception:  # pragma: no cover - fallback
+            from roi_tracker import ROITracker  # type: ignore
+
+        path = Path(data_dir) / "roi_history.json"
+        tracker = ROITracker()
+        try:
+            tracker.load_history(str(path))
+        except Exception:
+            logger.exception("failed to load tracker history: %s", path)
+            return None
+        return tracker
+
+    # ------------------------------------------------------------------
     def run(self, preset: Dict[str, Any], args: argparse.Namespace):
         """Execute ``sandbox_main`` retrying on failure."""
         attempts = 0
@@ -126,7 +144,12 @@ class SandboxRecoveryManager:
                 time.sleep(self.retry_delay)
 
 
-__all__ = ["SandboxRecoveryManager", "cli", "load_metrics"]
+__all__ = [
+    "SandboxRecoveryManager",
+    "cli",
+    "load_metrics",
+    "load_last_tracker",
+]
 
 
 def load_metrics(path: Path) -> Dict[str, float]:
