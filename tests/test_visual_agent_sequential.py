@@ -14,6 +14,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 requests = pytest.importorskip("requests")
+from fastapi.testclient import TestClient
 
 # Ensure the menace package is importable
 pkg_path = Path(__file__).resolve().parents[1]
@@ -306,4 +307,72 @@ def test_visual_agent_busy_via_client(tmp_path, monkeypatch):
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_run_endpoint_busy_with_testclient(monkeypatch, tmp_path):
+    """Concurrent /run requests should return 409 for the second until the first finishes."""
+    from tests.test_visual_agent_server import _setup_va
+    import types, sys
+
+    sys.modules.setdefault("psutil", types.ModuleType("psutil")).pid_exists = lambda *_a, **_k: False
+
+    va = _setup_va(monkeypatch, tmp_path, start_worker=True)
+
+    def fake_run(prompt: str, branch: str | None = None) -> None:
+        time.sleep(0.2)
+
+    monkeypatch.setattr(va, "run_menace_pipeline", fake_run)
+
+    shared = threading.Lock()
+
+    class DummyLock:
+        def acquire(self, timeout: float = 0):
+            if not shared.acquire(blocking=False):
+                raise va.Timeout()
+
+        def release(self):
+            if shared.locked():
+                shared.release()
+
+        @property
+        def is_locked(self):
+            return shared.locked()
+
+    monkeypatch.setattr(va, "_global_lock", DummyLock())
+
+    with TestClient(va.app) as client:
+        responses: dict[str, requests.Response] = {}
+
+        def first():
+            responses["r1"] = client.post("/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "a"})
+
+        def second():
+            time.sleep(0.01)
+            responses["r2"] = client.post("/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "b"})
+
+        t1 = threading.Thread(target=first)
+        t2 = threading.Thread(target=second)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert responses["r1"].status_code == 202
+        assert responses["r2"].status_code == 409
+
+        # Wait for the first job to complete
+        for _ in range(20):
+            status = client.get("/status").json()
+            if not status.get("active") and status.get("queue") == 0:
+                break
+            time.sleep(0.05)
+        resp3 = client.post("/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "c"})
+        assert resp3.status_code == 202
+
+    va._exit_event.set()
+    va._worker_thread.join(timeout=1)
+    va._autosave_thread.join(timeout=1)
+
+    for p in tmp_path.glob("visual_agent_*"):
+        p.unlink(missing_ok=True)
 
