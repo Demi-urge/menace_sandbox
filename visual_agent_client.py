@@ -280,6 +280,8 @@ class VisualAgentClient:
         if not self.token_refresh_cmd:
             return False
 
+        last_stdout = ""
+        last_stderr = ""
         for attempt in range(3):
             proc = subprocess.run(
                 self.token_refresh_cmd,
@@ -287,9 +289,11 @@ class VisualAgentClient:
                 text=True,
                 capture_output=True,
             )
+            last_stdout = proc.stdout.strip()
+            last_stderr = proc.stderr.strip()
             output = (proc.stdout + proc.stderr).strip()
-            if proc.returncode == 0 and proc.stdout.strip():
-                self.token = proc.stdout.strip()
+            if proc.returncode == 0 and last_stdout:
+                self.token = last_stdout
                 return True
             logger.warning(
                 "token refresh attempt %s failed: %s",
@@ -298,6 +302,11 @@ class VisualAgentClient:
             )
             if attempt < 2:
                 time.sleep(1.0)
+        logger.error(
+            "token refresh failed after %s attempts: %s",
+            attempt + 1,
+            last_stderr or last_stdout,
+        )
         return False
 
     def _refresh_token_async(self) -> Future:

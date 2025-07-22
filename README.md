@@ -545,6 +545,8 @@ uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 ```
 Only one connection is processed at a time. If `/run` returns `409` queue the request and retry once `/status` reports the agent idle.
 
+Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
+
 ### Topic discovery and clip acquisition
 
 Two new bots automate topic research and raw clip gathering:
