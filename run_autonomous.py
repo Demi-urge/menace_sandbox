@@ -46,6 +46,7 @@ from menace.synergy_exporter import start_synergy_exporter, SynergyExporter
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
+from logging_utils import get_logger, setup_logging
 from sandbox_recovery_manager import SandboxRecoveryManager
 import sandbox_runner
 
@@ -59,7 +60,7 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     spec.loader.exec_module(sr_mod)
     sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PresetModel(BaseModel):
@@ -332,7 +333,7 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
 
-    logging.basicConfig(level=logging.INFO)
+    setup_logging()
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
     created_env = not env_file.exists()

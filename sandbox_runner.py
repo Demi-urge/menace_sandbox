@@ -14,7 +14,7 @@ import time
 import textwrap
 import argparse
 import logging
-from logging_utils import log_record
+from logging_utils import log_record, get_logger, setup_logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -49,7 +49,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from menace.roi_tracker import ROITracker
 
 __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 ROOT = Path(__file__).resolve().parent
 
