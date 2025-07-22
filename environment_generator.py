@@ -115,19 +115,19 @@ def generate_presets(
         presets.append(preset)
 
     if tracker:
+        def _adj(seq: List[Any], cur: Any, up: bool) -> Any:
+            lookup = [str(x) for x in seq]
+            try:
+                idx = lookup.index(str(cur))
+            except ValueError:
+                idx = 0
+            idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
+            return seq[idx]
+
         eff_vals = tracker.metrics_history.get("synergy_efficiency", [])
         vals = eff_vals[-3:]
         if vals:
             avg_eff = sum(vals) / len(vals)
-
-            def _adj(seq: List[Any], cur: Any, up: bool) -> Any:
-                lookup = [str(x) for x in seq]
-                try:
-                    idx = lookup.index(str(cur))
-                except ValueError:
-                    idx = 0
-                idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
-                return seq[idx]
 
             if avg_eff > 0.05:
                 for p in presets:
@@ -150,6 +150,34 @@ def generate_presets(
                     p["MAX_BANDWIDTH"] = _adj(
                         _BANDWIDTHS, str(p.get("MAX_BANDWIDTH", bw)), False
                     )
+                    p["MIN_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), False
+                    )
+
+        lat_vals = tracker.metrics_history.get("synergy_network_latency", [])
+        vals_lat = lat_vals[-3:]
+        if vals_lat:
+            avg_lat = sum(vals_lat) / len(vals_lat)
+            for p in presets:
+                cur = p.get("NETWORK_LATENCY_MS", _LATENCIES[0])
+                if avg_lat > 1.0:
+                    p["NETWORK_LATENCY_MS"] = _adj(_LATENCIES, cur, True)
+                elif avg_lat < -1.0:
+                    p["NETWORK_LATENCY_MS"] = _adj(_LATENCIES, cur, False)
+
+        tp_vals = tracker.metrics_history.get("synergy_throughput", [])
+        vals_tp = tp_vals[-3:]
+        if vals_tp:
+            avg_tp = sum(vals_tp) / len(vals_tp)
+            for p in presets:
+                bw = str(p.get("MAX_BANDWIDTH", _BANDWIDTHS[0]))
+                if avg_tp > 5.0:
+                    p["MAX_BANDWIDTH"] = _adj(_BANDWIDTHS, bw, True)
+                    p["MIN_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), True
+                    )
+                elif avg_tp < -5.0:
+                    p["MAX_BANDWIDTH"] = _adj(_BANDWIDTHS, bw, False)
                     p["MIN_BANDWIDTH"] = _adj(
                         _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), False
                     )
