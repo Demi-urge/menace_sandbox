@@ -38,6 +38,7 @@ elif "menace" not in sys.modules:
     spec.loader.exec_module(menace_pkg)
 
 from menace.auto_env_setup import ensure_env
+from sandbox_settings import SandboxSettings
 
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
@@ -132,7 +133,7 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     return validated
 
 
-def _check_dependencies() -> bool:
+def _check_dependencies(settings: SandboxSettings) -> bool:
     """Install missing project dependencies and warn about binaries.
 
     Returns
@@ -141,8 +142,8 @@ def _check_dependencies() -> bool:
         ``True`` if all dependencies are satisfied, otherwise ``False``.
     """
     missing: List[str] = []
-    offline = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
-    wheel_dir = os.getenv("MENACE_WHEEL_DIR")
+    offline = settings.menace_offline_install
+    wheel_dir = settings.menace_wheel_dir
 
     def apt_install(pkg: str) -> bool:
         if offline:
@@ -261,9 +262,9 @@ def _check_dependencies() -> bool:
     return True
 
 
-def _get_env_override(name: str, current):
+def _get_env_override(name: str, current, settings: SandboxSettings):
     """Return parsed environment variable when ``current`` is ``None``."""
-    env_val = os.getenv(name)
+    env_val = getattr(settings, name.lower())
     if current is not None or env_val is None:
         return current
     try:
@@ -436,28 +437,13 @@ def main(argv: List[str] | None = None) -> None:
         default=None,
         help="do not persist synergy metrics",
     )
+    parser.add_argument(
+        "--check-settings",
+        action="store_true",
+        help="validate environment settings and exit",
+    )
     args = parser.parse_args(argv)
 
-    roi_cycles_env = os.getenv("ROI_CYCLES")
-    if roi_cycles_env is not None:
-        try:
-            args.roi_cycles = int(roi_cycles_env)
-        except Exception:
-            logger.warning("Invalid ROI_CYCLES value: %s", roi_cycles_env)
-
-    synergy_cycles_env = os.getenv("SYNERGY_CYCLES")
-    if synergy_cycles_env is not None:
-        try:
-            args.synergy_cycles = int(synergy_cycles_env)
-        except Exception:
-            logger.warning("Invalid SYNERGY_CYCLES value: %s", synergy_cycles_env)
-
-    if args.save_synergy_history is None:
-        env_val = os.getenv("SAVE_SYNERGY_HISTORY")
-        if env_val is not None:
-            args.save_synergy_history = env_val != "0"
-        else:
-            args.save_synergy_history = True
 
     logging.basicConfig(level=logging.INFO)
 
@@ -467,9 +453,27 @@ def main(argv: List[str] | None = None) -> None:
     if created_env:
         logger.info("created env file at %s", env_file)
 
-    data_dir = Path(
-        args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
-    )
+    try:
+        settings = SandboxSettings()
+    except ValidationError as exc:
+        if args.check_settings:
+            print(exc)
+            return
+        raise
+    if args.check_settings:
+        print("Environment settings valid")
+        return
+
+    if settings.roi_cycles is not None:
+        args.roi_cycles = settings.roi_cycles
+    if settings.synergy_cycles is not None:
+        args.synergy_cycles = settings.synergy_cycles
+    if settings.save_synergy_history is not None:
+        args.save_synergy_history = settings.save_synergy_history
+    elif args.save_synergy_history is None:
+        args.save_synergy_history = True
+
+    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     synergy_history: list[dict[str, float]] = []
     synergy_ma_prev: list[dict[str, float]] = []
     if args.save_synergy_history:
@@ -478,12 +482,10 @@ def main(argv: List[str] | None = None) -> None:
         args.synergy_cycles = max(3, len(synergy_history))
 
     if args.preset_files is None:
-        data_dir = Path(
-            args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
-        )
+        data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
         preset_file = data_dir / "presets.json"
         created_preset = False
-        env_val = os.getenv("SANDBOX_ENV_PRESETS")
+        env_val = settings.sandbox_env_presets
         if env_val:
             try:
                 presets_raw = json.loads(env_val)
@@ -525,31 +527,23 @@ def main(argv: List[str] | None = None) -> None:
         if created_preset:
             logger.info("created preset file at %s", preset_file)
 
-    if not _check_dependencies():
+    if not _check_dependencies(settings):
         sys.exit("dependency installation failed")
 
     dash_port = args.dashboard_port
-    dash_env = os.getenv("AUTO_DASHBOARD_PORT")
+    dash_env = settings.auto_dashboard_port
     if dash_port is None and dash_env is not None:
-        try:
-            dash_port = int(dash_env)
-        except Exception:
-            dash_port = None
+        dash_port = dash_env
 
     synergy_dash_port = None
     if args.save_synergy_history and dash_env is not None:
-        try:
-            synergy_dash_port = int(dash_env) + 1
-        except Exception:
-            synergy_dash_port = None
+        synergy_dash_port = dash_env + 1
 
     if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
 
-        history_file = (
-            Path(args.sandbox_data_dir or "sandbox_data") / "roi_history.json"
-        )
+        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "roi_history.json"
         dash = MetricsDashboard(str(history_file))
         Thread(
             target=dash.run,
@@ -561,9 +555,7 @@ def main(argv: List[str] | None = None) -> None:
         from menace.self_improvement_engine import SynergyDashboard
         from threading import Thread
 
-        synergy_file = (
-            Path(args.sandbox_data_dir or "sandbox_data") / "synergy_history.json"
-        )
+        synergy_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
         s_dash = SynergyDashboard(str(synergy_file))
         Thread(
             target=s_dash.run,
@@ -572,14 +564,12 @@ def main(argv: List[str] | None = None) -> None:
         ).start()
 
     agent_proc = None
-    autostart = os.getenv("VISUAL_AGENT_AUTOSTART", "1") != "0"
+    autostart = settings.visual_agent_autostart
     if autostart:
         try:
             import requests  # type: ignore
 
-            base = (os.getenv("VISUAL_AGENT_URLS", "http://127.0.0.1:8001")).split(";")[
-                0
-            ]
+            base = (settings.visual_agent_urls).split(";")[0]
             resp = requests.get(f"{base}/status", timeout=3)
             if resp.status_code != 200:
                 raise RuntimeError(resp.text)
@@ -592,27 +582,27 @@ def main(argv: List[str] | None = None) -> None:
     flagged: set[str] = set()
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = list(synergy_ma_prev)
-    roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold)
-    synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold)
-    roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence)
+    roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold, settings)
+    synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold, settings)
+    roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence, settings)
     synergy_confidence = _get_env_override(
-        "SYNERGY_CONFIDENCE", args.synergy_confidence
+        "SYNERGY_CONFIDENCE", args.synergy_confidence, settings
     )
     synergy_threshold_window = _get_env_override(
-        "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window
+        "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window, settings
     )
     synergy_threshold_weight = _get_env_override(
-        "SYNERGY_THRESHOLD_WEIGHT", args.synergy_threshold_weight
+        "SYNERGY_THRESHOLD_WEIGHT", args.synergy_threshold_weight, settings
     )
-    synergy_ma_window = _get_env_override("SYNERGY_MA_WINDOW", args.synergy_ma_window)
+    synergy_ma_window = _get_env_override("SYNERGY_MA_WINDOW", args.synergy_ma_window, settings)
     synergy_stationarity_confidence = _get_env_override(
-        "SYNERGY_STATIONARITY_CONFIDENCE", args.synergy_stationarity_confidence
+        "SYNERGY_STATIONARITY_CONFIDENCE", args.synergy_stationarity_confidence, settings
     )
     synergy_std_threshold = _get_env_override(
-        "SYNERGY_STD_THRESHOLD", args.synergy_std_threshold
+        "SYNERGY_STD_THRESHOLD", args.synergy_std_threshold, settings
     )
     synergy_variance_confidence = _get_env_override(
-        "SYNERGY_VARIANCE_CONFIDENCE", args.synergy_variance_confidence
+        "SYNERGY_VARIANCE_CONFIDENCE", args.synergy_variance_confidence, settings
     )
     if synergy_threshold_window is None:
         synergy_threshold_window = args.synergy_cycles
@@ -654,9 +644,7 @@ def main(argv: List[str] | None = None) -> None:
                 if gen_func is generate_presets:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
-                    data_dir = args.sandbox_data_dir or os.getenv(
-                        "SANDBOX_DATA_DIR", "sandbox_data"
-                    )
+                    data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
                     presets = validate_presets(
                         gen_func(str(data_dir), args.preset_count)
                     )
@@ -673,7 +661,7 @@ def main(argv: List[str] | None = None) -> None:
         finally:
             sandbox_runner._sandbox_main = recovery.sandbox_main
 
-        data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+        data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
         hist_file = data_dir / "roi_history.json"
         tracker = ROITracker()
         try:
