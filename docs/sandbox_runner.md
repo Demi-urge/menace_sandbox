@@ -42,6 +42,10 @@ in `VM_SETTINGS` pointing to your QEMU disk file. The VM runs `sandbox_runner.py
 just like the host or container. After shutdown the generated `roi_history.json`
 is read from the shared directory and merged into the main ROI tracker.
 
+Both Docker and QEMU startups are retried with exponential backoff. When all
+attempts fail the error message is stored in the returned tracker under
+`diagnostics['docker_error']` or `diagnostics['vm_error']`.
+
 Example configuration:
 
 ```python
@@ -103,7 +107,9 @@ cycles are unaffected.
 `SANDBOX_DOCKER=1` or pass `container=True` to execute the snippet in a minimal
 Docker/Podman container with the specified resource limits (`CPU_LIMIT`,
 `MEMORY_LIMIT` and `DISK_LIMIT`). CPU usage, memory consumption and disk I/O are
-recorded and returned in a `runtime_metrics` dictionary.
+recorded and returned in a `runtime_metrics` dictionary. When container startup
+fails the error is logged and the dictionary includes a `container_error`
+entry describing the problem.
 
 ## Section Targeting
 
