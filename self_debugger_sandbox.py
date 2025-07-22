@@ -100,6 +100,27 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 )
                 """
             )
+            self._history_conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS patch_scores(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    description TEXT,
+                    result TEXT,
+                    coverage_delta REAL,
+                    error_delta REAL,
+                    roi_delta REAL,
+                    complexity REAL,
+                    synergy_roi REAL,
+                    synergy_efficiency REAL,
+                    synergy_resilience REAL,
+                    synergy_antifragility REAL,
+                    flakiness REAL,
+                    runtime_impact REAL,
+                    score REAL,
+                    ts TEXT
+                )
+                """
+            )
             self._history_conn.commit()
             self._load_history_stats()
         except Exception:
@@ -603,6 +624,40 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self.logger.exception("score weight persistence failed")
 
     # ------------------------------------------------------------------
+    def recent_scores(self, limit: int = 20) -> list[tuple]:
+        """Return the most recent patch scores."""
+        if not self._history_conn:
+            return []
+        try:
+            cur = self._history_conn.execute(
+                """
+                SELECT
+                    description,
+                    result,
+                    coverage_delta,
+                    error_delta,
+                    roi_delta,
+                    complexity,
+                    synergy_roi,
+                    synergy_efficiency,
+                    synergy_resilience,
+                    synergy_antifragility,
+                    flakiness,
+                    runtime_impact,
+                    score,
+                    ts
+                FROM patch_scores
+                ORDER BY id DESC LIMIT ?
+                """,
+                (int(limit),),
+            )
+            rows = cur.fetchall()
+            return [tuple(r) for r in rows]
+        except Exception:
+            self.logger.exception("recent scores fetch failed")
+            return []
+
+    # ------------------------------------------------------------------
     def _composite_score(
         self,
         coverage_delta: float,
@@ -763,6 +818,47 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 sort_keys=True,
             )
             self.audit_trail.record(payload)
+            if self._history_conn:
+                try:
+                    self._history_conn.execute(
+                        """
+                        INSERT INTO patch_scores(
+                            description,
+                            result,
+                            coverage_delta,
+                            error_delta,
+                            roi_delta,
+                            complexity,
+                            synergy_roi,
+                            synergy_efficiency,
+                            synergy_resilience,
+                            synergy_antifragility,
+                            flakiness,
+                            runtime_impact,
+                            score,
+                            ts
+                        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            description,
+                            result,
+                            None if coverage_delta is None else float(coverage_delta),
+                            None if error_delta is None else float(error_delta),
+                            None if roi_delta is None else float(roi_delta),
+                            None if complexity is None else float(complexity),
+                            None if synergy_roi is None else float(synergy_roi),
+                            None if synergy_efficiency is None else float(synergy_efficiency),
+                            None if synergy_resilience is None else float(synergy_resilience),
+                            None if synergy_antifragility is None else float(synergy_antifragility),
+                            None if flakiness is None else float(flakiness),
+                            None if runtime_impact is None else float(runtime_impact),
+                            None if score is None else float(score),
+                            datetime.utcnow().isoformat(),
+                        ),
+                    )
+                    self._history_conn.commit()
+                except Exception:
+                    self.logger.exception("patch score persistence failed")
         except Exception:
             self.logger.exception("audit trail logging failed")
 
