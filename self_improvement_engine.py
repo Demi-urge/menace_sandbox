@@ -118,19 +118,27 @@ class DQNSynergyLearner(SynergyWeightLearner):
         lr: float = 1e-3,
         *,
         strategy: str | None = None,
+        target_sync: int = 10,
     ) -> None:
         super().__init__(path, lr)
         name = (strategy or "dqn").lower()
-        if name in {"double", "double_dqn", "double-dqn", "ddqn"}:
-            self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr)
+        self.target_sync = max(1, int(target_sync))
+        if name in {"double", "double_dqn", "double-dqn", "ddqn"} and sip_torch is not None:
+            self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr, target_sync=target_sync)
             self.strategy_name = "double_dqn"
         elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic"}:
             self.strategy = ActorCriticStrategy()
             self.strategy_name = "policy_gradient"
         else:
-            self.strategy = DQNStrategy(action_dim=4, lr=lr)
-            self.strategy_name = "dqn"
+            # prefer Double DQN when PyTorch is available
+            if sip_torch is not None:
+                self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr, target_sync=target_sync)
+                self.strategy_name = "double_dqn"
+            else:
+                self.strategy = DQNStrategy(action_dim=4, lr=lr)
+                self.strategy_name = "dqn"
         self._state: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self._steps = 0
 
     # ------------------------------------------------------------------
     def load(self) -> None:
@@ -209,6 +217,20 @@ class DQNSynergyLearner(SynergyWeightLearner):
         for key, idx in mapping.items():
             val = q_vals_list[idx]
             self.weights[key] = max(0.0, min(val, 10.0))
+        self._steps += 1
+        if (
+            self._steps % self.target_sync == 0
+            and hasattr(self.strategy, "target_model")
+            and hasattr(self.strategy, "model")
+            and getattr(self.strategy, "target_model") is not None
+            and getattr(self.strategy, "model") is not None
+        ):
+            try:
+                self.strategy.target_model.load_state_dict(
+                    self.strategy.model.state_dict()
+                )
+            except Exception:
+                pass
         self.save()
 
 
