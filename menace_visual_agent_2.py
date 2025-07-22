@@ -646,21 +646,24 @@ def safe_find_and_click(target_text, y_min=None, y_max=None, tolerance=100):
 
         coords = find_text_coordinates(img, target_text, y_min=y_min, y_max=y_max)
         if coords:
-            print(f"[SUCCESS] Found '{target_text}' at {coords}")
+            logger.info("found %s at %s", target_text, coords)
             click_target(*coords)
             return True
         elif target_text == "Describe a task":
-            print(f"[FALLBACK] Could not detect '{target_text}'. Clicking hardcoded coordinates (526, 382).")
+            logger.warning(
+                "could not detect %s; clicking fallback coordinates (603, 304)",
+                target_text,
+            )
             click_target(603, 304)
             return True
         else:
-            print(f"[FAILURE] '{target_text}' not found. Retrying...")
+            logger.warning("%s not found; retrying", target_text)
             retries += 1
             time.sleep(1)
 
     if img is not None:
         save_screenshot(img, f"failure_{target_text}")
-    print(f"[ABORT] Failed after {MAX_RETRIES} retries.")
+    logger.error("failed to find %s after %s retries", target_text, MAX_RETRIES)
     return False
 
 
@@ -682,11 +685,11 @@ def _wait_for_build(timeout: int, refresh: int) -> bool:
         time.sleep(1)
         img = capture_screen()
         text = ocr_image(img)
-        print("[OCR TEXT]", text)
+        logger.info("ocr text: %s", text)
         save_screenshot(img, "build_loop")
 
         if "diff" in text.lower():
-            print("[READY] Found 'diff' – proceeding to PR.")
+            logger.info("found 'diff' in ocr; proceeding to PR")
             click_target(1746, 154)
             time.sleep(20)
             click_target(1746, 154)
@@ -695,16 +698,16 @@ def _wait_for_build(timeout: int, refresh: int) -> bool:
 
         if time.time() - start > timeout:
             mins = timeout // 60
-            print(f"[TIMEOUT] Gave up after {mins} minutes. Returning nothing.")
+            logger.error("build timeout after %s minutes", mins)
             return False
 
         if time.time() - last_refresh >= refresh:
             mins = refresh // 60
-            print(f"[CTRL+R] Refresh triggered after {mins} minutes.")
+            logger.info("refreshing browser after %s minutes", mins)
             pyautogui.hotkey('ctrl', 'r')
             last_refresh = time.time()
 
-        print("…still building – re-checking in 10 s")
+        logger.info("build in progress; re-checking in 10 s")
         time.sleep(10)
 
 
@@ -712,7 +715,7 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
     _persist_state()
     try:
         if not safe_find_and_click(TRIGGERS['prompt']):
-            print("[ERROR] Could not locate prompt field.")
+            logger.error("could not locate prompt field")
             return
 
         time.sleep(1.5)
@@ -720,8 +723,9 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         pyautogui.press('enter')
         time.sleep(1)
 
-        print("[FALLBACK] Skipping OCR for 'Code'."
-              " Clicking hardcoded coordinates (1387, 557).")
+        logger.info(
+            "skipping OCR for 'Code'; using fallback coordinates (1304, 749)"
+        )
         click_target(1304, 749)
         time.sleep(10)
         click_target(665, 565)
@@ -744,16 +748,16 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
 
         delay_between_clicks = 0.3  # seconds
 
-        print("Eshgooo G 🔥 Starting click sweep...")
+        logger.info("starting click sweep")
 
         for x, y in coordinates:
             pyautogui.moveTo(x, y)
             pyautogui.click()
-            print(f"Clicked at: ({x}, {y})")
+            logger.info("clicked at (%s, %s)", x, y)
             _persist_state()
             time.sleep(delay_between_clicks)
 
-        print("✅ Sweep complete. Surely Balolos-coded.")
+        logger.info("click sweep complete")
         time.sleep(3)
         pyautogui.hotkey('ctrl', 'w')
         time.sleep(3)
@@ -767,12 +771,12 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         time.sleep(3)
         pyautogui.hotkey('win', '1')
         time.sleep(2)
-        print("Menace pipeline run completed.")
+        logger.info("menace pipeline run completed")
         _persist_state()
 
 
     except Exception as e:
-        print(f"[FATAL ERROR] {e}")
+        logger.error("fatal error during pipeline: %s", e)
         time.sleep(1)
         img = capture_screen()
         save_screenshot(img, "fatal_error")
@@ -986,7 +990,7 @@ if __name__ == "__main__":
         try:
             _global_lock.acquire(timeout=0)
         except Timeout:
-            print("Agent busy", file=sys.stderr)
+            logger.error("agent busy while flushing queue")
             sys.exit(1)
         try:
             task_queue.clear()
@@ -1002,14 +1006,14 @@ if __name__ == "__main__":
                 _global_lock.release()
             except Exception as exc:
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
-        print("Queue flushed")
+        logger.info("queue flushed")
         sys.exit(0)
 
     if args.recover_queue:
         try:
             _global_lock.acquire(timeout=0)
         except Timeout:
-            print("Agent busy", file=sys.stderr)
+            logger.error("agent busy while recovering queue")
             sys.exit(1)
         try:
             task_queue.clear()
@@ -1020,7 +1024,7 @@ if __name__ == "__main__":
                 _global_lock.release()
             except Exception as exc:
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
-        print(f"Recovered {len(task_queue)} tasks")
+        logger.info("recovered %s tasks", len(task_queue))
         sys.exit(0)
 
     if args.auto_recover:
@@ -1028,7 +1032,11 @@ if __name__ == "__main__":
 
 
     _setup_pid_file()
-    print(f"👁️  Menace Visual Agent listening on :{HTTP_PORT}  token={API_TOKEN[:8]}...")
+    logger.info(
+        "Menace Visual Agent listening on :%s  token=%s",
+        HTTP_PORT,
+        API_TOKEN[:8],
+    )
 
     config = uvicorn.Config(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
     server = uvicorn.Server(config)
