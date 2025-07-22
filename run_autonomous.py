@@ -529,13 +529,19 @@ def main(argv: List[str] | None = None) -> None:
         sys.exit("dependency installation failed")
 
     dash_port = args.dashboard_port
-    if dash_port is None:
-        env_val = os.getenv("AUTO_DASHBOARD_PORT")
-        if env_val is not None:
-            try:
-                dash_port = int(env_val)
-            except Exception:
-                dash_port = None
+    dash_env = os.getenv("AUTO_DASHBOARD_PORT")
+    if dash_port is None and dash_env is not None:
+        try:
+            dash_port = int(dash_env)
+        except Exception:
+            dash_port = None
+
+    synergy_dash_port = None
+    if args.save_synergy_history and dash_env is not None:
+        try:
+            synergy_dash_port = int(dash_env) + 1
+        except Exception:
+            synergy_dash_port = None
 
     if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
@@ -548,6 +554,20 @@ def main(argv: List[str] | None = None) -> None:
         Thread(
             target=dash.run,
             kwargs={"port": dash_port},
+            daemon=True,
+        ).start()
+
+    if synergy_dash_port:
+        from menace.self_improvement_engine import SynergyDashboard
+        from threading import Thread
+
+        synergy_file = (
+            Path(args.sandbox_data_dir or "sandbox_data") / "synergy_history.json"
+        )
+        s_dash = SynergyDashboard(str(synergy_file))
+        Thread(
+            target=s_dash.run,
+            kwargs={"port": synergy_dash_port},
             daemon=True,
         ).start()
 
