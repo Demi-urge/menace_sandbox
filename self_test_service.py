@@ -206,30 +206,45 @@ class SelfTestService:
                         stdout=(
                             asyncio.subprocess.PIPE
                             if use_pipe
-                            else asyncio.subprocess.DEVNULL
+                            else asyncio.subprocess.PIPE
                         ),
-                        stderr=asyncio.subprocess.DEVNULL,
+                        stderr=(
+                            asyncio.subprocess.PIPE
+                            if use_pipe
+                            else asyncio.subprocess.PIPE
+                        ),
                     )
                     proc_info.append((proc, tmp_name))
 
-            async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float, bool]:
+            async def _process(
+                proc: asyncio.subprocess.Process, tmp: str | None
+            ) -> tuple[int, int, float, float, bool, str, str]:
                 report: dict[str, Any] = {}
-                if use_pipe:
+                out: bytes = b""
+                err: bytes = b""
+                if use_pipe or hasattr(proc, "communicate") or getattr(proc, "stdout", None):
                     if hasattr(proc, "communicate"):
                         out, err = await proc.communicate()
                     else:
-                        out = b""
-                        err = b""
-                        if proc.stdout:
+                        if getattr(proc, "stdout", None):
                             out = await proc.stdout.read()
                         if getattr(proc, "stderr", None):
                             err = await proc.stderr.read()
                         await proc.wait()
-                    data = (out or b"") + (err or b"")
-                    try:
-                        report = json.loads(data.decode() or "{}")
-                    except Exception:
-                        self.logger.exception("failed to parse test report")
+                    if use_pipe:
+                        data = (out or b"") + (err or b"")
+                        try:
+                            report = json.loads(data.decode() or "{}")
+                        except Exception:
+                            self.logger.exception("failed to parse test report")
+                    else:
+                        await proc.wait()
+                        try:
+                            assert tmp is not None
+                            with open(tmp, "r", encoding="utf-8") as fh:
+                                report = json.load(fh)
+                        except Exception:
+                            self.logger.exception("failed to parse test report")
                 else:
                     await proc.wait()
                     try:
@@ -262,6 +277,8 @@ class SelfTestService:
                 )
 
                 failed_flag = proc.returncode != 0
+                out_snip = (out.decode(errors="ignore") if out else "")[:1000]
+                err_snip = (err.decode(errors="ignore") if err else "")[:1000]
                 if failed_flag:
                     exc = RuntimeError(
                         f"self tests failed with code {proc.returncode}"
@@ -271,26 +288,30 @@ class SelfTestService:
                         self.error_logger.log(exc, "self_tests", "sandbox")
                     except Exception:
                         self.logger.exception("error logging failed")
-
-                return pcount, fcount, cov, runtime, failed_flag
+                return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip
 
             tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_exc: Exception | None = None
             any_failed = False
+            stdout_snip = ""
+            stderr_snip = ""
 
             for res in results:
                 if isinstance(res, Exception):
                     if first_exc is None:
                         first_exc = res
                     continue
-                pcount, fcount, cov, runtime, failed_flag = res
+                pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip = res
                 any_failed = any_failed or failed_flag
                 passed += pcount
                 failed += fcount
                 coverage_total += cov
                 runtime_total += runtime
+                if failed_flag:
+                    stdout_snip += out_snip
+                    stderr_snip += err_snip
 
                 if self.result_callback:
                     partial = {
@@ -317,6 +338,9 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
+            if stdout_snip or stderr_snip:
+                self.results["stdout"] = stdout_snip
+                self.results["stderr"] = stderr_snip
             self._store_history(
                 {
                     "passed": passed,
@@ -477,6 +501,13 @@ def cli(argv: list[str] | None = None) -> int:
             asyncio.run(service._run_once())
         except Exception as exc:
             print(f"self test run failed: {exc}", file=sys.stderr)
+            if service.results:
+                out = service.results.get("stdout")
+                err = service.results.get("stderr")
+                if out:
+                    print(out, file=sys.stderr)
+                if err:
+                    print(err, file=sys.stderr)
             return 1
         return 0
 
