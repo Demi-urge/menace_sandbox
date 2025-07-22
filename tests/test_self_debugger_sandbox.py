@@ -138,6 +138,8 @@ class PatchHistoryDB:
     def __init__(self, path=None):
         self.path = Path(path or "patch.db")
         self.records = []
+        self.flaky = []
+        self.weights = None
 
     def add(self, rec):
         self.records.append(rec)
@@ -147,6 +149,19 @@ class PatchHistoryDB:
 
     def by_hash(self, code_hash):
         return [r for r in self.records if getattr(r, "code_hash", None) == code_hash]
+
+    def record_flakiness(self, filename: str, flakiness: float) -> None:
+        self.flaky.append((filename, flakiness))
+
+    def average_flakiness(self, filename: str, limit: int = 20) -> float:
+        vals = [f for f_name, f in self.flaky if f_name == filename]
+        return float(sum(vals) / len(vals)) if vals else 0.0
+
+    def store_weights(self, weights):
+        self.weights = tuple(weights)
+
+    def get_weights(self):
+        return self.weights
 
 
 cd_mod.PatchHistoryDB = PatchHistoryDB
@@ -923,3 +938,41 @@ def test_flakiness_history_affects_score(tmp_path):
     base = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0)
     penalized = dbg._composite_score(0.0, 0.0, 0.5, 0.0, 0.0, 0.0, filename="a.py")
     assert penalized < base
+
+
+def test_patch_scores_persist_and_retrieve(monkeypatch, tmp_path):
+    db_path = tmp_path / "scores.db"
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(db_path))
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=trail)
+    dbg._log_patch(
+        "desc",
+        "success",
+        coverage_delta=0.1,
+        error_delta=0.0,
+        roi_delta=0.2,
+        score=0.8,
+        flakiness=0.1,
+        runtime_impact=0.05,
+        complexity=1.0,
+        synergy_roi=0.3,
+        synergy_efficiency=0.4,
+    )
+    rows = dbg.recent_scores(1)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row[0] == "desc"
+    assert row[1] == "success"
+    assert abs(row[12] - 0.8) < 1e-6
+
+
+def test_recent_scores_limit(monkeypatch, tmp_path):
+    db_path = tmp_path / "scores.db"
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(db_path))
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    for i in range(3):
+        dbg._log_patch(f"p{i}", "success", score=float(i))
+    rows = dbg.recent_scores(2)
+    assert len(rows) == 2
+    assert rows[0][0] == "p2"
+    assert rows[1][0] == "p1"
