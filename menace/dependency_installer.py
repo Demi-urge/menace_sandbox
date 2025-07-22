@@ -15,7 +15,9 @@ from .startup_checks import _parse_requirement
 logger = logging.getLogger(__name__)
 
 
-def install_packages(packages: Iterable[str], *, offline: bool = False) -> dict[str, str]:
+def install_packages(
+    packages: Iterable[str], *, offline: bool = False, wheel_dir: str | Path | None = None
+) -> dict[str, str]:
     """Install ``packages`` via pip and return a mapping of failures to error messages.
 
     Parameters
@@ -33,6 +35,27 @@ def install_packages(packages: Iterable[str], *, offline: bool = False) -> dict[
         return errors
 
     if offline:
+        if wheel_dir:
+            wheel_path = Path(wheel_dir)
+            for pkg in pkgs:
+                mod = _parse_requirement(pkg)
+                try:
+                    subprocess.check_call(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pip",
+                            "install",
+                            "--no-index",
+                            "--find-links",
+                            str(wheel_path),
+                            pkg,
+                        ]
+                    )
+                    importlib.import_module(mod)
+                except Exception as exc:  # pragma: no cover - best effort
+                    errors[pkg] = str(exc)
+            return errors
         msg = "offline mode; installation skipped"
         for pkg in pkgs:
             errors[pkg] = msg

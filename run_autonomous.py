@@ -142,6 +142,7 @@ def _check_dependencies() -> bool:
     """
     missing: List[str] = []
     offline = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
+    wheel_dir = os.getenv("MENACE_WHEEL_DIR")
 
     def apt_install(pkg: str) -> bool:
         if offline:
@@ -158,11 +159,16 @@ def _check_dependencies() -> bool:
             return False
 
     def pip_install(pkg: str) -> bool:
+        cmd = [sys.executable, "-m", "pip", "install"]
         if offline:
-            logger.info("offline mode; skipping pip install %s", pkg)
-            return False
+            if wheel_dir:
+                cmd += ["--no-index", "--find-links", wheel_dir]
+            else:
+                logger.info("offline mode; skipping pip install %s", pkg)
+                return False
+        cmd.append(pkg)
         try:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+            subprocess.check_call(cmd)
             return True
         except Exception as exc:  # pragma: no cover - best effort
             logger.error("pip install %s failed: %s", pkg, exc)
@@ -235,7 +241,7 @@ def _check_dependencies() -> bool:
 
     missing_pkgs = verify_project_dependencies()
     if missing_pkgs:
-        errors = install_packages(missing_pkgs, offline=offline)
+        errors = install_packages(missing_pkgs, offline=offline, wheel_dir=wheel_dir)
         if offline and missing_pkgs:
             logger.info(
                 "offline install mode enabled; skipping installation for: %s",

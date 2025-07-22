@@ -125,8 +125,28 @@ def test_offline_mode_skips_install(monkeypatch):
     apt_calls = []
     monkeypatch.setattr(mod.subprocess, "run", lambda cmd, check=False: apt_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
     monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
+    monkeypatch.delenv("MENACE_WHEEL_DIR", raising=False)
     assert not mod._check_dependencies()
     assert pip_calls == []
+    assert apt_calls == []
+
+
+def test_offline_mode_wheel_dir(monkeypatch, tmp_path):
+    setup_startup(monkeypatch)
+    mod = load_module()
+    monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
+    _patch_tools(monkeypatch, mod, git=False)
+    di = sys.modules["menace.dependency_installer"]
+    monkeypatch.setattr(di.importlib, "import_module", lambda n: types.ModuleType(n))
+    pip_calls = []
+    monkeypatch.setattr(di.subprocess, "check_call", lambda cmd, **k: pip_calls.append(cmd) or 0)
+    apt_calls = []
+    monkeypatch.setattr(mod.subprocess, "run", lambda cmd, check=False: apt_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
+    monkeypatch.setenv("MENACE_OFFLINE_INSTALL", "1")
+    monkeypatch.setenv("MENACE_WHEEL_DIR", str(tmp_path))
+    assert not mod._check_dependencies()
+    assert pip_calls
+    assert all("--find-links" in call for call in pip_calls)
     assert apt_calls == []
 
 
