@@ -96,6 +96,32 @@ Predicted Q‑values replace the manual gradient step so weight updates follow t
 learned policy. Both the online and target model weights are persisted alongside
 the policy file so progress carries over between runs without a cold start.
 
+## Modifying ``synergy_weights.json``
+
+Synergy weights are persisted in a JSON file. By default the engine stores it
+next to ``SANDBOX_SCORE_DB`` using the suffix ``.synergy.json``. Provide
+``synergy_weights_path`` when creating ``SelfImprovementEngine`` to choose a
+different location. The file can be edited manually or with
+``synergy_weight_cli.py`` to set starting values.
+
+The environment variables ``SYNERGY_WEIGHT_ROI``,
+``SYNERGY_WEIGHT_EFFICIENCY``, ``SYNERGY_WEIGHT_RESILIENCE`` and
+``SYNERGY_WEIGHT_ANTIFRAGILITY`` override the loaded weights at startup. After
+each cycle the learner writes back to the JSON file so adjustments persist
+between runs.
+
+Example using ``DQNSynergyLearner`` and a custom weight file:
+
+```python
+from menace.self_improvement_engine import SelfImprovementEngine, DQNSynergyLearner
+
+engine = SelfImprovementEngine(
+    synergy_learner_cls=DQNSynergyLearner,
+    synergy_weights_path="synergy_weights.json",
+)
+engine.run_cycle()
+```
+
 ## Synergy Predictions and Preset Adaptation
 
 `ROITracker` records synergy metrics whenever multiple modules run together in
