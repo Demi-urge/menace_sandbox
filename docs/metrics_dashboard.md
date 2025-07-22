@@ -54,3 +54,14 @@ python -m menace.metrics_dashboard --file roi_history.json --port 8002
 The endpoints return JSON data with recorded values and prediction series which
 can be embedded in custom dashboards.
 
+
+### Synergy Prometheus Exporter
+
+Set `EXPORT_SYNERGY_METRICS=1` when running `run_autonomous.py` to expose the
+latest values from `synergy_history.json` as Prometheus gauges. The exporter
+listens on `SYNERGY_METRICS_PORT` (default 8003).
+
+```bash
+EXPORT_SYNERGY_METRICS=1 SYNERGY_METRICS_PORT=8003 python run_autonomous.py
+```
+
