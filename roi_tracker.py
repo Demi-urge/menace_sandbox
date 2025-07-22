@@ -743,7 +743,7 @@ class ROITracker:
             try:
                 manager.assign_prediction_bots(self)
             except Exception:
-                pass
+                logger.exception("manager assignment failed")
 
         results: Dict[str, float] = {}
         vec = list(features or [])
@@ -861,7 +861,7 @@ class ROITracker:
                 )
                 return float(val)
             except Exception:
-                pass
+                logger.exception("synergy prediction via manager failed")
 
         model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
         if model_name and len(history) > 10:
