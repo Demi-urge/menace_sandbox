@@ -679,30 +679,16 @@ def main(argv: List[str] | None = None) -> None:
         )
         flagged.update(new_flags)
 
-        if getattr(args, "auto_thresholds", False) or args.synergy_threshold is None:
-            synergy_threshold = cli._adaptive_synergy_threshold(
-                synergy_history,
-                synergy_threshold_window,
-                weight=synergy_threshold_weight,
-                confidence=synergy_confidence or 0.95,
-            )
-        elif synergy_threshold is None:
-            synergy_threshold = tracker.diminishing()
-        converged, ema_val, _ = cli._synergy_converged(
+        thr = args.synergy_threshold
+        if getattr(args, "auto_thresholds", False) or thr is None:
+            thr = None
+        converged, ema_val, _ = cli.adaptive_synergy_convergence(
             synergy_history,
             args.synergy_cycles,
-            synergy_threshold,
-            std_threshold=synergy_std_threshold,
-            ma_window=(
-                synergy_ma_window
-                if synergy_ma_window is not None
-                else args.synergy_cycles
-            ),
+            threshold=thr,
+            threshold_window=synergy_threshold_window,
+            weight=synergy_threshold_weight,
             confidence=synergy_confidence or 0.95,
-            stationarity_confidence=synergy_stationarity_confidence
-            or (synergy_confidence or 0.95),
-            variance_confidence=synergy_variance_confidence
-            or (synergy_confidence or 0.95),
         )
 
         if module_history and set(module_history) <= flagged and converged:

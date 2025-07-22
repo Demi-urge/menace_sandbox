@@ -420,6 +420,64 @@ def _synergy_converged(
     return True, max_abs, min_conf
 
 
+def adaptive_synergy_convergence(
+    history: list[dict[str, float]],
+    window: int,
+    *,
+    threshold: float | None = None,
+    threshold_window: int | None = None,
+    factor: float = 2.0,
+    weight: float = 1.0,
+    confidence: float = 0.95,
+) -> tuple[bool, float, float]:
+    """Return synergy convergence using EWMA and t-test statistics.
+
+    When ``threshold`` is not provided an adaptive threshold is derived from the
+    last ``threshold_window`` samples using :func:`_adaptive_synergy_threshold`.
+    The moving average and variance of each metric is computed using
+    :func:`_ema` and tested against the threshold via a two sided t-test.  The
+    function returns ``(converged, max_abs_ema, min_confidence)`` where
+    ``min_confidence`` is the smallest t-test confidence across metrics.
+    """
+
+    if threshold_window is None:
+        threshold_window = window
+
+    thr = threshold
+    if thr is None:
+        thr = _adaptive_synergy_threshold(
+            history, threshold_window, factor=factor, weight=weight
+        )
+
+    if len(history) < window:
+        return False, 0.0, 0.0
+
+    metrics: dict[str, list[float]] = {}
+    for entry in history[-window:]:
+        for k, v in entry.items():
+            if k.startswith("synergy_"):
+                metrics.setdefault(k, []).append(float(v))
+
+    max_abs = 0.0
+    min_conf = 1.0
+    for vals in metrics.values():
+        ema, std = _ema(vals)
+        max_abs = max(max_abs, abs(ema))
+        n = len(vals)
+        if n < 2 or std == 0:
+            conf = 1.0 if abs(ema) <= thr else 0.0
+        else:
+            se = std / math.sqrt(n)
+            t_stat = abs(ema) / se
+            p = 2 * (1 - t.cdf(t_stat, n - 1))
+            conf = 1 - p
+        min_conf = min(min_conf, conf)
+        if abs(ema) > thr or conf < confidence:
+            return False, max_abs, min_conf
+
+    return True, max_abs, min_conf
+
+
 def full_autonomous_run(
     args: argparse.Namespace,
     *,
