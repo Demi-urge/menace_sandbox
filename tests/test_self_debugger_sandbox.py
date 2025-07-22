@@ -1005,3 +1005,36 @@ def test_parallel_evaluation_records_scores(monkeypatch, tmp_path):
     rec = json.loads(trail.records[-1])
     assert rec["score"] > 0
     assert len(patch_db.flaky) >= 1
+
+
+def test_parallel_candidate_scoring_runtime(monkeypatch, tmp_path):
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), audit_trail=trail, flakiness_runs=1
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        dbg,
+        "_generate_tests",
+        lambda logs: ["def a():\n    pass\n", "def b():\n    pass\n"],
+    )
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    cov_vals = [50.0, 60.0, 50.0, 50.0, 70.0, 50.0, 50.0, 80.0, 50.0]
+
+    def fake_run(path, env=None):
+        time.sleep(0.1)
+        return cov_vals.pop(0), 0.0
+
+    monkeypatch.setattr(dbg, "_run_tests", fake_run)
+
+    start = time.perf_counter()
+    dbg.analyse_and_fix(patch_db=patch_db)
+    elapsed = time.perf_counter() - start
+
+    rec = json.loads(trail.records[-1])
+    assert rec["score"] > 0
+    assert len(patch_db.flaky) >= 1
+    assert elapsed < 0.5
