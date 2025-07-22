@@ -95,8 +95,8 @@ class SynergyWeightLearner:
                 json.dump(self.weights, fh)
                 tmp = Path(fh.name)
             os.replace(tmp, self.path)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("failed to save synergy weights: %s", exc)
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
@@ -170,15 +170,15 @@ class DQNSynergyLearner(SynergyWeightLearner):
                 if os.path.exists(tgt) and hasattr(self.strategy, "target_model"):
                     assert self.strategy.target_model is not None
                     self.strategy.target_model.load_state_dict(sip_torch.load(tgt))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("failed to load DQN models: %s", exc)
         try:
             pkl = base + ".policy.pkl"
             if os.path.exists(pkl):
                 with open(pkl, "rb") as fh:
                     self.strategy = pickle.load(fh)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("failed to load strategy pickle: %s", exc)
 
     # ------------------------------------------------------------------
     def save(self) -> None:
@@ -192,13 +192,13 @@ class DQNSynergyLearner(SynergyWeightLearner):
                     sip_torch.save(self.strategy.model.state_dict(), base + ".pt")
                 if hasattr(self.strategy, "target_model") and self.strategy.target_model is not None:
                     sip_torch.save(self.strategy.target_model.state_dict(), base + ".target.pt")
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("failed to save DQN models: %s", exc)
         try:
             with open(base + ".policy.pkl", "wb") as fh:
                 pickle.dump(self.strategy, fh)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("failed to save strategy pickle: %s", exc)
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
@@ -240,8 +240,8 @@ class DQNSynergyLearner(SynergyWeightLearner):
                 self.strategy.target_model.load_state_dict(
                     self.strategy.model.state_dict()
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("target model sync failed: %s", exc)
         self.save()
 
 
