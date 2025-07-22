@@ -7,6 +7,7 @@ from .logging_utils import log_record
 import time
 import asyncio
 import os
+from sandbox_settings import SandboxSettings
 import json
 import pickle
 import tempfile
@@ -328,32 +329,33 @@ class SelfImprovementEngine:
         self.pre_roi_cap = (
             pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         )
+        settings = SandboxSettings()
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
-            else float(os.getenv("SYNERGY_WEIGHT_ROI", "1.0"))
+            else settings.synergy_weight_roi
         )
         self.synergy_weight_efficiency = (
             synergy_weight_efficiency
             if synergy_weight_efficiency is not None
-            else float(os.getenv("SYNERGY_WEIGHT_EFFICIENCY", "1.0"))
+            else settings.synergy_weight_efficiency
         )
         self.synergy_weight_resilience = (
             synergy_weight_resilience
             if synergy_weight_resilience is not None
-            else float(os.getenv("SYNERGY_WEIGHT_RESILIENCE", "1.0"))
+            else settings.synergy_weight_resilience
         )
         self.synergy_weight_antifragility = (
             synergy_weight_antifragility
             if synergy_weight_antifragility is not None
-            else float(os.getenv("SYNERGY_WEIGHT_ANTIFRAGILITY", "1.0"))
+            else settings.synergy_weight_antifragility
         )
         self.roi_ema_alpha = (
             roi_ema_alpha
             if roi_ema_alpha is not None
-            else float(os.getenv("ROI_EMA_ALPHA", "0.1"))
+            else settings.roi_ema_alpha
         )
-        default_path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db")).with_suffix(
+        default_path = Path(settings.sandbox_score_db).with_suffix(
             ".synergy.json"
         )
         self.synergy_weights_path = (
@@ -364,7 +366,7 @@ class SelfImprovementEngine:
         self.synergy_weights_lr = (
             synergy_weights_lr
             if synergy_weights_lr is not None
-            else float(os.getenv("SYNERGY_WEIGHTS_LR", "0.1"))
+            else settings.synergy_weights_lr
         )
         self.synergy_learner = synergy_learner_cls(
             self.synergy_weights_path, lr=self.synergy_weights_lr
