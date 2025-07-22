@@ -586,6 +586,10 @@ from the data directory and derives the threshold using
 ``_adaptive_synergy_threshold``. Likewise ``--synergy-cycles`` defaults to the
 length of this history with a minimum of ``3``.
 
+Writes to this history file are protected with a ``filelock.FileLock``. The lock
+``synergy_history.json.lock`` is acquired before saving and released once the
+update completes to avoid corruption when multiple runs execute concurrently.
+
 Example usage:
 
 ```bash
