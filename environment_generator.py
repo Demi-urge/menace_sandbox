@@ -237,20 +237,40 @@ class AdaptivePresetAgent:
         try:
             with open(self.state_file) as fh:
                 data = json.load(fh)
-            st = data.get("state")
-            self.prev_state = tuple(st) if st is not None else None
-            self.prev_action = data.get("action")
         except Exception as exc:
             logger.warning("Failed to load RL state: %s", exc)
+            bak = f"{self.state_file}.bak"
+            if os.path.exists(bak):
+                try:
+                    with open(bak) as fh:
+                        data = json.load(fh)
+                except Exception as exc2:
+                    logger.warning("Failed to load backup RL state: %s", exc2)
+                    return
+            else:
+                return
+        st = data.get("state")
+        self.prev_state = tuple(st) if st is not None else None
+        self.prev_action = data.get("action")
 
     def _save_state(self) -> None:
         if not self.state_file:
             return
+        tmp_file = f"{self.state_file}.tmp"
+        bak_file = f"{self.state_file}.bak"
         try:
-            with open(self.state_file, "w") as fh:
+            with open(tmp_file, "w") as fh:
                 json.dump({"state": self.prev_state, "action": self.prev_action}, fh)
+            if os.path.exists(self.state_file):
+                os.replace(self.state_file, bak_file)
+            os.replace(tmp_file, self.state_file)
         except Exception as exc:
             logger.warning("Failed to save RL state: %s", exc)
+            try:
+                if os.path.exists(tmp_file):
+                    os.remove(tmp_file)
+            except OSError:
+                pass
 
     # --------------------------------------------------------------
     def _state(self, tracker: "ROITracker") -> tuple[int, ...]:
