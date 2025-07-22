@@ -45,6 +45,17 @@ class SelfTestService:
         docker_host: str | None = None,
         history_path: str | Path | None = None,
     ) -> None:
+        """Create a new service instance.
+
+        Parameters
+        ----------
+        container_runtime:
+            Executable used to run containers. Can be ``docker`` or ``podman``.
+        docker_host:
+            Remote host or URL for the container engine. Passed to the runtime
+            using ``-H`` for Docker or ``--url`` for Podman.
+        """
+
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
         self.data_bot = data_bot
@@ -218,7 +229,13 @@ class SelfTestService:
                         docker_cmd.extend(["-e", f"{k}={v}"])
                     docker_cmd.append(self.container_image)
 
-                    container_cmd = cmd[2:]
+                    # run pytest inside the container via the Python interpreter
+                    container_cmd = [
+                        "python",
+                        "-m",
+                        "pytest",
+                        *cmd[3:],
+                    ]
 
                     proc = await asyncio.create_subprocess_exec(
                         *docker_cmd,
