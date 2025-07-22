@@ -53,6 +53,14 @@ GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
 )
+LOCK_TIMEOUT = float(os.getenv("VISUAL_AGENT_LOCK_TIMEOUT", "3600"))
+try:
+    if os.path.exists(GLOBAL_LOCK_PATH):
+        if time.time() - os.path.getmtime(GLOBAL_LOCK_PATH) > LOCK_TIMEOUT:
+            os.remove(GLOBAL_LOCK_PATH)
+except Exception as exc:  # pragma: no cover - fs errors
+    logger.warning("failed to remove stale lock %s: %s", GLOBAL_LOCK_PATH, exc)
+
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
 
 # PID file setup

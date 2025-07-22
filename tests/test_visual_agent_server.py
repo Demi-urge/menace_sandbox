@@ -3,6 +3,7 @@ import importlib
 import sys
 import types
 import time
+import os
 import threading
 import socket
 import json
@@ -571,3 +572,14 @@ def test_recover_truncated_file(monkeypatch, tmp_path):
     assert bak2.read_text() == truncated1
     assert len(list(tmp_path.glob("visual_agent_queue.json.bak*"))) == 2
     assert json.loads(path.read_text()) == {"queue": [], "status": {}}
+
+
+def test_stale_lock_removed_on_startup(monkeypatch, tmp_path):
+    lock_path = tmp_path / "va.lock"
+    lock_path.write_text("x")
+    old = time.time() - 100
+    os.utime(lock_path, (old, old))
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+    va = _setup_va(monkeypatch, tmp_path)
+    assert not lock_path.exists()
