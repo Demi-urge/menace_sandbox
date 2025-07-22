@@ -1,8 +1,36 @@
 import sys
+import random
 import pytest
 
 import environment_generator as eg
-import menace.roi_tracker as rt
+try:
+    import menace.roi_tracker as rt
+except Exception:  # pragma: no cover - fallback stub
+    import types
+
+    class _RT:
+        def __init__(self, *a, **k):
+            self.roi_history = []
+            self.metrics_history = {"security_score": [70, 70, 70]}
+
+        def update(self, before=0.0, after=0.0, *, metrics=None):
+            self.roi_history.append(after)
+            if metrics:
+                for k2, v in metrics.items():
+                    self.metrics_history.setdefault(k2, []).append(v)
+
+        def diminishing(self):
+            return 0.01
+
+        def forecast(self):
+            return 0.0, (0.0, 0.0)
+
+        def forecast_synergy(self):
+            val, _ = self.forecast()
+            return val, (0.0, 0.0)
+
+    rt = types.SimpleNamespace(ROITracker=_RT)
+    sys.modules.setdefault("menace.roi_tracker", rt)
 
 
 def test_generate_presets_count_and_keys():
@@ -272,6 +300,26 @@ def test_synergy_efficiency_adjusts_resources():
     new = eg.adapt_presets(tracker, presets)
     assert float(new[0]["CPU_LIMIT"]) < 2
     assert new[0]["MEMORY_LIMIT"] != "512Mi"
+
+
+def test_generate_presets_synergy_efficiency_negative():
+    tracker = _DummyTracker([70, 70, 70], synergy_eff=[-0.2, -0.3, -0.4])
+    random.seed(1)
+    base = eg.generate_presets(1)[0]
+    random.seed(1)
+    new = eg.generate_presets(1, tracker=tracker)[0]
+    assert new["NETWORK_LATENCY_MS"] >= base["NETWORK_LATENCY_MS"]
+    assert eg._BANDWIDTHS.index(new["BANDWIDTH_LIMIT"]) <= eg._BANDWIDTHS.index(base["BANDWIDTH_LIMIT"])
+
+
+def test_generate_presets_synergy_efficiency_positive():
+    tracker = _DummyTracker([70, 70, 70], synergy_eff=[0.2, 0.25, 0.3])
+    random.seed(2)
+    base = eg.generate_presets(1)[0]
+    random.seed(2)
+    new = eg.generate_presets(1, tracker=tracker)[0]
+    assert new["NETWORK_LATENCY_MS"] <= base["NETWORK_LATENCY_MS"]
+    assert eg._BANDWIDTHS.index(new["BANDWIDTH_LIMIT"]) >= eg._BANDWIDTHS.index(base["BANDWIDTH_LIMIT"])
 
 
 def test_synergy_adaptability_adjusts_resources():
