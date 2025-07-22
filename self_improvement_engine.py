@@ -12,6 +12,7 @@ import pickle
 import tempfile
 import math
 from pathlib import Path
+import numpy as np
 
 from .self_model_bootstrap import bootstrap
 from .research_aggregator_bot import (
@@ -1432,7 +1433,14 @@ class ImprovementEngineRegistry:
             self.unregister_engine(name)
 
 
-__all__ = ["SelfImprovementEngine", "ImprovementEngineRegistry", "auto_x"]
+__all__ = [
+    "SelfImprovementEngine",
+    "ImprovementEngineRegistry",
+    "auto_x",
+    "SynergyDashboard",
+    "load_synergy_history",
+    "synergy_stats",
+]
 
 
 def auto_x(
@@ -1448,3 +1456,143 @@ def auto_x(
     else:
         registry.register_engine("default", SelfImprovementEngine())
     return registry.run_all_cycles(energy=energy)
+
+
+def load_synergy_history(path: str | Path) -> list[dict[str, float]]:
+    """Return synergy history entries from ``path``."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text())
+        if not isinstance(data, list):
+            return []
+        hist: list[dict[str, float]] = []
+        for entry in data:
+            if isinstance(entry, dict):
+                hist.append({str(k): float(v) for k, v in entry.items()})
+        return hist
+    except Exception:
+        return []
+
+
+def synergy_stats(history: list[dict[str, float]]) -> dict[str, dict[str, float]]:
+    """Return average and variance for each synergy metric."""
+    metrics: dict[str, list[float]] = {}
+    for entry in history:
+        for k, v in entry.items():
+            metrics.setdefault(str(k), []).append(float(v))
+    stats: dict[str, dict[str, float]] = {}
+    for name, vals in metrics.items():
+        arr = np.array(vals, dtype=float)
+        stats[name] = {
+            "average": float(arr.mean()) if arr.size else 0.0,
+            "variance": float(arr.var()) if arr.size else 0.0,
+        }
+    return stats
+
+
+class SynergyDashboard:
+    """Expose synergy metrics via a small Flask app."""
+
+    def __init__(self, history_file: str | Path = "synergy_history.json") -> None:
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.history_file = Path(history_file)
+        self.app = Flask(__name__)
+        self.app.add_url_rule("/", "index", self.index)
+        self.app.add_url_rule("/stats", "stats", self.stats)
+        self.app.add_url_rule("/plot.png", "plot", self.plot)
+
+    def _load(self) -> list[dict[str, float]]:
+        return load_synergy_history(self.history_file)
+
+    def index(self) -> tuple[str, int]:
+        return "Synergy dashboard running. Access /stats", 200
+
+    def stats(self) -> tuple[str, int]:
+        hist = self._load()
+        return jsonify(synergy_stats(hist)), 200
+
+    def plot(self) -> tuple[bytes, int, dict[str, str]]:
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        history = self._load()
+        metrics = sorted({k for d in history for k in d})
+        labels = list(range(len(history)))
+        fig, ax = plt.subplots()
+        for name in metrics:
+            vals = [d.get(name, 0.0) for d in history]
+            ax.plot(labels, vals, label=name)
+        if metrics:
+            ax.legend()
+        ax.set_xlabel("iteration")
+        ax.set_ylabel("value")
+        fig.tight_layout()
+        from io import BytesIO
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def run(self, host: str = "0.0.0.0", port: int = 5001) -> None:
+        self.app.run(host=host, port=port)
+
+
+def cli(argv: list[str] | None = None) -> None:
+    """Command line interface for synergy utilities."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Self-improvement utilities")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_dash = sub.add_parser(
+        "synergy-dashboard", help="start synergy metrics dashboard"
+    )
+    p_dash.add_argument("--file", default="synergy_history.json")
+    p_dash.add_argument("--port", type=int, default=5001)
+
+    p_plot = sub.add_parser("plot-synergy", help="plot synergy metrics")
+    p_plot.add_argument("history", help="synergy_history.json file")
+    p_plot.add_argument("output", help="output PNG file")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "synergy-dashboard":
+        dash = SynergyDashboard(args.file)
+        dash.run(port=args.port)
+        return
+
+    if args.cmd == "plot-synergy":
+        hist = load_synergy_history(args.history)
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            parser.error("matplotlib is required for plotting")
+        labels = list(range(len(hist)))
+        metrics = sorted({k for d in hist for k in d})
+        for name in metrics:
+            vals = [d.get(name, 0.0) for d in hist]
+            plt.plot(labels, vals, label=name)
+        if metrics:
+            plt.legend()
+        plt.xlabel("iteration")
+        plt.ylabel("value")
+        plt.tight_layout()
+        plt.savefig(args.output)
+        plt.close()
+        return
+
+    parser.error("unknown command")
+
+
+def main(argv: list[str] | None = None) -> None:
+    cli(argv)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()
