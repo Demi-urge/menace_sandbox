@@ -458,16 +458,16 @@ def test_reliability_roi_scores():
     tracker = rt.ROITracker()
     tracker.record_prediction(1.0, 1.5)
     tracker.record_prediction(2.0, 1.0)
-    mae = tracker.rolling_mae()
-    assert tracker.reliability() == pytest.approx(1.0 / (1.0 + mae))
+    err = 1.0 / (1.0 + rt.ROITracker._ema([0.5, 1.0]))
+    assert tracker.reliability() == pytest.approx(err)
 
 
 def test_reliability_metric_scores():
     tracker = rt.ROITracker()
     tracker.record_metric_prediction("profit", 1.0, 2.0)
     tracker.record_metric_prediction("profit", 2.0, 1.0)
-    mae = tracker.rolling_mae_metric("profit")
-    assert tracker.reliability(metric="profit") == pytest.approx(1.0 / (1.0 + mae))
+    err = 1.0 / (1.0 + rt.ROITracker._ema([1.0, 1.0]))
+    assert tracker.reliability(metric="profit") == pytest.approx(err)
 
 
 def test_synergy_reliability():

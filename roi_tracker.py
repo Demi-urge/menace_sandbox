@@ -93,6 +93,7 @@ class ROITracker:
             "synergy_antifragility": [],
             "synergy_resilience": [],
             "synergy_security_score": [],
+            "roi_reliability": [],
         }
         self.synergy_metrics_history: Dict[str, List[float]] = {
             "synergy_adaptability": [],
@@ -118,6 +119,7 @@ class ROITracker:
             "synergy_antifragility": [],
             "synergy_resilience": [],
             "synergy_security_score": [],
+            "synergy_roi_reliability": [],
         }
         self.synergy_history: list[dict[str, float]] = []
         self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
@@ -147,6 +149,19 @@ class ROITracker:
                         self.resource_metrics.append(tuple(vals[:5]))
             except Exception:
                 logger.exception("resource history fetch failed")
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _ema(values: Iterable[float], alpha: float = 0.3) -> float:
+        """Return exponential moving average for ``values``."""
+        it = iter(values)
+        try:
+            ema = float(next(it))
+        except StopIteration:
+            return 0.0
+        for val in it:
+            ema = alpha * float(val) + (1.0 - alpha) * ema
+        return float(ema)
 
     # ------------------------------------------------------------------
     def register_metrics(self, *names: str) -> None:
@@ -315,10 +330,20 @@ class ROITracker:
                 return 0.0
             return max(0.0, min(1.0, score))
         if metric is None:
-            mae = self.rolling_mae(window)
+            preds = self.predicted_roi
+            acts = self.actual_roi
         else:
-            mae = self.rolling_mae_metric(metric, window)
-        return 1.0 / (1.0 + abs(mae))
+            preds = self.predicted_metrics.get(metric, [])
+            acts = self.actual_metrics.get(metric, [])
+        if window:
+            preds = preds[-window:]
+            acts = acts[-window:]
+        errors = [abs(p - a) for p, a in zip(preds, acts)]
+        if not errors:
+            err = 0.0
+        else:
+            err = self._ema(errors)
+        return 1.0 / (1.0 + abs(err))
 
     # ------------------------------------------------------------------
     def cv_reliability(self, metric: str | None = None, cv: int = 3) -> float:
@@ -383,6 +408,12 @@ class ROITracker:
         if self._next_prediction is not None:
             self.record_prediction(self._next_prediction, roi_after)
             self._next_prediction = None
+        if metrics is None:
+            metrics = {}
+        metrics.setdefault("roi_reliability", self.reliability())
+        metrics.setdefault(
+            "synergy_roi_reliability", self.reliability(metric="synergy_roi")
+        )
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
