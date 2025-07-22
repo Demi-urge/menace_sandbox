@@ -78,6 +78,8 @@ class SelfImprovementEngine:
         synergy_weight_antifragility: float | None = None,
         state_path: Path | str | None = None,
         roi_ema_alpha: float | None = None,
+        synergy_weights_path: Path | str | None = None,
+        synergy_weights_lr: float | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -149,11 +151,25 @@ class SelfImprovementEngine:
             if roi_ema_alpha is not None
             else float(os.getenv("ROI_EMA_ALPHA", "0.1"))
         )
+        default_path = Path(os.getenv("SANDBOX_SCORE_DB", "score_history.db")).with_suffix(
+            ".synergy.json"
+        )
+        self.synergy_weights_path = (
+            Path(synergy_weights_path)
+            if synergy_weights_path is not None
+            else default_path
+        )
+        self.synergy_weights_lr = (
+            synergy_weights_lr
+            if synergy_weights_lr is not None
+            else float(os.getenv("SYNERGY_WEIGHTS_LR", "0.1"))
+        )
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
         self.roi_delta_ema: float = 0.0
         self._synergy_cache: dict | None = None
         self._load_state()
+        self._load_synergy_weights()
         from .module_index_db import ModuleIndexDB
 
         self.module_index = module_index or ModuleIndexDB()
@@ -217,6 +233,53 @@ class SelfImprovementEngine:
             os.replace(tmp, self.state_path)
         except Exception as exc:
             self.logger.exception("failed to save state: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _load_synergy_weights(self) -> None:
+        """Load persisted synergy weights from JSON file."""
+        path = self.synergy_weights_path
+        if not path or not path.exists():
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.synergy_weight_roi = float(data.get("roi", self.synergy_weight_roi))
+            self.synergy_weight_efficiency = float(
+                data.get("efficiency", self.synergy_weight_efficiency)
+            )
+            self.synergy_weight_resilience = float(
+                data.get("resilience", self.synergy_weight_resilience)
+            )
+            self.synergy_weight_antifragility = float(
+                data.get("antifragility", self.synergy_weight_antifragility)
+            )
+        except Exception as exc:
+            self.logger.exception("failed to load synergy weights: %s", exc)
+
+    # ------------------------------------------------------------------
+    def _save_synergy_weights(self) -> None:
+        """Persist synergy weights to JSON file."""
+        path = self.synergy_weights_path
+        if not path:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w", delete=False, dir=path.parent, encoding="utf-8"
+            ) as fh:
+                json.dump(
+                    {
+                        "roi": self.synergy_weight_roi,
+                        "efficiency": self.synergy_weight_efficiency,
+                        "resilience": self.synergy_weight_resilience,
+                        "antifragility": self.synergy_weight_antifragility,
+                    },
+                    fh,
+                )
+                tmp = Path(fh.name)
+            os.replace(tmp, path)
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("failed to save synergy weights: %s", exc)
 
     # ------------------------------------------------------------------
     def _metric_delta(self, name: str, window: int = 3) -> float:
@@ -321,6 +384,42 @@ class SelfImprovementEngine:
         except Exception:
             syn_adj = 0.0
         return float(syn_adj)
+
+    # ------------------------------------------------------------------
+    def _update_synergy_weights(self, roi_delta: float) -> None:
+        """Adjust synergy weights using a simple policy gradient."""
+        if roi_delta == 0.0:
+            return
+        names = [
+            "synergy_roi",
+            "synergy_efficiency",
+            "synergy_resilience",
+            "synergy_antifragility",
+        ]
+        deltas = [self._metric_delta(n) for n in names]
+        weights = [
+            self.synergy_weight_roi,
+            self.synergy_weight_efficiency,
+            self.synergy_weight_resilience,
+            self.synergy_weight_antifragility,
+        ]
+        updated: list[float] = []
+        lr = float(self.synergy_weights_lr)
+        for w, d in zip(weights, deltas):
+            try:
+                w = float(w) + lr * float(roi_delta) * float(d)
+            except Exception:
+                continue
+            w = max(0.0, min(w, 10.0))
+            updated.append(w)
+        if len(updated) == 4:
+            (
+                self.synergy_weight_roi,
+                self.synergy_weight_efficiency,
+                self.synergy_weight_resilience,
+                self.synergy_weight_antifragility,
+            ) = updated
+            self._save_synergy_weights()
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
@@ -965,6 +1064,7 @@ class SelfImprovementEngine:
             ) * self.roi_delta_ema + self.roi_ema_alpha * delta
             self.roi_history.append(delta)
             self._save_state()
+            self._update_synergy_weights(delta)
             if self.policy:
                 try:
                     next_state = self._policy_state()
