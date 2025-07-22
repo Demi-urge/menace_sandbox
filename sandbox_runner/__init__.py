@@ -12,6 +12,7 @@ from .environment import (
     SANDBOX_ENV_PRESETS,
 )
 from .cycle import _sandbox_cycle_runner
+from .resource_tuner import ResourceTuner
 if os.getenv("MENACE_LIGHT_IMPORTS"):
     def _run_sandbox(*_a, **_k):
         raise RuntimeError("CLI disabled in light import mode")
@@ -52,4 +53,5 @@ __all__ = [
     "collect_plugin_metrics",
     "discover_stub_providers",
     "load_stub_providers",
+    "ResourceTuner",
 ]
