@@ -97,7 +97,7 @@ try:
         if time.time() - os.path.getmtime(GLOBAL_LOCK_PATH) > LOCK_TIMEOUT:
             os.remove(GLOBAL_LOCK_PATH)
 except Exception as exc:  # pragma: no cover - fs errors
-    logger.warning("failed to remove stale lock %s: %s", GLOBAL_LOCK_PATH, exc)
+    logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
 
 _global_lock = FileLock(GLOBAL_LOCK_PATH)
 
@@ -114,25 +114,26 @@ def _remove_pid_file() -> None:
             existing = int(path.read_text().strip())
             if existing == os.getpid():
                 path.unlink()
-    except Exception as exc:
-        logger.warning("failed to remove pid file %s: %s", path, exc)
+    except Exception:
+        logger.exception("failed to remove pid file %s", path)
 
 
 def _setup_pid_file() -> None:
     path = Path(PID_FILE_PATH)
     if path.exists():
+        existing = None
         try:
             existing = int(path.read_text().strip())
-            if existing != os.getpid() and psutil.pid_exists(existing):
-                raise SystemExit(
-                    f"Another instance of menace_visual_agent_2 is running (PID {existing})"
-                )
         except Exception as exc:
-            logger.warning("failed reading pid from %s: %s", path, exc)
+            logger.error("unable to read pid from %s: %s", path, exc)
+        if existing and existing != os.getpid() and psutil.pid_exists(existing):
+            raise SystemExit(
+                f"Another instance of menace_visual_agent_2 is running (PID {existing})"
+            )
         try:
             path.unlink()
-        except Exception as exc:
-            logger.warning("failed to remove stale pid file %s: %s", path, exc)
+        except Exception:
+            logger.exception("failed to remove stale pid file %s", path)
     try:
         path.write_text(str(os.getpid()))
     finally:
@@ -144,8 +145,8 @@ def _cleanup_stale_files() -> None:
     try:
         if os.path.exists(GLOBAL_LOCK_PATH):
             os.remove(GLOBAL_LOCK_PATH)
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed to remove lock %s: %s", GLOBAL_LOCK_PATH, exc)
+    except Exception:  # pragma: no cover - fs errors
+        logger.exception("failed to remove lock %s", GLOBAL_LOCK_PATH)
 
     path = Path(PID_FILE_PATH)
     try:
@@ -156,8 +157,8 @@ def _cleanup_stale_files() -> None:
                 pid = None
             if pid is None or not psutil.pid_exists(pid):
                 path.unlink()
-    except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed to remove pid file %s: %s", path, exc)
+    except Exception:  # pragma: no cover - fs errors
+        logger.exception("failed to remove pid file %s", path)
 
 # Queue management
 import hashlib
