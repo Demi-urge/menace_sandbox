@@ -603,6 +603,10 @@ from the data directory and derives the threshold using
 ``_adaptive_synergy_threshold``. Likewise ``--synergy-cycles`` defaults to the
 length of this history with a minimum of ``3``.
 
+Synergy weights used during self-improvement are updated based on these
+metrics. See [self_improvement_engine.md#synergy-weight-learners](self_improvement_engine.md#synergy-weight-learners)
+for details on how the history influences weight adjustments.
+
 Writes to this history file are protected with a ``filelock.FileLock``. The lock
 ``synergy_history.json.lock`` is acquired before saving and released once the
 update completes to avoid corruption when multiple runs execute concurrently.

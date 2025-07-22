@@ -67,3 +67,29 @@ trend is above ``roi_threshold`` the registry ensures projected ROI covers the
 ``cost_per_engine`` before adding a new one. Optionally ``approval_callback``
 can gate risky expansions. If resources dwindle or ROI falls below the
 threshold, engines are removed down to ``min_engines``.
+
+## Synergy Weight Learners
+
+The engine keeps a set of synergy weights that modulate how cross‑module
+metrics influence policy updates. ``SynergyWeightLearner`` stores four weights
+(``roi``, ``efficiency``, ``resilience`` and ``antifragility``) in a JSON file.
+After each cycle ``_update_synergy_weights`` measures the rolling change of the
+corresponding synergy metrics and calls ``SynergyWeightLearner.update``:
+
+``synergy_roi`` → ``roi``
+
+``synergy_efficiency`` → ``efficiency``
+
+``synergy_resilience`` → ``resilience``
+
+``synergy_antifragility`` → ``antifragility``
+
+Each weight is nudged by ``lr * roi_delta * metric_delta`` and clamped between
+``0`` and ``10``. Positive ROI deltas therefore reinforce metrics that improved
+while negative deltas or worsening metrics lower their influence.
+
+``DQNSynergyLearner`` extends this process with a small deep Q‑network. The
+synergy deltas form the state and the ROI‑scaled change acts as the reward for
+each action. Predicted Q‑values replace the manual gradient step so weight
+updates follow the learned policy. Both learners persist their weights and any
+model parameters to disk so progress carries over between runs.
