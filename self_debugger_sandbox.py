@@ -138,6 +138,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             "synergy_resilience": (0.0, 1.0),
             "synergy_antifragility": (0.0, 1.0),
         }
+        self._last_weights_update = 0.0
+        self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
 
     # ------------------------------------------------------------------
@@ -408,6 +410,11 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     ) -> None:
         """Adjust ``score_weights`` using patch history statistics."""
 
+        now = time.monotonic()
+        if now - getattr(self, "_last_weights_update", 0.0) < self._weight_update_interval:
+            return
+        self._last_weights_update = now
+
         records: list[tuple[float, float, float, float, float, float]] = []
         weights_path: Path | None = None
 
@@ -660,10 +667,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         else:
             self._update_score_weights(None)
         mc = {k: s for k, s in self._metric_stats.items()}
-        cov = coverage_delta / (mc.get("coverage", (0.0, 1.0))[1] + 1e-6)
-        err = error_delta / (mc.get("error", (0.0, 1.0))[1] + 1e-6)
-        roi = roi_delta / (mc.get("roi", (0.0, 1.0))[1] + 1e-6)
-        comp = complexity / (mc.get("complexity", (0.0, 1.0))[1] + 1e-6)
+        cov_mean, cov_sd = mc.get("coverage", (0.0, 1.0))
+        err_mean, err_sd = mc.get("error", (0.0, 1.0))
+        roi_mean, roi_sd = mc.get("roi", (0.0, 1.0))
+        comp_mean, comp_sd = mc.get("complexity", (0.0, 1.0))
+
+        cov = (coverage_delta - cov_mean) / (cov_sd + 1e-6)
+        err = (error_delta - err_mean) / (err_sd + 1e-6)
+        roi = (roi_delta - roi_mean) / (roi_sd + 1e-6)
+        comp = (complexity - comp_mean) / (comp_sd + 1e-6)
         syn_r = synergy_roi / (mc.get("synergy_roi", (0.0, 1.0))[1] + 1e-6)
         syn_e = synergy_efficiency / (
             mc.get("synergy_efficiency", (0.0, 1.0))[1] + 1e-6
