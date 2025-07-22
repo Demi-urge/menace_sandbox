@@ -114,6 +114,46 @@ def generate_presets(
             preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
         presets.append(preset)
 
+    if tracker:
+        eff_vals = tracker.metrics_history.get("synergy_efficiency", [])
+        vals = eff_vals[-3:]
+        if vals:
+            avg_eff = sum(vals) / len(vals)
+
+            def _adj(seq: List[Any], cur: Any, up: bool) -> Any:
+                lookup = [str(x) for x in seq]
+                try:
+                    idx = lookup.index(str(cur))
+                except ValueError:
+                    idx = 0
+                idx = min(idx + 1, len(seq) - 1) if up else max(idx - 1, 0)
+                return seq[idx]
+
+            if avg_eff > 0.05:
+                for p in presets:
+                    lat = p.get("NETWORK_LATENCY_MS", _LATENCIES[-1])
+                    p["NETWORK_LATENCY_MS"] = _adj(_LATENCIES, lat, False)
+                    bw = str(p.get("BANDWIDTH_LIMIT", _BANDWIDTHS[0]))
+                    p["BANDWIDTH_LIMIT"] = _adj(_BANDWIDTHS, bw, True)
+                    p["MAX_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MAX_BANDWIDTH", bw)), True
+                    )
+                    p["MIN_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), True
+                    )
+            elif avg_eff < -0.05:
+                for p in presets:
+                    lat = p.get("NETWORK_LATENCY_MS", _LATENCIES[0])
+                    p["NETWORK_LATENCY_MS"] = _adj(_LATENCIES, lat, True)
+                    bw = str(p.get("BANDWIDTH_LIMIT", _BANDWIDTHS[-1]))
+                    p["BANDWIDTH_LIMIT"] = _adj(_BANDWIDTHS, bw, False)
+                    p["MAX_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MAX_BANDWIDTH", bw)), False
+                    )
+                    p["MIN_BANDWIDTH"] = _adj(
+                        _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), False
+                    )
+
     if (
         agent
         and tracker
