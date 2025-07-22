@@ -45,3 +45,24 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
    The script verifies system dependencies, creates default presets using `environment_generator` and invokes the sandbox runner. The metrics dashboard is available at `http://localhost:${AUTO_DASHBOARD_PORT}` once started.
 
+## Local run essentials
+
+The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
+
+- `VISUAL_AGENT_TOKEN` – shared secret for the visual agent service.
+- `SANDBOX_DATA_DIR` – directory where ROI history, presets and patch records are stored. Defaults to `sandbox_data`.
+- `DATABASE_URL` – connection string for the primary database. Defaults to `sqlite:///menace.db`.
+- `BOT_DB_PATH` – location of the bot registry database, default `bots.db`.
+- `BOT_PERFORMANCE_DB` – path for the performance history database, default `bot_performance_history.db`.
+- `MAINTENANCE_DB` – SQLite database used for maintenance logs, default `maintenance.db`.
+
+### Example `.env`
+
+```dotenv
+VISUAL_AGENT_TOKEN=my-secret-token
+SANDBOX_DATA_DIR=~/menace_data
+DATABASE_URL=sqlite:///menace.db
+BOT_DB_PATH=bots.db
+BOT_PERFORMANCE_DB=bot_performance_history.db
+MAINTENANCE_DB=maintenance.db
+```
