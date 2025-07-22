@@ -36,6 +36,8 @@ from .evolution_history_db import EvolutionHistoryDB
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
+    DQNStrategy,
+    torch as sip_torch,
 )
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
@@ -103,6 +105,69 @@ class SynergyWeightLearner:
         self.save()
 
 
+class DQNSynergyLearner(SynergyWeightLearner):
+    """Learner using a simple DQN to adapt synergy weights."""
+
+    def __init__(self, path: Path | None = None, lr: float = 1e-3) -> None:
+        super().__init__(path, lr)
+        self.strategy = DQNStrategy(action_dim=4, lr=lr)
+        self._state: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+
+    # ------------------------------------------------------------------
+    def load(self) -> None:
+        super().load()
+        if not self.path:
+            return
+        if self.path and sip_torch is not None:
+            try:
+                base = os.path.splitext(self.path)[0]
+                pt = base + ".pt"
+                if os.path.exists(pt):
+                    self.strategy._ensure_model(4)
+                    state_dict = sip_torch.load(pt)
+                    assert self.strategy.model is not None
+                    self.strategy.model.load_state_dict(state_dict)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    def save(self) -> None:
+        super().save()
+        if not self.path:
+            return
+        if self.path and sip_torch is not None:
+            try:
+                base = os.path.splitext(self.path)[0]
+                if self.strategy.model is not None:
+                    sip_torch.save(self.strategy.model.state_dict(), base + ".pt")
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
+        names = [
+            "synergy_roi",
+            "synergy_efficiency",
+            "synergy_resilience",
+            "synergy_antifragility",
+        ]
+        self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
+        for idx, name in enumerate(names):
+            reward = roi_delta * self._state[idx]
+            self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
+        q_vals = self.strategy.predict(self._state)
+        mapping = {
+            "roi": 0,
+            "efficiency": 1,
+            "resilience": 2,
+            "antifragility": 3,
+        }
+        for key, idx in mapping.items():
+            val = float(q_vals[idx].item() if hasattr(q_vals[idx], "item") else q_vals[idx])
+            self.weights[key] = max(0.0, min(val, 10.0))
+        self.save()
+
+
 class SelfImprovementEngine:
     """Run the automation pipeline on a configurable bot."""
 
@@ -140,6 +205,7 @@ class SelfImprovementEngine:
         roi_ema_alpha: float | None = None,
         synergy_weights_path: Path | str | None = None,
         synergy_weights_lr: float | None = None,
+        synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -224,7 +290,7 @@ class SelfImprovementEngine:
             if synergy_weights_lr is not None
             else float(os.getenv("SYNERGY_WEIGHTS_LR", "0.1"))
         )
-        self.synergy_learner = SynergyWeightLearner(
+        self.synergy_learner = synergy_learner_cls(
             self.synergy_weights_path, lr=self.synergy_weights_lr
         )
         if synergy_weight_roi is None:
@@ -375,12 +441,22 @@ class SelfImprovementEngine:
 
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
 
-        base_weights = {
-            "synergy_roi": self.synergy_weight_roi,
-            "synergy_efficiency": self.synergy_weight_efficiency,
-            "synergy_resilience": self.synergy_weight_resilience,
-            "synergy_antifragility": self.synergy_weight_antifragility,
-        }
+        learner_weights = getattr(self, "synergy_learner", None)
+        if learner_weights is not None:
+            lw = learner_weights.weights
+            base_weights = {
+                "synergy_roi": lw.get("roi", self.synergy_weight_roi),
+                "synergy_efficiency": lw.get("efficiency", self.synergy_weight_efficiency),
+                "synergy_resilience": lw.get("resilience", self.synergy_weight_resilience),
+                "synergy_antifragility": lw.get("antifragility", self.synergy_weight_antifragility),
+            }
+        else:
+            base_weights = {
+                "synergy_roi": self.synergy_weight_roi,
+                "synergy_efficiency": self.synergy_weight_efficiency,
+                "synergy_resilience": self.synergy_weight_resilience,
+                "synergy_antifragility": self.synergy_weight_antifragility,
+            }
 
         weights: dict[str, float]
         stats: dict[str, tuple[float, float]]
@@ -1195,7 +1271,7 @@ class SelfImprovementEngine:
                 self._schedule_task = None
 
 
-from typing import Callable, Optional
+from typing import Callable, Optional, Type
 
 
 class ImprovementEngineRegistry:
