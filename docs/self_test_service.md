@@ -24,3 +24,5 @@ Options include:
 - `--workers` – number of pytest workers
 - `--container-image` – Docker image used with `--use-container`
 - `--use-container` – execute tests inside a container when available
+- `--container-runtime` – container runtime executable (default `docker`)
+- `--docker-host` – Docker/Podman host or URL for remote engines
