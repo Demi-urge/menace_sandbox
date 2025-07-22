@@ -23,7 +23,7 @@ def setup_stubs(monkeypatch):
     sc_mod.verify_project_dependencies = lambda: []
     sc_mod._parse_requirement = lambda r: r
     eg_mod = types.ModuleType("menace.environment_generator")
-    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1"}]
+    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}]
     tracker_mod = types.ModuleType("menace.roi_tracker")
 
     class DummyTracker:
@@ -69,6 +69,13 @@ def setup_stubs(monkeypatch):
     cli_stub._adaptive_threshold = lambda *a, **k: 0.0
     cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
     cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+    def _adapt_conv(history, window, *, threshold=None, threshold_window=None, **k):
+        if threshold is None:
+            threshold_window = threshold_window or window
+            threshold = cli_stub._adaptive_synergy_threshold(history, threshold_window)
+        return cli_stub._synergy_converged(history, window, threshold, **k)
+
+    cli_stub.adaptive_synergy_convergence = _adapt_conv
     sr_stub._sandbox_main = lambda p, a: None
     sr_stub.cli = cli_stub
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
@@ -263,3 +270,77 @@ def test_invalid_synergy_history_exits(monkeypatch, tmp_path):
             "--sandbox-data-dir",
             str(tmp_path),
         ])
+
+
+def test_auto_thresholds_uses_saved_synergy(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    thresholds: list[float] = []
+    hist_lengths: list[int] = []
+
+    def adaptive(hist: list[dict[str, float]], window: int, **k) -> float:
+        hist_lengths.append(len(hist))
+        vals = [h.get("synergy_roi", 0.0) for h in hist[-window:]]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    def conv(history, cycles, *, threshold=None, threshold_window=None, **k):
+        if threshold_window is None:
+            threshold_window = cycles
+        thr = threshold if threshold is not None else adaptive(history, threshold_window)
+        thresholds.append(thr)
+        return True, 0.0, {}
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "adaptive_synergy_convergence", conv)
+
+    def make_run(val: float):
+        def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
+            data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+            data_dir.mkdir(parents=True, exist_ok=True)
+            roi_file = data_dir / "roi_history.json"
+            with open(roi_file, "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "roi_history": [0.1],
+                        "module_deltas": {},
+                        "metrics_history": {"synergy_roi": [val]},
+                    },
+                    fh,
+                )
+
+        return fake_run
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "full_autonomous_run", make_run(0.2))
+    monkeypatch.setattr(mod, "full_autonomous_run", make_run(0.2))
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+        "--auto-thresholds",
+    ])
+
+    first_thr = thresholds[-1]
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "full_autonomous_run", make_run(0.05))
+    monkeypatch.setattr(mod, "full_autonomous_run", make_run(0.05))
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+        "--auto-thresholds",
+    ])
+
+    second_thr = thresholds[-1]
+
+    assert hist_lengths[0] == 1
+    assert hist_lengths[1] == 2
+    assert second_thr < first_thr
