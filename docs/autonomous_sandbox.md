@@ -75,6 +75,17 @@ BOT_PERFORMANCE_DB=bot_performance_history.db
 MAINTENANCE_DB=maintenance.db
 ```
 
+## Logging
+
+Application logs are written to `stdout` by default. Set `SANDBOX_JSON_LOGS=1`
+to output logs as single line JSON objects which simplifies collection by log
+aggregators. When running under `run_autonomous.py` the same environment
+variable enables JSON formatted logs for the sandbox runner as well.
+
+Long running services rotate their own log files such as
+`service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or
+clean old logs periodically when persisting them on disk.
+
 ## Docker usage
 
 Build the sandbox image and run it inside a container using the helper scripts:

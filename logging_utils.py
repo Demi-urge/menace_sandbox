@@ -10,12 +10,30 @@ from pathlib import Path
 from typing import Any, Dict
 
 
+class JSONFormatter(logging.Formatter):
+    """Format log records as compact JSON."""
+
+    def format(self, record: logging.LogRecord) -> str:  # pragma: no cover - simple
+        data = {
+            "time": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "name": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            data["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(data)
+
+
 _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
     "version": 1,
     "formatters": {
-        "default": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"}
+        "default": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+        "json": {"()": "logging_utils.JSONFormatter"},
     },
-    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "default"}},
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "default"}
+    },
     "root": {"level": "INFO", "handlers": ["console"]},
 }
 
@@ -23,15 +41,24 @@ _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
 def setup_logging(config_path: str | None = None) -> None:
     """Configure logging from *config_path* or defaults."""
     path = Path(config_path or os.getenv("MENACE_LOGGING_CONFIG", ""))
+    cfg: Dict[str, Any] | None = None
     if path.is_file():
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 cfg = json.load(fh)
-            logging.config.dictConfig(cfg)
-            return
         except Exception:
-            pass
-    logging.config.dictConfig(_DEFAULT_LOG_CONFIG)
+            cfg = None
+    if cfg is None:
+        cfg = dict(_DEFAULT_LOG_CONFIG)
+    if os.getenv("SANDBOX_JSON_LOGS") == "1":
+        cfg = cfg.copy()
+        cfg.setdefault("formatters", {})["json"] = {"()": "logging_utils.JSONFormatter"}
+        for hname, handler in list(cfg.get("handlers", {}).items()):
+            if isinstance(handler, dict) and hname == "console":
+                handler = handler.copy()
+                handler["formatter"] = "json"
+                cfg["handlers"][hname] = handler
+    logging.config.dictConfig(cfg)
 
 
 _def_configured = False
@@ -51,4 +78,4 @@ def log_record(**fields: Any) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-__all__ = ["setup_logging", "get_logger", "log_record"]
+__all__ = ["setup_logging", "get_logger", "log_record", "JSONFormatter"]
