@@ -61,12 +61,13 @@ if "cryptography" not in sys.modules:
     sys.modules["cryptography.hazmat.primitives.asymmetric.ed25519"] = ed25519
     sys.modules["cryptography.hazmat.primitives.serialization"] = serialization
 
-if "numpy" not in sys.modules:
+import importlib.util as _importlib_util
+if "numpy" not in sys.modules and _importlib_util.find_spec("numpy") is None:
     np_stub = types.ModuleType("numpy")
     np_stub.isscalar = lambda x: isinstance(x, (int, float, complex))
     np_stub.bool_ = bool
     sys.modules["numpy"] = np_stub
-if "sklearn" not in sys.modules:
+if "sklearn" not in sys.modules and _importlib_util.find_spec("sklearn") is None:
     skl = types.ModuleType("sklearn")
     skl.pipeline = types.ModuleType("sklearn.pipeline")
     sys.modules["sklearn"] = skl
