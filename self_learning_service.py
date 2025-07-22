@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import Optional
-from threading import Event
+from threading import Event, Thread
 
 from .unified_event_bus import UnifiedEventBus
 from .neuroplasticity import PathwayDB
@@ -17,7 +17,12 @@ from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
 
 
-def main(persist_events: Optional[str] = None, *, stop_event: Event | None = None) -> None:
+def main(
+    persist_events: Optional[str] = None,
+    *,
+    stop_event: Event | None = None,
+    persist_progress: Optional[str] = None,
+) -> None:
     """Run the self-learning coordinator until ``stop_event`` is set."""
 
     bus = UnifiedEventBus(persist_events) if persist_events else UnifiedEventBus()
@@ -44,6 +49,49 @@ def main(persist_events: Optional[str] = None, *, stop_event: Event | None = Non
             stop_event.set()
     finally:
         coord.stop()
+        if persist_progress:
+            try:
+                results = coord.evaluation_manager.evaluate_all()
+                import json
+
+                with open(persist_progress, "w", encoding="utf-8") as fh:
+                    json.dump(results, fh)
+            except Exception:  # pragma: no cover - persistence failures
+                pass
 
 
 __all__ = ["main"]
+
+
+def run_background(
+    persist_events: Optional[str] = None,
+    *,
+    persist_progress: Optional[str] = None,
+) -> tuple[callable, callable]:
+    """Return ``start`` and ``stop`` callables to manage the background thread."""
+
+    stop_event = Event()
+    thread: Thread | None = None
+
+    def _target() -> None:
+        main(
+            persist_events,
+            stop_event=stop_event,
+            persist_progress=persist_progress,
+        )
+
+    def start() -> None:
+        nonlocal thread
+        if thread is None:
+            thread = Thread(target=_target, daemon=True)
+            thread.start()
+
+    def stop() -> None:
+        stop_event.set()
+        if thread is not None:
+            thread.join(timeout=0)
+
+    return start, stop
+
+
+__all__.append("run_background")
