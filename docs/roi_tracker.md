@@ -213,6 +213,14 @@ large the effect may be during the next iteration. The reliability value ranges
 from `0` to `1` and indicates how well previous synergy forecasts matched the
 actual results.
 
+Example computing synergy reliability:
+
+```python
+tracker.record_metric_prediction("synergy_roi", 0.04, 0.02)
+tracker.record_metric_prediction("synergy_roi", 0.05, 0.03)
+print(tracker.synergy_reliability())
+```
+
 ## Custom Metrics
 
 `sandbox_runner.py` reads `sandbox_metrics.yaml` (or JSON) from the repository

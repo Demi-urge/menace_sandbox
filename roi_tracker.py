@@ -282,7 +282,15 @@ class ROITracker:
 
     # ------------------------------------------------------------------
     def synergy_reliability(self, window: int | None = None) -> float:
-        """Return MAE for ``synergy_roi`` predictions."""
+        """Return the mean absolute error of ``synergy_roi`` forecasts.
+
+        The method compares each stored prediction for ``synergy_roi`` with the
+        corresponding actual value recorded via
+        :meth:`record_metric_prediction`. The absolute differences are averaged
+        over the given ``window`` (or the entire history when ``window`` is
+        ``None``) giving ``sum(|p\_i - a\_i|) / n``. The result indicates how
+        closely synergy ROI forecasts matched reality: lower is better.
+        """
 
         return self.rolling_mae_metric("synergy_roi", window)
 
