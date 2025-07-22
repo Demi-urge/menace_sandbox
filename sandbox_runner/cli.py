@@ -205,9 +205,22 @@ def _adaptive_synergy_threshold(
     ``window`` specifies how many recent entries to include. ``factor`` scales
     the resulting bound. ``weight`` controls exponential weighting of newer
     samples (``1.0`` means no weighting). ``predictions`` should contain the
-    corresponding predicted synergy values (with the same metric names) when
+    corresponding predicted synergy values with the same metric names when
     available. ``confidence`` is retained for backward compatibility but is no
     longer used.
+
+    The bound is derived from the weighted standard deviation of
+    ``actual - predicted`` values.  When a ``weight`` other than ``1.0`` is
+    provided the weights ``weight**i`` are applied from newest to oldest
+    samples.  The exponential moving average (EMA) is calculated as::
+
+        ema = sum(w_i * x_i) / sum(w_i)
+
+    and the variance as ``sum(w_i * (x_i - ema)**2) / sum(w_i)`` where
+    ``x_i`` are the differences.  The square root of this variance multiplied by
+    ``factor`` becomes the adaptive threshold.  This explicit formula is
+    recorded here for maintainability as :func:`_ema` mirrors these
+    calculations.
     """
 
     recent = history[-window:]
@@ -432,12 +445,24 @@ def adaptive_synergy_convergence(
 ) -> tuple[bool, float, float]:
     """Return synergy convergence using EWMA and t-test statistics.
 
-    When ``threshold`` is not provided an adaptive threshold is derived from the
-    last ``threshold_window`` samples using :func:`_adaptive_synergy_threshold`.
-    The moving average and variance of each metric is computed using
-    :func:`_ema` and tested against the threshold via a two sided t-test.  The
-    function returns ``(converged, max_abs_ema, min_confidence)`` where
-    ``min_confidence`` is the smallest t-test confidence across metrics.
+    The metrics of the last ``window`` iterations are examined.  When
+    ``threshold`` is ``None`` the bound is calculated from the most recent
+    ``threshold_window`` samples via :func:`_adaptive_synergy_threshold` using a
+    weighted EMA.  For each synergy metric the EMA and standard deviation are
+    computed with :func:`_ema` and the mean ``ema`` is compared against the
+    threshold by a two-sided t-test::
+
+        se = std / sqrt(n)
+        t_stat = |ema| / se
+        p = 2 * (1 - cdf(t_stat, df=n-1))
+
+    where ``cdf`` is the cumulative density function of the Student's
+    t-distribution.  ``confidence`` is ``1 - p`` and ``n`` is the number of
+    samples.  Convergence is reached only if ``|ema|`` is below the threshold
+    and the confidence for all metrics is greater than the supplied
+    ``confidence`` value.  The function returns ``(converged, max_abs_ema,
+    min_confidence)`` where ``min_confidence`` is the lowest t-test confidence
+    found.
     """
 
     if threshold_window is None:
