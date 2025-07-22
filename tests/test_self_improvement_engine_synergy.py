@@ -443,3 +443,88 @@ def test_synergy_weight_learning(tmp_path, monkeypatch):
     eng2.error_bot = None
     assert eng2.synergy_weight_roi == pytest.approx(second)
 
+
+def test_synergy_weight_multi_cycle(tmp_path, monkeypatch):
+    class Pipe:
+        def run(self, model: str, energy: int = 1):
+            return sie.AutomationResult(package=None, roi=sie.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0))
+
+    class Cap:
+        def __init__(self):
+            self.idx = 0
+
+        def energy_score(self, **_: object) -> float:
+            return 1.0
+
+        def profit(self) -> float:
+            val = self.idx * 0.1
+            self.idx += 1
+            return val
+
+        def log_evolution_event(self, *a, **k):
+            pass
+
+    class Info:
+        def set_current_model(self, *a, **k):
+            pass
+
+    class DummyDiag:
+        def __init__(self):
+            self.metrics = types.SimpleNamespace(fetch=lambda *a, **k: pandas.DataFrame())
+            self.error_bot = types.SimpleNamespace(db=types.SimpleNamespace(discrepancies=lambda: []))
+
+        def diagnose(self):
+            return []
+
+    seq = [
+        {"synergy_roi": 0.5, "synergy_efficiency": 0.0, "synergy_resilience": 0.0, "synergy_antifragility": 0.0},
+        {"synergy_roi": 1.0, "synergy_efficiency": -0.5, "synergy_resilience": 0.0, "synergy_antifragility": 0.0},
+        {"synergy_roi": 1.5, "synergy_efficiency": -1.0, "synergy_resilience": 0.0, "synergy_antifragility": 0.0},
+    ]
+
+    class Gen:
+        def __init__(self, vals):
+            self.vals = vals
+            self.idx = 0
+
+        def metric_delta(self, name: str, window: int = 3) -> float:
+            return self.vals[self.idx].get(name, 0.0)
+
+        def advance(self):
+            self.idx += 1
+
+    gen = Gen(seq)
+    path = tmp_path / "weights2.json"
+    eng = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=Pipe(),
+        diagnostics=DummyDiag(),
+        info_db=Info(),
+        capital_bot=Cap(),
+        synergy_weights_path=path,
+        synergy_weights_lr=1.0,
+    )
+    eng.error_bot = None
+    monkeypatch.setattr(eng, "_metric_delta", gen.metric_delta)
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    vals = []
+    for _ in range(3):
+        eng.run_cycle()
+        vals.append(eng.synergy_weight_roi)
+        gen.advance()
+
+    assert vals[1] > vals[0]
+    assert vals[2] > vals[1]
+
+    eng2 = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=Pipe(),
+        diagnostics=DummyDiag(),
+        info_db=Info(),
+        capital_bot=Cap(),
+        synergy_weights_path=path,
+    )
+    eng2.error_bot = None
+    assert eng2.synergy_weight_roi == pytest.approx(vals[-1])
+
