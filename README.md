@@ -553,9 +553,7 @@ additional `/run` request made while a job is active immediately receives HTTP
 
 Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
 
-Authentication now checks a hash of ``VISUAL_AGENT_TOKEN`` and also accepts a
-``Bearer`` token via the ``Authorization`` header.  Requests may still provide
-``x-token`` for backwards compatibility.
+``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
 
 ``menace_visual_agent_2.py`` automatically sets ``pytesseract.tesseract_cmd``
 based on the host OS. Override the path with ``TESSERACT_CMD`` if needed.

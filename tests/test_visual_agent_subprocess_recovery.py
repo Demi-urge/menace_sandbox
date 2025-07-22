@@ -11,6 +11,8 @@ pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 requests = pytest.importorskip("requests")
 
+TOKEN = "tombalolosvisualagent123"
+
 
 def _write_script(path: Path, recover: bool = False) -> Path:
     script = path / ("recover.py" if recover else "server.py")
@@ -87,6 +89,8 @@ def _start_server(tmp_path: Path):
     env["MENACE_AGENT_PORT"] = str(port)
     env["SANDBOX_DATA_DIR"] = str(tmp_path)
     env["VISUAL_AGENT_LOCK_FILE"] = str(tmp_path / "agent.lock")
+    env["VISUAL_AGENT_PID_FILE"] = str(tmp_path / "agent.pid")
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
 
@@ -110,6 +114,8 @@ def _run_recover(tmp_path: Path):
     env = os.environ.copy()
     env["SANDBOX_DATA_DIR"] = str(tmp_path)
     env["VISUAL_AGENT_LOCK_FILE"] = str(tmp_path / "agent.lock")
+    env["VISUAL_AGENT_PID_FILE"] = str(tmp_path / "agent.pid")
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
     subprocess.run([sys.executable, str(script)], env=env, check=True)

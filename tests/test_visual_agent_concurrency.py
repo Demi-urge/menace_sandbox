@@ -13,6 +13,8 @@ pytest.importorskip("fastapi")
 pytest.importorskip("uvicorn")
 requests = pytest.importorskip("requests")
 
+TOKEN = "tombalolosvisualagent123"
+
 for dep in ("pyautogui", "mss", "cv2", "numpy"):
     if importlib.util.find_spec(dep) is None:
         pytest.skip(f"{dep} is required", allow_module_level=True)
@@ -73,6 +75,7 @@ def test_visual_agent_concurrency(tmp_path):
 
     env = os.environ.copy()
     env["MENACE_AGENT_PORT"] = str(port)
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
 
@@ -172,6 +175,7 @@ def test_visual_agent_queue_persistence(tmp_path):
     env = os.environ.copy()
     env["MENACE_AGENT_PORT"] = str(port)
     env["SANDBOX_DATA_DIR"] = str(tmp_path)
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
     root = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
 

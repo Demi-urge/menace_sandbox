@@ -483,6 +483,7 @@ def test_main_runs_single_worker(monkeypatch):
     monkeypatch.setattr(uvicorn, "Config", lambda *a, **k: types.SimpleNamespace(**k))
     monkeypatch.setattr(uvicorn, "Server", DummyServer)
     monkeypatch.setattr(sys, "argv", ["menace_visual_agent_2"])
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
 
     runpy.run_module("menace_visual_agent_2", run_name="__main__")
 
@@ -508,6 +509,7 @@ def test_dataset_dir_env(monkeypatch, tmp_path):
 
     data_dir = tmp_path / "dataset"
     monkeypatch.setenv("VA_DATASET_DIR", str(data_dir))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
 
     va_mod = importlib.reload(importlib.import_module("menace_visual_agent_2"))
 
@@ -561,6 +563,37 @@ def test_unauthorized_retry(monkeypatch):
     assert refreshed
     assert len(calls) == 2
     assert resp["choices"][0]["message"]["content"] == "ok"
+
+
+def test_unauthorized_error(monkeypatch):
+    vac_mod = _reload_client(monkeypatch)
+
+    class Resp:
+        def __init__(self, status_code=401, data=None, text=""):
+            self.status_code = status_code
+            self._data = data or {}
+            self.text = text
+
+        def json(self):
+            return self._data
+
+    def fake_post(url, headers=None, json=None, timeout=10):
+        return Resp(401)
+
+    def fake_get(url, timeout=10):
+        return Resp(200, {"active": False})
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(post=fake_post, get=fake_get),
+    )
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_refresh_token_async", lambda self: Future())
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    with pytest.raises(PermissionError):
+        client.ask([{"content": "p"}])
 
 
 def _proc_worker(lock_path: str, q):
