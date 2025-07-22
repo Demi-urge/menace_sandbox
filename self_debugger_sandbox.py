@@ -136,6 +136,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         except Exception:
             self.logger.exception("score history init failed")
             self._history_conn = None
+        self._score_backend = None
+        backend_url = os.getenv("PATCH_SCORE_BACKEND_URL")
+        if backend_url:
+            try:
+                from .patch_score_backend import backend_from_url
+
+                self._score_backend = backend_from_url(backend_url)
+            except Exception:
+                self.logger.exception("patch score backend init failed")
         self._metric_stats: dict[str, tuple[float, float]] = {
             "coverage": (0.0, 1.0),
             "error": (0.0, 1.0),
@@ -615,6 +624,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
     # ------------------------------------------------------------------
     def recent_scores(self, limit: int = 20) -> list[tuple]:
         """Return the most recent patch scores."""
+        if self._score_backend:
+            try:
+                rows = self._score_backend.fetch_recent(limit)
+                if rows:
+                    return rows
+            except Exception:
+                self.logger.exception("patch score backend fetch failed")
         if not self._history_conn:
             return []
         try:
@@ -817,6 +833,27 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 sort_keys=True,
             )
             self.audit_trail.record(payload)
+            if self._score_backend:
+                try:
+                    self._score_backend.store(
+                        {
+                            "description": description,
+                            "result": result,
+                            "coverage_delta": coverage_delta,
+                            "error_delta": error_delta,
+                            "roi_delta": roi_delta,
+                            "complexity": complexity,
+                            "synergy_roi": synergy_roi,
+                            "synergy_efficiency": synergy_efficiency,
+                            "synergy_resilience": synergy_resilience,
+                            "synergy_antifragility": synergy_antifragility,
+                            "flakiness": flakiness,
+                            "runtime_impact": runtime_impact,
+                            "score": score,
+                        }
+                    )
+                except Exception:
+                    self.logger.exception("patch score backend store failed")
             if self._history_conn:
                 try:
                     self._history_conn.execute(
