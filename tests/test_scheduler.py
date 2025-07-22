@@ -71,3 +71,43 @@ def test_schedule_logs_bad_timestamp(tmp_path, caplog):
     result = sched_inst.run()
     assert result == [{"account": "a1", "clip": "1"}]
     assert "invalid timestamp" in caplog.text
+
+
+def test_compute_schedule_selects_best(tmp_path):
+    clips = {
+        "1": {"topic": "t", "stats": [{"views": 1}]},
+        "2": {"topic": "t", "stats": [{"views": 10}]},
+    }
+    accounts = {"accounts": [{"id": "a1", "platform": "yt", "topics": ["t"]}]}
+    topics = {"t": {}}
+    (tmp_path / "clips.json").write_text(json.dumps(clips))
+    (tmp_path / "accounts.json").write_text(json.dumps(accounts))
+    (tmp_path / "clip_topics.json").write_text(json.dumps(topics))
+    sched_inst = sched.Scheduler(
+        clips_file=tmp_path / "clips.json",
+        topics_file=tmp_path / "clip_topics.json",
+        accounts_file=tmp_path / "accounts.json",
+        history_file=tmp_path / "hist.json",
+    )
+    result = sched_inst.compute_schedule()
+    assert result == [{"account": "a1", "clip": "2"}]
+
+
+def test_run_writes_history(tmp_path):
+    clips = {"1": {"topic": "t", "stats": [{"views": 5}]}}
+    accounts = {"accounts": [{"id": "a1", "platform": "yt", "topics": ["t"]}]}
+    topics = {"t": {}}
+    (tmp_path / "clips.json").write_text(json.dumps(clips))
+    (tmp_path / "accounts.json").write_text(json.dumps(accounts))
+    (tmp_path / "clip_topics.json").write_text(json.dumps(topics))
+    hist = tmp_path / "hist.json"
+    sched_inst = sched.Scheduler(
+        clips_file=tmp_path / "clips.json",
+        topics_file=tmp_path / "clip_topics.json",
+        accounts_file=tmp_path / "accounts.json",
+        history_file=hist,
+    )
+    result = sched_inst.run()
+    assert hist.exists()
+    assert json.loads(hist.read_text())["schedule"] == result
+
