@@ -1,0 +1,35 @@
+version: "3.8"
+services:
+  menace:
+    build: .
+    command: ["/bin/sh", "-c", "scripts/start_autonomous.sh"]
+    env_file:
+      - .env
+    environment:
+      VM_SETTINGS: '{"windows_image":"/vm-images/windows.qcow2","macos_image":"/vm-images/macos.qcow2","memory":"2G"}'
+    volumes:
+      - .:/app
+      - ./qemu_images:/vm-images
+    depends_on:
+      - rabbitmq
+      - postgres
+      - vault
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: menace
+    ports:
+      - "5432:5432"
+  vault:
+    image: hashicorp/vault:1.13
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: root
+    ports:
+      - "8200:8200"
