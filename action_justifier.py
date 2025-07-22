@@ -144,7 +144,7 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
         try:
             return cache_file.read_text().strip()
         except Exception:
-            pass
+            logger.exception("failed reading justification cache")
     try:
         tokens = tokenizer.encode(prompt, return_tensors="pt")
         output = model.generate(tokens, max_new_tokens=60, do_sample=False)
@@ -157,7 +157,7 @@ def _llm_justification(action_log: Dict[str, Any], violation_flags: List[str], r
             _CACHE_DIR.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(explanation)
         except Exception:
-            pass
+            logger.exception("failed writing justification cache")
     return explanation or None
 
 

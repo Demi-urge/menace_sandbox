@@ -533,7 +533,7 @@ class TaskLock:
             try:
                 lock.release()
             except Exception:
-                pass
+                logger.exception("file lock release failed")
 
 
 def _alloc_bot_instance() -> "ResourceAllocationBot":
@@ -871,7 +871,7 @@ class CommunicationLogHandler:
             try:
                 self.on_error(msg)
             except Exception:
-                pass
+                logger.exception("error callback failed")
 
     def load(self) -> List[dict]:
         if not self.path.exists():
@@ -1683,7 +1683,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
                 try:
                     retry_after = float(resp.json().get("retry_after", retry_after))
                 except Exception:
-                    pass
+                    self.logger.exception("failed parsing retry_after from discord response")
                 return False, retry_after
             self.logger.error(
                 "discord error %s: %s",
@@ -1713,7 +1713,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
                             data = await resp.json()
                             retry_after = float(data.get("retry_after", retry_after))
                         except Exception:
-                            pass
+                            self.logger.exception("failed parsing async retry_after from discord response")
                         return False, retry_after
                     text = await resp.text()
                     self.logger.error(
@@ -1817,7 +1817,7 @@ class CommunicationMaintenanceBot(AdminBotBase):
                 with lock:
                     self.queue_file.unlink()
             except Exception:
-                pass
+                self.logger.exception("failed deleting queue file")
 
     def notify(self, content: str) -> None:
         content = _validate_message(content)
