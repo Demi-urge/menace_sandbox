@@ -27,6 +27,8 @@ try:  # pragma: win32 cover
 except Exception:  # pragma: no cover - posix
     msvcrt = None  # type: ignore
 
+LOCK_TIMEOUT = float(os.getenv("VISUAL_AGENT_LOCK_TIMEOUT", "3600"))
+
 
 class _ContextFileLock(FileLock):
     """FileLock variant whose ``acquire`` works as a context manager."""
@@ -64,7 +66,7 @@ class _ContextFileLock(FileLock):
             return True
         if not self._pid_running(pid):
             return True
-        if ts and time.time() - ts > 3600:
+        if ts and time.time() - ts > LOCK_TIMEOUT:
             return True
         return False
 
@@ -102,15 +104,19 @@ class _ContextFileLock(FileLock):
                     time.sleep(poll_interval)
             if lock_path:
                 with suppress(Exception):
-                    with open(lock_path, "w") as fh:
+                    tmp = lock_path + ".tmp"
+                    with open(tmp, "w") as fh:
                         fh.write(f"{os.getpid()},{time.time()}")
+                    os.replace(tmp, lock_path)
             return self._Guard(self)
         else:  # pragma: no cover - fallback
             result = super().acquire(timeout=timeout, poll_interval=poll_interval)
             if lock_path:
                 with suppress(Exception):
-                    with open(lock_path, "w") as fh:
+                    tmp = lock_path + ".tmp"
+                    with open(tmp, "w") as fh:
                         fh.write(f"{os.getpid()},{time.time()}")
+                    os.replace(tmp, lock_path)
             return result
 
     def release(self, *args, **kwargs) -> None:  # type: ignore[override]
