@@ -14,6 +14,8 @@ import math
 from pathlib import Path
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 from .self_model_bootstrap import bootstrap
 from .research_aggregator_bot import (
     ResearchAggregatorBot,
@@ -53,6 +55,10 @@ class SynergyWeightLearner:
     """Simple learner adjusting synergy weights via policy gradient."""
 
     def __init__(self, path: Path | None = None, lr: float = 0.1) -> None:
+        if sip_torch is None:
+            logger.warning(
+                "PyTorch not installed - using basic SynergyWeightLearner"
+            )
         self.path = Path(path) if path else None
         self.lr = lr
         self.weights = {
@@ -121,6 +127,10 @@ class DQNSynergyLearner(SynergyWeightLearner):
         target_sync: int = 10,
     ) -> None:
         super().__init__(path, lr)
+        if sip_torch is None:
+            logger.warning(
+                "PyTorch not available - DQNSynergyLearner falling back to DQN strategy"
+            )
         name = (strategy or "dqn").lower()
         self.target_sync = max(1, int(target_sync))
         if name in {"double", "double_dqn", "double-dqn", "ddqn"} and sip_torch is not None:

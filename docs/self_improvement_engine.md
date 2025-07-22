@@ -96,6 +96,12 @@ Predicted Q‑values replace the manual gradient step so weight updates follow t
 learned policy. Both the online and target model weights are persisted alongside
 the policy file so progress carries over between runs without a cold start.
 
+Both ``SynergyWeightLearner`` and ``DQNSynergyLearner`` emit a warning during
+initialisation if PyTorch or other optional libraries are missing. In that case
+the learners fall back to simpler behaviour which can slow convergence. Install
+the optional dependencies (for example ``pip install torch``) for the best
+performance.
+
 ## Modifying ``synergy_weights.json``
 
 Synergy weights are persisted in a JSON file. By default the engine stores it
