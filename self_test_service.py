@@ -3,6 +3,7 @@ from __future__ import annotations
 """Service running self tests on a schedule."""
 
 import asyncio
+from asyncio import Lock
 import json
 import logging
 import os
@@ -17,6 +18,8 @@ from typing import Any, Callable
 from .data_bot import DataBot
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
+
+_container_lock = Lock()
 
 
 class SelfTestService:
@@ -49,6 +52,7 @@ class SelfTestService:
         self.results: dict[str, Any] | None = None
         self.history_path = Path(history_path) if history_path else None
         self._history_db: sqlite3.Connection | None = None
+        self._lock_acquired = False
         if self.history_path and self.history_path.suffix == ".db":
             self._history_db = sqlite3.connect(self.history_path)
             self._history_db.execute(
@@ -105,8 +109,10 @@ class SelfTestService:
             self.logger.exception("failed to store history")
 
     async def _docker_available(self) -> bool:
-        """Return ``True`` if the docker CLI is available."""
+        """Return ``True`` if the docker CLI is available and acquire the container lock."""
         try:
+            await _container_lock.acquire()
+            self._lock_acquired = True
             proc = await asyncio.create_subprocess_exec(
                 "docker",
                 "--version",
@@ -114,11 +120,20 @@ class SelfTestService:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await proc.wait()
+            if proc.returncode != 0:
+                _container_lock.release()
+                self._lock_acquired = False
             return proc.returncode == 0
         except FileNotFoundError:
+            if self._lock_acquired:
+                _container_lock.release()
+                self._lock_acquired = False
             return False
         except Exception:
             self.logger.exception("docker check failed")
+            if self._lock_acquired:
+                _container_lock.release()
+                self._lock_acquired = False
             return False
 
     # ------------------------------------------------------------------
@@ -134,199 +149,205 @@ class SelfTestService:
         runtime_total = 0.0
         proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
 
-        use_container = self.use_container and await self._docker_available()
-        use_pipe = self.result_callback is not None or use_container
+        use_container = False
+        try:
+            use_container = self.use_container and await self._docker_available()
+            use_pipe = self.result_callback is not None or use_container
 
-        for p in paths:
-            tmp_name: str | None = None
-            cmd = [
-                sys.executable,
-                "-m",
-                "pytest",
-                "-q",
-                "--json-report",
-            ]
-            if use_pipe:
-                cmd.append("--json-report-file=-")
-            else:
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-                tmp.close()
-                tmp_name = tmp.name
-                cmd.append(f"--json-report-file={tmp_name}")
-            cmd.extend(other_args)
-            if self.workers > 1:
-                cmd.extend(["-n", str(self.workers)])
-            if p:
-                cmd.append(p)
+            for p in paths:
+                tmp_name: str | None = None
+                cmd = [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "--json-report",
+                ]
+                if use_pipe:
+                    cmd.append("--json-report-file=-")
+                else:
+                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
+                    tmp.close()
+                    tmp_name = tmp.name
+                    cmd.append(f"--json-report-file={tmp_name}")
+                cmd.extend(other_args)
+                if self.workers > 1:
+                    cmd.extend(["-n", str(self.workers)])
+                if p:
+                    cmd.append(p)
 
-            if use_container:
-                docker_cmd = [
-                    "docker",
-                    "run",
-                    "--rm",
+                if use_container:
+                    docker_cmd = [
+                        "docker",
+                        "run",
+                        "--rm",
                     "-i",
                     "-v",
                     f"{os.getcwd()}:{os.getcwd()}:ro",
                     "-w",
                     os.getcwd(),
                 ]
-                for k, v in os.environ.items():
-                    docker_cmd.extend(["-e", f"{k}={v}"])
-                docker_cmd.append(self.container_image)
+                    for k, v in os.environ.items():
+                        docker_cmd.extend(["-e", f"{k}={v}"])
+                    docker_cmd.append(self.container_image)
 
-                container_cmd = cmd[2:]
+                    container_cmd = cmd[2:]
 
-                proc = await asyncio.create_subprocess_exec(
-                    *docker_cmd,
-                    *container_cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                proc_info.append((proc, None))
-            else:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=(
-                        asyncio.subprocess.PIPE
-                        if use_pipe
-                        else asyncio.subprocess.DEVNULL
-                    ),
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                proc_info.append((proc, tmp_name))
-
-        async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float, bool]:
-            report: dict[str, Any] = {}
-            if use_pipe:
-                if hasattr(proc, "communicate"):
-                    out, err = await proc.communicate()
+                    proc = await asyncio.create_subprocess_exec(
+                        *docker_cmd,
+                        *container_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    proc_info.append((proc, None))
                 else:
-                    out = b""
-                    err = b""
-                    if proc.stdout:
-                        out = await proc.stdout.read()
-                    if getattr(proc, "stderr", None):
-                        err = await proc.stderr.read()
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=(
+                            asyncio.subprocess.PIPE
+                            if use_pipe
+                            else asyncio.subprocess.DEVNULL
+                        ),
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    proc_info.append((proc, tmp_name))
+
+            async def _process(proc: asyncio.subprocess.Process, tmp: str | None) -> tuple[int, int, float, float, bool]:
+                report: dict[str, Any] = {}
+                if use_pipe:
+                    if hasattr(proc, "communicate"):
+                        out, err = await proc.communicate()
+                    else:
+                        out = b""
+                        err = b""
+                        if proc.stdout:
+                            out = await proc.stdout.read()
+                        if getattr(proc, "stderr", None):
+                            err = await proc.stderr.read()
+                        await proc.wait()
+                    data = (out or b"") + (err or b"")
+                    try:
+                        report = json.loads(data.decode() or "{}")
+                    except Exception:
+                        self.logger.exception("failed to parse test report")
+                else:
                     await proc.wait()
-                data = (out or b"") + (err or b"")
-                try:
-                    report = json.loads(data.decode() or "{}")
-                except Exception:
-                    self.logger.exception("failed to parse test report")
-            else:
-                await proc.wait()
-                try:
-                    assert tmp is not None
-                    with open(tmp, "r", encoding="utf-8") as fh:
-                        report = json.load(fh)
-                except Exception:
-                    self.logger.exception("failed to parse test report")
-            if tmp:
-                try:
-                    os.unlink(tmp)
-                except Exception:
-                    pass
+                    try:
+                        assert tmp is not None
+                        with open(tmp, "r", encoding="utf-8") as fh:
+                            report = json.load(fh)
+                    except Exception:
+                        self.logger.exception("failed to parse test report")
+                if tmp:
+                    try:
+                        os.unlink(tmp)
+                    except Exception:
+                        pass
 
-            summary = report.get("summary", {})
-            pcount = int(summary.get("passed", 0))
-            fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
-            cov_info = report.get("coverage", {}) or report.get("cov", {})
-            cov = float(
-                cov_info.get("percent")
-                or cov_info.get("coverage")
-                or cov_info.get("percent_covered")
-                or 0.0
-            )
-            runtime = float(
-                report.get("duration")
-                or summary.get("duration")
-                or summary.get("runtime")
-                or 0.0
-            )
-
-            failed_flag = proc.returncode != 0
-            if failed_flag:
-                exc = RuntimeError(
-                    f"self tests failed with code {proc.returncode}"
+                summary = report.get("summary", {})
+                pcount = int(summary.get("passed", 0))
+                fcount = int(summary.get("failed", 0)) + int(summary.get("error", 0))
+                cov_info = report.get("coverage", {}) or report.get("cov", {})
+                cov = float(
+                    cov_info.get("percent")
+                    or cov_info.get("coverage")
+                    or cov_info.get("percent_covered")
+                    or 0.0
                 )
-                self.logger.error("self tests failed: %s", exc)
-                try:
-                    self.error_logger.log(exc, "self_tests", "sandbox")
-                except Exception:
-                    self.logger.exception("error logging failed")
+                runtime = float(
+                    report.get("duration")
+                    or summary.get("duration")
+                    or summary.get("runtime")
+                    or 0.0
+                )
 
-            return pcount, fcount, cov, runtime, failed_flag
+                failed_flag = proc.returncode != 0
+                if failed_flag:
+                    exc = RuntimeError(
+                        f"self tests failed with code {proc.returncode}"
+                    )
+                    self.logger.error("self tests failed: %s", exc)
+                    try:
+                        self.error_logger.log(exc, "self_tests", "sandbox")
+                    except Exception:
+                        self.logger.exception("error logging failed")
 
-        tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
-        
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        first_exc: Exception | None = None
-        any_failed = False
+                return pcount, fcount, cov, runtime, failed_flag
 
-        for res in results:
-            if isinstance(res, Exception):
-                if first_exc is None:
-                    first_exc = res
-                continue
-            pcount, fcount, cov, runtime, failed_flag = res
-            any_failed = any_failed or failed_flag
-            passed += pcount
-            failed += fcount
-            coverage_total += cov
-            runtime_total += runtime
+            tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
 
-            if self.result_callback:
-                partial = {
-                    "passed": passed,
-                    "failed": failed,
-                    "coverage": coverage_total / max(len(paths), 1),
-                    "runtime": runtime_total,
-                }
-                try:
-                    self.result_callback(partial)
-                except Exception:
-                    self.logger.exception("result callback failed")
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            first_exc: Exception | None = None
+            any_failed = False
 
-        try:
-            self.error_logger.db.add_test_result(passed, failed)
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to store test results")
+            for res in results:
+                if isinstance(res, Exception):
+                    if first_exc is None:
+                        first_exc = res
+                    continue
+                pcount, fcount, cov, runtime, failed_flag = res
+                any_failed = any_failed or failed_flag
+                passed += pcount
+                failed += fcount
+                coverage_total += cov
+                runtime_total += runtime
 
-        coverage = coverage_total / max(len(proc_info), 1)
-        runtime = runtime_total
-        self.results = {
-            "passed": passed,
-            "failed": failed,
-            "coverage": coverage,
-            "runtime": runtime,
-        }
-        self._store_history(
-            {
+                if self.result_callback:
+                    partial = {
+                        "passed": passed,
+                        "failed": failed,
+                        "coverage": coverage_total / max(len(paths), 1),
+                        "runtime": runtime_total,
+                    }
+                    try:
+                        self.result_callback(partial)
+                    except Exception:
+                        self.logger.exception("result callback failed")
+
+            try:
+                self.error_logger.db.add_test_result(passed, failed)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to store test results")
+
+            coverage = coverage_total / max(len(proc_info), 1)
+            runtime = runtime_total
+            self.results = {
                 "passed": passed,
                 "failed": failed,
                 "coverage": coverage,
                 "runtime": runtime,
-                "ts": datetime.utcnow().isoformat(),
             }
-        )
+            self._store_history(
+                {
+                    "passed": passed,
+                    "failed": failed,
+                    "coverage": coverage,
+                    "runtime": runtime,
+                    "ts": datetime.utcnow().isoformat(),
+                }
+            )
 
-        if self.result_callback:
-            try:
-                self.result_callback(self.results)
-            except Exception:
-                self.logger.exception("result callback failed")
+            if self.result_callback:
+                try:
+                    self.result_callback(self.results)
+                except Exception:
+                    self.logger.exception("result callback failed")
 
-        if self.data_bot:
-            try:
-                self.data_bot.db.log_eval("self_tests", "coverage", float(coverage))
-                self.data_bot.db.log_eval("self_tests", "runtime", float(runtime))
-            except Exception:
-                self.logger.exception("failed to store metrics")
+            if self.data_bot:
+                try:
+                    self.data_bot.db.log_eval("self_tests", "coverage", float(coverage))
+                    self.data_bot.db.log_eval("self_tests", "runtime", float(runtime))
+                except Exception:
+                    self.logger.exception("failed to store metrics")
 
-        if first_exc:
-            raise first_exc
-        if any_failed:
-            raise RuntimeError("self tests failed")
+            if first_exc:
+                raise first_exc
+            if any_failed:
+                raise RuntimeError("self tests failed")
+        finally:
+            if self._lock_acquired:
+                _container_lock.release()
+                self._lock_acquired = False
 
     async def _schedule_loop(self, interval: float) -> None:
         assert self._async_stop is not None
