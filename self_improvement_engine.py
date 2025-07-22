@@ -1474,6 +1474,7 @@ __all__ = [
     "SynergyDashboard",
     "load_synergy_history",
     "synergy_stats",
+    "synergy_ma",
 ]
 
 
@@ -1526,16 +1527,45 @@ def synergy_stats(history: list[dict[str, float]]) -> dict[str, dict[str, float]
     return stats
 
 
+def synergy_ma(
+    history: list[dict[str, float]], window: int = 5
+) -> list[dict[str, float]]:
+    """Return rolling averages over ``window`` samples for each metric."""
+    if window < 1:
+        raise ValueError("window must be positive")
+    metrics = sorted({k for d in history for k in d})
+    ma_history: list[dict[str, float]] = []
+    for idx in range(len(history)):
+        ma_entry: dict[str, float] = {}
+        start = max(0, idx + 1 - window)
+        for name in metrics:
+            vals = [history[j].get(name, 0.0) for j in range(start, idx + 1)]
+            arr = np.array(vals, dtype=float)
+            ma_entry[name] = float(arr.mean()) if arr.size else 0.0
+        ma_history.append(ma_entry)
+    return ma_history
+
+
 class SynergyDashboard:
     """Expose synergy metrics via a small Flask app."""
 
-    def __init__(self, history_file: str | Path = "synergy_history.json") -> None:
+    def __init__(
+        self,
+        history_file: str | Path = "synergy_history.json",
+        *,
+        ma_window: int = 5,
+    ) -> None:
+        from flask import Flask, jsonify  # type: ignore
+
         self.logger = logging.getLogger(self.__class__.__name__)
         self.history_file = Path(history_file)
+        self.ma_window = ma_window
+        self.jsonify = jsonify
         self.app = Flask(__name__)
         self.app.add_url_rule("/", "index", self.index)
         self.app.add_url_rule("/stats", "stats", self.stats)
         self.app.add_url_rule("/plot.png", "plot", self.plot)
+        self.app.add_url_rule("/history", "history", self.history)
 
     def _load(self) -> list[dict[str, float]]:
         return load_synergy_history(self.history_file)
@@ -1545,7 +1575,16 @@ class SynergyDashboard:
 
     def stats(self) -> tuple[str, int]:
         hist = self._load()
-        return jsonify(synergy_stats(hist)), 200
+        ma_hist = synergy_ma(hist, self.ma_window)
+        data = {
+            "stats": synergy_stats(hist),
+            "latest": hist[-1] if hist else {},
+            "rolling_average": ma_hist[-1] if ma_hist else {},
+        }
+        return self.jsonify(data), 200
+
+    def history(self) -> tuple[list[dict[str, float]], int]:
+        return self.jsonify(self._load()), 200
 
     def plot(self) -> tuple[bytes, int, dict[str, str]]:
         try:
@@ -1554,12 +1593,15 @@ class SynergyDashboard:
             return b"", 200, {"Content-Type": "image/png"}
 
         history = self._load()
+        ma_history = synergy_ma(history, self.ma_window)
         metrics = sorted({k for d in history for k in d})
         labels = list(range(len(history)))
         fig, ax = plt.subplots()
         for name in metrics:
             vals = [d.get(name, 0.0) for d in history]
             ax.plot(labels, vals, label=name)
+            ma_vals = [d.get(name, 0.0) for d in ma_history]
+            ax.plot(labels, ma_vals, label=f"{name}_ma", linestyle="--")
         if metrics:
             ax.legend()
         ax.set_xlabel("iteration")

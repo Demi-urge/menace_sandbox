@@ -167,7 +167,11 @@ flask_mod.Flask = DummyFlask
 flask_mod.jsonify = lambda obj: obj
 sys.modules["flask"] = flask_mod
 
-from menace.self_improvement_engine import synergy_stats, SynergyDashboard
+from menace.self_improvement_engine import (
+    synergy_stats,
+    SynergyDashboard,
+    synergy_ma,
+)
 
 
 HISTORY = [
@@ -180,6 +184,26 @@ def test_synergy_stats():
     stats = synergy_stats(HISTORY)
     assert stats["synergy_roi"]["average"] == pytest.approx(0.2)
     assert stats["synergy_roi"]["variance"] == pytest.approx(0.01)
+
+
+def test_synergy_ma():
+    ma = synergy_ma(HISTORY, window=2)
+    assert ma[-1]["synergy_roi"] == pytest.approx(0.2)
+    assert ma[-1]["synergy_efficiency"] == pytest.approx(0.15)
+
+
+def test_dashboard_endpoints():
+    dash = SynergyDashboard(ma_window=2)
+    dash._load = lambda: HISTORY
+
+    hist, code = dash.history()
+    assert code == 200
+    assert hist == HISTORY
+
+    data, code = dash.stats()
+    assert code == 200
+    assert data["latest"] == HISTORY[-1]
+    assert data["rolling_average"]["synergy_roi"] == pytest.approx(0.2)
 
 
 
