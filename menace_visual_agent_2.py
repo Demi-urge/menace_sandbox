@@ -44,10 +44,25 @@ app = FastAPI(title="Menace-Visual-Agent")
 @app.on_event("startup")
 def _startup_load_state() -> None:
     _setup_pid_file()
-    _initialize_state()
-    if AUTO_RECOVER_ON_STARTUP and task_queue:
-        logger.info("auto recovered %s queued tasks", len(task_queue))
-        _log_recovery_metrics(len(task_queue))
+    if AUTO_RECOVER_ON_STARTUP:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            raise SystemExit("Agent busy")
+        try:
+            task_queue.clear()
+            job_status.clear()
+            _load_state_locked()
+        finally:
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+        if task_queue:
+            logger.info("auto recovered %s queued tasks", len(task_queue))
+            _log_recovery_metrics(len(task_queue))
+    else:
+        _initialize_state()
     _start_background_threads()
 
 _running_lock = threading.Lock()      # ensures only one job at a time
@@ -112,6 +127,7 @@ STATE_FILE = DATA_DIR / "visual_agent_state.json"
 HASH_FILE = STATE_FILE.with_suffix(STATE_FILE.suffix + ".sha256")
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
 BACKUP_COUNT = 3
+# When true, queued tasks will be restored from disk on startup.
 AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1"
 
 
@@ -125,6 +141,18 @@ def _rotate_backups(path: Path) -> None:
             os.replace(backups[i - 1], backups[i])
     if path.exists():
         os.replace(path, backups[0])
+
+
+def _atomic_write(path: Path, data: str) -> None:
+    """Atomically write ``data`` to ``path`` with backup rotation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+        tmp = Path(fh.name)
+    _rotate_backups(path)
+    os.replace(tmp, path)
 
 
 def _log_recovery_metrics(count: int) -> None:
@@ -182,6 +210,7 @@ class PersistentQueue:
                 fh.write(json.dumps(item) + "\n")
             fh.flush()
             os.fsync(fh.fileno())
+        _rotate_backups(self.path)
         os.replace(tmp, self.path)
 
     def append(self, item: dict) -> None:
@@ -232,25 +261,14 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 def _save_state_locked() -> None:
     """Persist queue and status atomically."""
     global last_completed_ts
-    _rotate_backups(QUEUE_FILE)
-    _rotate_backups(STATE_FILE)
-    _rotate_backups(HASH_FILE)
     task_queue.save()
     data = {
         "status": job_status,
         "last_completed": last_completed_ts,
     }
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(data)
-    with tempfile.NamedTemporaryFile(
-        "w", delete=False, dir=STATE_FILE.parent, encoding="utf-8"
-    ) as fh:
-        fh.write(payload)
-        fh.flush()
-        os.fsync(fh.fileno())
-        tmp_path = Path(fh.name)
-    os.replace(tmp_path, STATE_FILE)
-    HASH_FILE.write_text(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+    _atomic_write(STATE_FILE, payload)
+    _atomic_write(HASH_FILE, hashlib.sha256(payload.encode("utf-8")).hexdigest())
 
 
 def _recover_queue_file_locked() -> None:
@@ -861,7 +879,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
-    parser.add_argument("--auto-recover", action="store_true", help="Recover queued tasks on startup")
+    parser.add_argument(
+        "--auto-recover",
+        action="store_true",
+        help="Automatically recover queued tasks on startup",
+    )
     args = parser.parse_args()
 
     if args.flush_queue:
