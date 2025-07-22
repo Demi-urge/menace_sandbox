@@ -115,3 +115,102 @@ def test_synergy_weight_learner_updates(tmp_path):
     assert after_dec < after_inc
     learner2 = sie.SynergyWeightLearner(path=path)
     assert learner2.weights["roi"] == pytest.approx(after_dec)
+
+
+def _expected_weights(start, cycles, lr=0.1):
+    """Compute expected weights after applying update cycles."""
+    weights = dict(start)
+    mapping = {
+        "synergy_roi": "roi",
+        "synergy_efficiency": "efficiency",
+        "synergy_resilience": "resilience",
+        "synergy_antifragility": "antifragility",
+    }
+    for roi_delta, deltas in cycles:
+        if roi_delta == 0:
+            continue
+        for name, key in mapping.items():
+            d = float(deltas.get(name, 0.0))
+            w = float(weights.get(key, 1.0)) + lr * roi_delta * d
+            weights[key] = max(0.0, min(w, 10.0))
+    return weights
+
+
+def test_synergy_weight_learner_multi_cycle(tmp_path):
+    path = tmp_path / "weights.json"
+    lr = 0.1
+    learner = sie.SynergyWeightLearner(path=path, lr=lr)
+
+    cycles1 = [
+        (1.0, {
+            "synergy_roi": 0.4,
+            "synergy_efficiency": 0.2,
+            "synergy_resilience": 0.1,
+            "synergy_antifragility": -0.2,
+        }),
+        (0.5, {
+            "synergy_roi": 0.2,
+            "synergy_efficiency": -0.1,
+            "synergy_resilience": 0.0,
+            "synergy_antifragility": 0.1,
+        }),
+        (-0.3, {
+            "synergy_roi": 0.1,
+            "synergy_efficiency": 0.2,
+            "synergy_resilience": -0.1,
+            "synergy_antifragility": 0.0,
+        }),
+        (0.2, {
+            "synergy_roi": -0.1,
+            "synergy_efficiency": 0.0,
+            "synergy_resilience": 0.1,
+            "synergy_antifragility": 0.2,
+        }),
+        (1.2, {
+            "synergy_roi": 0.3,
+            "synergy_efficiency": 0.1,
+            "synergy_resilience": 0.2,
+            "synergy_antifragility": 0.1,
+        }),
+    ]
+
+    expected1 = _expected_weights(learner.weights, cycles1, lr)
+    for roi_delta, deltas in cycles1:
+        learner.update(roi_delta, deltas)
+
+    assert learner.weights == pytest.approx(expected1)
+
+    # persistence check after first set of updates
+    learner2 = sie.SynergyWeightLearner(path=path, lr=lr)
+    assert learner2.weights == pytest.approx(expected1)
+
+    cycles2 = [
+        (-0.4, {
+            "synergy_roi": 0.2,
+            "synergy_efficiency": 0.0,
+            "synergy_resilience": 0.1,
+            "synergy_antifragility": -0.1,
+        }),
+        (0.7, {
+            "synergy_roi": -0.3,
+            "synergy_efficiency": 0.2,
+            "synergy_resilience": 0.0,
+            "synergy_antifragility": 0.1,
+        }),
+        (0.5, {
+            "synergy_roi": 0.1,
+            "synergy_efficiency": 0.1,
+            "synergy_resilience": 0.2,
+            "synergy_antifragility": 0.0,
+        }),
+    ]
+
+    expected2 = _expected_weights(expected1, cycles2, lr)
+    for roi_delta, deltas in cycles2:
+        learner2.update(roi_delta, deltas)
+
+    assert learner2.weights == pytest.approx(expected2)
+
+    # persistence check after all updates
+    learner3 = sie.SynergyWeightLearner(path=path, lr=lr)
+    assert learner3.weights == pytest.approx(expected2)
