@@ -95,3 +95,70 @@ the state and the ROI‑scaled change acts as the reward for each action.
 Predicted Q‑values replace the manual gradient step so weight updates follow the
 learned policy. Both the online and target model weights are persisted alongside
 the policy file so progress carries over between runs without a cold start.
+
+## Synergy Predictions and Preset Adaptation
+
+`ROITracker` records synergy metrics whenever multiple modules run together in
+the sandbox. `predict_synergy()` forecasts the next `synergy_roi` value while
+`predict_synergy_metric()` predicts specific metrics such as
+`synergy_efficiency` or `synergy_resilience`. `environment_generator.adapt_presets`
+uses these forecasts to adjust resource limits before each run.
+
+```python
+from menace.roi_tracker import ROITracker
+from menace.environment_generator import adapt_presets
+
+tracker = ROITracker()
+tracker.update(0.0, 0.1, metrics={"synergy_efficiency": 0.02})
+
+# Combine recent measurements with the predicted next value
+pred_eff = tracker.predict_synergy_metric("efficiency")
+presets = [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "256"}]
+new_presets = adapt_presets(tracker, presets)
+```
+
+When `pred_eff` is positive, CPU and memory limits are lowered because modules
+are expected to cooperate efficiently. Negative values have the opposite effect
+and increase the limits.
+
+## Synergy Metrics Reference
+
+The sandbox stores `synergy_<name>` entries capturing how the combined run of
+multiple modules differs from the average of their individual runs:
+
+- **synergy_roi** – overall ROI delta caused by module interaction.
+- **synergy_efficiency** – higher values suggest lower CPU and memory usage when
+  modules cooperate.
+- **synergy_adaptability** – indicates how well modules adjust to changing
+  scenarios; positive values reduce resource limits.
+- **synergy_antifragility** – measures benefits from stress. High scores raise
+  `THREAT_INTENSITY` while negative ones lower it.
+- **synergy_resilience** – reflects tolerance to failures. Positive values
+  increase bandwidth limits, negative ones decrease them.
+- **synergy_safety_rating** – combined safety performance influencing
+  `THREAT_INTENSITY`.
+- **synergy_risk_index** – security risk trend; high values bump the
+  `SECURITY_LEVEL` preset.
+- **synergy_security_score** – cross‑module security score impact.
+- **synergy_recovery_time** – how quickly modules recover from errors when run
+  together.
+- **synergy_shannon_entropy** – diversity of behaviours in the combined run.
+- **synergy_flexibility** – ability to handle varied inputs without failures.
+- **synergy_energy_consumption** – additional or reduced energy usage.
+- **synergy_profitability** – combined profit impact.
+- **synergy_revenue** – revenue change compared to solo runs.
+- **synergy_projected_lucrativity** – long‑term earning potential of the group.
+- **synergy_maintainability** – effect on code maintainability metrics.
+- **synergy_code_quality** – aggregated code quality change.
+- **synergy_network_latency** – latency difference when modules interact.
+- **synergy_throughput** – throughput change for the combined workload.
+- **synergy_discrepancy_count** – variation in result consistency across runs.
+- **synergy_gpu_usage**, **synergy_cpu_usage**, **synergy_memory_usage** –
+  resource usage deltas for GPU, CPU and memory respectively.
+- **synergy_long_term_lucrativity** – ROI trend over extended periods.
+
+`ROITracker.reliability()` converts prediction errors into a value between `0`
+and `1`. A score near `1` means synergy forecasts closely matched reality while
+values near `0` indicate noisy predictions. `synergy_reliability()` is a helper
+for the `synergy_roi` series and is used by the sandbox to scale ROI tolerance
+during long runs.
