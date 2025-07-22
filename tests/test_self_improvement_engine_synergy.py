@@ -137,6 +137,7 @@ sys.modules.setdefault(
 sys.modules.setdefault("pulp", types.ModuleType("pulp"))
 
 pytest.importorskip("pandas")
+import pandas
 
 import menace.self_improvement_engine as sie
 
@@ -169,31 +170,25 @@ def _metric_delta(vals, window=3):
 
 
 def _expected(records, metrics, window=3):
-    base = {
-        "synergy_roi": 1.0,
-        "synergy_efficiency": 1.0,
-        "synergy_resilience": 1.0,
-        "synergy_antifragility": 1.0,
-    }
+    base = ["synergy_roi", "synergy_efficiency", "synergy_resilience", "synergy_antifragility"]
     roi_vals = [r.roi_delta for r in records]
-    weights = dict(base)
+    X = [[float(getattr(r, n)) for n in base] for r in records]
+    weights = {n: 1.0 / len(base) for n in base}
     stats: dict[str, tuple[float, float]] = {}
-    if len(roi_vals) >= 2:
-        mx = sum(roi_vals) / len(roi_vals)
-        den2 = sum((b - mx) ** 2 for b in roi_vals)
-        for name in base:
-            vals = [getattr(r, name) for r in records]
-            m = sum(vals) / len(vals)
-            var = sum((v - m) ** 2 for v in vals) / len(vals)
-            stats[name] = (m, math.sqrt(var) if var > 0 else 1.0)
-            num = sum((a - m) * (b - mx) for a, b in zip(vals, roi_vals))
-            den1 = sum((a - m) ** 2 for a in vals)
-            corr = num / math.sqrt(den1 * den2) if den1 > 0 and den2 > 0 else 0.0
-            weights[name] = (1.0 / (var + 1e-6)) * (1.0 + max(0.0, corr))
-        total = sum(weights.values())
+    if len(X) >= 2:
+        import numpy as np
+
+        arr = np.array(X, dtype=float)
+        y = np.array(roi_vals, dtype=float)
+        coefs, *_ = np.linalg.lstsq(arr, y, rcond=None)
+        coef_abs = np.abs(coefs)
+        total = float(coef_abs.sum())
         if total > 0:
-            for k in weights:
-                weights[k] = weights[k] / total * len(weights)
+            for i, name in enumerate(base):
+                weights[name] = coef_abs[i] / total
+        for i, name in enumerate(base):
+            col = arr[:, i]
+            stats[name] = (float(col.mean()), float(col.std() or 1.0))
 
     def norm(name: str) -> float:
         val = _metric_delta(metrics[name], window)
@@ -246,4 +241,122 @@ def test_weighted_synergy_adjustment():
     result = engine._weighted_synergy_adjustment()
     assert result == pytest.approx(expected)
     assert weights["synergy_roi"] > weights["synergy_efficiency"]
-    assert weights["synergy_resilience"] < weights["synergy_efficiency"]
+    assert weights["synergy_roi"] > weights["synergy_resilience"]
+    assert weights["synergy_roi"] > weights["synergy_antifragility"]
+
+
+def test_synergy_weight_cache():
+    rec_a = [
+        _Rec(1, 1, 4, 2, 1, "1"),
+        _Rec(2, 2, 3, -2, -1, "2"),
+        _Rec(3, 3, 2, 2, 1, "3"),
+        _Rec(4, 4, 1, -2, -1, "4"),
+    ]
+    rec_b = [
+        _Rec(4, 1, 1, 1, 1, "1"),
+        _Rec(3, 1, 2, 1, 1, "2"),
+        _Rec(2, 1, 3, 1, 1, "3"),
+        _Rec(1, 1, 4, 1, 1, "4"),
+    ]
+    metrics = {
+        "synergy_roi": [0.0, 0.1, 0.2, 0.3],
+        "synergy_efficiency": [0.3, 0.2, 0.1, 0.0],
+        "synergy_resilience": [0.0, 2.0, -2.0, 2.0],
+        "synergy_antifragility": [0.0, 1.0, -1.0, 1.0],
+    }
+    db = _DummyDB(rec_a)
+    engine = sie.SelfImprovementEngine(interval=0, patch_db=db)
+    engine.tracker = _DummyTracker(metrics)
+    first = engine._weighted_synergy_adjustment()
+    db._recs = list(rec_b)
+    second = engine._weighted_synergy_adjustment()
+    assert first == pytest.approx(second)
+
+
+def test_energy_scaling_with_synergy_weights(tmp_path):
+    records = [
+        _Rec(0.1, -0.1, -0.2, 0.0, 0.0, "1"),
+        _Rec(0.2, 0.0, -0.1, 0.0, 0.0, "2"),
+        _Rec(0.3, 0.1, 0.0, 0.0, 0.0, "3"),
+        _Rec(0.4, 0.2, 0.1, 0.0, 0.0, "4"),
+    ]
+    metrics = {
+        "synergy_roi": [-0.05, 0.0, 0.05, 0.1],
+        "synergy_efficiency": [-0.1, -0.05, 0.0, 0.05],
+        "synergy_resilience": [0.0, 0.0, 0.0, 0.0],
+        "synergy_antifragility": [0.0, 0.0, 0.0, 0.0],
+    }
+
+    class Pipe:
+        def __init__(self):
+            self.energy = None
+
+        def run(self, model: str, energy: int = 1):
+            self.energy = energy
+            return sie.AutomationResult(package=None, roi=sie.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0))
+
+    class Cap:
+        def energy_score(self, **_: object) -> float:
+            return 1.0
+
+        def profit(self) -> float:
+            return 0.0
+
+        def log_evolution_event(self, *a, **k):
+            pass
+
+    class DummyPatchDB(_DummyDB):
+        def _connect(self):
+            class _Conn:
+                def __enter__(self_inner):
+                    return self_inner
+
+                def __exit__(self_inner, *a):
+                    pass
+
+                def execute(self_inner, *a, **k):
+                    class Res:
+                        def fetchall(self_res):
+                            return []
+
+                        def fetchone(self_res):
+                            return (0,)
+
+                    return Res()
+
+            return _Conn()
+
+        def keyword_features(self):
+            return 0, 0
+
+        def success_rate(self, limit: int = 50) -> float:
+            return 0.0
+
+    class Info:
+        def set_current_model(self, *a, **k):
+            pass
+
+    class DummyDiag:
+        def __init__(self):
+            self.metrics = types.SimpleNamespace(fetch=lambda *a, **k: pandas.DataFrame())
+            self.error_bot = types.SimpleNamespace(db=types.SimpleNamespace(discrepancies=lambda: []))
+
+        def diagnose(self):
+            return []
+
+    pipe = Pipe()
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pipe,
+        diagnostics=DummyDiag(),
+        info_db=Info(),
+        capital_bot=Cap(),
+        patch_db=DummyPatchDB(records),
+    )
+    engine.tracker = _DummyTracker(metrics)
+    sie.bootstrap = lambda: 0
+    engine.run_cycle()
+    expected, _ = _expected(records, metrics)
+    exp_energy = int(round(5 * (1.0 + expected)))
+    exp_energy = max(1, min(exp_energy, 100))
+    assert pipe.energy == exp_energy

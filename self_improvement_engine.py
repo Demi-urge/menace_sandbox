@@ -152,6 +152,7 @@ class SelfImprovementEngine:
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
         self.roi_delta_ema: float = 0.0
+        self._synergy_cache: dict | None = None
         self._load_state()
         from .module_index_db import ModuleIndexDB
 
@@ -258,46 +259,55 @@ class SelfImprovementEngine:
             "synergy_antifragility": self.synergy_weight_antifragility,
         }
 
-        stats: dict[str, tuple[float, float]] = {}
+        weights: dict[str, float]
+        stats: dict[str, tuple[float, float]]
         weights = dict(base_weights)
+        stats = {}
+
+        cache = getattr(self, "_synergy_cache", None)
 
         if pdb:
             try:
                 records = pdb.filter()
                 records.sort(key=lambda r: getattr(r, "ts", ""))
-                recent = records[-20:]
-                roi_vals: list[float] = []
-                hist: dict[str, list[float]] = {
-                    k: [] for k in base_weights
-                }
-                for rec in recent:
-                    roi_vals.append(float(getattr(rec, "roi_delta", 0.0)))
-                    for name in hist:
-                        hist[name].append(float(getattr(rec, name, 0.0)))
+                patch_count = len(records)
+                if not cache or cache.get("count") != patch_count:
+                    recent = records[-20:]
+                    roi_vals: list[float] = []
+                    data: list[list[float]] = []
+                    for rec in recent:
+                        roi_vals.append(float(getattr(rec, "roi_delta", 0.0)))
+                        data.append(
+                            [float(getattr(rec, name, 0.0)) for name in base_weights]
+                        )
 
-                if len(roi_vals) >= 2:
-                    for name, vals in hist.items():
-                        if not vals:
-                            continue
-                        m = sum(vals) / len(vals)
-                        var = sum((v - m) ** 2 for v in vals) / len(vals)
-                        stats[name] = (m, math.sqrt(var) if var > 0 else 1.0)
+                    if len(data) >= 2 and any(any(row) for row in data):
+                        import numpy as np
 
-                        mx = m
-                        my = sum(roi_vals) / len(roi_vals)
-                        num = sum((a - mx) * (b - my) for a, b in zip(vals, roi_vals))
-                        den1 = sum((a - mx) ** 2 for a in vals)
-                        den2 = sum((b - my) ** 2 for b in roi_vals)
-                        corr = num / math.sqrt(den1 * den2) if den1 > 0 and den2 > 0 else 0.0
-                        weight = (1.0 / (var + 1e-6)) * (1.0 + max(0.0, corr))
-                        weights[name] = weight
-
-                    total = sum(weights.values())
-                    if total > 0:
-                        for k in weights:
-                            weights[k] = weights[k] / total * len(weights)
+                        X = np.array(data, dtype=float)
+                        y = np.array(roi_vals, dtype=float)
+                        coefs, *_ = np.linalg.lstsq(X, y, rcond=None)
+                        coef_abs = np.abs(coefs)
+                        total = float(coef_abs.sum())
+                        if total > 0:
+                            for i, name in enumerate(base_weights):
+                                w = coef_abs[i] / total
+                                weights[name] = w * base_weights[name]
+                        else:
+                            weights = {k: base_weights[k] / len(base_weights) for k in base_weights}
+                        for i, name in enumerate(base_weights):
+                            col = X[:, i]
+                            stats[name] = (float(col.mean()), float(col.std() or 1.0))
+                    cache = {"count": patch_count, "weights": weights, "stats": stats}
+                    self._synergy_cache = cache
+                else:
+                    weights = cache.get("weights", weights)
+                    stats = cache.get("stats", stats)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("synergy weight history processing failed: %s", exc)
+                cache = None
+        if cache is None:
+            self._synergy_cache = {"count": 0, "weights": weights, "stats": stats}
 
         def norm_delta(name: str) -> float:
             val = self._metric_delta(name, window)
