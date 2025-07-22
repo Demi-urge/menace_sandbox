@@ -42,8 +42,6 @@ from sandbox_settings import SandboxSettings
 
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
-from menace.startup_checks import verify_project_dependencies
-from menace.dependency_installer import install_packages
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
@@ -133,132 +131,15 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     return validated
 
 
+_SETUP_MARKER = Path(".autonomous_setup_complete")
+
+
 def _check_dependencies(settings: SandboxSettings) -> bool:
-    """Install missing project dependencies and warn about binaries.
-
-    Returns
-    -------
-    bool
-        ``True`` if all dependencies are satisfied, otherwise ``False``.
-    """
-    missing: List[str] = []
-    offline = settings.menace_offline_install
-    wheel_dir = settings.menace_wheel_dir
-
-    def apt_install(pkg: str) -> bool:
-        if offline:
-            logger.info("offline mode; skipping apt-get install %s", pkg)
-            return False
-        if shutil.which("apt-get") is None:
-            return False
-        try:
-            subprocess.run(["apt-get", "update"], check=False)
-            subprocess.run(["apt-get", "install", "-y", pkg], check=True)
-            return True
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.error("apt-get install %s failed: %s", pkg, exc)
-            return False
-
-    def pip_install(pkg: str) -> bool:
-        cmd = [sys.executable, "-m", "pip", "install"]
-        if offline:
-            if wheel_dir:
-                cmd += ["--no-index", "--find-links", wheel_dir]
-            else:
-                logger.info("offline mode; skipping pip install %s", pkg)
-                return False
-        cmd.append(pkg)
-        try:
-            subprocess.check_call(cmd)
-            return True
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.error("pip install %s failed: %s", pkg, exc)
-            return False
-
-    if sys.version_info[:2] < (3, 10):
-        msg = f"Python >=3.10 required, found {sys.version_info.major}.{sys.version_info.minor}"
-        logger.error(msg)
-        return False
-
-    if shutil.which("docker") is None:
-        if apt_install("docker.io") and shutil.which("docker") is not None:
-            logger.info("installed docker successfully")
-        else:
-            logger.warning(
-                "Docker not found. Install using: sudo apt-get install docker.io"
-            )
-            missing.append("docker")
-    try:  # pragma: no cover - optional
-        import docker  # type: ignore
-    except Exception:
-        if pip_install("docker"):
-            try:
-                import docker  # type: ignore
-                logger.info("installed docker python package")
-            except Exception:
-                missing.append("docker python package")
-        else:
-            missing.append("docker python package")
-
-    if shutil.which("qemu-system-x86_64") is None:
-        if apt_install("qemu-system-x86") and shutil.which("qemu-system-x86_64") is not None:
-            logger.info("installed qemu-system-x86_64 successfully")
-        else:
-            logger.warning(
-                "qemu-system-x86_64 not found. Install using: sudo apt-get install qemu-system-x86"
-            )
-            missing.append("qemu-system-x86_64")
-
-    if shutil.which("git") is None:
-        if apt_install("git") and shutil.which("git") is not None:
-            logger.info("installed git successfully")
-        else:
-            logger.warning("git not found. Install using your system package manager")
-            missing.append("git")
-
-    if shutil.which("pytest") is None:
-        if pip_install("pytest") and shutil.which("pytest") is not None:
-            logger.info("installed pytest successfully")
-        else:
-            logger.warning(
-                "pytest not found. Install using: pip install pytest or system package"
-            )
-            missing.append("pytest")
-
-    # verify docker group membership if docker command exists
-    if shutil.which("docker") is not None:
-        try:  # pragma: no cover - optional
-            import grp
-            import getpass
-
-            user = getpass.getuser()
-            docker_grp = grp.getgrnam("docker")
-            if user not in docker_grp.gr_mem and os.getgid() != docker_grp.gr_gid:
-                logger.warning("User %s not in docker group", user)
-                missing.append("docker group")
-        except Exception:  # pragma: no cover - platform dependent
-            logger.warning("Unable to verify docker group membership")
-            missing.append("docker group")
-
-    missing_pkgs = verify_project_dependencies()
-    if missing_pkgs:
-        errors = install_packages(missing_pkgs, offline=offline, wheel_dir=wheel_dir)
-        if offline and missing_pkgs:
-            logger.info(
-                "offline install mode enabled; skipping installation for: %s",
-                ", ".join(missing_pkgs),
-            )
-        for pkg, err in errors.items():
-            logger.error("failed installing %s: %s", pkg, err)
-        failed_pkgs = [p for p in missing_pkgs if p in errors]
-        if failed_pkgs:
-            missing.extend(failed_pkgs)
-
-    if missing:
-        logger.error("Missing dependencies: %s", ", ".join(missing))
-        return False
-
-    logger.info("All dependencies satisfied")
+    """Return ``True`` and warn if the setup script has not been executed."""
+    if not _SETUP_MARKER.exists():
+        logger.warning(
+            "Dependencies may be missing. Run 'python setup_dependencies.py' first"
+        )
     return True
 
 
@@ -527,8 +408,7 @@ def main(argv: List[str] | None = None) -> None:
         if created_preset:
             logger.info("created preset file at %s", preset_file)
 
-    if not _check_dependencies(settings):
-        sys.exit("dependency installation failed")
+    _check_dependencies(settings)
 
     dash_port = args.dashboard_port
     dash_env = settings.auto_dashboard_port
