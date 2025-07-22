@@ -647,7 +647,7 @@ async def _execute_in_container(
     locally with the same environment variables and resource limits.
     """
 
-    def _execute_locally() -> Dict[str, float]:
+    def _execute_locally(err_msg: str | None = None) -> Dict[str, float]:
         """Fallback local execution with basic metrics."""
         with tempfile.TemporaryDirectory(prefix="sim_local_") as td:
             path = Path(td) / "snippet.py"
@@ -768,7 +768,7 @@ async def _execute_in_container(
             except Exception:
                 gpu_usage = 0.0
 
-            return {
+            result = {
                 "exit_code": float(exit_code),
                 "cpu": float(cpu_total),
                 "memory": float(mem_usage),
@@ -778,21 +778,31 @@ async def _execute_in_container(
                 "stdout_log": str(stdout_path),
                 "stderr_log": str(stderr_path),
             }
+            if err_msg:
+                result["container_error"] = str(err_msg)
+            return result
 
+    error_msg = ""
     try:
         import docker  # type: ignore
     except Exception as exc:  # pragma: no cover - optional dependency
+        error_msg = str(exc)
         logger.warning("docker import failed: %s", exc)
-        return _execute_locally()
+        return _execute_locally(error_msg)
 
-    client = _DOCKER_CLIENT or docker.from_env()
+    try:
+        client = _DOCKER_CLIENT or docker.from_env()
+    except Exception as exc:
+        error_msg = str(exc)
+        logger.error("failed to create docker client: %s", exc)
+        return _execute_locally(error_msg)
     if _DOCKER_CLIENT is None:
         _globals = globals()
         _globals["_DOCKER_CLIENT"] = client
 
     def _run_ephemeral() -> Dict[str, float]:
         """Run snippet using a one-off container (legacy behaviour)."""
-        nonlocal client
+        nonlocal client, error_msg
         attempt = 0
         delay = 0.5
         while True:
@@ -909,13 +919,14 @@ async def _execute_in_container(
                         "stderr_log": str(stderr_path),
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
+                error_msg = str(exc)
                 logger.exception("container execution failed: %s", exc)
-                _log_diagnostic(str(exc), False)
+                _log_diagnostic(error_msg, False)
                 if attempt >= 2:
                     logger.warning(
                         "docker repeatedly failed; falling back to local execution"
                     )
-                    return _execute_locally()
+                    return _execute_locally(error_msg)
                 attempt += 1
                 time.sleep(delay)
                 delay *= 2
@@ -1006,13 +1017,14 @@ async def _execute_in_container(
                 "stderr_log": str(stderr_path),
             }
         except Exception as exc:  # pragma: no cover - runtime failures
+            error_msg = str(exc)
             logger.exception("container execution failed: %s", exc)
-            _log_diagnostic(str(exc), False)
+            _log_diagnostic(error_msg, False)
             if attempt >= 2:
                 logger.warning(
                     "docker repeatedly failed; falling back to local execution"
                 )
-                return _execute_locally()
+                return _execute_locally(error_msg)
             attempt += 1
             time.sleep(delay)
             delay *= 2
@@ -2338,6 +2350,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
     """Execute an isolated sandbox run using ``preset`` environment vars."""
 
     tmp_dir = tempfile.mkdtemp(prefix="full_env_")
+    diagnostics: Dict[str, str] = {}
     try:
         repo_path = SANDBOX_REPO_PATH
         data_dir = Path(tmp_dir) / "data"
@@ -2353,6 +2366,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
         }
         if use_docker and not _docker_available():
             logger.warning("docker unavailable; falling back")
+            diagnostics["docker_error"] = "unavailable"
             use_docker = False
         os_type = env.get("OS_TYPE", "").lower()
         vm_used = False
@@ -2367,18 +2381,29 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 + container_repo
                 + "')\n"
             )
-            try:
-                asyncio.run(
-                    _execute_in_container(
-                        code,
-                        env,
-                        mounts={str(repo_path): container_repo, tmp_dir: sandbox_tmp},
-                        network_disabled=False,
+            attempt = 0
+            delay = 0.5
+            while True:
+                try:
+                    asyncio.run(
+                        _execute_in_container(
+                            code,
+                            env,
+                            mounts={str(repo_path): container_repo, tmp_dir: sandbox_tmp},
+                            network_disabled=False,
+                        )
                     )
-                )
-            except Exception:
-                logger.exception("docker execution failed, falling back to local run")
-                use_docker = False
+                    break
+                except Exception as exc:
+                    diagnostics["docker_error"] = str(exc)
+                    logger.exception("docker execution failed: %s", exc)
+                    if attempt >= 2:
+                        logger.error("docker repeatedly failed; running locally")
+                        use_docker = False
+                        break
+                    attempt += 1
+                    time.sleep(delay)
+                    delay *= 2
 
         if not use_docker and os_type in {"windows", "macos"}:
             vm = shutil.which("qemu-system-x86_64")
@@ -2393,50 +2418,67 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
 
                 overlay = Path(tmp_dir) / "overlay.qcow2"
                 try:
-                    subprocess.run(
-                        [
-                            "qemu-img",
-                            "create",
-                            "-f",
-                            "qcow2",
-                            "-b",
-                            image,
-                            str(overlay),
-                        ],
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                    )
-                    cmd = [
-                        vm,
-                        "-m",
-                        memory,
-                        "-drive",
-                        f"file={overlay},if=virtio",
-                        "-virtfs",
-                        f"local,path={repo_path},mount_tag=repo,security_model=none",
-                        "-virtfs",
-                        f"local,path={tmp_dir},mount_tag=sandbox_tmp,security_model=none",
-                        "-nographic",
-                        "-serial",
-                        "stdio",
-                        "-append",
-                        f"python {vm_repo}/sandbox_runner.py",
-                    ]
-                    subprocess.run(
-                        cmd,
-                        check=False,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=timeout,
-                    )
-                    vm_used = True
-                except subprocess.TimeoutExpired:
-                    logger.error("VM execution timed out")
-                    vm_used = False
-                except Exception:
-                    logger.exception("VM execution failed, falling back to local run")
-                    vm_used = False
+                    attempt = 0
+                    delay = 0.5
+                    while True:
+                        try:
+                            subprocess.run(
+                                [
+                                    "qemu-img",
+                                    "create",
+                                    "-f",
+                                    "qcow2",
+                                    "-b",
+                                    image,
+                                    str(overlay),
+                                ],
+                                check=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                            )
+                            cmd = [
+                                vm,
+                                "-m",
+                                memory,
+                                "-drive",
+                                f"file={overlay},if=virtio",
+                                "-virtfs",
+                                f"local,path={repo_path},mount_tag=repo,security_model=none",
+                                "-virtfs",
+                                f"local,path={tmp_dir},mount_tag=sandbox_tmp,security_model=none",
+                                "-nographic",
+                                "-serial",
+                                "stdio",
+                                "-append",
+                                f"python {vm_repo}/sandbox_runner.py",
+                            ]
+                            subprocess.run(
+                                cmd,
+                                check=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                timeout=timeout,
+                            )
+                            vm_used = True
+                            break
+                        except subprocess.TimeoutExpired:
+                            diagnostics["vm_error"] = "timeout"
+                            logger.error("VM execution timed out")
+                            vm_used = False
+                        except (FileNotFoundError, PermissionError) as exc:
+                            diagnostics["vm_error"] = str(exc)
+                            logger.error("VM setup failed: %s", exc)
+                            vm_used = False
+                            break
+                        except Exception as exc:
+                            diagnostics["vm_error"] = str(exc)
+                            logger.exception("VM execution failed: %s", exc)
+                            vm_used = False
+                        if vm_used or attempt >= 2:
+                            break
+                        attempt += 1
+                        time.sleep(delay)
+                        delay *= 2
                 finally:
                     try:
                         overlay.unlink()
@@ -2444,6 +2486,10 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                         pass
             else:
                 logger.warning("qemu binary or VM image missing, running locally")
+                if not vm:
+                    diagnostics["vm_error"] = "qemu missing"
+                elif not image:
+                    diagnostics["vm_error"] = "image missing"
 
         if not use_docker and not vm_used:
             env["SANDBOX_DATA_DIR"] = str(data_dir)
@@ -2459,6 +2505,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
 
         tracker = ROITracker()
         tracker.load_history(str(data_dir / "roi_history.json"))
+        tracker.diagnostics = diagnostics
         return tracker
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
