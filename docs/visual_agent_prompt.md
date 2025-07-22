@@ -143,7 +143,14 @@ visual agent is contacted. The most relevant are:
 
 ## Visual agent service
 
-The standalone service `menace_visual_agent_2.py` exposes HTTP endpoints on the port specified by `MENACE_AGENT_PORT` (default 8001). Requests must include `VISUAL_AGENT_TOKEN` for authentication. **Only a single connection is processed at any time.** When `/run` returns `409` the agent is busy. Queue additional tasks on your side and resend them once `/status` shows the agent is idle.
+The standalone service `menace_visual_agent_2.py` exposes HTTP endpoints on the
+port specified by `MENACE_AGENT_PORT` (default 8001). Requests must include
+`VISUAL_AGENT_TOKEN` for authentication. **Only a single connection is processed
+at any time.** When `/run` returns `409` the agent is busy. Queue additional
+tasks on your side and resend them once `/status` shows the agent is idle.
+
+Because the underlying pipeline is not reentrant, the service rejects any
+concurrent `/run` requests with HTTP 409 until the active job completes.
 
 The `/status` endpoint returns a JSON object with two fields:
 
