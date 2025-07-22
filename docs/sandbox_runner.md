@@ -519,6 +519,17 @@ python sandbox_runner.py rank-scenario-synergy run1 run2 --metric revenue
 
 Scenario names are sorted by the total value of the chosen synergy metric.
 
+### Synergy Metric Summaries
+
+The `synergy-metrics` subcommand displays the most recent synergy values along
+with their exponential moving averages. Pass `--file` to specify the
+`roi_history.json` path and use `--window` to change the EMA length. Adding
+`--plot` creates a small bar chart when `matplotlib` is available.
+
+```bash
+python sandbox_runner.py synergy-metrics --file sandbox_data/roi_history.json --window 4
+```
+
 ## Fully Autonomous Runs
 
 The `full-autonomous-run` subcommand wraps the logic from
