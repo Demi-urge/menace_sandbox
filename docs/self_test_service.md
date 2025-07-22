@@ -6,6 +6,11 @@ default tests run directly on the host, but enabling `use_container=True`
 executes each provided test path inside a Docker container when available. Each
 container is removed on completion so test runs are isolated.
 
+When multiple test paths are supplied together with the `--workers` option,
+the total worker count is distributed across the spawned containers.  This
+keeps the overall level of parallelism consistent while still allowing each
+container to run tests in parallel via `pytest -n`.
+
 Coverage percentage and total runtime are recorded in `MetricsDB` when a
 `DataBot` is supplied. Results can also be streamed incrementally by providing
 `result_callback` which receives a dictionary after each file and a final
@@ -24,5 +29,15 @@ Options include:
 - `--workers` – number of pytest workers
 - `--container-image` – Docker image used with `--use-container`
 - `--use-container` – execute tests inside a container when available
-- `--container-runtime` – container runtime executable (default `docker`)
+- `--container-runtime` – container runtime executable (e.g. `docker` or `podman`)
 - `--docker-host` – Docker/Podman host or URL for remote engines
+
+Example running tests inside a remote Podman instance:
+
+```bash
+python -m menace.self_test_service run \
+    --use-container \
+    --container-runtime podman \
+    --docker-host ssh://user@remote.example.com/run/podman.sock \
+    tests/unit
+```
