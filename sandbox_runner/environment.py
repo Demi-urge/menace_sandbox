@@ -283,6 +283,7 @@ _CLEANUP_TASK: asyncio.Task | None = None
 _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
+_CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 
 
@@ -440,6 +441,13 @@ def collect_metrics(
         f"container_failures_{img}": float(cnt)
         for img, cnt in _CREATE_FAILURES.items()
     }
+    result.update(
+        {
+            f"consecutive_failures_{img}": float(val)
+            for img, val in _CONSECUTIVE_CREATE_FAILURES.items()
+        }
+    )
+    result["container_backoff_base"] = float(_CREATE_BACKOFF_BASE)
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
     return result
 
@@ -804,8 +812,8 @@ async def _execute_in_container(
         """Run snippet using a one-off container (legacy behaviour)."""
         nonlocal client, error_msg
         attempt = 0
-        delay = 0.5
-        while True:
+        delay = _CREATE_BACKOFF_BASE
+        while attempt < _CREATE_RETRY_LIMIT:
             try:
                 with tempfile.TemporaryDirectory(prefix="sim_cont_") as td:
                     path = Path(td) / "snippet.py"
@@ -922,14 +930,18 @@ async def _execute_in_container(
                 error_msg = str(exc)
                 logger.exception("container execution failed: %s", exc)
                 _log_diagnostic(error_msg, False)
-                if attempt >= 2:
+                _CREATE_FAILURES[image] += 1
+                fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
+                _CONSECUTIVE_CREATE_FAILURES[image] = fails
+                if attempt >= _CREATE_RETRY_LIMIT - 1:
                     logger.warning(
                         "docker repeatedly failed; falling back to local execution"
                     )
+                    _log_diagnostic("local_fallback", True)
                     return _execute_locally(error_msg)
                 attempt += 1
-                time.sleep(delay)
-                delay *= 2
+                time.sleep(min(60.0, delay * (2 ** fails)))
+        return _execute_locally(error_msg)
 
     # use legacy container mode when advanced features are requested
     if (
@@ -942,8 +954,8 @@ async def _execute_in_container(
 
     # pooled execution path
     attempt = 0
-    delay = 0.5
-    while True:
+    delay = _CREATE_BACKOFF_BASE
+    while attempt < _CREATE_RETRY_LIMIT:
         try:
             image = env.get("CONTAINER_IMAGE")
             if not image:
@@ -1001,6 +1013,7 @@ async def _execute_in_container(
 
             if attempt:
                 _log_diagnostic("container_failure", True)
+            _CONSECUTIVE_CREATE_FAILURES[image] = 0
 
             exit_code = getattr(result, "exit_code", 0)
             if isinstance(result, tuple):
@@ -1020,14 +1033,18 @@ async def _execute_in_container(
             error_msg = str(exc)
             logger.exception("container execution failed: %s", exc)
             _log_diagnostic(error_msg, False)
-            if attempt >= 2:
+            _CREATE_FAILURES[image] += 1
+            fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
+            _CONSECUTIVE_CREATE_FAILURES[image] = fails
+            if attempt >= _CREATE_RETRY_LIMIT - 1:
                 logger.warning(
                     "docker repeatedly failed; falling back to local execution"
                 )
+                _log_diagnostic("local_fallback", True)
                 return _execute_locally(error_msg)
             attempt += 1
-            time.sleep(delay)
-            delay *= 2
+            time.sleep(min(60.0, delay * (2 ** fails)))
+    return _execute_locally(error_msg)
 
 
 # ----------------------------------------------------------------------
@@ -2399,6 +2416,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     logger.exception("docker execution failed: %s", exc)
                     if attempt >= 2:
                         logger.error("docker repeatedly failed; running locally")
+                        diagnostics["local_execution"] = "docker"
                         use_docker = False
                         break
                     attempt += 1
@@ -2464,17 +2482,22 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                         except subprocess.TimeoutExpired:
                             diagnostics["vm_error"] = "timeout"
                             logger.error("VM execution timed out")
+                            _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                         except (FileNotFoundError, PermissionError) as exc:
                             diagnostics["vm_error"] = str(exc)
                             logger.error("VM setup failed: %s", exc)
+                            _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                             break
                         except Exception as exc:
                             diagnostics["vm_error"] = str(exc)
                             logger.exception("VM execution failed: %s", exc)
+                            _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                         if vm_used or attempt >= 2:
+                            if attempt >= 2 and not vm_used:
+                                diagnostics.setdefault("local_execution", "vm")
                             break
                         attempt += 1
                         time.sleep(delay)
@@ -2492,6 +2515,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                     diagnostics["vm_error"] = "image missing"
 
         if not use_docker and not vm_used:
+            diagnostics.setdefault("local_execution", "vm")
             env["SANDBOX_DATA_DIR"] = str(data_dir)
             subprocess.run(
                 ["python", "sandbox_runner.py"],

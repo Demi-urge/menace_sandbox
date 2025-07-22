@@ -60,3 +60,5 @@ def test_creation_backoff_and_metrics(monkeypatch, caplog):
     assert env._CONSECUTIVE_CREATE_FAILURES["img"] == 0
     metrics = env.collect_metrics(0.0, 0.0, None)
     assert metrics["container_failures_img"] == 4.0
+    assert metrics["consecutive_failures_img"] == 0.0
+    assert metrics["container_backoff_base"] == 1.0
