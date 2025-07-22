@@ -1648,7 +1648,9 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     mae = tracker.rolling_mae()
     reliability = tracker.reliability()
     assert mae == pytest.approx(abs(tracker.predicted_roi[0] - tracker.actual_roi[0]))
-    assert reliability == pytest.approx(1.0 / (1.0 + mae))
+    expected_rel = 1.0 / (1.0 + rt.ROITracker._ema([abs(tracker.predicted_roi[0] - tracker.actual_roi[0])]))
+    assert reliability == pytest.approx(expected_rel)
+    assert tracker.metrics_history["roi_reliability"][-1] == pytest.approx(reliability)
 
 
 class _SynergyTracker:
