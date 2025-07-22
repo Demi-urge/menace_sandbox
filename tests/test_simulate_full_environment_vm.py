@@ -81,4 +81,5 @@ def test_simulate_full_environment_vm_fallback(monkeypatch, tmp_path):
     tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2", "memory": "1G"}})
     assert calls and calls[0][0] == "python"
     assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
+    assert getattr(tracker, "diagnostics", {}).get("local_execution") == "vm"
 
