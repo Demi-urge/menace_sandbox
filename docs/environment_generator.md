@@ -119,6 +119,46 @@ python preset_policy_cli.py import policy.json
 
 The tool calls `export_preset_policy` and `import_preset_policy` under the hood, encoding the policy table as JSON.
 
+## Example: RL adaptation with run_autonomous.py
+
+Follow these steps to launch the autonomous sandbox with reinforcement
+learning enabled for preset adaptation:
+
+1. Set the path where the learned policy should be stored:
+
+   ```bash
+   export SANDBOX_PRESET_RL_PATH=sandbox_data/preset_policy.json
+   ```
+
+   The `PresetRLAgent` persists its state at this location so future runs can
+   resume learning.
+
+2. (Optional) Choose the RL algorithm by setting
+   `SANDBOX_PRESET_RL_STRATEGY`:
+
+   ```bash
+   export SANDBOX_PRESET_RL_STRATEGY=double_dqn
+   ```
+
+   When unset the agent defaults to `q_learning`.
+
+3. Run the sandbox using `run_autonomous.py`:
+
+   ```bash
+   python run_autonomous.py --preset-count 2 --runs 1
+   ```
+
+   During each cycle `environment_generator.adapt_presets` loads the policy
+   from `SANDBOX_PRESET_RL_PATH`, adjusts CPU, memory, bandwidth and threat
+   levels based on recent ROI and synergy values, then writes the updated
+   policy back to disk.
+
+Synergy metrics such as `synergy_efficiency`, `synergy_resilience` and
+`synergy_antifragility` indicate how well modules cooperate. Positive scores
+tighten resource limits while negative ones relax them. The RL agent also
+consumes `synergy_roi` alongside ROI history so improvements in these metrics
+directly influence the policy update step.
+
 ## OpenAI stub generation
 
 When `SANDBOX_STUB_MODEL=openai` and `OPENAI_API_KEY` are set the sandbox
