@@ -406,6 +406,78 @@ def test_container_fallback(monkeypatch):
     assert recorded["cmd"][0] != "docker"
 
 
+def test_container_runtime_and_host(monkeypatch):
+    recorded = []
+
+    async def fake_exec(*cmd, **kwargs):
+        recorded.append(cmd)
+
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return True
+
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+
+    svc = mod.SelfTestService(
+        use_container=True,
+        container_image="img",
+        container_runtime="podman",
+        docker_host="ssh://host",
+    )
+    asyncio.run(svc._run_once())
+    cmd = recorded[0]
+    assert cmd[0] == "podman"
+    assert "--url" in cmd and "ssh://host" in cmd
+
+
+def test_container_workers_split(monkeypatch):
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(cmd)
+
+        class P:
+            returncode = 0
+            stdout = asyncio.StreamReader()
+
+            async def wait(self):
+                self.stdout.feed_data(json.dumps({"summary": {"passed": 0, "failed": 0}}).encode())
+                self.stdout.feed_eof()
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return True
+
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+
+    svc = mod.SelfTestService(
+        pytest_args="a b",
+        workers=4,
+        use_container=True,
+        container_image="img",
+    )
+    asyncio.run(svc._run_once())
+    assert len(calls) == 2
+    for c in calls:
+        assert "-n" in c and "2" in c
+
+
 def _make_fake_exec(passed: int, failed: int):
     async def fake_exec(*cmd, **kwargs):
         path = None

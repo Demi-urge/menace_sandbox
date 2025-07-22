@@ -41,6 +41,8 @@ class SelfTestService:
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
         container_image: str = "python:3.11-slim",
         use_container: bool = False,
+        container_runtime: str = "docker",
+        docker_host: str | None = None,
         history_path: str | Path | None = None,
     ) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -53,6 +55,8 @@ class SelfTestService:
         self.history_path = Path(history_path) if history_path else None
         self._history_db: sqlite3.Connection | None = None
         self._lock_acquired = False
+        self.container_runtime = container_runtime
+        self.docker_host = docker_host
         if self.history_path and self.history_path.suffix == ".db":
             self._history_db = sqlite3.connect(self.history_path)
             self._history_db.execute(
@@ -113,9 +117,16 @@ class SelfTestService:
         try:
             await _container_lock.acquire()
             self._lock_acquired = True
+            cmd = [self.container_runtime, "--version"]
+            if self.docker_host:
+                cmd.extend(
+                    [
+                        "-H" if self.container_runtime == "docker" else "--url",
+                        self.docker_host,
+                    ]
+                )
             proc = await asyncio.create_subprocess_exec(
-                "docker",
-                "--version",
+                *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -153,8 +164,14 @@ class SelfTestService:
         try:
             use_container = self.use_container and await self._docker_available()
             use_pipe = self.result_callback is not None or use_container
+            workers_list = [self.workers for _ in paths]
+            if use_container and self.workers > 1 and len(paths) > 1:
+                base = self.workers // len(paths)
+                rem = self.workers % len(paths)
+                workers_list = [base + (1 if i < rem else 0) for i in range(len(paths))]
+                workers_list = [max(w, 1) for w in workers_list]
 
-            for p in paths:
+            for idx, p in enumerate(paths):
                 tmp_name: str | None = None
                 cmd = [
                     sys.executable,
@@ -171,22 +188,32 @@ class SelfTestService:
                     tmp_name = tmp.name
                     cmd.append(f"--json-report-file={tmp_name}")
                 cmd.extend(other_args)
-                if self.workers > 1:
-                    cmd.extend(["-n", str(self.workers)])
+                w = workers_list[idx]
+                if w > 1:
+                    cmd.extend(["-n", str(w)])
                 if p:
                     cmd.append(p)
 
                 if use_container:
-                    docker_cmd = [
-                        "docker",
-                        "run",
-                        "--rm",
-                    "-i",
-                    "-v",
-                    f"{os.getcwd()}:{os.getcwd()}:ro",
-                    "-w",
-                    os.getcwd(),
-                ]
+                    docker_cmd = [self.container_runtime]
+                    if self.docker_host:
+                        docker_cmd.extend(
+                            [
+                                "-H" if self.container_runtime == "docker" else "--url",
+                                self.docker_host,
+                            ]
+                        )
+                    docker_cmd.extend(
+                        [
+                            "run",
+                            "--rm",
+                            "-i",
+                            "-v",
+                            f"{os.getcwd()}:{os.getcwd()}:ro",
+                            "-w",
+                            os.getcwd(),
+                        ]
+                    )
                     for k, v in os.environ.items():
                         docker_cmd.extend(["-e", f"{k}={v}"])
                     docker_cmd.append(self.container_image)
@@ -468,6 +495,15 @@ def cli(argv: list[str] | None = None) -> int:
         help="Docker image when using containers",
     )
     run.add_argument(
+        "--container-runtime",
+        default="docker",
+        help="Container runtime executable",
+    )
+    run.add_argument(
+        "--docker-host",
+        help="Docker/Podman host or URL",
+    )
+    run.add_argument(
         "--use-container",
         action="store_true",
         help="Execute tests inside a Docker container",
@@ -494,6 +530,8 @@ def cli(argv: list[str] | None = None) -> int:
             pytest_args=" ".join(pytest_args) if pytest_args else None,
             workers=args.workers,
             container_image=args.container_image,
+            container_runtime=args.container_runtime,
+            docker_host=args.docker_host,
             use_container=args.use_container,
             history_path=args.history,
         )
