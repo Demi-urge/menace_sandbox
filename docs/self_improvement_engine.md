@@ -88,8 +88,10 @@ Each weight is nudged by ``lr * roi_delta * metric_delta`` and clamped between
 ``0`` and ``10``. Positive ROI deltas therefore reinforce metrics that improved
 while negative deltas or worsening metrics lower their influence.
 
-``DQNSynergyLearner`` extends this process with a small deep Q‑network. The
-synergy deltas form the state and the ROI‑scaled change acts as the reward for
-each action. Predicted Q‑values replace the manual gradient step so weight
-updates follow the learned policy. Both learners persist their weights and any
-model parameters to disk so progress carries over between runs.
+``DQNSynergyLearner`` extends this process with a small deep Q‑network. When
+PyTorch is available the learner defaults to a Double DQN variant with a target
+network that periodically syncs from the online model. The synergy deltas form
+the state and the ROI‑scaled change acts as the reward for each action.
+Predicted Q‑values replace the manual gradient step so weight updates follow the
+learned policy. Both the online and target model weights are persisted alongside
+the policy file so progress carries over between runs without a cold start.
