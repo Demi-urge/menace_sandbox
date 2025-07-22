@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import importlib.util
 from pathlib import Path
 
 logging.basicConfig(
@@ -28,8 +29,48 @@ menace_stub = types.ModuleType("menace")
 metrics_stub = types.ModuleType("menace.metrics_dashboard")
 metrics_stub.MetricsDashboard = lambda *a, **k: object()
 menace_stub.metrics_dashboard = metrics_stub
+menace_stub.__path__ = [str(ROOT)]
+spec = importlib.util.spec_from_file_location("menace", ROOT / "__init__.py")
+real_mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(real_mod)
+for _name in dir(real_mod):
+    if not _name.startswith("__"):
+        setattr(menace_stub, _name, getattr(real_mod, _name))
 sys.modules.setdefault("menace", menace_stub)
 sys.modules.setdefault("menace.metrics_dashboard", metrics_stub)
+
+# Stub cryptography for modules requiring it
+if "cryptography" not in sys.modules:
+    crypto_mod = types.ModuleType("cryptography")
+    hazmat = types.ModuleType("cryptography.hazmat")
+    primitives = types.ModuleType("primitives")
+    asymmetric = types.ModuleType("asymmetric")
+    ed25519 = types.ModuleType("ed25519")
+    ed25519.Ed25519PrivateKey = type("Ed25519PrivateKey", (), {"generate": lambda: object()})
+    ed25519.Ed25519PublicKey = object
+    asymmetric.ed25519 = ed25519
+    primitives.asymmetric = asymmetric
+    serialization = types.ModuleType("serialization")
+    primitives.serialization = serialization
+    hazmat.primitives = primitives
+    crypto_mod.hazmat = hazmat
+    sys.modules["cryptography"] = crypto_mod
+    sys.modules["cryptography.hazmat"] = hazmat
+    sys.modules["cryptography.hazmat.primitives"] = primitives
+    sys.modules["cryptography.hazmat.primitives.asymmetric"] = asymmetric
+    sys.modules["cryptography.hazmat.primitives.asymmetric.ed25519"] = ed25519
+    sys.modules["cryptography.hazmat.primitives.serialization"] = serialization
+
+if "numpy" not in sys.modules:
+    np_stub = types.ModuleType("numpy")
+    np_stub.isscalar = lambda x: isinstance(x, (int, float, complex))
+    np_stub.bool_ = bool
+    sys.modules["numpy"] = np_stub
+if "sklearn" not in sys.modules:
+    skl = types.ModuleType("sklearn")
+    skl.pipeline = types.ModuleType("sklearn.pipeline")
+    sys.modules["sklearn"] = skl
+    sys.modules["sklearn.pipeline"] = skl.pipeline
 
 # Provide lightweight stubs for optional heavy dependencies
 if "pulp" not in sys.modules:

@@ -58,6 +58,18 @@ then starts `SelfLearningCoordinator` which listens for `memory:new`, `code:new`
 `workflows:new` and `pathway:new` events. It runs indefinitely until
 interrupted.
 
+For integration tests or other applications you can run the service in a
+background thread using :func:`menace.self_learning_service.run_background`:
+
+```python
+from menace.self_learning_service import run_background
+
+start, stop = run_background()
+start()
+...
+stop()
+```
+
 ## Evaluating Models
 
 Call `evaluate()` on a learning engine to run cross-validation and a small
