@@ -138,6 +138,27 @@ def _setup_pid_file() -> None:
     finally:
         atexit.register(_remove_pid_file)
 
+
+def _cleanup_stale_files() -> None:
+    """Remove leftover lock and PID files."""
+    try:
+        if os.path.exists(GLOBAL_LOCK_PATH):
+            os.remove(GLOBAL_LOCK_PATH)
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed to remove lock %s: %s", GLOBAL_LOCK_PATH, exc)
+
+    path = Path(PID_FILE_PATH)
+    try:
+        if path.exists():
+            try:
+                pid = int(path.read_text().strip())
+            except Exception:
+                pid = None
+            if pid is None or not psutil.pid_exists(pid):
+                path.unlink()
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed to remove pid file %s: %s", path, exc)
+
 # Queue management
 import hashlib
 
@@ -979,12 +1000,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
+    parser.add_argument("--cleanup", action="store_true", help="Remove stale lock and PID files then exit")
     parser.add_argument(
         "--auto-recover",
         action="store_true",
         help="Automatically recover queued tasks on startup",
     )
     args = parser.parse_args()
+
+    if args.cleanup:
+        _cleanup_stale_files()
+        sys.exit(0)
 
     if args.flush_queue:
         try:

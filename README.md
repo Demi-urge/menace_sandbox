@@ -434,6 +434,7 @@ written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
   queue after a restart. Use ``--flush-queue`` to drop stalled entries.
 - ``menace_visual_agent_2.py --auto-recover`` also restores queued tasks on
   startup and records metrics in ``sandbox_data/visual_agent_recovery.json``.
+- ``menace_visual_agent_2.py --cleanup`` removes stale lock and PID files then exits.
 - Inspect sandbox restart metrics via ``sandbox_recovery_manager.py --file
   sandbox_data/recovery.json``.
 
