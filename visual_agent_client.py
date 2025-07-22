@@ -341,7 +341,7 @@ class VisualAgentClient:
                     try:
                         resp = requests.post(
                             f"{base}/run",
-                            headers={"x-token": self.token},
+                            headers={"Authorization": f"Bearer {self.token}"},
                             json={"prompt": prompt, "branch": None},
                             timeout=10,
                         )
@@ -392,7 +392,7 @@ class VisualAgentClient:
                     try:
                         resp = requests.post(
                             f"{base}/revert",
-                            headers={"x-token": self.token},
+                            headers={"Authorization": f"Bearer {self.token}"},
                             timeout=10,
                         )
                     except Exception as exc:

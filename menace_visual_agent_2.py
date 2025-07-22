@@ -2,6 +2,8 @@
 import logging
 import os
 import time
+import platform
+import hashlib
 from datetime import datetime
 
 # Third party imports
@@ -26,12 +28,27 @@ import psutil
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 API_TOKEN = os.getenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
+API_TOKEN_HASH = hashlib.sha256(API_TOKEN.encode()).hexdigest()
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
 DEVICE_ID  = "desktop"
 
 # Logger setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _extract_token(x_token: str | None, authorization: str | None) -> str:
+    """Return the token from ``authorization`` or ``x_token`` headers."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1]
+    return x_token or ""
+
+
+def _verify_token(x_token: str = "", authorization: str = "") -> None:
+    token = _extract_token(x_token, authorization)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    if token_hash != API_TOKEN_HASH:
+        raise HTTPException(status_code=401, detail="Bad token")
 
 # ------------------------------------------------------------------
 # 1️⃣  FASTAPI SCHEMA ----------------------------------------------
@@ -453,9 +470,12 @@ def _start_background_threads() -> None:
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
 @app.post("/run", status_code=202)
-async def run_task(task: TaskIn, x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def run_task(
+    task: TaskIn,
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
 
     try:
         _global_lock.acquire(timeout=0)
@@ -479,8 +499,24 @@ async def run_task(task: TaskIn, x_token: str = Header(default="")):
 
     return response
 
-# Tesseract path (change this if needed)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+def _configure_tesseract() -> None:
+    """Set ``pytesseract.tesseract_cmd`` depending on the host OS."""
+    env_path = os.getenv("TESSERACT_CMD")
+    if env_path:
+        pytesseract.pytesseract.tesseract_cmd = env_path
+        return
+
+    system = platform.system()
+    if system == "Windows":
+        default = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+    elif system == "Darwin":
+        default = "/usr/local/bin/tesseract"
+    else:
+        default = "/usr/bin/tesseract"
+
+    pytesseract.pytesseract.tesseract_cmd = default
+
+_configure_tesseract()
 
 # Dataset directory
 DATASET_DIR = os.getenv("VA_DATASET_DIR", r"C:\\menace_training_dataset")
@@ -694,9 +730,11 @@ def run_menace_pipeline(prompt: str, branch: str | None = None):
         _persist_state()
 
 @app.post("/revert", status_code=202)
-async def revert_patch(x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def revert_patch(
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
 
     if not _running_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Agent busy")
@@ -731,9 +769,11 @@ async def revert_patch(x_token: str = Header(default="")):
     return {"status": "revert triggered"}
 
 @app.post("/clone", status_code=202)
-async def clone_repo(x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def clone_repo(
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
 
     if not _running_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="Agent busy")
@@ -765,9 +805,12 @@ async def clone_repo(x_token: str = Header(default="")):
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
 @app.post("/cancel/{task_id}", status_code=202)
-async def cancel_task(task_id: str, x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def cancel_task(
+    task_id: str,
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
 
     if task_id not in job_status:
         raise HTTPException(status_code=404, detail="Not found")
@@ -825,9 +868,11 @@ async def task_status(task_id: str):
 
 
 @app.post("/flush", status_code=200)
-async def flush_queue(x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def flush_queue(
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
     try:
         _global_lock.acquire(timeout=0)
     except Timeout:
@@ -850,9 +895,11 @@ async def flush_queue(x_token: str = Header(default="")):
 
 
 @app.post("/recover", status_code=200)
-async def recover_queue(x_token: str = Header(default="")):
-    if x_token != API_TOKEN:
-        raise HTTPException(status_code=401, detail="Bad token")
+async def recover_queue(
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    _verify_token(x_token, authorization)
     try:
         _global_lock.acquire(timeout=0)
     except Timeout:
