@@ -59,6 +59,20 @@ def test_s3_backend_store_and_fetch(monkeypatch):
     assert rows == [("x", "ok")]
 
 
+def test_file_backend_store_and_fetch(tmp_path):
+    be = psb.FilePatchScoreBackend(str(tmp_path))
+    be.store(["y", "ok"])
+    rows = be.fetch_recent(1)
+    assert rows == [("y", "ok")]
+
+
+def test_backend_from_url_file(tmp_path):
+    url = f"file://{tmp_path}"  # path-like URL
+    be = psb.backend_from_url(url)
+    assert isinstance(be, psb.FilePatchScoreBackend)
+    assert be.directory.endswith(str(tmp_path))
+
+
 def test_sandbox_uses_backend(monkeypatch, tmp_path):
     calls = {}
 
