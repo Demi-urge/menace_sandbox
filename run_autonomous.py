@@ -504,6 +504,8 @@ def main(argv: List[str] | None = None) -> None:
                 raise RuntimeError(resp.text)
         except Exception:
             cmd = [sys.executable, str(_pkg_dir / "menace_visual_agent_2.py")]
+            if os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1":
+                cmd.append("--auto-recover")
             agent_proc = subprocess.Popen(cmd)
             time.sleep(2)
 
