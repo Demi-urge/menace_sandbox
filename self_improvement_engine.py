@@ -1731,6 +1731,7 @@ class SynergyDashboard:
         self.exporter_port = exporter_port
         self.refresh_interval = float(refresh_interval)
         self._history: list[dict[str, float]] = []
+        self._last_metrics: dict[str, float] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.jsonify = jsonify
@@ -1773,11 +1774,14 @@ class SynergyDashboard:
         try:
             resp = requests.get(url, timeout=1.0)
             if resp.status_code != 200:
-                return {}
-            return self._parse_metrics(resp.text)
-        except Exception:  # pragma: no cover - runtime issues
-            self.logger.exception("failed to fetch metrics from %s", url)
-            return {}
+                raise RuntimeError(f"status {resp.status_code}")
+            metrics = self._parse_metrics(resp.text)
+            if metrics:
+                self._last_metrics = metrics
+            return metrics
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.warning("failed to fetch metrics from %s: %s", url, exc)
+            return dict(self._last_metrics)
 
     def _update_loop(self) -> None:
         while not self._stop.is_set():
