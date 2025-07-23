@@ -31,6 +31,7 @@ from .diagnostic_manager import DiagnosticManager
 from .error_bot import ErrorBot, ErrorDB
 from .data_bot import MetricsDB, DataBot
 from .code_database import PatchHistoryDB
+from .patch_score_backend import PatchScoreBackend, backend_from_url
 from .capital_management_bot import CapitalManagementBot
 from .learning_engine import LearningEngine
 from .unified_event_bus import UnifiedEventBus
@@ -283,6 +284,7 @@ class SelfImprovementEngine:
         synergy_weights_path: Path | str | None = None,
         synergy_weights_lr: float | None = None,
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
+        score_backend: PatchScoreBackend | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -406,6 +408,16 @@ class SelfImprovementEngine:
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("SelfImprovementEngine")
+        self._score_backend: PatchScoreBackend | None = None
+        if score_backend is not None:
+            self._score_backend = score_backend
+        else:
+            backend_url = os.getenv("PATCH_SCORE_BACKEND_URL")
+            if backend_url:
+                try:
+                    self._score_backend = backend_from_url(backend_url)
+                except Exception:
+                    self.logger.exception("patch score backend init failed")
         self._cycle_running = False
         self._schedule_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -427,6 +439,18 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "failed to subscribe to self_improve events: %s", exc
                 )
+
+    # ------------------------------------------------------------------
+    def recent_scores(self, limit: int = 20) -> list[tuple]:
+        """Return recently stored patch scores."""
+        if self._score_backend:
+            try:
+                rows = self._score_backend.fetch_recent(limit)
+                if rows:
+                    return rows
+            except Exception:
+                self.logger.exception("patch score backend fetch failed")
+        return []
 
     # ------------------------------------------------------------------
     def _load_state(self) -> None:
@@ -1261,6 +1285,18 @@ class SelfImprovementEngine:
             self.roi_history.append(delta)
             self._save_state()
             self._update_synergy_weights(delta)
+            if self._score_backend:
+                try:
+                    self._score_backend.store(
+                        {
+                            "description": self.bot_name,
+                            "result": "success" if delta >= 0 else "decline",
+                            "roi_delta": float(delta),
+                            "score": float(delta),
+                        }
+                    )
+                except Exception:
+                    self.logger.exception("patch score backend store failed")
             if self.policy:
                 try:
                     next_state = self._policy_state()

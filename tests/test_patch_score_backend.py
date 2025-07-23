@@ -77,3 +77,50 @@ def test_sandbox_uses_backend(monkeypatch, tmp_path):
     dbg._log_patch("d", "ok")
     assert calls["store"]["description"] == "d"
     assert dbg.recent_scores(1) == [("r", "ok")]
+
+
+def test_engine_uses_backend(monkeypatch, tmp_path):
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "jinja2":
+            raise ImportError
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    from tests import test_self_improvement_engine as sie_tests
+
+    calls = {}
+
+    class FakeBackend(psb.PatchScoreBackend):
+        def store(self, rec):
+            calls["store"] = rec
+
+        def fetch_recent(self, limit=20):
+            return [("e", "ok")]
+
+    monkeypatch.setenv("PATCH_SCORE_BACKEND_URL", "http://x")
+    monkeypatch.setattr(psb, "backend_from_url", lambda u: FakeBackend())
+
+    mdb = sie_tests.db.MetricsDB(tmp_path / "m.db")
+    edb = sie_tests.eb.ErrorDB(tmp_path / "e.db")
+    info = sie_tests.rab.InfoDB(tmp_path / "i.db")
+    diag = sie_tests.dm.DiagnosticManager(mdb, sie_tests.eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return sie_tests.mp.AutomationResult(
+                package=None,
+                roi=sie_tests.prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0),
+            )
+
+    monkeypatch.setattr(sie_tests.sie, "bootstrap", lambda: 0)
+    engine = sie_tests.sie.SelfImprovementEngine(
+        interval=0, pipeline=StubPipeline(), diagnostics=diag, info_db=info
+    )
+    mdb.add(sie_tests.db.MetricRecord("bot", 5.0, 10.0, 3.0, 1.0, 1.0, 1))
+    edb.log_discrepancy("fail")
+    engine.run_cycle()
+    assert calls["store"]["description"] == engine.bot_name
+    assert engine.recent_scores(1) == [("e", "ok")]

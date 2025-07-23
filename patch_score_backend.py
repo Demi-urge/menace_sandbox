@@ -40,23 +40,40 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
     """Send patch scores to a remote HTTP API."""
 
     url: str
+    _session: "requests.Session | None" = None
 
+    # ------------------------------------------------------------------
+    def _get_session(self) -> "requests.Session":
+        assert requests is not None  # pragma: no cover - checked by caller
+        if self._session is None:
+            sess_cls = getattr(requests, "Session", None)
+            if sess_cls is not None:
+                self._session = sess_cls()
+            else:  # fallback for simplified stubs
+                self._session = requests  # type: ignore
+        return self._session
+
+    # ------------------------------------------------------------------
     def store(self, record: Dict[str, object]) -> None:
         if not requests:
             logger.debug("requests unavailable; skipping HTTP backend")
             return
         try:  # pragma: no cover - network issues
-            requests.post(self.url, json=record, timeout=5)
+            resp = self._get_session().post(self.url, json=record, timeout=5)
+            resp.raise_for_status()
         except Exception as exc:  # pragma: no cover
             logger.error("HTTP patch score store failed: %s", exc)
 
+    # ------------------------------------------------------------------
     def fetch_recent(self, limit: int = 20) -> List[Tuple]:
         if not requests:
             return []
         try:  # pragma: no cover - network issues
-            resp = requests.get(self.url, params={"limit": limit}, timeout=5)
+            resp = self._get_session().get(self.url, params={"limit": limit}, timeout=5)
             resp.raise_for_status()
             data = resp.json()
+            if isinstance(data, dict):
+                data = data.get("results", [])
             return [tuple(r) for r in data]
         except Exception as exc:  # pragma: no cover
             logger.error("HTTP patch score fetch failed: %s", exc)
@@ -69,24 +86,36 @@ class S3PatchScoreBackend(PatchScoreBackend):
 
     bucket: str
     prefix: str
+    _client: object | None = None
 
+    # ------------------------------------------------------------------
+    def _get_client(self):
+        if not boto3:  # pragma: no cover - optional dependency
+            return None
+        if self._client is None:
+            self._client = boto3.client("s3")
+        return self._client
+
+    # ------------------------------------------------------------------
     def store(self, record: Dict[str, object]) -> None:
-        if not boto3:
+        client = self._get_client()
+        if client is None:
             logger.debug("boto3 unavailable; skipping S3 backend")
             return
         key = f"{self.prefix.rstrip('/')}/{int(time.time()*1000)}.json"
         try:  # pragma: no cover - network issues
-            boto3.client("s3").put_object(
+            client.put_object(
                 Bucket=self.bucket, Key=key, Body=json.dumps(record).encode()
             )
         except Exception as exc:  # pragma: no cover
             logger.error("S3 patch score store failed: %s", exc)
 
+    # ------------------------------------------------------------------
     def fetch_recent(self, limit: int = 20) -> List[Tuple]:
-        if not boto3:
+        client = self._get_client()
+        if client is None:
             return []
         try:  # pragma: no cover - network issues
-            client = boto3.client("s3")
             resp = client.list_objects_v2(
                 Bucket=self.bucket, Prefix=self.prefix.rstrip("/") + "/"
             )
