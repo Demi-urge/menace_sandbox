@@ -66,6 +66,7 @@ app = FastAPI(title="Menace-Visual-Agent")
 
 @app.on_event("startup")
 def _startup_load_state() -> None:
+    _cleanup_stale_files()
     _setup_pid_file()
     if AUTO_RECOVER_ON_STARTUP:
         try:
@@ -140,6 +141,7 @@ def _setup_pid_file() -> None:
     try:
         path.write_text(str(os.getpid()))
     finally:
+        atexit.register(_cleanup_stale_files)
         atexit.register(_remove_pid_file)
 
 
@@ -1060,7 +1062,7 @@ if __name__ == "__main__":
     if args.auto_recover:
         AUTO_RECOVER_ON_STARTUP = True
 
-
+    _cleanup_stale_files()
     _setup_pid_file()
     logger.info(
         "Menace Visual Agent listening on :%s  token=%s",
