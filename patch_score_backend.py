@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import List, Tuple, Dict
@@ -131,6 +132,48 @@ class S3PatchScoreBackend(PatchScoreBackend):
             return []
 
 
+@dataclass
+class FilePatchScoreBackend(PatchScoreBackend):
+    """Store patch scores as JSON files on the local filesystem."""
+
+    directory: str
+
+    # ------------------------------------------------------------------
+    def _ensure_dir(self) -> str:
+        os.makedirs(self.directory, exist_ok=True)
+        return self.directory
+
+    # ------------------------------------------------------------------
+    def store(self, record: Dict[str, object]) -> None:
+        path = os.path.join(self._ensure_dir(), f"{int(time.time()*1000)}.json")
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump(record, fh)
+        except Exception as exc:  # pragma: no cover
+            logger.error("File patch score store failed: %s", exc)
+
+    # ------------------------------------------------------------------
+    def fetch_recent(self, limit: int = 20) -> List[Tuple]:
+        try:
+            files = [
+                os.path.join(self._ensure_dir(), f)
+                for f in os.listdir(self.directory)
+                if f.endswith(".json")
+            ]
+        except Exception as exc:  # pragma: no cover
+            logger.error("File patch score list failed: %s", exc)
+            return []
+        files.sort(key=os.path.getmtime, reverse=True)
+        results: List[Tuple] = []
+        for path in files[:limit]:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    results.append(tuple(json.load(fh)))
+            except Exception as exc:  # pragma: no cover
+                logger.error("File patch score fetch failed: %s", exc)
+        return results
+
+
 def backend_from_url(url: str) -> PatchScoreBackend:
     """Instantiate a backend from ``url``."""
     parts = urlparse(url)
@@ -138,6 +181,9 @@ def backend_from_url(url: str) -> PatchScoreBackend:
         return HTTPPatchScoreBackend(url)
     if parts.scheme == "s3":
         return S3PatchScoreBackend(parts.netloc, parts.path.lstrip("/"))
+    if parts.scheme == "file":
+        path = parts.netloc + parts.path
+        return FilePatchScoreBackend(path)
     raise ValueError(f"unsupported backend URL: {url}")
 
 
@@ -145,5 +191,6 @@ __all__ = [
     "PatchScoreBackend",
     "HTTPPatchScoreBackend",
     "S3PatchScoreBackend",
+    "FilePatchScoreBackend",
     "backend_from_url",
 ]
