@@ -54,6 +54,7 @@ from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
 from menace.self_improvement_policy import SelfImprovementPolicy
 from menace.self_improvement_engine import SelfImprovementEngine
+from menace.patch_score_backend import backend_from_url
 from menace.self_test_service import SelfTestService
 from menace.code_database import PatchHistoryDB, CodeDB
 try:  # patch suggestion DB may reside at top level during tests
@@ -578,11 +579,19 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         ModuleIndexDB = None  # type: ignore
     policy = SelfImprovementPolicy(path=str(policy_file))
     patch_db = PatchHistoryDB(patch_db_path)
+    score_backend = None
+    backend_url = os.getenv("PATCH_SCORE_BACKEND_URL")
+    if backend_url:
+        try:
+            score_backend = backend_from_url(backend_url)
+        except Exception:
+            logger.exception("patch score backend init failed")
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
         module_index=ModuleIndexDB(module_map_file) if ModuleIndexDB else None,
         patch_db=patch_db,
         policy=policy,
+        score_backend=score_backend,
     )
 
     telem_db = ErrorDB(Path(tmp) / "errors.db")
