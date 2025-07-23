@@ -60,6 +60,52 @@ python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/syne
 
 The updated file persists between runs and influences ROI calculations automatically.
 
+## Customising weights with `synergy_weight_cli.py`
+
+The helper CLI directly edits `synergy_weights.json` and records each change in
+`sandbox_data/synergy_weights.log`. Typical steps are:
+
+1. **Show the current weights** to verify the starting values:
+
+   ```bash
+   python synergy_weight_cli.py --path synergy_weights.json show
+   ```
+
+2. **Export** them for manual tweaking:
+
+   ```bash
+   python synergy_weight_cli.py --path synergy_weights.json export --out weights.json
+   ```
+
+   Edit `weights.json` and adjust each value between `0.0` and `10.0`.
+
+3. **Import** the edited file:
+
+   ```bash
+   python synergy_weight_cli.py --path synergy_weights.json import weights.json
+   ```
+
+4. **Train** from recorded history whenever you have new synergy metrics:
+
+   ```bash
+   python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/synergy_history.json
+   ```
+
+5. **Reset** to defaults if experimentation goes wrong:
+
+   ```bash
+   python synergy_weight_cli.py --path synergy_weights.json reset
+   ```
+
+6. **Review the change log** or produce a plot of all updates:
+
+   ```bash
+   python synergy_weight_cli.py history --log sandbox_data/synergy_weights.log --plot
+   ```
+
+These commands modify the file in place so subsequent sandbox runs pick up the
+new weights automatically.
+
 ## Weight update walkthrough
 
 1. Each iteration the ROI tracker stores the latest synergy metrics in

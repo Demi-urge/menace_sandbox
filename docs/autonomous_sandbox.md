@@ -224,6 +224,26 @@ python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/s
 
 Use `--wsgi gunicorn` or `--wsgi uvicorn` to serve the dashboard via Gunicorn or Uvicorn instead of the Flask development server.
 
+### Advanced synergy learning
+
+The default learner uses a lightweight actor–critic strategy. To enable deeper
+reinforcement learning you can instantiate `SelfImprovementEngine` with
+`DQNSynergyLearner`:
+
+```python
+from menace.self_improvement_engine import SelfImprovementEngine, DQNSynergyLearner
+
+engine = SelfImprovementEngine(
+    synergy_learner_cls=DQNSynergyLearner,
+    synergy_weights_path="sandbox_data/synergy_weights.json",
+)
+engine.run_cycle()
+```
+
+This variant relies on PyTorch and persists the Q‑network weights alongside the
+JSON file. See [synergy_learning.md](synergy_learning.md) for background on how
+the learner adjusts the metrics.
+
 ## Docker usage
 
 Build the sandbox image and run it inside a container using the helper scripts:
