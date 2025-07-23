@@ -343,3 +343,43 @@ def test_dqn_synergy_learner_multi_cycle_sync(tmp_path):
 
     learner2 = sie.DQNSynergyLearner(path=path)
     assert learner2.weights["roi"] == pytest.approx(learner.weights["roi"])
+
+
+@pytest.mark.parametrize(
+    "cls_name",
+    ["DQNSynergyLearner", "SACSynergyLearner", "TD3SynergyLearner"],
+)
+def test_sb3_learners_positive_convergence(tmp_path, cls_name):
+    torch = pytest.importorskip("torch")
+    import importlib
+
+    import menace.self_improvement_engine as sie
+    import menace.self_improvement_policy as sip
+
+    # reload modules with real RL strategies when torch is available
+    sip = importlib.reload(sip)
+    sie = importlib.reload(sie)
+
+    path = tmp_path / f"{cls_name}.json"
+    cls = getattr(sie, cls_name)
+    learner = cls(path=path, lr=0.01, target_sync=1)
+
+    deltas = {
+        "synergy_roi": 1.0,
+        "synergy_efficiency": 0.8,
+        "synergy_resilience": 0.6,
+        "synergy_antifragility": 0.4,
+        "synergy_reliability": 0.2,
+        "synergy_maintainability": 0.1,
+        "synergy_throughput": 0.3,
+    }
+
+    start = learner.weights["roi"]
+    for _ in range(5):
+        learner.update(1.0, deltas)
+
+    assert 0.0 <= learner.weights["roi"] <= 10.0
+    assert learner.weights["roi"] >= start
+
+    learner2 = cls(path=path)
+    assert learner2.weights["roi"] == pytest.approx(learner.weights["roi"])
