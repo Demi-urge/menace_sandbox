@@ -40,6 +40,8 @@ class MetricsDashboard:
             "learning_holdout_score",
             "evolution_cycle_count",
             "experiment_best_roi",
+            "visual_agent_wait_time",
+            "visual_agent_queue_depth",
         ):
             gauge = getattr(metrics_exporter, name, None)
             if gauge is not None:

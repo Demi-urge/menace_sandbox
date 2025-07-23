@@ -1,5 +1,40 @@
-from menace.metrics_dashboard import MetricsDashboard
+import importlib.util
+import sys
+import types
+from pathlib import Path
+
 from menace.roi_tracker import ROITracker
+
+if "menace.metrics_dashboard" in sys.modules:
+    from menace.metrics_dashboard import MetricsDashboard
+    from menace import metrics_exporter
+else:  # pragma: no cover - allow running file directly
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+    spec_me = importlib.util.spec_from_file_location(
+        "menace.metrics_exporter",
+        Path(__file__).resolve().parents[1] / "metrics_exporter.py",
+        submodule_search_locations=pkg.__path__,
+    )
+    me = importlib.util.module_from_spec(spec_me)
+    me.__package__ = "menace"
+    sys.modules["menace.metrics_exporter"] = me
+    spec_me.loader.exec_module(me)
+
+    spec_md = importlib.util.spec_from_file_location(
+        "menace.metrics_dashboard",
+        Path(__file__).resolve().parents[1] / "metrics_dashboard.py",
+        submodule_search_locations=pkg.__path__,
+    )
+    md = importlib.util.module_from_spec(spec_md)
+    md.__package__ = "menace"
+    sys.modules["menace.metrics_dashboard"] = md
+    spec_md.loader.exec_module(md)
+
+    pkg.metrics_exporter = me
+    pkg.metrics_dashboard = md
+    MetricsDashboard = md.MetricsDashboard
+    metrics_exporter = me
 
 
 def _make_history(path):
@@ -85,3 +120,9 @@ def test_roi_and_metric_routes(tmp_path):
     resp = client.get("/plots/predictions.png")
     assert resp.status_code == 200
     assert resp.data.startswith(b"\x89PNG") or resp.data == b""
+
+    metrics_exporter.visual_agent_queue_depth.set(1)
+    metrics_exporter.visual_agent_wait_time.set(0.2)
+    all_metrics = client.get("/metrics").get_json()
+    assert all_metrics["visual_agent_queue_depth"] == 1
+    assert all_metrics["visual_agent_wait_time"] == 0.2
