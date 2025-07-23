@@ -667,6 +667,54 @@ def test_metrics_warning(monkeypatch, caplog):
     assert "queue size" in caplog.text
 
 
+def test_status_monitor_and_wait_metric(monkeypatch):
+    monkeypatch.setenv("VISUAL_AGENT_STATUS_INTERVAL", "0.01")
+    vac_mod = _reload_client(monkeypatch)
+
+    class Gauge:
+        def __init__(self):
+            self.value = None
+
+        def set(self, v):
+            self.value = v
+
+    depth = Gauge()
+    wait = Gauge()
+
+    monkeypatch.setattr(vac_mod.metrics_exporter, "visual_agent_queue_depth", depth)
+    monkeypatch.setattr(vac_mod.metrics_exporter, "visual_agent_wait_time", wait)
+
+    class Resp:
+        def __init__(self, data=None):
+            self.status_code = 200
+            self._data = data or {}
+
+        def json(self):
+            return self._data
+
+    def fake_get(url, timeout=5):
+        if url.endswith("/status"):
+            return Resp({"queue": 2, "active": False})
+        return Resp()
+
+    monkeypatch.setattr(
+        vac_mod,
+        "requests",
+        types.SimpleNamespace(get=fake_get, post=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_send", lambda *a, **k: (True, "ok"))
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"], poll_interval=0.01)
+    client.ask([{"content": "a"}])
+    time.sleep(0.05)
+    client._stop_event.set()
+    if client._status_thread is not None:
+        client._status_thread.join(timeout=1)
+    assert depth.value == 2
+    assert wait.value is not None
+
+
 def test_tasks_survive_restart(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     pytest.importorskip("uvicorn")

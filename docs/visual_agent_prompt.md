@@ -142,6 +142,10 @@ visual agent is contacted. The most relevant are:
   prepends "Improve Menace by enhancing error handling and modifying
   existing bots." (see `DEFAULT_MESSAGE_PREFIX` in
   `visual_agent_client.py`).
+- `VISUAL_AGENT_STATUS_INTERVAL` – poll `/status` periodically to record queue
+  depth for the dashboard. Set to `0` to disable.
+  When enabled the sandbox dashboard exposes `visual_agent_queue_depth` and
+  `visual_agent_wait_time` metrics.
 
 ## Visual agent service
 

@@ -14,6 +14,8 @@ from collections import deque
 from concurrent.futures import Future
 from typing import Iterable, Dict, Any, Callable, Deque, Tuple
 
+from . import metrics_exporter
+
 from .audit_logger import log_event
 from filelock import FileLock, Timeout
 
@@ -172,6 +174,7 @@ class VisualAgentClient:
         token_refresh_cmd: str | None = None,
         queue_warning_threshold: int | None = None,
         metrics_interval: float | None = None,
+        status_interval: float | None = None,
     ) -> None:
         default_urls = (
             os.getenv("VISUAL_AGENT_URLS")
@@ -193,10 +196,15 @@ class VisualAgentClient:
         self.metrics_interval = metrics_interval or float(
             os.getenv("VISUAL_AGENT_METRICS_INTERVAL", "30")
         )
+        self.status_interval = status_interval if status_interval is not None else float(
+            os.getenv("VISUAL_AGENT_STATUS_INTERVAL", "0")
+        )
         self.open_run_id: str | None = None
         self.active = False
         self._lock = threading.Lock()
-        self._queue: Deque[Tuple[Callable[[], Any], Future]] = deque()
+        self._queue: Deque[Tuple[Callable[[], Any], Future, float]] = deque()
+        self._wait_lock = threading.Lock()
+        self._wait_times: Deque[float] = deque(maxlen=100)
         self._cv = threading.Condition()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
@@ -208,12 +216,19 @@ class VisualAgentClient:
             self._metrics_thread.start()
         else:
             self._metrics_thread = None
+        if self.status_interval > 0 and self.urls and requests:
+            self._status_thread = threading.Thread(
+                target=self._status_loop, daemon=True
+            )
+            self._status_thread.start()
+        else:
+            self._status_thread = None
 
     # ------------------------------------------------------------------
     def _enqueue(self, func: Callable[[], Any]) -> Future:
         fut: Future = Future()
         with self._cv:
-            self._queue.append((func, fut))
+            self._queue.append((func, fut, time.time()))
             self._cv.notify()
         return fut
 
@@ -222,13 +237,26 @@ class VisualAgentClient:
             with self._cv:
                 while not self._queue:
                     self._cv.wait()
-                func, fut = self._queue.popleft()
+                func, fut, ts = self._queue.popleft()
+            wait = time.time() - ts
+            self._record_wait_time(wait)
             try:
                 with _global_lock.acquire():
                     result = func()
                 fut.set_result(result)
             except Exception as exc:
                 fut.set_exception(exc)
+
+    def _record_wait_time(self, delta: float) -> None:
+        with self._wait_lock:
+            self._wait_times.append(delta)
+            avg = sum(self._wait_times) / len(self._wait_times)
+        gauge = getattr(metrics_exporter, "visual_agent_wait_time", None)
+        if gauge is not None:
+            try:
+                gauge.set(avg)
+            except Exception:
+                pass
 
     def _metrics_loop(self) -> None:
         while not self._stop_event.wait(self.metrics_interval):
@@ -250,6 +278,26 @@ class VisualAgentClient:
                             self.queue_warning_threshold,
                         )
                     break
+                except Exception:
+                    continue
+
+    def _status_loop(self) -> None:
+        while not self._stop_event.wait(self.status_interval):
+            for base in self.urls:
+                try:
+                    resp = requests.get(f"{base}/status", timeout=5)
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.json()
+                    qsize = data.get("queue")
+                    if isinstance(qsize, int):
+                        gauge = getattr(metrics_exporter, "visual_agent_queue_depth", None)
+                        if gauge is not None:
+                            try:
+                                gauge.set(qsize)
+                            except Exception:
+                                pass
+                        break
                 except Exception:
                     continue
 

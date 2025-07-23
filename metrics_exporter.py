@@ -223,6 +223,15 @@ projected_lucrativity_gauge = Gauge(
     "projected_lucrativity", "Projected lucrativity"
 )
 
+# Metrics for visual agent utilisation
+visual_agent_wait_time = Gauge(
+    "visual_agent_wait_time_seconds",
+    "Average wait time for VisualAgentClient tasks",
+)
+visual_agent_queue_depth = Gauge(
+    "visual_agent_queue_depth", "Queue length reported by VisualAgentClient"
+)
+
 # Additional counters for failure visibility
 error_bot_exceptions = Gauge(
     "error_bot_exceptions_total", "Exceptions encountered in ErrorBot"
@@ -290,6 +299,8 @@ __all__ = [
     "efficiency_gauge",
     "flexibility_gauge",
     "projected_lucrativity_gauge",
+    "visual_agent_wait_time",
+    "visual_agent_queue_depth",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
 ]
