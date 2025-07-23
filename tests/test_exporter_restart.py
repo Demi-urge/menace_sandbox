@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _free_port() -> int:
     import socket
+
     sock = socket.socket()
     sock.bind(("", 0))
     port = sock.getsockname()[1]
@@ -85,13 +86,17 @@ def setup_stubs(monkeypatch, tmp_path):
 
     if "filelock" not in sys.modules:
         fl = types.ModuleType("filelock")
+
         class DummyLock:
             def __init__(self, *a, **k):
                 pass
+
             def acquire(self, timeout=0):
                 pass
+
             def release(self):
                 pass
+
         fl.FileLock = DummyLock
         fl.Timeout = RuntimeError
         monkeypatch.setitem(sys.modules, "filelock", fl)
@@ -172,24 +177,34 @@ def test_exporter_auto_restart(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
-    mod.main([
-        "--max-iterations",
-        "1",
-        "--runs",
-        "2",
-        "--preset-count",
-        "1",
-        "--sandbox-data-dir",
-        str(tmp_path),
-    ])
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "2",
+            "--preset-count",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ]
+    )
 
     assert captured["starts"] >= 2
 
     meta_log = tmp_path / "sandbox_meta.log"
     assert meta_log.exists()
-    entries = [json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()]
-    restarts = [e.get("restart_count") for e in entries if e.get("event") == "exporter_restarted"]
+    entries = [
+        json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()
+    ]
+    restarts = [
+        e.get("restart_count")
+        for e in entries
+        if e.get("event") == "exporter_restarted"
+    ]
     assert restarts and restarts[-1] == len(restarts)
+    assert isinstance(se_mod.exporter_uptime.labels().get(), float)
+    assert isinstance(se_mod.exporter_failures.labels().get(), float)
 
 
 def test_exporter_busy_port(monkeypatch, tmp_path: Path) -> None:
@@ -250,21 +265,25 @@ def test_exporter_busy_port(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     try:
-        mod.main([
-            "--max-iterations",
-            "1",
-            "--runs",
-            "1",
-            "--preset-count",
-            "1",
-            "--sandbox-data-dir",
-            str(tmp_path),
-        ])
+        mod.main(
+            [
+                "--max-iterations",
+                "1",
+                "--runs",
+                "1",
+                "--preset-count",
+                "1",
+                "--sandbox-data-dir",
+                str(tmp_path),
+            ]
+        )
     finally:
         busy.close()
 
     assert captured["ports"]
     assert captured["ports"][0] != port
+    assert isinstance(se_mod.exporter_uptime.labels().get(), float)
+    assert isinstance(se_mod.exporter_failures.labels().get(), float)
 
 
 def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
@@ -322,22 +341,30 @@ def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
-    mod.main([
-        "--max-iterations",
-        "1",
-        "--runs",
-        "1",
-        "--preset-count",
-        "1",
-        "--sandbox-data-dir",
-        str(tmp_path),
-    ])
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--preset-count",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ]
+    )
 
     assert captured["starts"] >= 2
     meta_log = tmp_path / "sandbox_meta.log"
     assert meta_log.exists()
-    entries = [json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()]
-    restarts = [e.get("restart_count") for e in entries if e.get("event") == "exporter_restarted"]
+    entries = [
+        json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()
+    ]
+    restarts = [
+        e.get("restart_count")
+        for e in entries
+        if e.get("event") == "exporter_restarted"
+    ]
     assert restarts and restarts[-1] == len(restarts)
 
 
@@ -355,7 +382,9 @@ def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
             self.stopped = False
 
         def start(self) -> None:  # type: ignore[override]
-            self._thread = threading.Thread(target=lambda: time.sleep(0.05), daemon=True)
+            self._thread = threading.Thread(
+                target=lambda: time.sleep(0.05), daemon=True
+            )
             self._thread.start()
 
         def stop(self) -> None:  # type: ignore[override]
@@ -403,17 +432,21 @@ def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
-    mod.main([
-        "--max-iterations",
-        "1",
-        "--runs",
-        "1",
-        "--preset-count",
-        "1",
-        "--sandbox-data-dir",
-        str(tmp_path),
-    ])
+    mod.main(
+        [
+            "--max-iterations",
+            "1",
+            "--runs",
+            "1",
+            "--preset-count",
+            "1",
+            "--sandbox-data-dir",
+            str(tmp_path),
+        ]
+    )
 
     inst = RecordingExporter.instances[-1]
     assert inst.stopped is True
     assert inst._thread is not None and not inst._thread.is_alive()
+    assert isinstance(se_mod.exporter_uptime.labels().get(), float)
+    assert isinstance(se_mod.exporter_failures.labels().get(), float)
