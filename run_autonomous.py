@@ -92,6 +92,18 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
 logger = get_logger(__name__)
 
 
+def _visual_agent_running(urls: str) -> bool:
+    """Return ``True`` if the visual agent responds to ``/status``."""
+    try:
+        import requests  # type: ignore
+
+        base = urls.split(";")[0]
+        resp = requests.get(f"{base}/status", timeout=3)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 class PresetModel(BaseModel):
     """Schema for environment presets."""
 
@@ -495,20 +507,35 @@ def main(argv: List[str] | None = None) -> None:
 
     agent_proc = None
     autostart = settings.visual_agent_autostart
-    if autostart:
+    if autostart and not _visual_agent_running(settings.visual_agent_urls):
+        cmd = [sys.executable, str(_pkg_dir / "menace_visual_agent_2.py")]
+        if os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1":
+            cmd.append("--auto-recover")
         try:
-            import requests  # type: ignore
-
-            base = (settings.visual_agent_urls).split(";")[0]
-            resp = requests.get(f"{base}/status", timeout=3)
-            if resp.status_code != 200:
-                raise RuntimeError(resp.text)
-        except Exception:
-            cmd = [sys.executable, str(_pkg_dir / "menace_visual_agent_2.py")]
-            if os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1":
-                cmd.append("--auto-recover")
             agent_proc = subprocess.Popen(cmd)
-            time.sleep(2)
+        except Exception:  # pragma: no cover - runtime dependent
+            logger.exception("failed to launch visual agent")
+            sys.exit(1)
+
+        started = False
+        for _ in range(5):
+            time.sleep(1)
+            if agent_proc.poll() is not None:
+                logger.error(
+                    "visual agent exited with code %s", agent_proc.returncode
+                )
+                sys.exit(1)
+            if _visual_agent_running(settings.visual_agent_urls):
+                started = True
+                break
+        if not started:
+            logger.error("visual agent failed to start at %s", settings.visual_agent_urls)
+            try:
+                agent_proc.terminate()
+                agent_proc.wait(timeout=5)
+            except Exception:
+                pass
+            sys.exit(1)
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
@@ -588,6 +615,12 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
+        if agent_proc and agent_proc.poll() is not None:
+            logger.error(
+                "visual agent process terminated with code %s",
+                agent_proc.returncode,
+            )
+            sys.exit(1)
         if args.preset_files:
             pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
             with open(pf, "r", encoding="utf-8") as fh:
