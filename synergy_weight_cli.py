@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-"""Command line tool for managing synergy weight settings."""
+"""Command line tool for inspecting and training synergy weight settings.
+
+Refer to ``docs/synergy_learning.md`` for an overview of how synergy
+weights are learned and how predictions feed into ROI calculations.
+"""
 
 import argparse
 import json

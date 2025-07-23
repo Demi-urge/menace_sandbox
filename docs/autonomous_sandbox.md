@@ -202,7 +202,9 @@ clean old logs periodically when persisting them on disk.
 Set `EXPORT_SYNERGY_METRICS=1` when launching `run_autonomous.py` to start the
 `SynergyExporter`. It reads `synergy_history.json` and exposes the latest
 values on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` (default port
-`8003`) for Prometheus scraping.
+`8003`) for Prometheus scraping. See
+[`synergy_learning.md`](synergy_learning.md) for details on how synergy
+weights are learned and how these metrics influence ROI.
 
 ## Docker usage
 
