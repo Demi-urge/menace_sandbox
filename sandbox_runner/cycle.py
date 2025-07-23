@@ -8,7 +8,11 @@ import shutil
 import time
 import asyncio
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
+    from sandbox_runner import SandboxContext
+    from roi_tracker import ROITracker
 
 try:
     from radon.metrics import mi_visit  # type: ignore
@@ -78,13 +82,22 @@ async def _collect_plugin_metrics_async(
 
 
 def _sandbox_cycle_runner(
-    ctx: Any,
+    ctx: "SandboxContext",
     section: str | None,
     snippet: str | None,
-    tracker: Any,
+    tracker: "ROITracker",
     scenario: str | None = None,
 ) -> None:
-    """Execute a single improvement/test cycle."""
+    """Run one self-improvement cycle within the sandbox.
+
+    The function coordinates resource tuning, code improvement and testing
+    for the provided ``ctx``.  It updates ``SANDBOX_ENV_PRESETS`` and the
+    environment variable of the same name, invokes the orchestrator,
+    self-improvement engine and tester, analyses the sandbox and records
+    metrics on ``tracker``.  ``ctx`` is mutated in place and patches may be
+    written to disk.  Any raised exceptions are logged and the cycle
+    continues unless ``tracker`` indicates convergence.
+    """
 
     global SANDBOX_ENV_PRESETS
     from sandbox_runner import build_section_prompt, GPT_SECTION_PROMPT_MAX_LENGTH
