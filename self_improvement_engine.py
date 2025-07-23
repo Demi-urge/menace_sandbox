@@ -10,6 +10,7 @@ import asyncio
 import os
 from sandbox_settings import SandboxSettings
 import json
+import sqlite3
 import pickle
 import io
 import tempfile
@@ -1689,18 +1690,20 @@ def auto_x(
 
 
 def load_synergy_history(path: str | Path) -> list[dict[str, float]]:
-    """Return synergy history entries from ``path``."""
+    """Return synergy history entries from ``path`` SQLite database."""
     p = Path(path)
     if not p.exists():
         return []
     try:
-        data = json.loads(p.read_text())
-        if not isinstance(data, list):
-            return []
+        with sqlite3.connect(p) as conn:
+            rows = conn.execute(
+                "SELECT entry FROM synergy_history ORDER BY id"
+            ).fetchall()
         hist: list[dict[str, float]] = []
-        for entry in data:
-            if isinstance(entry, dict):
-                hist.append({str(k): float(v) for k, v in entry.items()})
+        for (text,) in rows:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                hist.append({str(k): float(v) for k, v in data.items()})
         return hist
     except Exception:
         return []
@@ -1746,7 +1749,7 @@ class SynergyDashboard:
 
     def __init__(
         self,
-        history_file: str | Path = "synergy_history.json",
+        history_file: str | Path = "synergy_history.db",
         *,
         ma_window: int = 5,
         exporter_host: str | None = None,
@@ -1891,14 +1894,14 @@ def cli(argv: list[str] | None = None) -> None:
     p_dash = sub.add_parser(
         "synergy-dashboard", help="start synergy metrics dashboard"
     )
-    p_dash.add_argument("--file", default="synergy_history.json")
+    p_dash.add_argument("--file", default="synergy_history.db")
     p_dash.add_argument("--port", type=int, default=5001)
     p_dash.add_argument("--exporter-host")
     p_dash.add_argument("--exporter-port", type=int, default=8003)
     p_dash.add_argument("--refresh-interval", type=float, default=5.0)
 
     p_plot = sub.add_parser("plot-synergy", help="plot synergy metrics")
-    p_plot.add_argument("history", help="synergy_history.json file")
+    p_plot.add_argument("history", help="synergy_history.db file")
     p_plot.add_argument("output", help="output PNG file")
 
     args = parser.parse_args(argv)

@@ -231,5 +231,6 @@ __all__ = [
     "indirect_domain_reference_detector",
     "evolution_ab_comparator",
     "module_index_db",
+    "synergy_history_db",
 ]
 __version__ = "0.1.0"
