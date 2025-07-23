@@ -82,6 +82,10 @@ Additional synergy metrics influence the adjustments:
 - **synergy_safety_rating** – adjusts `THREAT_INTENSITY` based on combined
   safety performance; positive values increase the intensity while negative
   values decrease it.
+- **synergy_reliability** – higher values tighten adjustments based on more
+  trustworthy synergy forecasts.
+- **synergy_maintainability** – influences CPU limits to encourage easier upkeep.
+- **synergy_throughput** – scales bandwidth when modules sustain higher output.
 
 Synergy *predictions* are also consulted when present. `ROITracker.predict_synergy()`
 forecasts the next `synergy_roi` value and `predict_synergy_metric()` provides
@@ -153,8 +157,9 @@ learning enabled for preset adaptation:
    levels based on recent ROI and synergy values, then writes the updated
    policy back to disk.
 
-Synergy metrics such as `synergy_efficiency`, `synergy_resilience` and
-`synergy_antifragility` indicate how well modules cooperate. Positive scores
+Synergy metrics such as `synergy_efficiency`, `synergy_resilience`,
+`synergy_antifragility`, `synergy_reliability`, `synergy_maintainability` and
+`synergy_throughput` indicate how well modules cooperate. Positive scores
 tighten resource limits while negative ones relax them. The RL agent also
 consumes `synergy_roi` alongside ROI history so improvements in these metrics
 directly influence the policy update step.

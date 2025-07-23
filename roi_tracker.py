@@ -93,6 +93,7 @@ class ROITracker:
             "synergy_antifragility": [],
             "synergy_resilience": [],
             "synergy_security_score": [],
+            "synergy_reliability": [],
             "roi_reliability": [],
         }
         self.synergy_metrics_history: Dict[str, List[float]] = {
@@ -120,6 +121,7 @@ class ROITracker:
             "synergy_resilience": [],
             "synergy_security_score": [],
             "synergy_roi_reliability": [],
+            "synergy_reliability": [],
         }
         self.synergy_history: list[dict[str, float]] = []
         self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
@@ -198,6 +200,7 @@ class ROITracker:
                 "throughput": "synergy_throughput",
                 "risk_index": "synergy_risk_index",
                 "recovery_time": "synergy_recovery_time",
+                "reliability": "synergy_reliability",
                 "adaptability": "synergy_adaptability",
                 "efficiency": "synergy_efficiency",
                 "antifragility": "synergy_antifragility",
@@ -414,6 +417,7 @@ class ROITracker:
         metrics.setdefault(
             "synergy_roi_reliability", self.reliability(metric="synergy_roi")
         )
+        metrics.setdefault("synergy_reliability", self.synergy_reliability())
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
@@ -1403,6 +1407,9 @@ class ROITracker:
             "synergy_cpu_usage",
             "synergy_memory_usage",
             "synergy_long_term_lucrativity",
+            "synergy_reliability",
+            "synergy_maintainability",
+            "synergy_throughput",
         ):
             self.synergy_metrics_history.setdefault(key, [])
             self.predicted_metrics.setdefault(key, [])

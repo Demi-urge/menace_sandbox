@@ -106,6 +106,9 @@ def test_synergy_weight_learner_updates(tmp_path):
         "synergy_efficiency": 0.0,
         "synergy_resilience": 0.0,
         "synergy_antifragility": 0.0,
+        "synergy_reliability": 0.0,
+        "synergy_maintainability": 0.0,
+        "synergy_throughput": 0.0,
     }
     learner.update(1.0, deltas)
     after_inc = learner.weights["roi"]
@@ -125,6 +128,9 @@ def _expected_weights(start, cycles, lr=0.1):
         "synergy_efficiency": "efficiency",
         "synergy_resilience": "resilience",
         "synergy_antifragility": "antifragility",
+        "synergy_reliability": "reliability",
+        "synergy_maintainability": "maintainability",
+        "synergy_throughput": "throughput",
     }
     for roi_delta, deltas in cycles:
         if roi_delta == 0:
@@ -147,30 +153,45 @@ def test_synergy_weight_learner_multi_cycle(tmp_path):
             "synergy_efficiency": 0.2,
             "synergy_resilience": 0.1,
             "synergy_antifragility": -0.2,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (0.5, {
             "synergy_roi": 0.2,
             "synergy_efficiency": -0.1,
             "synergy_resilience": 0.0,
             "synergy_antifragility": 0.1,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (-0.3, {
             "synergy_roi": 0.1,
             "synergy_efficiency": 0.2,
             "synergy_resilience": -0.1,
             "synergy_antifragility": 0.0,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (0.2, {
             "synergy_roi": -0.1,
             "synergy_efficiency": 0.0,
             "synergy_resilience": 0.1,
             "synergy_antifragility": 0.2,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (1.2, {
             "synergy_roi": 0.3,
             "synergy_efficiency": 0.1,
             "synergy_resilience": 0.2,
             "synergy_antifragility": 0.1,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
     ]
 
@@ -190,18 +211,27 @@ def test_synergy_weight_learner_multi_cycle(tmp_path):
             "synergy_efficiency": 0.0,
             "synergy_resilience": 0.1,
             "synergy_antifragility": -0.1,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (0.7, {
             "synergy_roi": -0.3,
             "synergy_efficiency": 0.2,
             "synergy_resilience": 0.0,
             "synergy_antifragility": 0.1,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
         (0.5, {
             "synergy_roi": 0.1,
             "synergy_efficiency": 0.1,
             "synergy_resilience": 0.2,
             "synergy_antifragility": 0.0,
+            "synergy_reliability": 0.0,
+            "synergy_maintainability": 0.0,
+            "synergy_throughput": 0.0,
         }),
     ]
 
