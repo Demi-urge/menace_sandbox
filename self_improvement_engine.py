@@ -55,12 +55,12 @@ POLICY_STATE_LEN = 21
 
 
 class SynergyWeightLearner:
-    """Simple learner adjusting synergy weights via policy gradient."""
+    """Learner adjusting synergy weights using a simple RL policy."""
 
     def __init__(self, path: Path | None = None, lr: float = 0.1) -> None:
         if sip_torch is None:
             logger.warning(
-                "PyTorch not installed - using basic SynergyWeightLearner"
+                "PyTorch not installed - using ActorCritic strategy"
             )
         self.path = Path(path) if path else None
         self.lr = lr
@@ -73,6 +73,8 @@ class SynergyWeightLearner:
             "maintainability": 1.0,
             "throughput": 1.0,
         }
+        self.strategy = ActorCriticStrategy()
+        self._state: tuple[float, ...] = (0.0,) * 7
         self.load()
 
     # ------------------------------------------------------------------
@@ -87,6 +89,14 @@ class SynergyWeightLearner:
                     self.weights[k] = float(data[k])
         except Exception:
             return
+        try:
+            base = os.path.splitext(self.path)[0]
+            pkl = base + ".policy.pkl"
+            if os.path.exists(pkl):
+                with open(pkl, "rb") as fh:
+                    self.strategy = pickle.load(fh)
+        except Exception as exc:
+            logger.exception("failed to load strategy pickle: %s", exc)
 
     # ------------------------------------------------------------------
     def save(self) -> None:
@@ -102,25 +112,45 @@ class SynergyWeightLearner:
             os.replace(tmp, self.path)
         except Exception as exc:
             logger.exception("failed to save synergy weights: %s", exc)
+        try:
+            base = os.path.splitext(self.path)[0]
+            with open(base + ".policy.pkl", "wb") as fh:
+                pickle.dump(self.strategy, fh)
+        except Exception as exc:
+            logger.exception("failed to save strategy pickle: %s", exc)
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
-        if roi_delta == 0.0:
-            return
+        names = [
+            "synergy_roi",
+            "synergy_efficiency",
+            "synergy_resilience",
+            "synergy_antifragility",
+            "synergy_reliability",
+            "synergy_maintainability",
+            "synergy_throughput",
+        ]
+        self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
+        q_vals_list: list[float] = []
+        for idx, _ in enumerate(names):
+            reward = roi_delta * self._state[idx]
+            q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
+            q_vals_list.append(float(q))
+        if hasattr(self.strategy, "predict"):
+            q_vals = self.strategy.predict(self._state)
+            q_vals_list = [float(v.item() if hasattr(v, "item") else v) for v in q_vals]
         mapping = {
-            "synergy_roi": "roi",
-            "synergy_efficiency": "efficiency",
-            "synergy_resilience": "resilience",
-            "synergy_antifragility": "antifragility",
-            "synergy_reliability": "reliability",
-            "synergy_maintainability": "maintainability",
-            "synergy_throughput": "throughput",
+            "roi": 0,
+            "efficiency": 1,
+            "resilience": 2,
+            "antifragility": 3,
+            "reliability": 4,
+            "maintainability": 5,
+            "throughput": 6,
         }
-        for name, key in mapping.items():
-            d = float(deltas.get(name, 0.0))
-            w = float(self.weights.get(key, 1.0))
-            w += self.lr * roi_delta * d
-            self.weights[key] = max(0.0, min(w, 10.0))
+        for key, idx in mapping.items():
+            val = q_vals_list[idx]
+            self.weights[key] = max(0.0, min(val, 10.0))
         self.save()
 
 
@@ -388,9 +418,7 @@ class SelfImprovementEngine:
             if roi_ema_alpha is not None
             else settings.roi_ema_alpha
         )
-        default_path = Path(settings.sandbox_score_db).with_suffix(
-            ".synergy.json"
-        )
+        default_path = Path(settings.sandbox_data_dir) / "synergy_weights.json"
         self.synergy_weights_path = (
             Path(synergy_weights_path)
             if synergy_weights_path is not None
