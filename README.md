@@ -474,6 +474,9 @@ Troubleshooting tips:
   restarting unexpectedly.
 - If synergy metrics diverge wildly, verify that ``synergy_history.json`` is
   writable and consider adjusting ``--synergy-threshold-weight``.
+- HTTP 401 errors from the visual agent usually mean ``VISUAL_AGENT_TOKEN`` is
+  missing or mismatched. Confirm the token matches the secret configured in
+  ``menace_visual_agent_2.py``.
 QEMU must be installed separately for cross-platform tests. Place your QCOW2 files in `qemu_images` and reference them via `VM_SETTINGS` so presets with `OS_TYPE` `windows` or `macos` boot automatically.
 
 ### Maintenance logs and audit signing
@@ -509,6 +512,9 @@ start unattended.  At minimum the following variables must be defined:
 - ``OPENAI_API_KEY`` – API key enabling language model features used by
   ``BotDevelopmentBot`` and other helpers.
 - ``STRIPE_API_KEY`` – required for revenue tracking and monetisation helpers.
+- ``VISUAL_AGENT_TOKEN`` – shared secret used by ``menace_visual_agent_2.py`` for authentication.
+- ``SANDBOX_REPO_PATH`` – path to the local sandbox repository clone processed during self-improvement cycles.
+- ``SANDBOX_DATA_DIR`` – directory storing ROI history, presets and patch metrics.
 
 ## Usage
 
