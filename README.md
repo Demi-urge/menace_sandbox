@@ -646,6 +646,8 @@ persist these values:
 python synergy_weight_cli.py show
 python synergy_weight_cli.py export --out weights.json
 python synergy_weight_cli.py import weights.json
+python synergy_weight_cli.py reset
+python synergy_weight_cli.py history --plot
 ```
 
 ### Synergy metrics exporter
