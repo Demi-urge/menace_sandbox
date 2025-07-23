@@ -680,6 +680,9 @@ class ROITracker:
         history = self.synergy_metrics_history.get(metric_name)
         if history is None:
             history = self.metrics_history.get(metric_name)
+        if method != "arima" and history:
+            n = min(len(history), window)
+            return float(round(self._ema(history[-n:]), 4))
         if history is None:
             history = []
         return self._forecast_generic(history)
@@ -773,6 +776,10 @@ class ROITracker:
         history = self.metrics_history.get("synergy_roi")
         if not history or len(history) < 2:
             return 0.0
+        method = os.getenv("SYNERGY_FORECAST_METHOD", "ema").lower()
+        if method != "arima":
+            n = min(len(history), window)
+            return float(round(self._ema(history[-n:]), 4))
 
         model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
         if model_name and len(history) > 10:
@@ -856,6 +863,10 @@ class ROITracker:
         history = self.synergy_metrics_history.get(metric_name)
         if history is None:
             history = self.metrics_history.get(metric_name)
+        method = os.getenv("SYNERGY_FORECAST_METHOD", "ema").lower()
+        if method != "arima" and history:
+            n = min(len(history), window)
+            return float(round(self._ema(history[-n:]), 4))
 
         if manager is not None:
             try:

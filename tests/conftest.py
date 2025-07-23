@@ -63,15 +63,49 @@ if "cryptography" not in sys.modules:
 
 import importlib.util as _importlib_util
 if "numpy" not in sys.modules and _importlib_util.find_spec("numpy") is None:
+    class _Array(list):
+        def reshape(self, *shape):
+            return self
+
     np_stub = types.ModuleType("numpy")
     np_stub.isscalar = lambda x: isinstance(x, (int, float, complex))
     np_stub.bool_ = bool
+    np_stub.arange = lambda n, *a, **k: _Array(range(n))
+    np_stub.array = lambda x, dtype=None: _Array(list(x))
+    np_stub.percentile = lambda data, p: 0.0
+    np_stub.std = lambda x, ddof=0: 0.0
+    np_stub.dot = lambda a, b: sum(float(x) * float(y) for x, y in zip(a, b))
     sys.modules["numpy"] = np_stub
 if "sklearn" not in sys.modules and _importlib_util.find_spec("sklearn") is None:
     skl = types.ModuleType("sklearn")
     skl.pipeline = types.ModuleType("sklearn.pipeline")
+    skl.preprocessing = types.ModuleType("sklearn.preprocessing")
+    class _Poly:
+        def __init__(self, *a, **k):
+            pass
+
+        def fit_transform(self, x):
+            return x
+
+    skl.preprocessing.PolynomialFeatures = _Poly
+    skl.linear_model = types.ModuleType("sklearn.linear_model")
+    class _LR:
+        def fit(self, X, y):
+            self.coef_ = [0.0, 0.0, 0.0]
+            return self
+
+        def predict(self, X):
+            class Arr(list):
+                def tolist(self_inner):
+                    return list(self_inner)
+
+            return Arr([0.0 for _ in range(len(X))])
+
+    skl.linear_model.LinearRegression = _LR
     sys.modules["sklearn"] = skl
     sys.modules["sklearn.pipeline"] = skl.pipeline
+    sys.modules["sklearn.preprocessing"] = skl.preprocessing
+    sys.modules["sklearn.linear_model"] = skl.linear_model
 
 # Provide lightweight stubs for optional heavy dependencies
 if "pulp" not in sys.modules:
@@ -133,6 +167,14 @@ def _ensure_sqlalchemy():
         importlib.reload(_sa)
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _set_synergy_method(monkeypatch):
+    """Use ARIMA synergy forecasting during tests by default."""
+    monkeypatch.setenv("SYNERGY_FORECAST_METHOD", "arima")
+    yield
+    monkeypatch.delenv("SYNERGY_FORECAST_METHOD", raising=False)
 
 
 class _TrackerMock:
