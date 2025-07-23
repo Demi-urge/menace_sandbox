@@ -588,6 +588,9 @@ Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command ret
 
 ``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
 
+Set ``VISUAL_AGENT_AUTO_RECOVER=1`` to launch the service with
+``--auto-recover`` so queued tasks persist across restarts.
+
 ``menace_visual_agent_2.py`` automatically sets ``pytesseract.tesseract_cmd``
 based on the host OS. Override the path with ``TESSERACT_CMD`` if needed.
 

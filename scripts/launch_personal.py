@@ -18,6 +18,8 @@ _DEF_PORT = "8001"
 def _start_agent(env: dict[str, str]) -> subprocess.Popen[bytes]:
     """Spawn ``menace_visual_agent_2.py`` with ``env``."""
     cmd = [sys.executable, str(Path(__file__).resolve().parents[1] / "menace_visual_agent_2.py")]
+    if env.get("VISUAL_AGENT_AUTO_RECOVER") == "1":
+        cmd.append("--auto-recover")
     return subprocess.Popen(cmd, env=env)
 
 

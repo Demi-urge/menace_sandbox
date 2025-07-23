@@ -74,6 +74,7 @@ After the system tools are in place install the Python requirements via
 - `AUTO_DASHBOARD_PORT=8001` – start the metrics dashboard
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
 - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
+- `VISUAL_AGENT_AUTO_RECOVER=1` – start the agent with `--auto-recover` enabled
 - `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
 - `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 
