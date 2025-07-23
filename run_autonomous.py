@@ -638,6 +638,27 @@ def main(argv: List[str] | None = None) -> None:
             logger.warning("failed to start synergy exporter: %s", exc)
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
 
+    auto_trainer = None
+    if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
+        from menace.synergy_auto_trainer import SynergyAutoTrainer
+
+        try:
+            interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
+        except Exception:
+            interval = 600.0
+        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        weights_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_weights.json"
+        auto_trainer = SynergyAutoTrainer(
+            history_file=str(history_file),
+            weights_file=str(weights_file),
+            interval=interval,
+        )
+        try:
+            auto_trainer.start()
+            cleanup_funcs.append(auto_trainer.stop)
+        except Exception as exc:  # pragma: no cover - runtime issues
+            logger.warning("failed to start synergy auto trainer: %s", exc)
+
     dash_thread = None
     if dash_port:
         if not _port_available(dash_port):

@@ -232,5 +232,6 @@ __all__ = [
     "evolution_ab_comparator",
     "module_index_db",
     "synergy_history_db",
+    "synergy_auto_trainer",
 ]
 __version__ = "0.1.0"
