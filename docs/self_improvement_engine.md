@@ -87,7 +87,9 @@ synergy metrics and calls ``SynergyWeightLearner.update``:
 
 The base learner uses a lightweight actor‑critic policy so weights follow a
 learned reinforcement‑learning strategy. ``DQNSynergyLearner`` provides a deeper
-Double DQN alternative when PyTorch is available.
+Double DQN alternative when PyTorch is available.  ``SACSynergyLearner`` and
+``TD3SynergyLearner`` wrap simplified Soft Actor‑Critic and TD3 strategies so
+different RL approaches can be selected via ``synergy_learner_cls``.
 
 ``DQNSynergyLearner`` extends this process with a small deep Q‑network. When
 PyTorch is available the learner defaults to a Double DQN variant with a target
@@ -113,13 +115,13 @@ The environment variables ``SYNERGY_WEIGHT_ROI``,
 each cycle the learner writes back to the JSON file so adjustments persist
 between runs.
 
-Example using ``DQNSynergyLearner`` and a custom weight file:
+Example using ``TD3SynergyLearner`` and a custom weight file:
 
 ```python
-from menace.self_improvement_engine import SelfImprovementEngine, DQNSynergyLearner
+from menace.self_improvement_engine import SelfImprovementEngine, TD3SynergyLearner
 
 engine = SelfImprovementEngine(
-    synergy_learner_cls=DQNSynergyLearner,
+    synergy_learner_cls=TD3SynergyLearner,
     synergy_weights_path="synergy_weights.json",
 )
 engine.run_cycle()

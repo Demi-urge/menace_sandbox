@@ -210,12 +210,12 @@ class DQNSynergyLearner(SynergyWeightLearner):
             )
         name = (strategy or "dqn").lower()
         self.target_sync = max(1, int(target_sync))
-        if name in {"double", "double_dqn", "double-dqn", "ddqn"} and sip_torch is not None:
+        if name in {"double", "double_dqn", "double-dqn", "ddqn", "td3"} and sip_torch is not None:
             self.strategy = DoubleDQNStrategy(action_dim=7, lr=lr, target_sync=target_sync)
-            self.strategy_name = "double_dqn"
-        elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic"}:
+            self.strategy_name = "td3" if name == "td3" else "double_dqn"
+        elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic", "sac"}:
             self.strategy = ActorCriticStrategy()
-            self.strategy_name = "policy_gradient"
+            self.strategy_name = "sac" if name == "sac" else "policy_gradient"
         else:
             # prefer Double DQN when PyTorch is available
             if sip_torch is not None:
@@ -329,6 +329,20 @@ class DQNSynergyLearner(SynergyWeightLearner):
             except Exception as exc:
                 logger.exception("target model sync failed: %s", exc)
         self.save()
+
+
+class SACSynergyLearner(DQNSynergyLearner):
+    """Synergy learner using a simplified SAC strategy."""
+
+    def __init__(self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10) -> None:
+        super().__init__(path, lr, strategy="sac", target_sync=target_sync)
+
+
+class TD3SynergyLearner(DQNSynergyLearner):
+    """Synergy learner using a simplified TD3 strategy."""
+
+    def __init__(self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10) -> None:
+        super().__init__(path, lr, strategy="td3", target_sync=target_sync)
 
 
 class SelfImprovementEngine:
