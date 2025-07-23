@@ -71,7 +71,7 @@ from sandbox_settings import SandboxSettings
 
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
-from menace.synergy_exporter import start_synergy_exporter, SynergyExporter
+from menace.synergy_exporter import SynergyExporter
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
@@ -460,13 +460,14 @@ def main(argv: List[str] | None = None) -> None:
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
         port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
         history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
+        synergy_exporter = SynergyExporter(
+            history_file=str(history_file),
+            port=port,
+        )
         try:
-            synergy_exporter = start_synergy_exporter(
-                history_file=str(history_file),
-                port=port,
-            )
-        except Exception:
-            logger.exception("failed to start synergy exporter")
+            synergy_exporter.start()
+        except Exception as exc:  # pragma: no cover - runtime issues
+            logger.warning("failed to start synergy exporter: %s", exc)
 
     if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
