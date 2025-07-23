@@ -700,3 +700,77 @@ def test_tasks_survive_restart(tmp_path, monkeypatch):
         proc2.terminate()
         proc2.wait(timeout=5)
 
+
+
+def _proc_client_ask(lock_path: str, q):
+    import os
+    import time
+    import importlib
+
+    from menace.visual_agent_client import VisualAgentClient, _ContextFileLock
+
+    os.environ["VISUAL_AGENT_LOCK_FILE"] = lock_path
+    vac_mod = importlib.reload(importlib.import_module("menace.visual_agent_client"))
+
+    def fake_send(self, base, prompt):
+        q.put((os.getpid(), "start", time.time()))
+        time.sleep(0.2)
+        q.put((os.getpid(), "end", time.time()))
+        return True, "ok"
+
+    vac_mod.VisualAgentClient._send = fake_send
+    vac_mod._global_lock = _ContextFileLock(lock_path)
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    client.ask([{"content": "hi"}])
+
+
+def test_concurrent_asks_serialized(monkeypatch, tmp_path):
+    """Concurrent ask calls in separate processes should run sequentially."""
+    lock_path = str(tmp_path / "va.lock")
+    q = multiprocessing.Queue()
+
+    p1 = multiprocessing.Process(target=_proc_client_ask, args=(lock_path, q))
+    p2 = multiprocessing.Process(target=_proc_client_ask, args=(lock_path, q))
+    p1.start()
+    time.sleep(0.05)
+    p2.start()
+    p1.join()
+    p2.join()
+
+    records = [q.get() for _ in range(4)]
+    grouped: dict[int, list[tuple[str, float]]] = {}
+    for pid, name, t in records:
+        grouped.setdefault(pid, []).append((name, t))
+
+    (start1, end1), (start2, end2) = [sorted(v) for v in grouped.values()]
+    assert start2[1] >= end1[1]
+
+
+def test_stale_lock_cleanup_allows_new_requests(monkeypatch, tmp_path):
+    """Stale lock removal should allow subsequent asks."""
+    import importlib, os
+
+    lock_path = tmp_path / "stale.lock"
+    vac_mod = importlib.reload(importlib.import_module("menace.visual_agent_client"))
+    monkeypatch.setattr(vac_mod, "_global_lock", vac_mod._ContextFileLock(str(lock_path)))
+    monkeypatch.setattr(vac_mod, "LOCK_TIMEOUT", 0.01)
+
+    old = time.time() - 1
+    lock_path.write_text(f"{os.getpid()},{old}")
+    os.utime(lock_path, (old, old))
+
+    count = 0
+
+    def fake_send(self, base, prompt):
+        nonlocal count
+        count += 1
+        return True, "ok"
+
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_send", fake_send)
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"])
+    client.ask([{"content": "a"}])
+    assert not lock_path.exists()
+    client.ask([{"content": "b"}])
+    assert count == 2
