@@ -4,6 +4,8 @@ import types
 import time
 import socket
 import logging
+import os
+import importlib
 import pytest
 
 if "jinja2" not in sys.modules:
@@ -247,6 +249,14 @@ HISTORY = [
 ]
 
 
+def _load_cli():
+    """Import sandbox_runner.cli with light imports enabled."""
+    os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+    if "sandbox_runner.cli" in sys.modules:
+        return importlib.reload(sys.modules["sandbox_runner.cli"])
+    return importlib.import_module("sandbox_runner.cli")
+
+
 def test_synergy_stats():
     stats = synergy_stats(HISTORY)
     assert stats["synergy_roi"]["average"] == pytest.approx(0.2)
@@ -375,6 +385,38 @@ def test_dashboard_run_port_in_use(caplog):
     finally:
         sock.close()
     assert f"port {port} in use" in caplog.text
+
+
+def test_synergy_converged_noisy_metrics():
+    cli = _load_cli()
+    hist = [
+        {"synergy_roi": 0.05},
+        {"synergy_roi": -0.04},
+        {"synergy_roi": 0.06},
+        {"synergy_roi": -0.05},
+        {"synergy_roi": 0.07},
+        {"synergy_roi": -0.06},
+    ]
+    ok, _, conf = cli._synergy_converged(hist, 6, 0.01)
+    assert ok is False
+    assert conf < 0.95
+
+
+def test_synergy_converged_variance_jump():
+    cli = _load_cli()
+    hist = [
+        {"synergy_roi": 0.001},
+        {"synergy_roi": 0.001},
+        {"synergy_roi": 0.001},
+        {"synergy_roi": 0.001},
+        {"synergy_roi": 0.3},
+        {"synergy_roi": -0.3},
+        {"synergy_roi": 0.3},
+        {"synergy_roi": -0.3},
+    ]
+    ok, _, conf = cli._synergy_converged(hist, 8, 0.01)
+    assert ok is False
+    assert conf < 0.95
 
 
 
