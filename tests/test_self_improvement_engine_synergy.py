@@ -170,7 +170,15 @@ def _metric_delta(vals, window=3):
 
 
 def _expected(records, metrics, window=3):
-    base = ["synergy_roi", "synergy_efficiency", "synergy_resilience", "synergy_antifragility"]
+    base = [
+        "synergy_roi",
+        "synergy_efficiency",
+        "synergy_resilience",
+        "synergy_antifragility",
+        "synergy_reliability",
+        "synergy_maintainability",
+        "synergy_throughput",
+    ]
     roi_vals = [r.roi_delta for r in records]
     X = [[float(getattr(r, n)) for n in base] for r in records]
     weights = {n: 1.0 / len(base) for n in base}
@@ -191,7 +199,7 @@ def _expected(records, metrics, window=3):
             stats[name] = (float(col.mean()), float(col.std() or 1.0))
 
     def norm(name: str) -> float:
-        val = _metric_delta(metrics[name], window)
+        val = _metric_delta(metrics.get(name, [0.0] * len(records)), window)
         mean, std = stats.get(name, (0.0, 1.0))
         return (val - mean) / (std + 1e-6)
 
@@ -200,12 +208,15 @@ def _expected(records, metrics, window=3):
 
 
 class _Rec:
-    def __init__(self, r, sr, se, res, af, ts):
+    def __init__(self, r, sr, se, res, af, rel, maint, tp, ts):
         self.roi_delta = r
         self.synergy_roi = sr
         self.synergy_efficiency = se
         self.synergy_resilience = res
         self.synergy_antifragility = af
+        self.synergy_reliability = rel
+        self.synergy_maintainability = maint
+        self.synergy_throughput = tp
         self.ts = ts
 
 
@@ -224,16 +235,19 @@ class _DummyTracker:
 
 def test_weighted_synergy_adjustment():
     records = [
-        _Rec(1, 1, 4, 2, 1, "1"),
-        _Rec(2, 2, 3, -2, -1, "2"),
-        _Rec(3, 3, 2, 2, 1, "3"),
-        _Rec(4, 4, 1, -2, -1, "4"),
+        _Rec(1, 1, 4, 2, 1, 0, 0, 0, "1"),
+        _Rec(2, 2, 3, -2, -1, 0, 0, 0, "2"),
+        _Rec(3, 3, 2, 2, 1, 0, 0, 0, "3"),
+        _Rec(4, 4, 1, -2, -1, 0, 0, 0, "4"),
     ]
     metrics = {
         "synergy_roi": [0.0, 0.1, 0.2, 0.3],
         "synergy_efficiency": [0.3, 0.2, 0.1, 0.0],
         "synergy_resilience": [0.0, 2.0, -2.0, 2.0],
         "synergy_antifragility": [0.0, 1.0, -1.0, 1.0],
+        "synergy_reliability": [0.0, 0.0, 0.0, 0.0],
+        "synergy_maintainability": [0.0, 0.0, 0.0, 0.0],
+        "synergy_throughput": [0.0, 0.0, 0.0, 0.0],
     }
     engine = sie.SelfImprovementEngine(interval=0, patch_db=_DummyDB(records))
     engine.tracker = _DummyTracker(metrics)
@@ -247,22 +261,25 @@ def test_weighted_synergy_adjustment():
 
 def test_synergy_weight_cache():
     rec_a = [
-        _Rec(1, 1, 4, 2, 1, "1"),
-        _Rec(2, 2, 3, -2, -1, "2"),
-        _Rec(3, 3, 2, 2, 1, "3"),
-        _Rec(4, 4, 1, -2, -1, "4"),
+        _Rec(1, 1, 4, 2, 1, 0, 0, 0, "1"),
+        _Rec(2, 2, 3, -2, -1, 0, 0, 0, "2"),
+        _Rec(3, 3, 2, 2, 1, 0, 0, 0, "3"),
+        _Rec(4, 4, 1, -2, -1, 0, 0, 0, "4"),
     ]
     rec_b = [
-        _Rec(4, 1, 1, 1, 1, "1"),
-        _Rec(3, 1, 2, 1, 1, "2"),
-        _Rec(2, 1, 3, 1, 1, "3"),
-        _Rec(1, 1, 4, 1, 1, "4"),
+        _Rec(4, 1, 1, 1, 1, 0, 0, 0, "1"),
+        _Rec(3, 1, 2, 1, 1, 0, 0, 0, "2"),
+        _Rec(2, 1, 3, 1, 1, 0, 0, 0, "3"),
+        _Rec(1, 1, 4, 1, 1, 0, 0, 0, "4"),
     ]
     metrics = {
         "synergy_roi": [0.0, 0.1, 0.2, 0.3],
         "synergy_efficiency": [0.3, 0.2, 0.1, 0.0],
         "synergy_resilience": [0.0, 2.0, -2.0, 2.0],
         "synergy_antifragility": [0.0, 1.0, -1.0, 1.0],
+        "synergy_reliability": [0.0, 0.0, 0.0, 0.0],
+        "synergy_maintainability": [0.0, 0.0, 0.0, 0.0],
+        "synergy_throughput": [0.0, 0.0, 0.0, 0.0],
     }
     db = _DummyDB(rec_a)
     engine = sie.SelfImprovementEngine(interval=0, patch_db=db)
@@ -275,10 +292,10 @@ def test_synergy_weight_cache():
 
 def test_energy_scaling_with_synergy_weights(tmp_path):
     records = [
-        _Rec(0.1, -0.1, -0.2, 0.0, 0.0, "1"),
-        _Rec(0.2, 0.0, -0.1, 0.0, 0.0, "2"),
-        _Rec(0.3, 0.1, 0.0, 0.0, 0.0, "3"),
-        _Rec(0.4, 0.2, 0.1, 0.0, 0.0, "4"),
+        _Rec(0.1, -0.1, -0.2, 0.0, 0.0, 0.0, 0.0, 0.0, "1"),
+        _Rec(0.2, 0.0, -0.1, 0.0, 0.0, 0.0, 0.0, 0.0, "2"),
+        _Rec(0.3, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "3"),
+        _Rec(0.4, 0.2, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, "4"),
     ]
     metrics = {
         "synergy_roi": [-0.05, 0.0, 0.05, 0.1],

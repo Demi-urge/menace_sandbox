@@ -68,6 +68,9 @@ class SynergyWeightLearner:
             "efficiency": 1.0,
             "resilience": 1.0,
             "antifragility": 1.0,
+            "reliability": 1.0,
+            "maintainability": 1.0,
+            "throughput": 1.0,
         }
         self.load()
 
@@ -108,6 +111,9 @@ class SynergyWeightLearner:
             "synergy_efficiency": "efficiency",
             "synergy_resilience": "resilience",
             "synergy_antifragility": "antifragility",
+            "synergy_reliability": "reliability",
+            "synergy_maintainability": "maintainability",
+            "synergy_throughput": "throughput",
         }
         for name, key in mapping.items():
             d = float(deltas.get(name, 0.0))
@@ -136,7 +142,7 @@ class DQNSynergyLearner(SynergyWeightLearner):
         name = (strategy or "dqn").lower()
         self.target_sync = max(1, int(target_sync))
         if name in {"double", "double_dqn", "double-dqn", "ddqn"} and sip_torch is not None:
-            self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr, target_sync=target_sync)
+            self.strategy = DoubleDQNStrategy(action_dim=7, lr=lr, target_sync=target_sync)
             self.strategy_name = "double_dqn"
         elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic"}:
             self.strategy = ActorCriticStrategy()
@@ -144,12 +150,12 @@ class DQNSynergyLearner(SynergyWeightLearner):
         else:
             # prefer Double DQN when PyTorch is available
             if sip_torch is not None:
-                self.strategy = DoubleDQNStrategy(action_dim=4, lr=lr, target_sync=target_sync)
+                self.strategy = DoubleDQNStrategy(action_dim=7, lr=lr, target_sync=target_sync)
                 self.strategy_name = "double_dqn"
             else:
-                self.strategy = DQNStrategy(action_dim=4, lr=lr)
+                self.strategy = DQNStrategy(action_dim=7, lr=lr)
                 self.strategy_name = "dqn"
-        self._state: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self._state: tuple[float, ...] = (0.0,) * 7
         self._steps = 0
 
     # ------------------------------------------------------------------
@@ -161,7 +167,7 @@ class DQNSynergyLearner(SynergyWeightLearner):
         if self.path and sip_torch is not None:
             try:
                 if hasattr(self.strategy, "_ensure_model"):
-                    self.strategy._ensure_model(4)
+                    self.strategy._ensure_model(7)
                 pt = base + ".pt"
                 if os.path.exists(pt) and hasattr(self.strategy, "model"):
                     state_dict = sip_torch.load(pt)
@@ -208,6 +214,9 @@ class DQNSynergyLearner(SynergyWeightLearner):
             "synergy_efficiency",
             "synergy_resilience",
             "synergy_antifragility",
+            "synergy_reliability",
+            "synergy_maintainability",
+            "synergy_throughput",
         ]
         self._state = tuple(float(deltas.get(n, 0.0)) for n in names)
         q_vals_list: list[float] = []
@@ -225,6 +234,9 @@ class DQNSynergyLearner(SynergyWeightLearner):
             "efficiency": 1,
             "resilience": 2,
             "antifragility": 3,
+            "reliability": 4,
+            "maintainability": 5,
+            "throughput": 6,
         }
         for key, idx in mapping.items():
             val = q_vals_list[idx]
@@ -279,6 +291,9 @@ class SelfImprovementEngine:
         synergy_weight_efficiency: float | None = None,
         synergy_weight_resilience: float | None = None,
         synergy_weight_antifragility: float | None = None,
+        synergy_weight_reliability: float | None = None,
+        synergy_weight_maintainability: float | None = None,
+        synergy_weight_throughput: float | None = None,
         state_path: Path | str | None = None,
         roi_ema_alpha: float | None = None,
         synergy_weights_path: Path | str | None = None,
@@ -352,6 +367,21 @@ class SelfImprovementEngine:
             if synergy_weight_antifragility is not None
             else settings.synergy_weight_antifragility
         )
+        self.synergy_weight_reliability = (
+            synergy_weight_reliability
+            if synergy_weight_reliability is not None
+            else getattr(settings, "synergy_weight_reliability", 1.0)
+        )
+        self.synergy_weight_maintainability = (
+            synergy_weight_maintainability
+            if synergy_weight_maintainability is not None
+            else getattr(settings, "synergy_weight_maintainability", 1.0)
+        )
+        self.synergy_weight_throughput = (
+            synergy_weight_throughput
+            if synergy_weight_throughput is not None
+            else getattr(settings, "synergy_weight_throughput", 1.0)
+        )
         self.roi_ema_alpha = (
             roi_ema_alpha
             if roi_ema_alpha is not None
@@ -397,6 +427,30 @@ class SelfImprovementEngine:
             self.synergy_learner.weights[
                 "antifragility"
             ] = self.synergy_weight_antifragility
+        if synergy_weight_reliability is None:
+            self.synergy_weight_reliability = self.synergy_learner.weights[
+                "reliability"
+            ]
+        else:
+            self.synergy_learner.weights[
+                "reliability"
+            ] = self.synergy_weight_reliability
+        if synergy_weight_maintainability is None:
+            self.synergy_weight_maintainability = self.synergy_learner.weights[
+                "maintainability"
+            ]
+        else:
+            self.synergy_learner.weights[
+                "maintainability"
+            ] = self.synergy_weight_maintainability
+        if synergy_weight_throughput is None:
+            self.synergy_weight_throughput = self.synergy_learner.weights[
+                "throughput"
+            ]
+        else:
+            self.synergy_learner.weights[
+                "throughput"
+            ] = self.synergy_weight_throughput
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
         self.roi_delta_ema: float = 0.0
@@ -499,6 +553,9 @@ class SelfImprovementEngine:
         self.synergy_weight_antifragility = self.synergy_learner.weights[
             "antifragility"
         ]
+        self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
+        self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
+        self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
 
     # ------------------------------------------------------------------
     def _save_synergy_weights(self) -> None:
@@ -507,6 +564,9 @@ class SelfImprovementEngine:
         self.synergy_learner.weights["efficiency"] = self.synergy_weight_efficiency
         self.synergy_learner.weights["resilience"] = self.synergy_weight_resilience
         self.synergy_learner.weights["antifragility"] = self.synergy_weight_antifragility
+        self.synergy_learner.weights["reliability"] = self.synergy_weight_reliability
+        self.synergy_learner.weights["maintainability"] = self.synergy_weight_maintainability
+        self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.synergy_learner.save()
 
     # ------------------------------------------------------------------
@@ -551,6 +611,9 @@ class SelfImprovementEngine:
                 "synergy_efficiency": lw.get("efficiency", self.synergy_weight_efficiency),
                 "synergy_resilience": lw.get("resilience", self.synergy_weight_resilience),
                 "synergy_antifragility": lw.get("antifragility", self.synergy_weight_antifragility),
+                "synergy_reliability": lw.get("reliability", self.synergy_weight_reliability),
+                "synergy_maintainability": lw.get("maintainability", self.synergy_weight_maintainability),
+                "synergy_throughput": lw.get("throughput", self.synergy_weight_throughput),
             }
         else:
             base_weights = {
@@ -558,6 +621,9 @@ class SelfImprovementEngine:
                 "synergy_efficiency": self.synergy_weight_efficiency,
                 "synergy_resilience": self.synergy_weight_resilience,
                 "synergy_antifragility": self.synergy_weight_antifragility,
+                "synergy_reliability": self.synergy_weight_reliability,
+                "synergy_maintainability": self.synergy_weight_maintainability,
+                "synergy_throughput": self.synergy_weight_throughput,
             }
 
         weights: dict[str, float]
@@ -631,6 +697,9 @@ class SelfImprovementEngine:
             "synergy_efficiency",
             "synergy_resilience",
             "synergy_antifragility",
+            "synergy_reliability",
+            "synergy_maintainability",
+            "synergy_throughput",
         ]
         deltas = {n: self._metric_delta(n) for n in names}
         self.synergy_learner.update(roi_delta, deltas)
@@ -640,6 +709,9 @@ class SelfImprovementEngine:
         self.synergy_weight_antifragility = self.synergy_learner.weights[
             "antifragility"
         ]
+        self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
+        self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
+        self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
