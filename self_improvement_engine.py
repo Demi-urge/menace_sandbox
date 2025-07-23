@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from .logging_utils import log_record
 import time
+import threading
 import asyncio
 import os
 from sandbox_settings import SandboxSettings
@@ -1662,12 +1663,21 @@ class SynergyDashboard:
         history_file: str | Path = "synergy_history.json",
         *,
         ma_window: int = 5,
+        exporter_host: str | None = None,
+        exporter_port: int = 8003,
+        refresh_interval: float = 5.0,
     ) -> None:
         from flask import Flask, jsonify  # type: ignore
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.history_file = Path(history_file)
         self.ma_window = ma_window
+        self.exporter_host = exporter_host
+        self.exporter_port = exporter_port
+        self.refresh_interval = float(refresh_interval)
+        self._history: list[dict[str, float]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
         self.jsonify = jsonify
         self.app = Flask(__name__)
         self.app.add_url_rule("/", "index", self.index)
@@ -1675,8 +1685,56 @@ class SynergyDashboard:
         self.app.add_url_rule("/plot.png", "plot", self.plot)
         self.app.add_url_rule("/history", "history", self.history)
 
+        if self.exporter_host:
+            self._thread = threading.Thread(target=self._update_loop, daemon=True)
+            self._thread.start()
+
     def _load(self) -> list[dict[str, float]]:
+        if self.exporter_host:
+            return list(self._history)
         return load_synergy_history(self.history_file)
+
+    # --------------------------------------------------------------
+    def _parse_metrics(self, text: str) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        for line in text.splitlines():
+            if line.startswith("#"):
+                continue
+            parts = line.strip().split()
+            if len(parts) != 2:
+                continue
+            name, value = parts
+            if name.startswith("synergy_"):
+                try:
+                    metrics[name] = float(value)
+                except ValueError:
+                    continue
+        return metrics
+
+    def _fetch_exporter_metrics(self) -> dict[str, float]:
+        import requests  # type: ignore
+
+        url = f"http://{self.exporter_host}:{self.exporter_port}/metrics"
+        try:
+            resp = requests.get(url, timeout=1.0)
+            if resp.status_code != 200:
+                return {}
+            return self._parse_metrics(resp.text)
+        except Exception:  # pragma: no cover - runtime issues
+            self.logger.exception("failed to fetch metrics from %s", url)
+            return {}
+
+    def _update_loop(self) -> None:
+        while not self._stop.is_set():
+            vals = self._fetch_exporter_metrics()
+            if vals:
+                self._history.append(vals)
+            self._stop.wait(self.refresh_interval)
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1.0)
 
     def index(self) -> tuple[str, int]:
         return "Synergy dashboard running. Access /stats", 200
@@ -1739,6 +1797,9 @@ def cli(argv: list[str] | None = None) -> None:
     )
     p_dash.add_argument("--file", default="synergy_history.json")
     p_dash.add_argument("--port", type=int, default=5001)
+    p_dash.add_argument("--exporter-host")
+    p_dash.add_argument("--exporter-port", type=int, default=8003)
+    p_dash.add_argument("--refresh-interval", type=float, default=5.0)
 
     p_plot = sub.add_parser("plot-synergy", help="plot synergy metrics")
     p_plot.add_argument("history", help="synergy_history.json file")
@@ -1747,7 +1808,12 @@ def cli(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.cmd == "synergy-dashboard":
-        dash = SynergyDashboard(args.file)
+        dash = SynergyDashboard(
+            args.file,
+            exporter_host=args.exporter_host,
+            exporter_port=args.exporter_port,
+            refresh_interval=args.refresh_interval,
+        )
         dash.run(port=args.port)
         return
 
