@@ -46,12 +46,12 @@ ra.ResearchAggregatorBot = DummyAgg
 ra.ResearchItem = object
 ra.InfoDB = object
 map_mod = sys.modules["menace.model_automation_pipeline"]
-map_mod.ModelAutomationPipeline = object
+map_mod.ModelAutomationPipeline = lambda *a, **k: object()
 map_mod.AutomationResult = object
-sys.modules["menace.diagnostic_manager"].DiagnosticManager = object
+sys.modules["menace.diagnostic_manager"].DiagnosticManager = lambda *a, **k: object()
 err_mod = sys.modules["menace.error_bot"]
-err_mod.ErrorBot = object
-err_mod.ErrorDB = object
+err_mod.ErrorBot = lambda *a, **k: object()
+err_mod.ErrorDB = lambda *a, **k: object()
 sys.modules["menace.data_bot"].MetricsDB = object
 sys.modules["menace.data_bot"].DataBot = object
 sys.modules["menace.code_database"].PatchHistoryDB = object
@@ -65,7 +65,7 @@ sys.modules["menace.action_planner"].ActionPlanner = object
 sys.modules["menace.evolution_history_db"].EvolutionHistoryDB = object
 policy_mod = sys.modules["menace.self_improvement_policy"]
 policy_mod.SelfImprovementPolicy = object
-policy_mod.ConfigurableSelfImprovementPolicy = object
+policy_mod.ConfigurableSelfImprovementPolicy = lambda *a, **k: object()
 class DummyStrategy:
     def update(self, *a, **k):
         return 0.0
@@ -101,6 +101,18 @@ for name in [
     "cryptography.hazmat.primitives.serialization",
 ]:
     sys.modules.setdefault(name, types.ModuleType(name))
+
+pyd_mod = types.ModuleType("pydantic")
+pyd_dc = types.ModuleType("dataclasses")
+pyd_dc.dataclass = lambda *a, **k: (lambda f: f)
+pyd_mod.dataclasses = pyd_dc
+pyd_mod.Field = lambda default=None, **k: default
+pyd_mod.BaseModel = object
+sys.modules.setdefault("pydantic", pyd_mod)
+pyd_settings_mod = types.ModuleType("pydantic_settings")
+pyd_settings_mod.BaseSettings = object
+pyd_settings_mod.SettingsConfigDict = dict
+sys.modules.setdefault("pydantic_settings", pyd_settings_mod)
 
 import menace.self_improvement_engine as sie
 
@@ -233,3 +245,54 @@ def test_synergy_weight_learner_multi_cycle(tmp_path):
     # persistence check after all updates
     learner3 = sie.SynergyWeightLearner(path=path, lr=lr)
     assert learner3.weights["roi"] == pytest.approx(vals2[-1])
+
+
+def test_atomic_save_called(monkeypatch, tmp_path):
+    path = tmp_path / "w.json"
+    learner = sie.SynergyWeightLearner(path=path)
+    called = []
+
+    def fake(path_arg, data, *, binary=False):
+        called.append(path_arg)
+
+    monkeypatch.setattr(sie, "_atomic_write", fake)
+    learner.save()
+    assert path in called
+
+
+class _Rec:
+    def __init__(self, r, sr):
+        self.roi_delta = r
+        self.synergy_roi = sr
+        self.synergy_efficiency = 0.0
+        self.synergy_resilience = 0.0
+        self.synergy_antifragility = 0.0
+        self.synergy_reliability = 0.0
+        self.synergy_maintainability = 0.0
+        self.synergy_throughput = 0.0
+        self.ts = "1"
+
+
+class _DummyDB:
+    def __init__(self, recs):
+        self._recs = list(recs)
+
+    def filter(self):
+        return list(self._recs)
+
+
+class _DummyTracker:
+    def __init__(self, metrics):
+        self.metrics_history = metrics
+
+
+def test_weights_influence_roi(monkeypatch, tmp_path):
+    path = tmp_path / "w.json"
+    recs = [_Rec(0.5, 0.1), _Rec(0.6, 0.2)]
+    metrics = {"synergy_roi": [0.1, 0.2]}
+    engine = sie.SelfImprovementEngine(interval=0, patch_db=_DummyDB(recs), synergy_weights_path=path)
+    engine.tracker = _DummyTracker(metrics)
+    adj_before = engine._weighted_synergy_adjustment()
+    engine._update_synergy_weights(1.0)
+    adj_after = engine._weighted_synergy_adjustment()
+    assert adj_before != adj_after

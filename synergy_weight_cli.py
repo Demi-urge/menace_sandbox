@@ -31,6 +31,9 @@ def cli(argv: list[str] | None = None) -> int:
     p_imp = sub.add_parser("import", help="Import weights from JSON")
     p_imp.add_argument("file", help="JSON file to read")
 
+    p_train = sub.add_parser("train", help="Train weights from synergy history")
+    p_train.add_argument("history", help="Synergy history JSON")
+
     args = parser.parse_args(argv)
 
     engine = _load_engine(args.path)
@@ -56,6 +59,17 @@ def cli(argv: list[str] | None = None) -> int:
         for key in learner.weights:
             if key in data:
                 learner.weights[key] = float(data[key])
+        learner.save()
+        return 0
+
+    if args.cmd == "train":
+        with open(args.history, encoding="utf-8") as fh:
+            hist = json.load(fh)
+        for entry in hist:
+            if not isinstance(entry, dict):
+                continue
+            roi_delta = float(entry.get("synergy_roi", 0.0))
+            learner.update(roi_delta, entry)
         learner.save()
         return 0
 
