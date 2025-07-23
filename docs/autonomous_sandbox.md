@@ -84,6 +84,8 @@ After the system tools are in place install the Python requirements via
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
 - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
 - `VISUAL_AGENT_AUTO_RECOVER=1` – start the agent with `--auto-recover` enabled
+- `VISUAL_AGENT_TOKEN_ROTATE` – new token value used to restart the
+  visual agent between sandbox runs
 - `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
 - `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 
@@ -132,6 +134,8 @@ jobs.
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
 
 - `VISUAL_AGENT_TOKEN` – shared secret for the visual agent service.
+- `VISUAL_AGENT_TOKEN_ROTATE` – when set, the new token used to restart the
+  visual agent between runs.
 - `VISUAL_AGENT_SSL_CERT` – path to the TLS certificate served by
   `menace_visual_agent_2.py` when running over HTTPS.
 - `VISUAL_AGENT_SSL_KEY` – path to the private key for the certificate.
@@ -146,6 +150,7 @@ The sandbox reads several paths and authentication tokens from environment varia
 
 ```dotenv
 VISUAL_AGENT_TOKEN=my-secret-token
+#VISUAL_AGENT_TOKEN_ROTATE=new-secret
 VISUAL_AGENT_SSL_CERT=/path/to/cert.pem
 VISUAL_AGENT_SSL_KEY=/path/to/key.pem
 SANDBOX_DATA_DIR=~/menace_data

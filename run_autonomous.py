@@ -782,8 +782,23 @@ def main(argv: List[str] | None = None) -> None:
         last_tracker = None
 
     run_idx = 0
+    mgr = None
     while args.runs is None or run_idx < args.runs:
         run_idx += 1
+        if run_idx > 1:
+            new_tok = os.getenv("VISUAL_AGENT_TOKEN_ROTATE")
+            if new_tok and _visual_agent_running(settings.visual_agent_urls):
+                try:
+                    from visual_agent_manager import VisualAgentManager
+
+                    mgr = mgr or VisualAgentManager()
+                    mgr.restart_with_token(new_tok)
+                    os.environ["VISUAL_AGENT_TOKEN"] = new_tok
+                    os.environ.pop("VISUAL_AGENT_TOKEN_ROTATE", None)
+                    logger.info("visual agent token rotated")
+                except Exception:
+                    logger.exception("failed to rotate visual agent token")
+
         logger.info(
             "Starting autonomous run %d/%s",
             run_idx,
