@@ -103,6 +103,13 @@ installs packages from ``MENACE_WHEEL_DIR`` instead of contacting PyPI.
 scripts/setup_autonomous.sh
 ```
 
+After the base requirements are installed you can bootstrap optional
+dependencies and verify your configuration with:
+
+```bash
+python scripts/bootstrap_env.py
+```
+
 ## Getting Started
 
 Launch the autonomous sandbox with the default environment presets:

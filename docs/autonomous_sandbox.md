@@ -28,7 +28,14 @@ Follow these steps when launching the sandbox for the first time:
    ./setup_env.sh
    ```
 
-4. **Create a `.env` file** with sensible defaults. The easiest way is:
+4. **Bootstrap the environment** to verify optional dependencies and
+   install anything missing:
+
+   ```bash
+   python scripts/bootstrap_env.py
+   ```
+
+5. **Create a `.env` file** with sensible defaults. The easiest way is:
 
    ```bash
    python -c 'import auto_env_setup as a; a.ensure_env()'
@@ -36,7 +43,7 @@ Follow these steps when launching the sandbox for the first time:
 
    Edit the resulting `.env` to add missing API keys.
 
-5. **Start the visual agent** in one terminal and the autonomous loop in
+6. **Start the visual agent** in one terminal and the autonomous loop in
    another as described below.
 
 ## System packages

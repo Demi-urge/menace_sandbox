@@ -41,6 +41,22 @@ def test_run_startup_checks_warns(monkeypatch, tmp_path, caplog):
     assert "Missing required dependencies" in caplog.text
 
 
+def test_optional_dependency_install(monkeypatch, tmp_path):
+    monkeypatch.setenv("MENACE_MODE", "test")
+    pyproj = tmp_path / "pyproject.toml"
+    _write_pyproject(pyproj, [])
+
+    called: list[str] = []
+
+    monkeypatch.setattr(sc, "validate_dependencies", lambda modules=sc.OPTIONAL_LIBS: ["missing_pkg"])
+    monkeypatch.setattr(sc, "verify_project_dependencies", lambda p: [])
+    monkeypatch.setattr(sc, "_install_packages", lambda pkgs: called.extend(pkgs))
+
+    sc.run_startup_checks(pyproject_path=pyproj)
+
+    assert "missing_pkg" in called
+
+
 def test_run_startup_checks_fails(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_MODE", "production")
     pyproj = tmp_path / "pyproject.toml"
@@ -49,6 +65,7 @@ def test_run_startup_checks_fails(monkeypatch, tmp_path):
         sc.run_startup_checks(pyproject_path=pyproj)
 
 
+@pytest.mark.skipif(not hasattr(Ed25519PrivateKey, "private_bytes"), reason="cryptography stubs")
 def test_audit_log_verification(monkeypatch, tmp_path):
     pyproj = tmp_path / "pyproject.toml"
     _write_pyproject(pyproj, [])
