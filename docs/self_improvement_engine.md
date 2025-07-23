@@ -191,3 +191,39 @@ and `1`. A score near `1` means synergy forecasts closely matched reality while
 values near `0` indicate noisy predictions. `synergy_reliability()` is a helper
 for the `synergy_roi` series and is used by the sandbox to scale ROI tolerance
 during long runs.
+
+## Interpreting synergy metrics
+
+Synergy metrics highlight how modules influence each other when run together. A
+positive `synergy_efficiency` means the group consumes fewer resources than its
+parts individually while a negative `synergy_roi` shows the interaction reduces
+profit.
+
+```python
+from menace.roi_tracker import ROITracker
+tracker = ROITracker()
+forecast = tracker.predict_synergy_metric("efficiency")
+if forecast > 0:
+    print("Expect lower CPU usage", forecast)
+```
+
+## Adjusting synergy weights
+
+Weights stored in `synergy_weights.json` control how much each metric affects the
+reinforcement learner. They can be tweaked programmatically:
+
+```python
+from menace.self_improvement_engine import SynergyWeightLearner
+
+learner = SynergyWeightLearner(path="synergy_weights.json")
+learner.weights["efficiency"] *= 1.5  # favour efficient interactions
+learner.save()
+```
+
+Alternatively export the file, edit it and import the new values:
+
+```bash
+python synergy_weight_cli.py --path synergy_weights.json export --out weights.json
+# edit weights.json
+python synergy_weight_cli.py --path synergy_weights.json import weights.json
+```
