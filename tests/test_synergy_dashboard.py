@@ -127,6 +127,26 @@ sys.modules.setdefault(
     "cryptography.hazmat.primitives.serialization", crypto_pri.serialization
 )
 
+if "pydantic" not in sys.modules:
+    pyd_mod = types.ModuleType("pydantic")
+    pyd_mod.Field = lambda default=None, **k: default
+    pyd_mod.BaseSettings = object
+    pyd_mod.BaseModel = object
+    class _VE(Exception):
+        pass
+    pyd_mod.ValidationError = _VE
+    pyd_dc = types.ModuleType("dataclasses")
+    pyd_dc.dataclass = lambda *a, **k: (lambda cls: cls)
+    pyd_mod.dataclasses = pyd_dc
+    sys.modules["pydantic"] = pyd_mod
+    sys.modules["pydantic.dataclasses"] = pyd_dc
+
+if "pydantic_settings" not in sys.modules:
+    ps_mod = types.ModuleType("pydantic_settings")
+    ps_mod.BaseSettings = object
+    ps_mod.SettingsConfigDict = dict
+    sys.modules["pydantic_settings"] = ps_mod
+
 sys.modules.setdefault("pulp", types.ModuleType("pulp"))
 
 sys.modules.setdefault("menace.ai_counter_bot", types.ModuleType("menace.ai_counter_bot"))
@@ -227,6 +247,31 @@ def test_dashboard_update_loop(monkeypatch):
                 break
             time.sleep(0.02)
         assert dash._history[:2] == updates
+    finally:
+        dash.stop()
+
+
+def test_dashboard_exporter_unreachable(monkeypatch):
+    import requests
+
+    responses = [types.SimpleNamespace(status_code=200, text="synergy_roi 0.4\n")]
+
+    def fake_get(url, timeout=1.0):
+        if responses:
+            return responses.pop(0)
+        raise requests.exceptions.Timeout()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    dash = SynergyDashboard(exporter_host="localhost", refresh_interval=0.01)
+    try:
+        for _ in range(100):
+            if len(dash._history) >= 2:
+                break
+            time.sleep(0.02)
+        assert dash._history[0] == {"synergy_roi": 0.4}
+        assert dash._history[1] == {"synergy_roi": 0.4}
+        assert dash._thread and dash._thread.is_alive()
     finally:
         dash.stop()
 
