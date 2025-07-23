@@ -27,6 +27,13 @@ sys.modules.setdefault("jinja2", jinja_mod)
 sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///"))
 sys.modules.setdefault("yaml", types.ModuleType("yaml"))
 sys.modules.setdefault("numpy", types.ModuleType("numpy"))
+pydantic_mod = types.ModuleType("pydantic")
+pydantic_dc = types.ModuleType("dataclasses")
+pydantic_dc.dataclass = lambda *a, **k: (lambda cls: cls)
+pydantic_mod.dataclasses = pydantic_dc
+pydantic_mod.BaseModel = object
+sys.modules.setdefault("pydantic", pydantic_mod)
+sys.modules.setdefault("pydantic.dataclasses", pydantic_dc)
 import importlib.util
 import importlib.machinery
 import sys
@@ -62,6 +69,20 @@ def test_container_locking(monkeypatch):
                 async def wait(self):
                     return None
             return P()
+        elif cmd[0] == 'docker' and cmd[1] == 'ps':
+            class P:
+                returncode = 0
+                async def communicate(self):
+                    return b'', b''
+                async def wait(self):
+                    return None
+            return P()
+        elif cmd[0] == 'docker' and cmd[1] == 'rm':
+            class P:
+                returncode = 0
+                async def wait(self):
+                    return None
+            return P()
         elif cmd[0] == 'docker':
             class P:
                 returncode = 0
@@ -92,3 +113,75 @@ def test_container_locking(monkeypatch):
 
     elapsed = asyncio.run(main())
     assert elapsed >= 0.19
+
+
+def test_container_retries(monkeypatch):
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        if cmd[0] == 'docker' and cmd[1] == '--version':
+            class P:
+                returncode = 0
+
+                async def wait(self):
+                    return None
+
+            return P()
+        elif cmd[0] == 'docker' and cmd[1] == 'ps':
+            class P:
+                returncode = 0
+
+                async def communicate(self):
+                    return b'', b''
+
+                async def wait(self):
+                    return None
+
+            return P()
+        elif cmd[0] == 'docker' and cmd[1] == 'rm':
+            class P:
+                returncode = 0
+
+                async def wait(self):
+                    return None
+
+            return P()
+        elif cmd[0] == 'docker':
+            calls.append('run')
+
+            if len(calls) == 1:
+                class P:
+                    returncode = 1
+                    stdout = asyncio.StreamReader()
+
+                    async def communicate(self):
+                        self.stdout.feed_data(b'')
+                        self.stdout.feed_eof()
+                        return b'', b''
+
+                    async def wait(self):
+                        return None
+
+                return P()
+            else:
+                class P:
+                    returncode = 0
+                    stdout = asyncio.StreamReader()
+
+                    async def communicate(self):
+                        self.stdout.feed_data(json.dumps({'summary': {'passed': 0, 'failed': 0}}).encode())
+                        self.stdout.feed_eof()
+                        return b'', b''
+
+                    async def wait(self):
+                        return None
+
+                return P()
+        else:
+            raise RuntimeError('unexpected command')
+
+    monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
+
+    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    asyncio.run(svc._run_once())
+    assert calls.count('run') == 2
