@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Synergy prediction helpers used by ROITracker and PredictionManager."""
 
-from typing import Iterable
+from typing import Iterable, Optional, Tuple
 
 import os
 
@@ -19,20 +19,49 @@ except Exception:  # pragma: no cover - optional dependency
     nn = None  # type: ignore
 
 
+def _pick_best_order(
+    series: Iterable[float],
+    *,
+    max_ar: int = 3,
+    max_ma: int = 3,
+    ic: str = "bic",
+) -> Tuple[int, int, int]:
+    """Return best ``(p, d, q)`` order for ``series``."""
+    if np is None:
+        return (1, 1, 1)
+    try:  # pragma: no cover - optional dependency
+        from statsmodels.tsa.stattools import arma_order_select_ic  # type: ignore
+
+        arr = np.array(list(series), dtype=float)
+        res = arma_order_select_ic(
+            arr, max_ar=max_ar, max_ma=max_ma, ic=[ic]
+        )
+        if ic == "aic":
+            p, q = res.aic_min_order
+        else:
+            p, q = res.bic_min_order
+        return (int(p), 1, int(q))
+    except Exception:  # pragma: no cover - fallback
+        return (1, 1, 1)
+
+
 class ARIMASynergyPredictor:
     """ARIMA based synergy forecaster."""
 
-    def __init__(self, order: tuple[int, int, int] = (1, 1, 1)) -> None:
+    def __init__(self, order: Optional[Tuple[int, int, int]] = (1, 1, 1)) -> None:
         self.order = order
 
     def predict(self, history: Iterable[float]) -> float:
         values = [float(v) for v in history]
         if len(values) < 2:
             return float(values[-1]) if values else 0.0
+        order = self.order
+        if order is None and len(values) > 4:
+            order = _pick_best_order(values)
         try:
             from statsmodels.tsa.arima.model import ARIMA  # type: ignore
 
-            model = ARIMA(values, order=self.order).fit()
+            model = ARIMA(values, order=order or (1, 1, 1)).fit()
             res = model.get_forecast(steps=1)
             return float(res.predicted_mean[0])
         except Exception:
@@ -96,4 +125,4 @@ class LSTMSynergyPredictor:
             return float(pred.item())
 
 
-__all__ = ["ARIMASynergyPredictor", "LSTMSynergyPredictor"]
+__all__ = ["ARIMASynergyPredictor", "LSTMSynergyPredictor", "_pick_best_order"]
