@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 BACKUP_COUNT = 3
 
 
+# Default synergy weight values used when no valid file is available
+DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = {
+    "roi": 1.0,
+    "efficiency": 1.0,
+    "resilience": 1.0,
+    "antifragility": 1.0,
+    "reliability": 1.0,
+    "maintainability": 1.0,
+    "throughput": 1.0,
+}
+
+
 def _rotate_backups(path: Path) -> None:
     """Rotate backup files for ``path``."""
     backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
@@ -93,15 +105,7 @@ class SynergyWeightLearner:
             )
         self.path = Path(path) if path else None
         self.lr = lr
-        self.weights = {
-            "roi": 1.0,
-            "efficiency": 1.0,
-            "resilience": 1.0,
-            "antifragility": 1.0,
-            "reliability": 1.0,
-            "maintainability": 1.0,
-            "throughput": 1.0,
-        }
+        self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
         self.strategy = ActorCriticStrategy()
         self._state: tuple[float, ...] = (0.0,) * 7
         self.load()
@@ -113,11 +117,22 @@ class SynergyWeightLearner:
         try:
             with open(self.path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            for k in self.weights:
-                if k in data:
-                    self.weights[k] = float(data[k])
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to load synergy weights %s: %s", self.path, exc)
+            self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
             return
+
+        valid = isinstance(data, dict) and all(
+            k in data and isinstance(data[k], (int, float)) for k in self.weights
+        )
+        if not valid:
+            logger.warning(
+                "invalid synergy weight data in %s - using defaults", self.path
+            )
+            self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
+        else:
+            for k in self.weights:
+                self.weights[k] = float(data[k])
         try:
             base = os.path.splitext(self.path)[0]
             pkl = base + ".policy.pkl"
