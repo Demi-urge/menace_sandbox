@@ -3,10 +3,12 @@ import sys
 import types
 import importlib.util
 import builtins
+import pytest
 
 # Create a minimal fake 'menace' package with required submodules
 pkg = types.ModuleType("menace")
 sys.modules["menace"] = pkg
+pkg.__path__ = [os.path.dirname(os.path.dirname(__file__))]
 
 stub = types.ModuleType("menace.logging_utils")
 stub.log_record = lambda **k: {}
@@ -99,17 +101,20 @@ sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
 )
 sys.modules["sandbox_settings"] = sandbox_settings
 
-# Import the module under test
-spec = importlib.util.spec_from_file_location(
-    "menace.self_improvement_engine",
-    os.path.join(os.path.dirname(__file__), "..", "self_improvement_engine.py"),
-)
-sie = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = sie
-spec.loader.exec_module(sie)
+
+def _load_engine():
+    spec = importlib.util.spec_from_file_location(
+        "menace.self_improvement_engine",
+        os.path.join(os.path.dirname(__file__), "..", "self_improvement_engine.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def test_synergy_weight_save_logs(monkeypatch, tmp_path, caplog):
+    sie = _load_engine()
     learner = sie.SynergyWeightLearner(path=tmp_path / "w.json")
 
     def fail(*a, **k):
@@ -141,10 +146,11 @@ class DummyStrategy:
         return 0.0
 
     def predict(self, *_):
-        return [0.0, 0.0, 0.0, 0.0]
+        return [0.0] * 7
 
 
 def test_dqn_load_logs(monkeypatch, tmp_path, caplog):
+    sie = _load_engine()
     path = tmp_path / "w.json"
     path.write_text("{}")
     learner = sie.DQNSynergyLearner(path=path)
@@ -162,9 +168,37 @@ def test_dqn_load_logs(monkeypatch, tmp_path, caplog):
 
 
 def test_dqn_update_logs(monkeypatch, caplog):
+    sie = _load_engine()
     learner = sie.DQNSynergyLearner()
     learner.strategy = DummyStrategy()
     learner.target_sync = 1
     caplog.set_level("ERROR")
     learner.update(1.0, {"synergy_roi": 0.0, "synergy_efficiency": 0.0, "synergy_resilience": 0.0, "synergy_antifragility": 0.0})
     assert "target model sync failed" in caplog.text
+
+
+def test_load_invalid_weights_logs_warning(tmp_path, caplog):
+    sie = _load_engine()
+    path = tmp_path / "w.json"
+    path.write_text("{\"roi\": 1.0, \"efficiency\": \"bad\"}")
+    caplog.set_level("WARNING")
+    learner = sie.SynergyWeightLearner(path=path)
+    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert "invalid synergy weight data" in caplog.text
+
+
+def test_load_corrupted_weights_logs_warning(tmp_path, caplog):
+    sie = _load_engine()
+    path = tmp_path / "bad.json"
+    path.write_text("{broken}")
+    caplog.set_level("WARNING")
+    learner = sie.SynergyWeightLearner(path=path)
+    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert "failed to load synergy weights" in caplog.text
+
+
+def teardown_module(module):
+    for name in list(sys.modules):
+        if name.startswith("menace"):
+            sys.modules.pop(name, None)
+    sys.modules.pop("sandbox_settings", None)
