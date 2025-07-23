@@ -95,6 +95,9 @@ Network behaviour can be tuned with:
   posture.
 - `SANDBOX_PATCH_RETRIES` – number of patch attempts `SelfDebuggerSandbox`
   performs before giving up (default `3`).
+- `VISUAL_AGENT_TOKEN` – authentication token passed to `menace_visual_agent_2.py`.
+- `SANDBOX_REPO_PATH` – local path of the sandbox repository clone.
+- `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
@@ -666,3 +669,8 @@ Each time a pooled container fails to start the counters `failures` and
 logged when the consecutive count reaches `SANDBOX_POOL_FAIL_THRESHOLD`
 (default `5`). Review this file and the warnings to identify images that are
 consistently failing to launch.
+
+## Troubleshooting
+
+- **Missing dependencies** – rerun `./setup_env.sh` to install required packages and verify that `ffmpeg` and `tesseract` are available.
+- **Authentication errors** – HTTP 401 responses from the visual agent usually mean `VISUAL_AGENT_TOKEN` is unset or incorrect.
