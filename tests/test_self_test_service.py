@@ -585,6 +585,17 @@ def test_container_failure_logs_identifiers(monkeypatch):
 
     async def fail_exec(*cmd, **kwargs):
         recorded["cmd"] = cmd
+        if "logs" in cmd:
+            class P:
+                returncode = 0
+
+                async def communicate(self):
+                    return b"container logs", b""
+
+                async def wait(self):
+                    return None
+
+            return P()
 
         class P:
             returncode = 1
@@ -616,3 +627,4 @@ def test_container_failure_logs_identifiers(monkeypatch):
     err = svc.results.get("stderr", "")
     assert "selftest_deadbeef" in err
     assert "docker" in err
+    assert "container logs" in svc.results.get("logs", "")

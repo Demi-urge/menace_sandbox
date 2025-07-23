@@ -123,3 +123,55 @@ async def test_container_invocation(monkeypatch):
     assert "pytest" in recorded["cmd"]
     assert any("--json-report-file=-" in str(x) for x in recorded["cmd"])
 
+
+@pytest.mark.asyncio
+async def test_container_failure_logs(monkeypatch):
+    recorded = []
+
+    async def fake_exec(*cmd, **kwargs):
+        if "logs" in cmd:
+            recorded.append(cmd)
+
+            class P:
+                returncode = 0
+
+                async def communicate(self):
+                    return b"log out", b""
+
+                async def wait(self):
+                    return None
+
+            return P()
+
+        recorded.append(cmd)
+
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"out", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return True
+
+    async def dummy(*a, **k):
+        return None
+
+    monkeypatch.setattr(sts.SelfTestService, "_docker_available", avail)
+    monkeypatch.setattr(sts.SelfTestService, "_remove_stale_containers", dummy)
+    monkeypatch.setattr(sts.SelfTestService, "_force_remove_container", dummy)
+
+    svc = sts.SelfTestService(use_container=True, container_image="img", container_retries=0)
+    with pytest.raises(RuntimeError):
+        await svc._run_once()
+
+    assert any("logs" in r for r in recorded)
+    assert "log out" in svc.results.get("logs", "")
+

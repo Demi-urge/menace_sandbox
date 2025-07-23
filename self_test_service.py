@@ -325,7 +325,7 @@ class SelfTestService:
 
             async def _process(
                 cmd: list[str], tmp: str | None, is_container: bool, name: str | None
-            ) -> tuple[int, int, float, float, bool, str, str]:
+            ) -> tuple[int, int, float, float, bool, str, str, str]:
                 report: dict[str, Any] = {}
                 out: bytes = b""
                 err: bytes = b""
@@ -397,6 +397,7 @@ class SelfTestService:
                 failed_flag = proc.returncode != 0
                 out_snip = (out.decode(errors="ignore") if out else "")[:1000]
                 err_snip = (err.decode(errors="ignore") if err else "")[:1000]
+                log_snip = ""
                 if failed_flag:
                     exc = RuntimeError(
                         f"self tests failed with code {proc.returncode}"
@@ -404,6 +405,24 @@ class SelfTestService:
                     if is_container:
                         cmd_str = " ".join(shlex.quote(c) for c in cmd)
                         err_snip = f"[container {name} cmd: {cmd_str}]\n" + err_snip
+                        if name:
+                            log_cmd = [self.container_runtime]
+                            if self.docker_host:
+                                log_cmd.extend([
+                                    "-H" if self.container_runtime == "docker" else "--url",
+                                    self.docker_host,
+                                ])
+                            log_cmd.extend(["logs", name])
+                            try:
+                                lp = await asyncio.create_subprocess_exec(
+                                    *log_cmd,
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.STDOUT,
+                                )
+                                lout, _ = await asyncio.wait_for(lp.communicate(), timeout=10)
+                                log_snip = (lout.decode(errors="ignore") if lout else "")[:1000]
+                            except Exception:
+                                log_snip = ""
                         self.logger.error(
                             "self tests failed in container %s: %s (cmd: %s)",
                             name,
@@ -416,7 +435,7 @@ class SelfTestService:
                         self.error_logger.log(exc, "self_tests", "sandbox")
                     except Exception:
                         self.logger.exception("error logging failed")
-                return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip
+                return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip, log_snip
 
             tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name in proc_info]
 
@@ -425,13 +444,14 @@ class SelfTestService:
             any_failed = False
             stdout_snip = ""
             stderr_snip = ""
+            logs_snip = ""
 
             for res in results:
                 if isinstance(res, Exception):
                     if first_exc is None:
                         first_exc = res
                     continue
-                pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip = res
+                pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip, log_snip = res
                 any_failed = any_failed or failed_flag
                 passed += pcount
                 failed += fcount
@@ -440,6 +460,7 @@ class SelfTestService:
                 if failed_flag:
                     stdout_snip += out_snip
                     stderr_snip += err_snip
+                    logs_snip += log_snip
 
                 if self.result_callback:
                     partial = {
@@ -466,9 +487,11 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
-            if stdout_snip or stderr_snip:
+            if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
+                if logs_snip:
+                    self.results["logs"] = logs_snip
             self._store_history(
                 {
                     "passed": passed,
