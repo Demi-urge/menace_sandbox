@@ -72,6 +72,8 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_ROI_TOLERANCE=0.01` – ROI delta required to stop early
 - `RUN_CYCLES=0` – unlimited run cycles for the orchestrator
 - `AUTO_DASHBOARD_PORT=8001` – start the metrics dashboard
+- `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
+- `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
 - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
 - `VISUAL_AGENT_AUTO_RECOVER=1` – start the agent with `--auto-recover` enabled
@@ -187,6 +189,13 @@ variable enables JSON formatted logs for the sandbox runner as well.
 Long running services rotate their own log files such as
 `service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or
 clean old logs periodically when persisting them on disk.
+
+## Synergy metrics exporter
+
+Set `EXPORT_SYNERGY_METRICS=1` when launching `run_autonomous.py` to start the
+`SynergyExporter`. It reads `synergy_history.json` and exposes the latest
+values on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` (default port
+`8003`) for Prometheus scraping.
 
 ## Docker usage
 
