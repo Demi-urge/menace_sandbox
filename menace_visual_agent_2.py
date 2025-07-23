@@ -386,6 +386,11 @@ def _recover_queue_file_locked() -> None:
 
 def _load_state_locked() -> None:
     task_queue.load()
+    for item in task_queue:
+        if not isinstance(item, dict) or not all(k in item for k in ("id", "prompt", "branch")):
+            logger.warning("invalid queue entry detected, attempting recovery")
+            _recover_queue_file_locked()
+            return
     if not STATE_FILE.exists():
         return
     if not HASH_FILE.exists():
