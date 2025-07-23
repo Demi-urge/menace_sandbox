@@ -16,6 +16,8 @@ import tempfile
 import math
 from pathlib import Path
 import numpy as np
+import socket
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -1870,6 +1872,12 @@ class SynergyDashboard:
         return buf.getvalue(), 200, {"Content-Type": "image/png"}
 
     def run(self, host: str = "0.0.0.0", port: int = 5001) -> None:
+        with contextlib.closing(socket.socket()) as sock:
+            try:
+                sock.bind((host, port))
+            except OSError:
+                self.logger.error("port %d in use", port)
+                raise
         self.app.run(host=host, port=port)
 
 
