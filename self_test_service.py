@@ -401,7 +401,17 @@ class SelfTestService:
                     exc = RuntimeError(
                         f"self tests failed with code {proc.returncode}"
                     )
-                    self.logger.error("self tests failed: %s", exc)
+                    if is_container:
+                        cmd_str = " ".join(shlex.quote(c) for c in cmd)
+                        err_snip = f"[container {name} cmd: {cmd_str}]\n" + err_snip
+                        self.logger.error(
+                            "self tests failed in container %s: %s (cmd: %s)",
+                            name,
+                            exc,
+                            cmd_str,
+                        )
+                    else:
+                        self.logger.error("self tests failed: %s", exc)
                     try:
                         self.error_logger.log(exc, "self_tests", "sandbox")
                     except Exception:
