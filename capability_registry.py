@@ -7,6 +7,9 @@ from typing import Iterable, List, Dict
 import json
 import os
 import threading
+from logging_utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class CapabilityRegistry:
@@ -24,9 +27,8 @@ class CapabilityRegistry:
                 for cap, bots in data.items():
                     if isinstance(bots, list):
                         self._caps[cap].extend(str(b) for b in bots)
-            except Exception:
-                # Ignore persistence loading errors
-                pass
+            except Exception as exc:
+                logger.error("failed to load registry from %s: %s", self._path, exc)
 
     def register(self, bot_name: str, capabilities: Iterable[str]) -> None:
         with self._lock:
@@ -70,8 +72,8 @@ class CapabilityRegistry:
             with open(tmp_path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
             os.replace(tmp_path, self._path)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("failed to persist registry to %s: %s", self._path, exc)
 
 
 __all__ = ["CapabilityRegistry"]

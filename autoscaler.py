@@ -33,13 +33,15 @@ from .env_config import (
     LOCAL_PROVIDER_LOG_BACKUP_COUNT,
 )
 
+from logging_utils import get_logger
+
 if not logging.getLogger().hasHandlers():  # pragma: no cover - config once
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _resolve_binary(name: str, fallback_paths: list[str] | None = None) -> str:
@@ -110,7 +112,7 @@ class LocalProvider(Provider):
     """
 
     def __init__(self, executable: str | None = None, *, log_path: str | None = None) -> None:
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         self.processes: list[subprocess.Popen] = []
         self.restart_counts: Dict[int, int] = {}
         self.max_restarts = LOCAL_PROVIDER_MAX_RESTARTS
@@ -134,8 +136,8 @@ class LocalProvider(Provider):
     def __del__(self) -> None:
         try:
             self.log_handle.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.error("failed to close log file: %s", exc)
 
     def scale_up(self, amount: int = 1) -> bool:  # pragma: no cover - subprocess
         success = True
@@ -213,7 +215,7 @@ class KubernetesProvider(Provider):
 
     def __init__(self, deployment: str | None = None) -> None:
         self.deployment = deployment or os.getenv("K8S_DEPLOYMENT", "menace")
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         self._kubectl = _resolve_binary(
             "kubectl", ["/usr/local/bin/kubectl", "/usr/bin/kubectl"]
         )
@@ -271,7 +273,7 @@ class DockerSwarmProvider(Provider):
 
     def __init__(self, service: str | None = None) -> None:
         self.service = service or os.getenv("SWARM_SERVICE", "menace")
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         self._docker = _resolve_binary(
             "docker", ["/usr/local/bin/docker", "/usr/bin/docker"]
         )
@@ -431,7 +433,7 @@ class Autoscaler:
         self.last_scaled_at = 0.0
         self.last_scaled_up_at = 0.0
         self.last_scaled_down_at = 0.0
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         self.history: Deque[Dict[str, float]] = deque(maxlen=history_window)
         self.tolerance = AUTOSCALE_TOLERANCE
         self.scale_up_threshold = SCALE_UP_THRESHOLD
@@ -460,7 +462,12 @@ class Autoscaler:
                 if allowed <= 0:
                     self.logger.info("scale_up ignored; max instances reached")
                     return
-            if self.provider.scale_up(allowed):
+            try:
+                ok = self.provider.scale_up(allowed)
+            except Exception as exc:
+                self.logger.error("provider scale_up failed: %s", exc)
+                ok = False
+            if ok:
                 self.instances += allowed
                 now = time.time()
                 self.last_scaled_up_at = now
@@ -494,7 +501,12 @@ class Autoscaler:
             if time.time() - self.last_scaled_down_at < self.scale_down_cooldown:
                 self.logger.info("scale_down ignored; cooldown active")
                 return
-            if self.provider.scale_down(amount):
+            try:
+                ok = self.provider.scale_down(amount)
+            except Exception as exc:
+                self.logger.error("provider scale_down failed: %s", exc)
+                ok = False
+            if ok:
                 self.instances = max(0, self.instances - amount)
                 now = time.time()
                 self.last_scaled_down_at = now

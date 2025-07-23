@@ -7,9 +7,12 @@ import json
 import os
 import time
 from datetime import datetime
+from logging_utils import get_logger
 
 # Path for Security AI invocation logs
 INVOCATION_LOG = os.path.join("logs", "security_ai_invocations.jsonl")
+
+logger = get_logger(__name__)
 
 
 def log_invocation(timestamp: float, action_id: str) -> None:
@@ -28,15 +31,15 @@ def log_invocation(timestamp: float, action_id: str) -> None:
         with open(INVOCATION_LOG, "a", encoding="utf-8") as fh:
             json.dump(entry, fh)
             fh.write("\n")
-    except Exception:
-        # In case of any error, attempt to preserve data using a best effort
+    except Exception as exc:
+        logger.error("log_invocation failed: %s", exc)
         tmp_path = INVOCATION_LOG + ".tmp"
         try:
             with open(tmp_path, "a", encoding="utf-8") as fh:
                 json.dump(entry, fh)
                 fh.write("\n")
-        except Exception:
-            pass
+        except Exception as exc2:
+            logger.error("tmp log failed: %s", exc2)
 
 
 def load_recent_invocations(window_seconds: int = 300) -> List[str]:
@@ -63,8 +66,8 @@ def load_recent_invocations(window_seconds: int = 300) -> List[str]:
                     aid = entry.get("action_id")
                     if isinstance(aid, str):
                         action_ids.append(aid)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("reading invocation log failed: %s", exc)
     return action_ids
 
 
@@ -86,8 +89,8 @@ def _load_action_log(path: str) -> List[str]:
                 aid = entry.get("action_id") or entry.get("id")
                 if isinstance(aid, str):
                     ids.append(aid)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error("failed to load actions from %s: %s", path, exc)
     return ids
 
 
