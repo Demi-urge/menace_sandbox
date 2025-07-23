@@ -11,12 +11,41 @@ import os
 from sandbox_settings import SandboxSettings
 import json
 import pickle
+import io
 import tempfile
 import math
 from pathlib import Path
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+BACKUP_COUNT = 3
+
+
+def _rotate_backups(path: Path) -> None:
+    """Rotate backup files for ``path``."""
+    backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
+    for i in range(BACKUP_COUNT - 1, 0, -1):
+        if backups[i - 1].exists():
+            if backups[i].exists():
+                backups[i].unlink()
+            os.replace(backups[i - 1], backups[i])
+    if path.exists():
+        os.replace(path, backups[0])
+
+
+def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> None:
+    """Atomically write data to ``path`` with backup rotation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "wb" if binary else "w"
+    encoding = None if binary else "utf-8"
+    with tempfile.NamedTemporaryFile(mode, encoding=encoding, dir=path.parent, delete=False) as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+        tmp = Path(fh.name)
+    _rotate_backups(path)
+    os.replace(tmp, path)
 
 from .self_model_bootstrap import bootstrap
 from .research_aggregator_bot import (
@@ -103,19 +132,13 @@ class SynergyWeightLearner:
         if not self.path:
             return
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                "w", delete=False, dir=self.path.parent, encoding="utf-8"
-            ) as fh:
-                json.dump(self.weights, fh)
-                tmp = Path(fh.name)
-            os.replace(tmp, self.path)
+            _atomic_write(self.path, json.dumps(self.weights))
         except Exception as exc:
             logger.exception("failed to save synergy weights: %s", exc)
         try:
             base = os.path.splitext(self.path)[0]
-            with open(base + ".policy.pkl", "wb") as fh:
-                pickle.dump(self.strategy, fh)
+            pkl = Path(base + ".policy.pkl")
+            _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
 
@@ -227,14 +250,18 @@ class DQNSynergyLearner(SynergyWeightLearner):
         if self.path and sip_torch is not None:
             try:
                 if hasattr(self.strategy, "model") and self.strategy.model is not None:
-                    sip_torch.save(self.strategy.model.state_dict(), base + ".pt")
+                    buf = io.BytesIO()
+                    sip_torch.save(self.strategy.model.state_dict(), buf)
+                    _atomic_write(Path(base + ".pt"), buf.getvalue(), binary=True)
                 if hasattr(self.strategy, "target_model") and self.strategy.target_model is not None:
-                    sip_torch.save(self.strategy.target_model.state_dict(), base + ".target.pt")
+                    buf = io.BytesIO()
+                    sip_torch.save(self.strategy.target_model.state_dict(), buf)
+                    _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
             except Exception as exc:
                 logger.exception("failed to save DQN models: %s", exc)
         try:
-            with open(base + ".policy.pkl", "wb") as fh:
-                pickle.dump(self.strategy, fh)
+            pkl = Path(base + ".policy.pkl")
+            _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
 
