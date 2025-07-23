@@ -189,6 +189,49 @@ flask_mod.Flask = DummyFlask
 flask_mod.jsonify = lambda obj: obj
 sys.modules["flask"] = flask_mod
 
+if "gunicorn.app.base" not in sys.modules:
+    gunicorn_mod = types.ModuleType("gunicorn")
+    gunicorn_app_mod = types.ModuleType("gunicorn.app")
+    gunicorn_base_mod = types.ModuleType("gunicorn.app.base")
+
+    class _DummyGA:
+        def __init__(self, *a, **k):
+            self.cfg = types.SimpleNamespace(set=lambda *a, **k: None)
+
+        def run(self):
+            pass
+
+    gunicorn_base_mod.BaseApplication = _DummyGA
+    sys.modules["gunicorn"] = gunicorn_mod
+    sys.modules["gunicorn.app"] = gunicorn_app_mod
+    sys.modules["gunicorn.app.base"] = gunicorn_base_mod
+
+if "uvicorn" not in sys.modules:
+    uvicorn_mod = types.ModuleType("uvicorn")
+    uvicorn_mod.run = lambda *a, **k: None
+    sys.modules["uvicorn"] = uvicorn_mod
+
+if "starlette.middleware.wsgi" not in sys.modules:
+    star_mod = types.ModuleType("starlette")
+    mid_mod = types.ModuleType("starlette.middleware")
+    wsgi_mod = types.ModuleType("starlette.middleware.wsgi")
+
+    class _WSGI:
+        def __init__(self, app):
+            self.app = app
+
+    wsgi_mod.WSGIMiddleware = _WSGI
+    sys.modules["starlette"] = star_mod
+    sys.modules["starlette.middleware"] = mid_mod
+    sys.modules["starlette.middleware.wsgi"] = wsgi_mod
+
+if "requests" not in sys.modules:
+    req_mod = types.ModuleType("requests")
+    exc_mod = types.SimpleNamespace(Timeout=type("Timeout", (Exception,), {}))
+    req_mod.exceptions = exc_mod
+    req_mod.get = lambda *a, **k: None
+    sys.modules["requests"] = req_mod
+
 from menace.self_improvement_engine import (
     synergy_stats,
     SynergyDashboard,
@@ -274,6 +317,48 @@ def test_dashboard_exporter_unreachable(monkeypatch):
         assert dash._thread and dash._thread.is_alive()
     finally:
         dash.stop()
+
+
+def test_dashboard_run_gunicorn(monkeypatch):
+    calls = {}
+
+    class DummyGA:
+        def __init__(self, *a, **k):
+            self.cfg = types.SimpleNamespace(set=lambda *a, **k: None)
+
+        def run(self):
+            calls["ran"] = True
+
+    monkeypatch.setattr(
+        sys.modules["gunicorn.app.base"], "BaseApplication", DummyGA, raising=False
+    )
+
+    dash = SynergyDashboard()
+    dash.run(port=0, wsgi="gunicorn")
+
+    assert calls.get("ran") is True
+
+
+def test_dashboard_run_uvicorn(monkeypatch):
+    calls = {}
+
+    class DummyWSGI:
+        def __init__(self, app):
+            self.app = app
+            calls["wrapped"] = app
+
+    def dummy_run(app, host="", port=0, workers=1):
+        calls["run"] = {"app": app, "host": host, "port": port, "workers": workers}
+
+    monkeypatch.setattr(
+        sys.modules["starlette.middleware.wsgi"], "WSGIMiddleware", DummyWSGI
+    )
+    monkeypatch.setattr(sys.modules["uvicorn"], "run", dummy_run)
+
+    dash = SynergyDashboard()
+    dash.run(port=0, wsgi="uvicorn")
+
+    assert calls["run"]["app"].app is dash.app
 
 
 
