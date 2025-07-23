@@ -551,3 +551,20 @@ def test_recovery_time_saved(tmp_path):
     other = rt.ROITracker()
     other.load_history(str(path))
     assert other.metrics_history["recovery_time"][-1] == 2.5
+
+def test_synergy_history_multi_metric(tmp_path):
+    tracker = rt.ROITracker()
+    tracker.synergy_history.append({"synergy_roi": 0.1, "synergy_efficiency": 0.2})
+    tracker.synergy_history.append({"synergy_roi": 0.2, "synergy_efficiency": 0.3})
+    path = tmp_path / "hist.json"
+    tracker.save_history(str(path))
+
+    other = rt.ROITracker()
+    other.load_history(str(path))
+    assert other.synergy_history == tracker.synergy_history
+    path2 = tmp_path / "hist.db"
+    tracker.save_history(str(path2))
+    another = rt.ROITracker()
+    another.load_history(str(path2))
+    assert another.synergy_history == tracker.synergy_history
+
