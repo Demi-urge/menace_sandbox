@@ -199,21 +199,14 @@ stable-baselines3
 sentry-sdk
 ```
 
-For convenience, a `setup_env.sh` script installs dependencies and pytest:
+For convenience, a `setup_env.sh` script installs dependencies and pytest. To
+prepare a fresh environment for running the test suite in one step run:
 
 ```bash
-./setup_env.sh
+./setup_env.sh && scripts/setup_tests.sh
 ```
 
-To ensure all test dependencies such as **jinja2**, **hypothesis** and
-**SQLAlchemy** are available, run the helper script before executing the test
-suite:
-
-```bash
-scripts/setup_tests.sh
-pytest
-pytest tests/test_roi_tracker_forecast.py tests/test_sandbox_section_simulations.py
-```
+Afterwards execute `pytest` (optionally passing specific test files) as usual.
 
 ### Hardware tests
 
@@ -475,8 +468,8 @@ written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
 
 Troubleshooting tips:
 
-- Run ``./setup_env.sh`` followed by ``scripts/setup_tests.sh`` when tests fail
-  to ensure all dependencies are installed.
+- Run ``./setup_env.sh && scripts/setup_tests.sh`` when tests fail to ensure
+  all dependencies are installed.
 - Delete ``sandbox_data/recovery.json`` if ``SandboxRecoveryManager`` keeps
   restarting unexpectedly.
 - If synergy metrics diverge wildly, verify that ``synergy_history.json`` is
