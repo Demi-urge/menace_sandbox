@@ -135,6 +135,14 @@ dashboard:
 scripts/start_sandbox.sh
 ```
 
+To visualise synergy metrics separately, run:
+
+```bash
+python -m menace.self_improvement_engine synergy-dashboard --wsgi flask
+```
+
+Replace `flask` with `gunicorn` or `uvicorn` to use a different server.
+
 ### Required dependencies
 
 The following Python packages must be available. They are installed
