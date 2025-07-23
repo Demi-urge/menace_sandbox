@@ -137,6 +137,14 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = logging.getLogger(__name__)
 
+
+class VisualAgentError(RuntimeError):
+    """Base class for visual agent client errors."""
+
+
+class VisualAgentConnectionError(VisualAgentError):
+    """Raised when communication with the visual agent repeatedly fails."""
+
 # Default instructions prepended before messages sent to the visual agent.
 DEFAULT_MESSAGE_PREFIX = (
     "Improve Menace by enhancing error handling and modifying existing bots."
@@ -256,16 +264,32 @@ class VisualAgentClient:
                 resp = requests.get(f"{base}/status", timeout=10)
             except Exception as exc:  # pragma: no cover - network issues
                 attempts += 1
+                logger.warning(
+                    "status poll attempt %s to %s failed: %s",
+                    attempts,
+                    base,
+                    exc,
+                )
                 if attempts >= 3:
-                    return False, f"status poll failed: {exc}"
+                    msg = f"status poll failed after {attempts} attempts: {exc}"
+                    logger.error(msg)
+                    raise VisualAgentConnectionError(msg)
                 time.sleep(delay)
                 delay *= 2
                 continue
 
             if resp.status_code != 200:
                 attempts += 1
+                logger.warning(
+                    "status poll attempt %s to %s returned %s",
+                    attempts,
+                    base,
+                    resp.status_code,
+                )
                 if attempts >= 3:
-                    return False, f"unexpected status {resp.status_code}"
+                    msg = f"unexpected status {resp.status_code}"
+                    logger.error(msg)
+                    raise VisualAgentConnectionError(msg)
                 time.sleep(delay)
                 delay *= 2
                 continue
@@ -346,8 +370,16 @@ class VisualAgentClient:
                             timeout=10,
                         )
                     except Exception as exc:
+                        logger.warning(
+                            "send attempt %s to %s failed: %s",
+                            attempt + 1,
+                            base,
+                            exc,
+                        )
                         if attempt == 2:
-                            return False, f"connection error: {exc}"
+                            msg = f"connection error after {attempt + 1} attempts: {exc}"
+                            logger.error(msg)
+                            raise VisualAgentConnectionError(msg)
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -363,17 +395,29 @@ class VisualAgentClient:
                         continue
                     if resp.status_code == 202:
                         return self._poll(base)
-                    if resp.status_code >= 500 and attempt < 2:
+                    if resp.status_code >= 500:
+                        logger.warning(
+                            "send attempt %s to %s returned %s",
+                            attempt + 1,
+                            base,
+                            resp.status_code,
+                        )
+                        if attempt == 2:
+                            msg = f"server error status {resp.status_code}"
+                            logger.error(msg)
+                            raise VisualAgentConnectionError(msg)
                         time.sleep(delay)
                         delay *= 2
                         continue
                     snippet = resp.text[:200]
                     return False, f"status {resp.status_code}: {snippet}"
-                return False, "failed"
+                raise VisualAgentConnectionError("send failed after 3 attempts")
 
         try:
             return sender()
         except PermissionError:
+            raise
+        except VisualAgentError:
             raise
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
@@ -401,8 +445,16 @@ class VisualAgentClient:
                             timeout=10,
                         )
                     except Exception as exc:
+                        logger.warning(
+                            "revert attempt %s to %s failed: %s",
+                            attempt + 1,
+                            base,
+                            exc,
+                        )
                         if attempt == 2:
-                            return False, f"connection error: {exc}"
+                            msg = f"connection error after {attempt + 1} attempts: {exc}"
+                            logger.error(msg)
+                            raise VisualAgentConnectionError(msg)
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -418,17 +470,29 @@ class VisualAgentClient:
                         continue
                     if resp.status_code == 202:
                         return self._poll(base)
-                    if resp.status_code >= 500 and attempt < 2:
+                    if resp.status_code >= 500:
+                        logger.warning(
+                            "revert attempt %s to %s returned %s",
+                            attempt + 1,
+                            base,
+                            resp.status_code,
+                        )
+                        if attempt == 2:
+                            msg = f"server error status {resp.status_code}"
+                            logger.error(msg)
+                            raise VisualAgentConnectionError(msg)
                         time.sleep(delay)
                         delay *= 2
                         continue
                     snippet = resp.text[:200]
                     return False, f"status {resp.status_code}: {snippet}"
-                return False, "failed"
+                raise VisualAgentConnectionError("revert failed after 3 attempts")
 
         try:
             return sender()
         except PermissionError:
+            raise
+        except VisualAgentError:
             raise
         except Exception as exc:  # pragma: no cover - network issues
             return False, f"exception {exc}"
@@ -523,5 +587,10 @@ class VisualAgentClientStub:
             self.active = False
 
 
-__all__ = ["VisualAgentClient", "VisualAgentClientStub"]
+__all__ = [
+    "VisualAgentClient",
+    "VisualAgentClientStub",
+    "VisualAgentError",
+    "VisualAgentConnectionError",
+]
 
