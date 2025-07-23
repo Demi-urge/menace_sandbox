@@ -56,3 +56,28 @@ def test_load_error(tmp_path, monkeypatch, caplog):
     assert "Failed to load ROI history" in caplog.text
     data = resp.get_json()
     assert data["error"]
+
+
+
+
+def test_plot_predictions(tmp_path):
+    path = tmp_path / "hist.json"
+    tracker = ROITracker()
+    tracker.update(
+        0.0,
+        1.0,
+        metrics={
+            "security_score": 0.8,
+            "synergy_security_score": 0.05,
+        },
+    )
+    tracker.record_metric_prediction("security_score", 0.9, 0.8)
+    tracker.record_metric_prediction("synergy_security_score", 0.06, 0.05)
+    tracker.record_prediction(1.1, 1.0)
+    tracker.save_history(str(path))
+
+    dash = SandboxDashboard(path)
+    client = dash.app.test_client()
+    resp = client.get("/plots/predictions.png")
+    assert resp.status_code == 200
+    assert resp.data.startswith(b"\x89PNG") or resp.data == b""
