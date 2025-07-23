@@ -71,10 +71,11 @@ threshold, engines are removed down to ``min_engines``.
 ## Synergy Weight Learners
 
 The engine keeps a set of synergy weights that modulate how cross‑module
-metrics influence policy updates. ``SynergyWeightLearner`` stores four weights
-(``roi``, ``efficiency``, ``resilience`` and ``antifragility``) in a JSON file.
-After each cycle ``_update_synergy_weights`` measures the rolling change of the
-corresponding synergy metrics and calls ``SynergyWeightLearner.update``:
+metrics influence policy updates. ``SynergyWeightLearner`` stores seven weights
+(``roi``, ``efficiency``, ``resilience``, ``antifragility``, ``reliability``,
+``maintainability`` and ``throughput``) in a JSON file. After each cycle
+``_update_synergy_weights`` measures the rolling change of the corresponding
+synergy metrics and calls ``SynergyWeightLearner.update``:
 
 ``synergy_roi`` → ``roi``
 
@@ -84,9 +85,9 @@ corresponding synergy metrics and calls ``SynergyWeightLearner.update``:
 
 ``synergy_antifragility`` → ``antifragility``
 
-Each weight is nudged by ``lr * roi_delta * metric_delta`` and clamped between
-``0`` and ``10``. Positive ROI deltas therefore reinforce metrics that improved
-while negative deltas or worsening metrics lower their influence.
+The base learner uses a lightweight actor‑critic policy so weights follow a
+learned reinforcement‑learning strategy. ``DQNSynergyLearner`` provides a deeper
+Double DQN alternative when PyTorch is available.
 
 ``DQNSynergyLearner`` extends this process with a small deep Q‑network. When
 PyTorch is available the learner defaults to a Double DQN variant with a target
@@ -96,19 +97,15 @@ Predicted Q‑values replace the manual gradient step so weight updates follow t
 learned policy. Both the online and target model weights are persisted alongside
 the policy file so progress carries over between runs without a cold start.
 
-Both ``SynergyWeightLearner`` and ``DQNSynergyLearner`` emit a warning during
-initialisation if PyTorch or other optional libraries are missing. In that case
-the learners fall back to simpler behaviour which can slow convergence. Install
-the optional dependencies (for example ``pip install torch``) for the best
-performance.
+Both learners emit a warning during initialisation if optional dependencies are
+missing. Install ``torch`` for the best performance when using the DQN variant.
 
 ## Modifying ``synergy_weights.json``
 
-Synergy weights are persisted in a JSON file. By default the engine stores it
-next to ``SANDBOX_SCORE_DB`` using the suffix ``.synergy.json``. Provide
-``synergy_weights_path`` when creating ``SelfImprovementEngine`` to choose a
-different location. The file can be edited manually or with
-``synergy_weight_cli.py`` to set starting values.
+Synergy weights are persisted in a JSON file. By default the engine stores it at
+``sandbox_data/synergy_weights.json``. Provide ``synergy_weights_path`` when
+creating ``SelfImprovementEngine`` to choose a different location. The file can
+be edited manually or with ``synergy_weight_cli.py`` to set starting values.
 
 The environment variables ``SYNERGY_WEIGHT_ROI``,
 ``SYNERGY_WEIGHT_EFFICIENCY``, ``SYNERGY_WEIGHT_RESILIENCE`` and
