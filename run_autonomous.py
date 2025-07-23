@@ -9,7 +9,7 @@ import os
 import shutil
 import sqlite3
 from pathlib import Path
-from typing import List
+from typing import List, Callable
 import urllib.request
 import sys
 import subprocess
@@ -19,6 +19,8 @@ import importlib
 import importlib.util
 import socket
 import contextlib
+import atexit
+import signal
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -517,6 +519,19 @@ def main(argv: List[str] | None = None) -> None:
     if args.save_synergy_history and dash_env is not None:
         synergy_dash_port = dash_env + 1
 
+    cleanup_funcs: list[Callable[[], None]] = []
+
+    def _cleanup() -> None:
+        for func in cleanup_funcs:
+            try:
+                func()
+            except Exception:
+                logger.exception("cleanup failed")
+
+    atexit.register(_cleanup)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
+
     meta_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
     exporter_log = AuditTrail(str(meta_log_path))
 
@@ -535,10 +550,12 @@ def main(argv: List[str] | None = None) -> None:
         try:
             synergy_exporter.start()
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_started"})
+            cleanup_funcs.append(synergy_exporter.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
 
+    dash_thread = None
     if dash_port:
         if not _port_available(dash_port):
             logger.error("metrics dashboard port %d in use", dash_port)
@@ -549,12 +566,15 @@ def main(argv: List[str] | None = None) -> None:
 
         history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "roi_history.json"
         dash = MetricsDashboard(str(history_file))
-        Thread(
+        dash_thread = Thread(
             target=dash.run,
             kwargs={"port": dash_port},
             daemon=True,
-        ).start()
+        )
+        dash_thread.start()
+        cleanup_funcs.append(lambda: dash_thread and dash_thread.is_alive() and dash_thread.join(0.1))
 
+    s_dash = None
     if synergy_dash_port:
         if not _port_available(synergy_dash_port):
             logger.error("synergy dashboard port %d in use", synergy_dash_port)
@@ -565,11 +585,14 @@ def main(argv: List[str] | None = None) -> None:
 
         synergy_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
         s_dash = SynergyDashboard(str(synergy_file))
-        Thread(
+        dash_t = Thread(
             target=s_dash.run,
             kwargs={"port": synergy_dash_port},
             daemon=True,
-        ).start()
+        )
+        dash_t.start()
+        cleanup_funcs.append(s_dash.stop)
+        cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
     agent_proc = None
     autostart = settings.visual_agent_autostart
