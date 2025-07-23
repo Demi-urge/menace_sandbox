@@ -15,6 +15,8 @@ import time
 from datetime import datetime
 import importlib
 import importlib.util
+import socket
+import contextlib
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -104,6 +106,23 @@ def _visual_agent_running(urls: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+
+def _port_available(port: int, host: str = "0.0.0.0") -> bool:
+    """Return True if the TCP ``port`` is free on ``host``."""
+    with contextlib.closing(socket.socket()) as sock:
+        try:
+            sock.bind((host, port))
+            return True
+        except OSError:
+            return False
+
+
+def _free_port() -> int:
+    """Return an available TCP port."""
+    with contextlib.closing(socket.socket()) as sock:
+        sock.bind(("", 0))
+        return sock.getsockname()[1]
 
 
 class PresetModel(BaseModel):
@@ -476,6 +495,10 @@ def main(argv: List[str] | None = None) -> None:
     synergy_exporter: SynergyExporter | None = None
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
         port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
+        if not _port_available(port):
+            logger.error("synergy exporter port %d in use", port)
+            port = _free_port()
+            logger.info("using port %d for synergy exporter", port)
         history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
         synergy_exporter = SynergyExporter(
             history_file=str(history_file),
@@ -489,6 +512,10 @@ def main(argv: List[str] | None = None) -> None:
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
 
     if dash_port:
+        if not _port_available(dash_port):
+            logger.error("metrics dashboard port %d in use", dash_port)
+            dash_port = _free_port()
+            logger.info("using port %d for MetricsDashboard", dash_port)
         from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
 
@@ -501,6 +528,10 @@ def main(argv: List[str] | None = None) -> None:
         ).start()
 
     if synergy_dash_port:
+        if not _port_available(synergy_dash_port):
+            logger.error("synergy dashboard port %d in use", synergy_dash_port)
+            synergy_dash_port = _free_port()
+            logger.info("using port %d for SynergyDashboard", synergy_dash_port)
         from menace.self_improvement_engine import SynergyDashboard
         from threading import Thread
 
