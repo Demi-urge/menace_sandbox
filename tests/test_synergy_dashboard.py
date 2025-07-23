@@ -1,6 +1,7 @@
 import json
 import sys
 import types
+import time
 import pytest
 
 if "jinja2" not in sys.modules:
@@ -67,6 +68,7 @@ if "matplotlib" not in sys.modules:
 if "dotenv" not in sys.modules:
     dotenv_mod = types.ModuleType("dotenv")
     dotenv_mod.load_dotenv = lambda *a, **k: None
+    dotenv_mod.dotenv_values = lambda *a, **k: {}
     sys.modules["dotenv"] = dotenv_mod
 
 if "prometheus_client" not in sys.modules:
@@ -204,6 +206,29 @@ def test_dashboard_endpoints():
     assert code == 200
     assert data["latest"] == HISTORY[-1]
     assert data["rolling_average"]["synergy_roi"] == pytest.approx(0.2)
+
+
+def test_dashboard_update_loop(monkeypatch):
+    updates = [{"synergy_roi": 0.4}, {"synergy_roi": 0.5}]
+    iterator = iter(updates)
+
+    def fake_fetch(self):
+        try:
+            return next(iterator)
+        except StopIteration:
+            return {}
+
+    monkeypatch.setattr(SynergyDashboard, "_fetch_exporter_metrics", fake_fetch)
+
+    dash = SynergyDashboard(exporter_host="localhost", refresh_interval=0.01)
+    try:
+        for _ in range(100):
+            if len(dash._history) >= 2:
+                break
+            time.sleep(0.02)
+        assert dash._history[:2] == updates
+    finally:
+        dash.stop()
 
 
 
