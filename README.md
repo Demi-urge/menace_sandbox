@@ -649,6 +649,14 @@ python synergy_weight_cli.py export --out weights.json
 python synergy_weight_cli.py import weights.json
 ```
 
+### Synergy metrics exporter
+
+Set `EXPORT_SYNERGY_METRICS=1` when running `run_autonomous.py` to expose the
+latest values from `synergy_history.json` via `SynergyExporter`. The exporter
+listens on `SYNERGY_METRICS_PORT` (default `8003`). Visit
+`http://localhost:8003/metrics` (or your chosen port) to view the Prometheus
+gauges.
+
 ### Dependency provisioning
 
 
