@@ -53,6 +53,11 @@ def test_exporter_serves_latest_metrics(tmp_path: Path) -> None:
             time.sleep(0.05)
         assert metrics.get("synergy_roi") == 0.3
         assert metrics.get("synergy_efficiency") == 0.5
+
+        status = urllib.request.urlopen(
+            f"http://localhost:{exp.health_port}/health"
+        ).getcode()
+        assert status == 200
     finally:
         exp.stop()
         me.stop_metrics_server()
@@ -217,8 +222,11 @@ def test_run_autonomous_starts_exporter(monkeypatch, tmp_path: Path) -> None:
     data = urllib.request.urlopen(f"http://localhost:{port}/metrics").read().decode()
     metrics = _parse_metrics(data)
     assert metrics.get("synergy_roi") == 0.05
-
     exp = captured["exp"]
+    status = urllib.request.urlopen(
+        f"http://localhost:{exp.health_port}/health"
+    ).getcode()
+    assert status == 200
     assert exp._thread is not None
     assert not exp._thread.is_alive()
 
