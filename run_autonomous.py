@@ -12,6 +12,7 @@ from typing import List
 import sys
 import subprocess
 import time
+from datetime import datetime
 import importlib
 import importlib.util
 
@@ -72,6 +73,7 @@ from sandbox_settings import SandboxSettings
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
 from menace.synergy_exporter import SynergyExporter
+from menace.audit_trail import AuditTrail
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
 from menace.roi_tracker import ROITracker
@@ -468,6 +470,9 @@ def main(argv: List[str] | None = None) -> None:
     if args.save_synergy_history and dash_env is not None:
         synergy_dash_port = dash_env + 1
 
+    meta_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
+    exporter_log = AuditTrail(str(meta_log_path))
+
     synergy_exporter: SynergyExporter | None = None
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
         port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
@@ -478,8 +483,10 @@ def main(argv: List[str] | None = None) -> None:
         )
         try:
             synergy_exporter.start()
+            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_started"})
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
+            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
 
     if dash_port:
         from menace.metrics_dashboard import MetricsDashboard
@@ -615,6 +622,17 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
+        if (
+            synergy_exporter is not None
+            and synergy_exporter._thread is not None
+            and not synergy_exporter._thread.is_alive()
+        ):
+            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_restarted"})
+            try:
+                synergy_exporter.start()
+            except Exception as exc:
+                logger.warning("failed to restart synergy exporter: %s", exc)
+                exporter_log.record({"timestamp": int(time.time()), "event": "exporter_restart_failed", "error": str(exc)})
         if agent_proc and agent_proc.poll() is not None:
             logger.error(
                 "visual agent process terminated with code %s",
@@ -765,6 +783,7 @@ def main(argv: List[str] | None = None) -> None:
     if synergy_exporter is not None:
         try:
             synergy_exporter.stop()
+            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_stopped"})
         except Exception:
             logger.exception("failed to stop synergy exporter")
 
