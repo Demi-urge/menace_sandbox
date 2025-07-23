@@ -131,7 +131,7 @@ class SandboxRecoveryManager:
                     except Exception:  # pragma: no cover - runtime issues
                         self.logger.exception("failed to update metrics")
 
-                if self._using_stub:
+                if self._using_stub or self._restart_gauge is None:
                     try:
                         metrics_file = log_dir / "recovery.json"
                         with open(metrics_file, "w", encoding="utf-8") as fh:
