@@ -1,5 +1,6 @@
 import importlib
 import json
+import sqlite3
 import socket
 import time
 import urllib.request
@@ -32,8 +33,18 @@ def test_exporter_serves_latest_metrics(tmp_path: Path) -> None:
         {"synergy_roi": 0.2, "synergy_efficiency": 0.4},
         {"synergy_roi": 0.3, "synergy_efficiency": 0.5},
     ]
-    hist_file = tmp_path / "synergy_history.json"
-    hist_file.write_text(json.dumps(history))
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    for entry in history:
+        conn.execute(
+            "INSERT INTO synergy_history(entry) VALUES (?)",
+            (json.dumps(entry),),
+        )
+    conn.commit()
+    conn.close()
 
     port = _free_port()
     exp = se.SynergyExporter(history_file=hist_file, interval=0.05, port=port)
@@ -72,9 +83,18 @@ def test_run_autonomous_starts_exporter(monkeypatch, tmp_path: Path) -> None:
     import types
     import shutil
 
-    # prepare temporary history file with initial data
-    hist_file = tmp_path / "synergy_history.json"
-    hist_file.write_text(json.dumps([{"synergy_roi": 0.05}]))
+    # prepare temporary history database with initial data
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.05}),),
+    )
+    conn.commit()
+    conn.close()
 
     port = _free_port()
     monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 from pathlib import Path
 from typing import List
 import sys
@@ -230,23 +231,21 @@ def _get_env_override(name: str, current, settings: SandboxSettings):
 def load_previous_synergy(
     data_dir: str | Path,
 ) -> tuple[list[dict[str, float]], list[dict[str, float]]]:
-    """Return synergy history and moving averages from ``synergy_history.json``."""
+    """Return synergy history and moving averages from ``synergy_history.db``."""
 
-    path = Path(data_dir) / "synergy_history.json"
+    path = Path(data_dir) / "synergy_history.db"
     if not path.exists():
         return [], []
     history: list[dict[str, float]] = []
     try:
-        loaded = json.loads(path.read_text())
-        if isinstance(loaded, list):
-            history = validate_synergy_history(
-                [entry for entry in loaded if isinstance(entry, dict)]
-            )
-        else:
-            raise ValueError("synergy history must be a list")
-    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-        logger.warning("could not parse synergy history %s: %s", path, exc)
-        history = []
+        with sqlite3.connect(path) as conn:
+            rows = conn.execute(
+                "SELECT entry FROM synergy_history ORDER BY id"
+            ).fetchall()
+        for (text,) in rows:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                history.append({str(k): float(v) for k, v in data.items()})
     except Exception as exc:  # pragma: no cover - unexpected errors
         logger.warning("failed to load synergy history %s: %s", path, exc)
         history = []
@@ -426,8 +425,13 @@ def main(argv: List[str] | None = None) -> None:
     data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     synergy_history: list[dict[str, float]] = []
     synergy_ma_prev: list[dict[str, float]] = []
+    history_conn: sqlite3.Connection | None = None
     if args.save_synergy_history or args.recover:
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
+        history_conn = sqlite3.connect(str(data_dir / "synergy_history.db"))
+        history_conn.execute(
+            "CREATE TABLE IF NOT EXISTS synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+        )
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
 
@@ -499,7 +503,7 @@ def main(argv: List[str] | None = None) -> None:
             logger.error("synergy exporter port %d in use", port)
             port = _free_port()
             logger.info("using port %d for synergy exporter", port)
-        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
+        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
         synergy_exporter = SynergyExporter(
             history_file=str(history_file),
             port=port,
@@ -535,7 +539,7 @@ def main(argv: List[str] | None = None) -> None:
         from menace.self_improvement_engine import SynergyDashboard
         from threading import Thread
 
-        synergy_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.json"
+        synergy_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
         s_dash = SynergyDashboard(str(synergy_file))
         Thread(
             target=s_dash.run,
@@ -631,12 +635,14 @@ def main(argv: List[str] | None = None) -> None:
                 synergy_ma_history.append(ma_entry)
             if missing:
                 synergy_ma_prev = synergy_ma_history
-            if missing and args.save_synergy_history:
+            if missing and args.save_synergy_history and history_conn is not None:
                 try:
-                    data_dir.mkdir(parents=True, exist_ok=True)
-                    sy_path = data_dir / "synergy_history.json"
-                    with FileLock(str(sy_path) + ".lock"):
-                        sy_path.write_text(json.dumps(synergy_history))
+                    for entry in missing:
+                        history_conn.execute(
+                            "INSERT INTO synergy_history(entry) VALUES (?)",
+                            (json.dumps(entry),),
+                        )
+                    history_conn.commit()
                 except Exception:
                     logger.exception("failed to save synergy history")
             if tracker.roi_history:
@@ -715,28 +721,22 @@ def main(argv: List[str] | None = None) -> None:
             logger.exception("failed to load tracker history: %s", hist_file)
             continue
 
-        if args.save_synergy_history:
-            synergy_file = data_dir / "synergy_history.json"
-            if synergy_file.exists():
-                try:
-                    loaded = json.loads(synergy_file.read_text())
-                    if isinstance(loaded, list):
-                        synergy_history = validate_synergy_history(
-                            [entry for entry in loaded if isinstance(entry, dict)]
-                        )
-                    else:
-                        raise ValueError("synergy history must be a list")
-                except (ValidationError, ValueError, json.JSONDecodeError) as exc:
-                    logger.warning(
-                        "could not parse synergy history %s: %s", synergy_file, exc
-                    )
-                    synergy_history = []
-                except Exception as exc:  # pragma: no cover - unexpected errors
-                    logger.warning(
-                        "failed to load synergy history %s: %s", synergy_file, exc
-                    )
-                    synergy_history = []
-            else:
+        if args.save_synergy_history and history_conn is not None:
+            try:
+                rows = history_conn.execute(
+                    "SELECT entry FROM synergy_history ORDER BY id"
+                ).fetchall()
+                synergy_history = [
+                    {str(k): float(v) for k, v in json.loads(text).items()}
+                    for (text,) in rows
+                    if isinstance(json.loads(text), dict)
+                ]
+            except Exception as exc:  # pragma: no cover - unexpected errors
+                logger.warning(
+                    "failed to load synergy history %s: %s",
+                    data_dir / "synergy_history.db",
+                    exc,
+                )
                 synergy_history = []
 
         for mod, vals in tracker.module_deltas.items():
@@ -749,12 +749,13 @@ def main(argv: List[str] | None = None) -> None:
         }
         if syn_vals:
             synergy_history.append(syn_vals)
-            if args.save_synergy_history:
+            if args.save_synergy_history and history_conn is not None:
                 try:
-                    data_dir.mkdir(parents=True, exist_ok=True)
-                    sy_path = data_dir / "synergy_history.json"
-                    with FileLock(str(sy_path) + ".lock"):
-                        sy_path.write_text(json.dumps(synergy_history))
+                    history_conn.execute(
+                        "INSERT INTO synergy_history(entry) VALUES (?)",
+                        (json.dumps(syn_vals),),
+                    )
+                    history_conn.commit()
                 except Exception:
                     logger.exception("failed to save synergy history")
             ma_entry: dict[str, float] = {}
@@ -817,6 +818,9 @@ def main(argv: List[str] | None = None) -> None:
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_stopped"})
         except Exception:
             logger.exception("failed to stop synergy exporter")
+
+    if history_conn is not None:
+        history_conn.close()
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import sqlite3
 import logging
 import threading
 import time
@@ -14,11 +15,11 @@ from .metrics_exporter import Gauge, start_metrics_server
 
 
 class SynergyExporter:
-    """Periodically read ``synergy_history.json`` and expose latest values."""
+    """Periodically read ``synergy_history.db`` and expose latest values."""
 
     def __init__(
         self,
-        history_file: str | Path = "synergy_history.json",
+        history_file: str | Path = "synergy_history.db",
         *,
         interval: float = 5.0,
         port: int = 8003,
@@ -41,11 +42,14 @@ class SynergyExporter:
         if not p.exists():
             return {}
         try:
-            data = json.loads(p.read_text())
-            if isinstance(data, list) and data:
-                entry = data[-1]
-                if isinstance(entry, dict):
-                    return {str(k): float(v) for k, v in entry.items()}
+            with sqlite3.connect(p) as conn:
+                row = conn.execute(
+                    "SELECT entry FROM synergy_history ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+            if row:
+                data = json.loads(row[0])
+                if isinstance(data, dict):
+                    return {str(k): float(v) for k, v in data.items()}
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("failed to read %s: %s", p, exc)
         return {}
@@ -112,7 +116,7 @@ class SynergyExporter:
 
 def start_synergy_exporter(
     *,
-    history_file: str | Path = "synergy_history.json",
+    history_file: str | Path = "synergy_history.db",
     interval: float = 5.0,
     port: int = 8003,
 ) -> SynergyExporter:
