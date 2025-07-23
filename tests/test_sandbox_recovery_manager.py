@@ -154,6 +154,41 @@ def test_json_fallback_and_cli(monkeypatch, tmp_path, capsys):
     assert isinstance(metrics["last_failure_time"], float)
 
 
+def test_json_metrics_multiple_failures(monkeypatch, tmp_path):
+    stub = types.ModuleType("metrics_exporter")
+    stub._USING_STUB = True
+
+    class DummyGauge:
+        def __init__(self, *a, **k):
+            pass
+
+        def set(self, v):
+            pass
+
+    stub.Gauge = DummyGauge
+    stub.CollectorRegistry = object
+    stub.sandbox_restart_total = DummyGauge()
+    stub.sandbox_last_failure_ts = DummyGauge()
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+
+    calls = []
+
+    def fail_twice_then_ok(preset, args):
+        calls.append("call")
+        if len(calls) <= 2:
+            raise RuntimeError("boom")
+        return "ok"
+
+    monkeypatch.setattr(srm.time, "sleep", lambda s: None)
+    mgr = srm.SandboxRecoveryManager(fail_twice_then_ok, retry_delay=0)
+    args = argparse.Namespace(sandbox_data_dir=str(tmp_path))
+    mgr.run({}, args)
+
+    data = json.loads((tmp_path / "recovery.json").read_text())
+    assert data["restart_count"] == 2.0
+    assert isinstance(data["last_failure_time"], float)
+
+
 def test_run_autonomous_integration(monkeypatch, tmp_path):
     pytest.skip("requires full environment")
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
