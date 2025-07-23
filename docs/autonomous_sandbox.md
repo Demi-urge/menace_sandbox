@@ -113,6 +113,13 @@ The `/status` response also includes the length of the internal queue so you can
 monitor progress. This behaviour avoids race conditions in the underlying visual
 pipeline.
 
+Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent_queue.jsonl`. Each
+entry is written as a JSON object on its own line and the file is updated every
+time the queue changes. Up to three backups of the queue and state files are
+kept with `.bakN` extensions. If the current files are corrupted the agent
+automatically restores the most recent valid backup without losing queued
+jobs.
+
 ## Local run essentials
 
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
