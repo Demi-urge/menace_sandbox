@@ -1,6 +1,6 @@
 # Synergy Metrics Dashboard
 
-`SelfImprovementEngine` exposes a small dashboard for reviewing synergy metrics recorded during sandbox runs. The dashboard expects `synergy_history.db` in the current directory by default and plots each metric over time.
+`SelfImprovementEngine` exposes a small dashboard for reviewing synergy metrics recorded during sandbox runs. The dashboard expects `synergy_history.db` in the current directory by default and plots each metric over time. The sandbox now persists history in this SQLite file and will automatically migrate an older `synergy_history.json` on startup.
 
 Start the server:
 

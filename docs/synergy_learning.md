@@ -1,6 +1,6 @@
 # Synergy learning
 
-This page explains how synergy weights are learned and how predictions feed into ROI calculations.
+This page explains how synergy weights are learned and how predictions feed into ROI calculations. Synergy history is persisted in `synergy_history.db` within the sandbox data directory. If a legacy `synergy_history.json` exists it is migrated automatically at startup.
 
 ## SynergyWeightLearner
 
@@ -168,3 +168,13 @@ synergy_efficiency 0.01
 
 Use these metrics together with the current weights to understand how synergy
 factors contribute to overall ROI.
+
+## Background training and exporter monitoring
+
+Set `AUTO_TRAIN_SYNERGY=1` to start a background trainer that periodically updates
+`synergy_weights.json` from the data stored in `synergy_history.db`. The interval
+defaults to 600 seconds and can be adjusted with `AUTO_TRAIN_INTERVAL`.
+
+When `EXPORT_SYNERGY_METRICS=1` is enabled the exporter is monitored and
+automatically restarted if its health check fails. Control how frequently the
+monitor checks the exporter with `SYNERGY_EXPORTER_CHECK_INTERVAL`.
