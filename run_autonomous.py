@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 from typing import List
+import urllib.request
 import sys
 import subprocess
 import time
@@ -124,6 +125,29 @@ def _free_port() -> int:
     with contextlib.closing(socket.socket()) as sock:
         sock.bind(("", 0))
         return sock.getsockname()[1]
+
+
+def _exporter_health_ok(exp: SynergyExporter, *, max_age: float = 30.0) -> bool:
+    """Return ``True`` if the exporter health endpoint responds and is fresh."""
+    if exp._thread is None or not exp._thread.is_alive():
+        return False
+    if exp.health_port is None:
+        return False
+    try:
+        with urllib.request.urlopen(
+            f"http://localhost:{exp.health_port}/health", timeout=3
+        ) as resp:
+            if resp.status != 200:
+                return False
+            data = json.loads(resp.read().decode())
+            updated = data.get("updated")
+            if updated is None:
+                return False
+            if time.time() - float(updated) > max_age:
+                return False
+    except Exception:
+        return False
+    return True
 
 
 class PresetModel(BaseModel):
@@ -659,11 +683,7 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
-        if (
-            synergy_exporter is not None
-            and synergy_exporter._thread is not None
-            and not synergy_exporter._thread.is_alive()
-        ):
+        if synergy_exporter is not None and not _exporter_health_ok(synergy_exporter):
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_restarted"})
             try:
                 synergy_exporter.start()
