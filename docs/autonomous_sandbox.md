@@ -207,6 +207,16 @@ values on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` (default port
 for an explanation of the exported metrics and how the synergy weights influence
 ROI.
 
+### Synergy dashboard
+
+The history can also be viewed in a small dashboard. Start it with
+
+```bash
+python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/synergy_history.json
+```
+
+Use `--wsgi gunicorn` or `--wsgi uvicorn` to serve the dashboard via Gunicorn or Uvicorn instead of the Flask development server.
+
 ## Docker usage
 
 Build the sandbox image and run it inside a container using the helper scripts:

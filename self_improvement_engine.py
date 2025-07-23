@@ -1874,14 +1874,58 @@ class SynergyDashboard:
         buf.seek(0)
         return buf.getvalue(), 200, {"Content-Type": "image/png"}
 
-    def run(self, host: str = "0.0.0.0", port: int = 5001) -> None:
+    def run(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 5001,
+        *,
+        wsgi: str = "flask",
+    ) -> None:
+        """Run the dashboard using the selected WSGI/ASGI server."""
         with contextlib.closing(socket.socket()) as sock:
             try:
                 sock.bind((host, port))
             except OSError:
                 self.logger.error("port %d in use", port)
                 raise
-        self.app.run(host=host, port=port)
+
+        server = wsgi.lower()
+        if server == "flask":
+            self.app.run(host=host, port=port)
+            return
+
+        if server == "gunicorn":
+            try:
+                from gunicorn.app.base import BaseApplication  # type: ignore
+            except Exception as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError("gunicorn is required for --wsgi gunicorn") from exc
+
+            class _GunicornApp(BaseApplication):
+                def __init__(self, app):
+                    self.application = app
+                    super().__init__()
+
+                def load_config(self):  # pragma: no cover - runtime setup
+                    self.cfg.set("bind", f"{host}:{port}")
+                    self.cfg.set("workers", 1)
+
+                def load(self):  # pragma: no cover - runtime setup
+                    return self.application
+
+            _GunicornApp(self.app).run()
+            return
+
+        if server == "uvicorn":
+            try:
+                import uvicorn  # type: ignore
+                from starlette.middleware.wsgi import WSGIMiddleware
+            except Exception as exc:  # pragma: no cover - optional dependency
+                raise RuntimeError("uvicorn is required for --wsgi uvicorn") from exc
+
+            uvicorn.run(WSGIMiddleware(self.app), host=host, port=port, workers=1)
+            return
+
+        raise ValueError(f"unknown wsgi server: {wsgi}")
 
 
 def cli(argv: list[str] | None = None) -> None:
@@ -1899,6 +1943,12 @@ def cli(argv: list[str] | None = None) -> None:
     p_dash.add_argument("--exporter-host")
     p_dash.add_argument("--exporter-port", type=int, default=8003)
     p_dash.add_argument("--refresh-interval", type=float, default=5.0)
+    p_dash.add_argument(
+        "--wsgi",
+        choices=["flask", "gunicorn", "uvicorn"],
+        default="flask",
+        help="WSGI/ASGI server to use",
+    )
 
     p_plot = sub.add_parser("plot-synergy", help="plot synergy metrics")
     p_plot.add_argument("history", help="synergy_history.db file")
@@ -1913,7 +1963,7 @@ def cli(argv: list[str] | None = None) -> None:
             exporter_port=args.exporter_port,
             refresh_interval=args.refresh_interval,
         )
-        dash.run(port=args.port)
+        dash.run(port=args.port, wsgi=args.wsgi)
         return
 
     if args.cmd == "plot-synergy":
