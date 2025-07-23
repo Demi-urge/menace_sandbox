@@ -2,6 +2,8 @@ import json
 import sys
 import types
 import time
+import socket
+import logging
 import pytest
 
 if "jinja2" not in sys.modules:
@@ -359,6 +361,20 @@ def test_dashboard_run_uvicorn(monkeypatch):
     dash.run(port=0, wsgi="uvicorn")
 
     assert calls["run"]["app"].app is dash.app
+
+
+def test_dashboard_run_port_in_use(caplog):
+    dash = SynergyDashboard()
+    sock = socket.socket()
+    sock.bind(("0.0.0.0", 0))
+    port = sock.getsockname()[1]
+    caplog.set_level(logging.ERROR)
+    try:
+        with pytest.raises(OSError):
+            dash.run(port=port)
+    finally:
+        sock.close()
+    assert f"port {port} in use" in caplog.text
 
 
 
