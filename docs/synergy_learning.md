@@ -55,7 +55,7 @@ python synergy_weight_cli.py --path synergy_weights.json show
 After a few sessions record synergy history and train the weights:
 
 ```bash
-python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/synergy_history.json
+python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/synergy_history.db
 ```
 
 The updated file persists between runs and influences ROI calculations automatically.
@@ -88,7 +88,7 @@ The helper CLI directly edits `synergy_weights.json` and records each change in
 4. **Train** from recorded history whenever you have new synergy metrics:
 
    ```bash
-   python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/synergy_history.json
+   python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/synergy_history.db
    ```
 
 5. **Reset** to defaults if experimentation goes wrong:
@@ -109,7 +109,7 @@ new weights automatically.
 ## Weight update walkthrough
 
 1. Each iteration the ROI tracker stores the latest synergy metrics in
-   `synergy_history.json`:
+   `synergy_history.db`:
 
    ```json
    [
@@ -135,7 +135,7 @@ new weights automatically.
 
 ## Interpreting SynergyExporter metrics
 
-`SynergyExporter` reads the same `synergy_history.json` file and exposes the
+`SynergyExporter` reads the same `synergy_history.db` file and exposes the
 most recent entry as Prometheus gauge metrics. Each key becomes a metric of the
 same name, for example `synergy_roi`, `synergy_efficiency` and
 `synergy_resilience`. Higher values indicate improvements relative to the
@@ -147,7 +147,7 @@ Enable the exporter with `EXPORT_SYNERGY_METRICS=1` or by calling
 ```python
 from menace.synergy_exporter import start_synergy_exporter
 
-start_synergy_exporter(history_file="sandbox_data/synergy_history.json", port=8003)
+start_synergy_exporter(history_file="sandbox_data/synergy_history.db", port=8003)
 ```
 
 A minimal Prometheus configuration to scrape the exporter looks like this:

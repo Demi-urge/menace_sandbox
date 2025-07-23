@@ -79,6 +79,7 @@ from sandbox_settings import SandboxSettings
 import menace.environment_generator as environment_generator
 from menace.environment_generator import generate_presets
 from menace.synergy_exporter import SynergyExporter
+from menace.synergy_history_db import migrate_json_to_db
 from menace.audit_trail import AuditTrail
 import sandbox_runner.cli as cli
 from sandbox_runner.cli import full_autonomous_run
@@ -435,6 +436,14 @@ def main(argv: List[str] | None = None) -> None:
             print(exc)
             return
         raise
+
+    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    legacy_json = data_dir / "synergy_history.json"
+    db_file = data_dir / "synergy_history.db"
+    if not db_file.exists() and legacy_json.exists():
+        logger.info("migrating %s to SQLite", legacy_json)
+        migrate_json_to_db(legacy_json, db_file)
+
     if args.check_settings:
         print("Environment settings valid")
         return
@@ -448,7 +457,6 @@ def main(argv: List[str] | None = None) -> None:
     elif args.save_synergy_history is None:
         args.save_synergy_history = True
 
-    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     synergy_history: list[dict[str, float]] = []
     synergy_ma_prev: list[dict[str, float]] = []
     history_conn: sqlite3.Connection | None = None

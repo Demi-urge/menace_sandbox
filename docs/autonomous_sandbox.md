@@ -207,7 +207,8 @@ clean old logs periodically when persisting them on disk.
 ## Synergy metrics exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when launching `run_autonomous.py` to start the
-`SynergyExporter`. It reads `synergy_history.json` and exposes the latest
+`SynergyExporter`. It reads `synergy_history.db` (migrating any legacy JSON
+file) and exposes the latest
 values on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` (default port
 `8003`) for Prometheus scraping. See
 [`synergy_learning.md`](synergy_learning.md#interpreting-synergyexporter-metrics)
@@ -219,7 +220,7 @@ ROI.
 The history can also be viewed in a small dashboard. Start it with
 
 ```bash
-python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/synergy_history.json
+python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/synergy_history.db
 ```
 
 Use `--wsgi gunicorn` or `--wsgi uvicorn` to serve the dashboard via Gunicorn or Uvicorn instead of the Flask development server.
