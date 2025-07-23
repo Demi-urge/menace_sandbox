@@ -335,3 +335,81 @@ def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
     assert meta_log.exists()
     entries = [json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()]
     assert any(e.get("event") == "exporter_restarted" for e in entries)
+
+
+def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
+    sr_stub = setup_stubs(monkeypatch, tmp_path)
+
+    se_mod = importlib.import_module("menace.synergy_exporter")
+
+    class RecordingExporter(se_mod.SynergyExporter):
+        instances: list["RecordingExporter"] = []
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            RecordingExporter.instances.append(self)
+            self.stopped = False
+
+        def start(self) -> None:  # type: ignore[override]
+            self._thread = threading.Thread(target=lambda: time.sleep(0.05), daemon=True)
+            self._thread.start()
+
+        def stop(self) -> None:  # type: ignore[override]
+            self.stopped = True
+            super().stop()
+
+    monkeypatch.setattr(se_mod, "SynergyExporter", RecordingExporter)
+
+    mod, spec = load_module()
+    monkeypatch.setitem(sys.modules, "run_autonomous", mod)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+    spec.loader.exec_module(mod)
+    monkeypatch.setattr(mod, "SynergyExporter", RecordingExporter)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+
+    class DummySettings:
+        def __init__(self) -> None:
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_env_presets = None
+            self.auto_dashboard_port = None
+            self.save_synergy_history = True
+            self.visual_agent_autostart = False
+            self.visual_agent_urls = ""
+            self.roi_cycles = None
+            self.synergy_cycles = None
+            self.roi_threshold = None
+            self.synergy_threshold = None
+            self.roi_confidence = None
+            self.synergy_confidence = None
+            self.synergy_threshold_window = None
+            self.synergy_threshold_weight = None
+            self.synergy_ma_window = None
+            self.synergy_stationarity_confidence = None
+            self.synergy_std_threshold = None
+            self.synergy_variance_confidence = None
+
+    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: list(p))
+
+    monkeypatch.chdir(tmp_path)
+
+    port = _free_port()
+    monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
+    monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--preset-count",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+    ])
+
+    inst = RecordingExporter.instances[-1]
+    assert inst.stopped is True
+    assert inst._thread is not None and not inst._thread.is_alive()
