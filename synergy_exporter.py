@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 import logging
 import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
 from .metrics_exporter import Gauge, start_metrics_server
@@ -28,6 +30,10 @@ class SynergyExporter:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._gauges: Dict[str, Gauge] = {}
+        self._health_server: HTTPServer | None = None
+        self._health_thread: threading.Thread | None = None
+        self.health_port: int | None = None
+        self.last_update: float | None = None
 
     # ------------------------------------------------------------------
     def _load_latest(self) -> Dict[str, float]:
@@ -56,13 +62,44 @@ class SynergyExporter:
                     g.set(float(value))
                 except Exception:  # pragma: no cover - metrics library issues
                     self.logger.exception("failed to update gauge %s", name)
+            if vals:
+                self.last_update = time.time()
             self._stop.wait(self.interval)
+
+    def _start_health_server(self) -> None:
+        """Launch a minimal HTTP endpoint returning exporter status."""
+        exporter = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # type: ignore[override]
+                if self.path != "/health":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body = json.dumps(
+                    {"status": "ok", "updated": exporter.last_update}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:  # pragma: no cover - silence
+                return
+
+        server = HTTPServer(("0.0.0.0", 0), Handler)
+        self.health_port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self._health_server = server
+        self._health_thread = thread
 
     # ------------------------------------------------------------------
     def start(self) -> None:
         start_metrics_server(self.port)
         self._thread = threading.Thread(target=self._update_loop, daemon=True)
         self._thread.start()
+        self._start_health_server()
         self.logger.info(
             "Synergy metrics exporter running on port %d", self.port
         )
