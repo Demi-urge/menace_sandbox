@@ -578,3 +578,41 @@ def test_offline_container_load(monkeypatch, tmp_path):
     asyncio.run(svc._run_once())
 
     assert any(c[0] == "docker" and "load" in c for c in calls)
+
+
+def test_container_failure_logs_identifiers(monkeypatch):
+    recorded = {}
+
+    async def fail_exec(*cmd, **kwargs):
+        recorded["cmd"] = cmd
+
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"out", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    async def avail(self):
+        return True
+
+    async def dummy(*a, **k):
+        return None
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+    monkeypatch.setattr(mod.SelfTestService, "_remove_stale_containers", dummy)
+    monkeypatch.setattr(mod.SelfTestService, "_force_remove_container", dummy)
+    monkeypatch.setattr(mod.uuid, "uuid4", lambda: types.SimpleNamespace(hex="deadbeef"))
+
+    svc = mod.SelfTestService(use_container=True, container_image="img", container_retries=0)
+    with pytest.raises(RuntimeError):
+        asyncio.run(svc._run_once())
+
+    err = svc.results.get("stderr", "")
+    assert "selftest_deadbeef" in err
+    assert "docker" in err
