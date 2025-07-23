@@ -44,6 +44,32 @@ def test_arima_synergy_predictor_basic():
     assert isinstance(out, float)
 
 
+def test_arima_synergy_predictor_auto_order(monkeypatch):
+    import menace.synergy_predictor as sp
+
+    monkeypatch.setattr(sp, "_pick_best_order", lambda vals: (2, 1, 0))
+
+    calls = {}
+
+    class DummyModel:
+        def __init__(self, series, order):
+            calls["order"] = order
+
+        def fit(self):
+            return self
+
+        def get_forecast(self, steps=1):
+            return types.SimpleNamespace(predicted_mean=[1.5])
+
+    monkeypatch.setitem(sys.modules, "statsmodels.tsa.arima.model", types.SimpleNamespace(ARIMA=DummyModel))
+
+    pred = ARIMASynergyPredictor(order=None)
+    vals = [float(i) for i in range(11)]
+    out = pred.predict(vals)
+    assert out == pytest.approx(1.5)
+    assert calls.get("order") == (2, 1, 0)
+
+
 def test_lstm_synergy_predictor_basic():
     torch = pytest.importorskip("torch")
     pred = LSTMSynergyPredictor(seq_len=3, epochs=1)
