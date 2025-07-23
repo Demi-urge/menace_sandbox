@@ -17,10 +17,15 @@ import time
 from datetime import datetime
 import importlib
 import importlib.util
+import threading
 import socket
 import contextlib
 import atexit
 import signal
+
+EXPORTER_CHECK_INTERVAL = float(
+    os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10")
+)
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -151,6 +156,73 @@ def _exporter_health_ok(exp: SynergyExporter, *, max_age: float = 30.0) -> bool:
     except Exception:
         return False
     return True
+
+
+class ExporterMonitor:
+    """Background monitor to keep the exporter running."""
+
+    def __init__(
+        self,
+        exporter: SynergyExporter,
+        log: AuditTrail,
+        *,
+        interval: float = EXPORTER_CHECK_INTERVAL,
+    ) -> None:
+        self.exporter = exporter
+        self.log = log
+        self.interval = float(interval)
+        self.restart_count = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        try:
+            self.exporter.stop()
+        except Exception:
+            logger.exception("failed to stop synergy exporter")
+
+    # ------------------------------------------------------------------
+    def _restart(self) -> None:
+        try:
+            self.exporter.stop()
+        except Exception:
+            logger.exception("failed to stop synergy exporter")
+        try:
+            self.exporter = SynergyExporter(
+                history_file=str(self.exporter.history_file),
+                interval=self.exporter.interval,
+                port=self.exporter.port,
+            )
+            self.exporter.start()
+            self.restart_count += 1
+            self.log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "exporter_restarted",
+                    "restart_count": self.restart_count,
+                }
+            )
+        except Exception as exc:
+            logger.warning("failed to restart synergy exporter: %s", exc)
+            self.log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "exporter_restart_failed",
+                    "error": str(exc),
+                }
+            )
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if not _exporter_health_ok(self.exporter):
+                self._restart()
+            self._stop.wait(self.interval)
 
 
 class PresetModel(BaseModel):
@@ -544,6 +616,7 @@ def main(argv: List[str] | None = None) -> None:
     exporter_log = AuditTrail(str(meta_log_path))
 
     synergy_exporter: SynergyExporter | None = None
+    exporter_monitor: ExporterMonitor | None = None
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
         port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
         if not _port_available(port):
@@ -558,7 +631,9 @@ def main(argv: List[str] | None = None) -> None:
         try:
             synergy_exporter.start()
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_started"})
-            cleanup_funcs.append(synergy_exporter.stop)
+            exporter_monitor = ExporterMonitor(synergy_exporter, exporter_log)
+            exporter_monitor.start()
+            cleanup_funcs.append(exporter_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
             exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
@@ -714,13 +789,7 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
-        if synergy_exporter is not None and not _exporter_health_ok(synergy_exporter):
-            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_restarted"})
-            try:
-                synergy_exporter.start()
-            except Exception as exc:
-                logger.warning("failed to restart synergy exporter: %s", exc)
-                exporter_log.record({"timestamp": int(time.time()), "event": "exporter_restart_failed", "error": str(exc)})
+        # exporter health is monitored in background
         if agent_proc and agent_proc.poll() is not None:
             logger.error(
                 "visual agent process terminated with code %s",
@@ -863,10 +932,16 @@ def main(argv: List[str] | None = None) -> None:
             logger.exception("failed to shutdown visual agent")
         agent_proc = None
 
-    if synergy_exporter is not None:
+    if exporter_monitor is not None:
         try:
-            synergy_exporter.stop()
-            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_stopped"})
+            exporter_monitor.stop()
+            exporter_log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "exporter_stopped",
+                    "restart_count": exporter_monitor.restart_count,
+                }
+            )
         except Exception:
             logger.exception("failed to stop synergy exporter")
 

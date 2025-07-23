@@ -113,6 +113,8 @@ def setup_stubs(monkeypatch, tmp_path):
         ps.SettingsConfigDict = dict
         monkeypatch.setitem(sys.modules, "pydantic_settings", ps)
 
+    monkeypatch.setenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "0.01")
+
     return sr_stub
 
 
@@ -186,7 +188,8 @@ def test_exporter_auto_restart(monkeypatch, tmp_path: Path) -> None:
     meta_log = tmp_path / "sandbox_meta.log"
     assert meta_log.exists()
     entries = [json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()]
-    assert any(e.get("event") == "exporter_restarted" for e in entries)
+    restarts = [e.get("restart_count") for e in entries if e.get("event") == "exporter_restarted"]
+    assert restarts and restarts[-1] == len(restarts)
 
 
 def test_exporter_busy_port(monkeypatch, tmp_path: Path) -> None:
@@ -334,7 +337,8 @@ def test_exporter_stale_health(monkeypatch, tmp_path: Path) -> None:
     meta_log = tmp_path / "sandbox_meta.log"
     assert meta_log.exists()
     entries = [json.loads(l.split(" ", 1)[1]) for l in meta_log.read_text().splitlines()]
-    assert any(e.get("event") == "exporter_restarted" for e in entries)
+    restarts = [e.get("restart_count") for e in entries if e.get("event") == "exporter_restarted"]
+    assert restarts and restarts[-1] == len(restarts)
 
 
 def test_exporter_cleanup(monkeypatch, tmp_path: Path) -> None:
