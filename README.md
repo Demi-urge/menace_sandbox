@@ -658,6 +658,11 @@ python synergy_weight_cli.py reset
 python synergy_weight_cli.py history --plot
 ```
 
+See [docs/synergy_learning.md](docs/synergy_learning.md#customising-weights-with-synergy_weight_cli.py)
+for a full walkthrough and
+[the autonomous sandbox guide](docs/autonomous_sandbox.md#advanced-synergy-learning)
+for an example using the deeper `DQNSynergyLearner`.
+
 ### Synergy metrics exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when running `run_autonomous.py` to expose the
