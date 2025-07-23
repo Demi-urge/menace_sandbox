@@ -59,3 +59,66 @@ python synergy_weight_cli.py --path synergy_weights.json train sandbox_data/syne
 ```
 
 The updated file persists between runs and influences ROI calculations automatically.
+
+## Weight update walkthrough
+
+1. Each iteration the ROI tracker stores the latest synergy metrics in
+   `synergy_history.json`:
+
+   ```json
+   [
+     {"synergy_roi": 0.01, "synergy_efficiency": 0.02},
+     {"synergy_roi": 0.03, "synergy_efficiency": 0.05}
+   ]
+   ```
+
+2. `SelfImprovementEngine._update_synergy_weights` computes the delta for each
+   metric and invokes `SynergyWeightLearner.update(roi_delta, deltas)`. The
+   learner adjusts the values stored in `synergy_weights.json`:
+
+   ```json
+   {"roi": 1.05, "efficiency": 0.95, "resilience": 1.0,
+    "antifragility": 1.0, "reliability": 1.0,
+    "maintainability": 1.0, "throughput": 1.0}
+   ```
+
+3. During the next cycle `_weighted_synergy_adjustment` multiplies the current
+   metric deltas by these weights. Positive ROI deltas increase the
+   corresponding weights while negative values reduce them, causing the system
+   to favour metrics that historically improved ROI.
+
+## Interpreting SynergyExporter metrics
+
+`SynergyExporter` reads the same `synergy_history.json` file and exposes the
+most recent entry as Prometheus gauge metrics. Each key becomes a metric of the
+same name, for example `synergy_roi`, `synergy_efficiency` and
+`synergy_resilience`. Higher values indicate improvements relative to the
+previous cycle while negative values show a decline.
+
+Enable the exporter with `EXPORT_SYNERGY_METRICS=1` or by calling
+`start_synergy_exporter()`:
+
+```python
+from menace.synergy_exporter import start_synergy_exporter
+
+start_synergy_exporter(history_file="sandbox_data/synergy_history.json", port=8003)
+```
+
+A minimal Prometheus configuration to scrape the exporter looks like this:
+
+```yaml
+scrape_configs:
+  - job_name: 'synergy'
+    static_configs:
+      - targets: ['localhost:8003']
+```
+
+Collected metrics appear as plain values:
+
+```
+synergy_roi 0.05
+synergy_efficiency 0.01
+```
+
+Use these metrics together with the current weights to understand how synergy
+factors contribute to overall ROI.
