@@ -11,6 +11,7 @@ import shlex
 import sqlite3
 import sys
 import tempfile
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -43,6 +44,8 @@ class SelfTestService:
         use_container: bool = False,
         container_runtime: str = "docker",
         docker_host: str | None = None,
+        container_retries: int = 1,
+        container_timeout: float = 300.0,
         history_path: str | Path | None = None,
     ) -> None:
         """Create a new service instance.
@@ -68,6 +71,11 @@ class SelfTestService:
         self._lock_acquired = False
         self.container_runtime = container_runtime
         self.docker_host = docker_host
+        self.container_retries = int(os.getenv("SELF_TEST_RETRIES", container_retries))
+        try:
+            self.container_timeout = float(os.getenv("SELF_TEST_TIMEOUT", str(container_timeout)))
+        except ValueError:
+            self.container_timeout = container_timeout
         self.offline_install = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
         self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
         if self.history_path and self.history_path.suffix == ".db":
@@ -161,6 +169,47 @@ class SelfTestService:
             return False
 
     # ------------------------------------------------------------------
+    async def _force_remove_container(self, name: str) -> None:
+        docker_cmd = [self.container_runtime]
+        if self.docker_host:
+            docker_cmd.extend([
+                "-H" if self.container_runtime == "docker" else "--url",
+                self.docker_host,
+            ])
+        docker_cmd.extend(["rm", "-f", name])
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *docker_cmd,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except Exception:
+            pass
+
+    async def _remove_stale_containers(self) -> None:
+        docker_cmd = [self.container_runtime]
+        if self.docker_host:
+            docker_cmd.extend([
+                "-H" if self.container_runtime == "docker" else "--url",
+                self.docker_host,
+            ])
+        docker_cmd.extend(["ps", "-aq", "--filter", "label=menace_self_test=1"])
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *docker_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await proc.communicate()
+            for cid in out.decode().splitlines():
+                cid = cid.strip()
+                if cid:
+                    await self._force_remove_container(cid)
+        except Exception:
+            self.logger.warning("failed to clean up stale containers")
+
+    # ------------------------------------------------------------------
     async def _run_once(self) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
@@ -171,11 +220,13 @@ class SelfTestService:
         failed = 0
         coverage_total = 0.0
         runtime_total = 0.0
-        proc_info: list[tuple[asyncio.subprocess.Process, str | None]] = []
+        proc_info: list[tuple[list[str], str | None, bool, str | None]] = []
 
         use_container = False
         try:
             use_container = self.use_container and await self._docker_available()
+            if use_container:
+                await self._remove_stale_containers()
             use_pipe = self.result_callback is not None or use_container
             workers_list = [self.workers for _ in paths]
             if use_container and self.workers > 1 and len(paths) > 1:
@@ -240,10 +291,15 @@ class SelfTestService:
                                 self.docker_host,
                             ]
                         )
+                    cname = f"selftest_{uuid.uuid4().hex}"
                     docker_cmd.extend(
                         [
                             "run",
                             "--rm",
+                            "--name",
+                            cname,
+                            "--label",
+                            "menace_self_test=1",
                             "-i",
                             "-v",
                             f"{os.getcwd()}:{os.getcwd()}:ro",
@@ -255,7 +311,6 @@ class SelfTestService:
                         docker_cmd.extend(["-e", f"{k}={v}"])
                     docker_cmd.append(self.container_image)
 
-                    # run pytest inside the container via the Python interpreter
                     container_cmd = [
                         "python",
                         "-m",
@@ -263,66 +318,59 @@ class SelfTestService:
                         *cmd[3:],
                     ]
 
-                    proc = await asyncio.create_subprocess_exec(
-                        *docker_cmd,
-                        *container_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    proc_info.append((proc, None))
+                    full_cmd = [*docker_cmd, *container_cmd]
+                    proc_info.append((full_cmd, None, True, cname))
                 else:
-                    proc = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=(
-                            asyncio.subprocess.PIPE
-                            if use_pipe
-                            else asyncio.subprocess.PIPE
-                        ),
-                        stderr=(
-                            asyncio.subprocess.PIPE
-                            if use_pipe
-                            else asyncio.subprocess.PIPE
-                        ),
-                    )
-                    proc_info.append((proc, tmp_name))
+                    proc_info.append((cmd, tmp_name, False, None))
 
             async def _process(
-                proc: asyncio.subprocess.Process, tmp: str | None
+                cmd: list[str], tmp: str | None, is_container: bool, name: str | None
             ) -> tuple[int, int, float, float, bool, str, str]:
                 report: dict[str, Any] = {}
                 out: bytes = b""
                 err: bytes = b""
-                if use_pipe or hasattr(proc, "communicate") or getattr(proc, "stdout", None):
-                    if hasattr(proc, "communicate"):
-                        out, err = await proc.communicate()
-                    else:
-                        if getattr(proc, "stdout", None):
-                            out = await proc.stdout.read()
-                        if getattr(proc, "stderr", None):
-                            err = await proc.stderr.read()
+                attempts = self.container_retries + 1 if is_container else 1
+                for attempt in range(attempts):
+                    proc = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    try:
+                        out, err = await asyncio.wait_for(
+                            proc.communicate(),
+                            timeout=self.container_timeout if is_container else None,
+                        )
+                    except asyncio.TimeoutError:
+                        proc.kill()
                         await proc.wait()
-                    if use_pipe:
-                        data = (out or b"") + (err or b"")
+                        if is_container and name:
+                            await self._force_remove_container(name)
+                        if attempt == attempts - 1:
+                            self.logger.error("self test container timed out")
+                            break
+                        continue
+
+                    if proc.returncode != 0 and is_container and attempt < attempts - 1:
+                        if name:
+                            await self._force_remove_container(name)
+                        continue
+                    break
+
+                if use_pipe:
+                    data = (out or b"") + (err or b"")
+                    try:
+                        report = json.loads(data.decode() or "{}")
+                    except Exception:
+                        self.logger.exception("failed to parse test report")
+                else:
+                    if tmp and os.path.exists(tmp):
                         try:
-                            report = json.loads(data.decode() or "{}")
-                        except Exception:
-                            self.logger.exception("failed to parse test report")
-                    else:
-                        await proc.wait()
-                        try:
-                            assert tmp is not None
                             with open(tmp, "r", encoding="utf-8") as fh:
                                 report = json.load(fh)
                         except Exception:
                             self.logger.exception("failed to parse test report")
-                else:
-                    await proc.wait()
-                    try:
-                        assert tmp is not None
-                        with open(tmp, "r", encoding="utf-8") as fh:
-                            report = json.load(fh)
-                    except Exception:
-                        self.logger.exception("failed to parse test report")
+
                 if tmp:
                     try:
                         os.unlink(tmp)
@@ -360,7 +408,7 @@ class SelfTestService:
                         self.logger.exception("error logging failed")
                 return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip
 
-            tasks = [asyncio.create_task(_process(p, t)) for p, t in proc_info]
+            tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name in proc_info]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_exc: Exception | None = None
@@ -560,6 +608,18 @@ def cli(argv: list[str] | None = None) -> int:
         default=None,
         help="Additional arguments passed to pytest",
     )
+    run.add_argument(
+        "--retries",
+        type=int,
+        default=1,
+        help="Container retry attempts on failure",
+    )
+    run.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Container timeout in seconds",
+    )
 
     args = parser.parse_args(argv)
 
@@ -577,6 +637,8 @@ def cli(argv: list[str] | None = None) -> int:
             docker_host=args.docker_host,
             use_container=args.use_container,
             history_path=args.history,
+            container_retries=args.retries,
+            container_timeout=args.timeout,
         )
         try:
             asyncio.run(service._run_once())
