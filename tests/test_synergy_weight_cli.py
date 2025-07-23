@@ -1,5 +1,6 @@
 import json
 import types
+import io
 
 import synergy_weight_cli as cli
 
@@ -66,3 +67,38 @@ def test_train(monkeypatch, tmp_path):
     cli.cli(["train", str(hist)])
     assert len(updates) == 2
     assert engine.synergy_learner.saved
+
+
+def test_reset(monkeypatch):
+    engine = DummyEngine()
+    engine.synergy_learner.weights["roi"] = 5.0
+    monkeypatch.setattr(cli, "_load_engine", lambda p=None: engine)
+    log = io.StringIO()
+
+    def fake_log(path, weights):
+        log.write(json.dumps(weights))
+
+    monkeypatch.setattr(cli, "_log_weights", fake_log)
+    cli.cli(["reset"])
+    assert engine.synergy_learner.weights["roi"] == 1.0
+    assert engine.synergy_learner.saved
+    assert "roi" in log.getvalue()
+
+
+def test_history(monkeypatch, tmp_path, capsys):
+    hist_file = tmp_path / "log.log"
+    hist_file.write_text(json.dumps({"timestamp": 1, "roi": 2}) + "\n")
+    monkeypatch.setattr(cli, "_load_engine", lambda p=None: DummyEngine())
+    cli.cli(["history", "--log", str(hist_file)])
+    out = capsys.readouterr().out
+    assert "roi" in out
+
+
+def test_history_plot(monkeypatch, tmp_path):
+    hist_file = tmp_path / "log.log"
+    hist_file.write_text(json.dumps({"timestamp": 1, "roi": 2}) + "\n")
+    monkeypatch.setattr(cli, "_load_engine", lambda p=None: DummyEngine())
+    called = {}
+    monkeypatch.setattr(cli, "_plot_history", lambda p: called.setdefault("p", p))
+    cli.cli(["history", "--log", str(hist_file), "--plot"])
+    assert called["p"] == hist_file
