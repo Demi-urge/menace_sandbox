@@ -223,12 +223,12 @@ def load_previous_synergy(
             )
         else:
             raise ValueError("synergy history must be a list")
-    except ValidationError as exc:
-        logger.error("invalid synergy history file %s: %s", path, exc)
-        sys.exit(1)
-    except Exception:
-        logger.exception("failed to load synergy history: %s", path)
-        return [], []
+    except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+        logger.warning("could not parse synergy history %s: %s", path, exc)
+        history = []
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.warning("failed to load synergy history %s: %s", path, exc)
+        history = []
 
     ma_history: list[dict[str, float]] = []
     for idx, entry in enumerate(history):
@@ -677,12 +677,14 @@ def main(argv: List[str] | None = None) -> None:
                         )
                     else:
                         raise ValueError("synergy history must be a list")
-                except ValidationError as exc:
-                    logger.error("invalid synergy history file %s: %s", synergy_file, exc)
-                    sys.exit(1)
-                except Exception:
-                    logger.exception(
-                        "failed to load synergy history: %s", synergy_file
+                except (ValidationError, ValueError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "could not parse synergy history %s: %s", synergy_file, exc
+                    )
+                    synergy_history = []
+                except Exception as exc:  # pragma: no cover - unexpected errors
+                    logger.warning(
+                        "failed to load synergy history %s: %s", synergy_file, exc
                     )
                     synergy_history = []
             else:

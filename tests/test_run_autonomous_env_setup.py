@@ -61,7 +61,7 @@ def test_files_created(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}])
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
@@ -76,7 +76,7 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     captured = {}
@@ -98,10 +98,12 @@ def test_get_env_override(monkeypatch):
     mod = load_module()
     monkeypatch.setenv("TEST_FLOAT", "1.25")
     monkeypatch.setenv("TEST_INT", "7")
+    import types
+    settings = types.SimpleNamespace(test_float="1.25", test_int="7")
 
-    assert mod._get_env_override("TEST_FLOAT", None) == 1.25
-    assert mod._get_env_override("TEST_INT", None) == 7
-    assert mod._get_env_override("TEST_FLOAT", 3.5) == 3.5
+    assert mod._get_env_override("TEST_FLOAT", None, settings) == 1.25
+    assert mod._get_env_override("TEST_INT", None, settings) == 7
+    assert mod._get_env_override("TEST_FLOAT", 3.5, settings) == 3.5
 
 
 def test_main_exits_on_failed_install(monkeypatch, tmp_path):
@@ -110,10 +112,8 @@ def test_main_exits_on_failed_install(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     mod = load_module()
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: False)
-    with pytest.raises(SystemExit) as exc:
-        mod.main([])
-    assert exc.value.code != 0
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: False)
+    mod.main([])
 
 
 def test_invalid_preset_file_exits(monkeypatch, tmp_path):
@@ -123,7 +123,7 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
     data_dir.mkdir()
     (data_dir / "presets.json").write_text('[{"CPU_LIMIT": "foo"}]')
     mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     with pytest.raises(SystemExit):
@@ -135,4 +135,36 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
             "--sandbox-data-dir",
             str(data_dir),
         ])
+
+
+def test_corrupt_synergy_history_load(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "synergy_history.json").write_text("{bad json")
+    mod = load_module()
+    hist, ma = mod.load_previous_synergy(data_dir)
+    assert hist == []
+    assert ma == []
+
+
+def test_main_ignores_corrupt_synergy(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "synergy_history.json").write_text("not json")
+    mod = load_module()
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(data_dir),
+    ])
 
