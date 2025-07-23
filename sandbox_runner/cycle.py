@@ -496,7 +496,11 @@ def _sandbox_cycle_runner(
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
                     logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
-                except Exception:
+                except PermissionError as exc:
+                    logger.error("patch permission denied for %s: %s", mod, exc)
+                    raise
+                except Exception as exc:
+                    logger.exception("patch application failed for %s", mod)
                     patch_id = None
                 try:
                     res = ctx.improver.run_cycle()
@@ -611,7 +615,11 @@ def _sandbox_cycle_runner(
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
                     logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
-                except Exception:
+                except PermissionError as exc:
+                    logger.error("patch permission denied for %s: %s", mod, exc)
+                    raise
+                except Exception as exc:
+                    logger.exception("patch application failed for %s", mod)
                     patch_id = None
                 try:
                     res = ctx.improver.run_cycle()

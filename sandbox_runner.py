@@ -560,8 +560,8 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                     "SELECT id, filename FROM patch_history WHERE id>?",
                     (last_id,),
                 ).fetchall()
-        except Exception:
-            logger.exception("patch history read failed")
+        except sqlite3.Error as exc:
+            logger.exception("patch history read failed: %s", exc)
             return [], last_id
         modules = [str(r[1]) for r in rows]
         new_last = max([last_id, *[r[0] for r in rows]]) if rows else last_id

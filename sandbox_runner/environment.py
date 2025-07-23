@@ -261,11 +261,18 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
 # Docker container pooling support
 try:  # pragma: no cover - optional dependency
     import docker  # type: ignore
-    _DOCKER_CLIENT = docker.from_env()
+    from docker.errors import DockerException
 except Exception as exc:  # pragma: no cover - docker may be unavailable
     logger.warning("docker import failed: %s", exc)
     docker = None  # type: ignore
+    DockerException = Exception  # type: ignore
     _DOCKER_CLIENT = None
+else:
+    try:
+        _DOCKER_CLIENT = docker.from_env()
+    except DockerException as exc:  # pragma: no cover - docker may be unavailable
+        logger.warning("docker client init failed: %s", exc)
+        _DOCKER_CLIENT = None
 
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
@@ -299,7 +306,7 @@ def _docker_available() -> bool:
         client = _DOCKER_CLIENT or docker.from_env()
         client.ping()
         return True
-    except Exception:
+    except DockerException:
         return False
 
 
@@ -845,6 +852,7 @@ async def _execute_in_container(
     error_msg = ""
     try:
         import docker  # type: ignore
+        from docker.errors import DockerException
     except Exception as exc:  # pragma: no cover - optional dependency
         error_msg = str(exc)
         logger.warning("docker import failed: %s", exc)
@@ -852,7 +860,7 @@ async def _execute_in_container(
 
     try:
         client = _DOCKER_CLIENT or docker.from_env()
-    except Exception as exc:
+    except DockerException as exc:
         error_msg = str(exc)
         logger.error("failed to create docker client: %s", exc)
         return _execute_locally(error_msg)
@@ -2506,7 +2514,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                         )
                     )
                     break
-                except Exception as exc:
+                except DockerException as exc:
                     diagnostics["docker_error"] = str(exc)
                     logger.exception(
                         "docker execution failed: %s; cmd: docker run <image> python sandbox_runner.py",
