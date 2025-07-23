@@ -294,5 +294,52 @@ def test_weights_influence_roi(monkeypatch, tmp_path):
     engine.tracker = _DummyTracker(metrics)
     adj_before = engine._weighted_synergy_adjustment()
     engine._update_synergy_weights(1.0)
+    engine._synergy_cache = None
     adj_after = engine._weighted_synergy_adjustment()
     assert adj_before != adj_after
+
+
+def test_dqn_synergy_learner_multi_cycle_sync(tmp_path):
+    torch = pytest.importorskip("torch")
+    import importlib
+
+    # reload with real strategies when torch is available
+    import menace.self_improvement_engine as sie
+    import menace.self_improvement_policy as sip
+    sip = importlib.reload(sip)
+    sie = importlib.reload(sie)
+
+    path = tmp_path / "weights.json"
+    learner = sie.DQNSynergyLearner(path=path, lr=0.01, target_sync=2)
+
+    deltas = {
+        "synergy_roi": 1.0,
+        "synergy_efficiency": 0.5,
+        "synergy_resilience": 0.1,
+        "synergy_antifragility": -0.1,
+        "synergy_reliability": 0.0,
+        "synergy_maintainability": 0.0,
+        "synergy_throughput": 0.0,
+    }
+
+    start = learner.weights["roi"]
+    learner.update(1.0, deltas)
+
+    def _equal(m1, m2):
+        return all(torch.equal(a, b) for a, b in zip(m1.parameters(), m2.parameters()))
+
+    # models diverge after first update
+    assert not _equal(learner.strategy.model, learner.strategy.target_model)
+
+    learner.update(1.0, deltas)
+    # target sync on step 2
+    assert _equal(learner.strategy.model, learner.strategy.target_model)
+
+    learner.update(0.5, deltas)
+    learner.update(-0.2, deltas)
+
+    assert 0.0 <= learner.weights["roi"] <= 10.0
+    assert learner.weights["roi"] != start
+
+    learner2 = sie.DQNSynergyLearner(path=path)
+    assert learner2.weights["roi"] == pytest.approx(learner.weights["roi"])
