@@ -140,6 +140,42 @@ MAINTENANCE_DB=maintenance.db
 OPENAI_API_KEY=sk-xxxxx
 ```
 
+## Running locally step by step
+
+The following sequence shows how to launch the sandbox on a personal machine.
+It assumes the repository is already cloned and all dependencies from
+`requirements.txt` are installed.
+
+1. **Generate a `.env` file** or update an existing one using
+   `auto_env_setup.ensure_env()`:
+
+   ```bash
+   python -c 'import auto_env_setup as a; a.ensure_env()'
+   ```
+
+   Review the generated file and add any missing API keys.
+
+2. **Start the visual agent** and leave it running:
+
+   ```bash
+   python menace_visual_agent_2.py
+   ```
+
+3. **Launch the autonomous loop** in a second terminal:
+
+   ```bash
+   python run_autonomous.py
+   ```
+
+   To start both components sequentially from a single shell you can run:
+
+   ```bash
+   python menace_visual_agent_2.py &
+   python run_autonomous.py
+   ```
+
+   Terminate the backgrounded visual agent when you are done.
+
 ## Logging
 
 Application logs are written to `stdout` by default. Set `SANDBOX_JSON_LOGS=1`
