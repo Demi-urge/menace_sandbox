@@ -13,6 +13,8 @@ from contextlib import suppress
 from collections import deque
 from concurrent.futures import Future
 from typing import Iterable, Dict, Any, Callable, Deque, Tuple
+from pathlib import Path
+import json
 
 from . import metrics_exporter
 
@@ -140,6 +142,27 @@ except Exception:  # pragma: no cover - optional dependency
 logger = logging.getLogger(__name__)
 
 
+class _LocalQueue:
+    """Minimal persistent queue for failed requests."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def append(self, item: dict) -> None:
+        with self._lock:
+            with open(self.path, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(item) + "\n")
+
+
+def _queue_local_task(queue: _LocalQueue, item: dict) -> None:
+    try:
+        queue.append(item)
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed to queue task locally: %s", exc)
+
+
 class VisualAgentError(RuntimeError):
     """Base class for visual agent client errors."""
 
@@ -209,6 +232,8 @@ class VisualAgentClient:
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
         self._stop_event = threading.Event()
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        self._local_queue = _LocalQueue(data_dir / "visual_agent_client_queue.jsonl")
         if self.queue_warning_threshold is not None and self.urls and requests:
             self._metrics_thread = threading.Thread(
                 target=self._metrics_loop, daemon=True
@@ -427,7 +452,8 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"connection error after {attempt + 1} attempts: {exc}"
                             logger.error(msg)
-                            raise VisualAgentConnectionError(msg)
+                            _queue_local_task(self._local_queue, {"action": "run", "prompt": prompt})
+                            return True, msg
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -435,9 +461,10 @@ class VisualAgentClient:
                     if resp.status_code == 401:
                         if not retried:
                             retried = True
-                            self._refresh_token_async()
-                            continue
-                        raise PermissionError("unauthorized")
+                            if self._refresh_token():
+                                continue
+                            return False, "token refresh failed"
+                        return False, "unauthorized"
                     if resp.status_code == 409:
                         self._poll(base)
                         continue
@@ -453,13 +480,15 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"server error status {resp.status_code}"
                             logger.error(msg)
-                            raise VisualAgentConnectionError(msg)
+                            _queue_local_task(self._local_queue, {"action": "run", "prompt": prompt})
+                            return True, msg
                         time.sleep(delay)
                         delay *= 2
                         continue
                     snippet = resp.text[:200]
                     return False, f"status {resp.status_code}: {snippet}"
-                raise VisualAgentConnectionError("send failed after 3 attempts")
+                _queue_local_task(self._local_queue, {"action": "run", "prompt": prompt})
+                return True, "queued locally"
 
         try:
             return sender()
@@ -502,7 +531,8 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"connection error after {attempt + 1} attempts: {exc}"
                             logger.error(msg)
-                            raise VisualAgentConnectionError(msg)
+                            _queue_local_task(self._local_queue, {"action": "revert"})
+                            return True, msg
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -510,9 +540,10 @@ class VisualAgentClient:
                     if resp.status_code == 401:
                         if not retried:
                             retried = True
-                            self._refresh_token_async()
-                            continue
-                        raise PermissionError("unauthorized")
+                            if self._refresh_token():
+                                continue
+                            return False, "token refresh failed"
+                        return False, "unauthorized"
                     if resp.status_code == 409:
                         self._poll(base)
                         continue
@@ -528,13 +559,15 @@ class VisualAgentClient:
                         if attempt == 2:
                             msg = f"server error status {resp.status_code}"
                             logger.error(msg)
-                            raise VisualAgentConnectionError(msg)
+                            _queue_local_task(self._local_queue, {"action": "revert"})
+                            return True, msg
                         time.sleep(delay)
                         delay *= 2
                         continue
                     snippet = resp.text[:200]
                     return False, f"status {resp.status_code}: {snippet}"
-                raise VisualAgentConnectionError("revert failed after 3 attempts")
+                _queue_local_task(self._local_queue, {"action": "revert"})
+                return True, "queued locally"
 
         try:
             return sender()
