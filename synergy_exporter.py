@@ -13,6 +13,16 @@ from typing import Dict
 
 from .metrics_exporter import Gauge, start_metrics_server
 
+# Gauges tracking exporter uptime and failures
+exporter_uptime = Gauge(
+    "synergy_exporter_uptime_seconds",
+    "Uptime of the SynergyExporter in seconds",
+)
+exporter_failures = Gauge(
+    "synergy_exporter_failures_total",
+    "Total number of exporter update failures",
+)
+
 
 class SynergyExporter:
     """Periodically read ``synergy_history.db`` and expose latest values."""
@@ -35,6 +45,8 @@ class SynergyExporter:
         self._health_thread: threading.Thread | None = None
         self.health_port: int | None = None
         self.last_update: float | None = None
+        self.start_time: float | None = None
+        self.failures = 0
 
     # ------------------------------------------------------------------
     def _load_latest(self) -> Dict[str, float]:
@@ -52,6 +64,11 @@ class SynergyExporter:
                     return {str(k): float(v) for k, v in data.items()}
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("failed to read %s: %s", p, exc)
+            self.failures += 1
+            try:
+                exporter_failures.set(float(self.failures))
+            except Exception:  # pragma: no cover - metrics library issues
+                pass
         return {}
 
     def _update_loop(self) -> None:
@@ -66,8 +83,18 @@ class SynergyExporter:
                     g.set(float(value))
                 except Exception:  # pragma: no cover - metrics library issues
                     self.logger.exception("failed to update gauge %s", name)
+                    self.failures += 1
+                    try:
+                        exporter_failures.set(float(self.failures))
+                    except Exception:  # pragma: no cover - metrics library issues
+                        pass
             if vals:
                 self.last_update = time.time()
+            if self.start_time is not None:
+                try:
+                    exporter_uptime.set(time.time() - self.start_time)
+                except Exception:  # pragma: no cover - metrics library issues
+                    pass
             self._stop.wait(self.interval)
 
     def _start_health_server(self) -> None:
@@ -101,17 +128,23 @@ class SynergyExporter:
     # ------------------------------------------------------------------
     def start(self) -> None:
         start_metrics_server(self.port)
+        self.start_time = time.time()
+        exporter_uptime.set(0.0)
+        exporter_failures.set(float(self.failures))
         self._thread = threading.Thread(target=self._update_loop, daemon=True)
         self._thread.start()
         self._start_health_server()
-        self.logger.info(
-            "Synergy metrics exporter running on port %d", self.port
-        )
+        self.logger.info("Synergy metrics exporter running on port %d", self.port)
 
     def stop(self) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+        if self.start_time is not None:
+            try:
+                exporter_uptime.set(time.time() - self.start_time)
+            except Exception:  # pragma: no cover - metrics library issues
+                pass
 
 
 def start_synergy_exporter(
@@ -127,4 +160,9 @@ def start_synergy_exporter(
     return exp
 
 
-__all__ = ["SynergyExporter", "start_synergy_exporter"]
+__all__ = [
+    "SynergyExporter",
+    "start_synergy_exporter",
+    "exporter_uptime",
+    "exporter_failures",
+]
