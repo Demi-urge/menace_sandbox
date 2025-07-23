@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import os
+import sys
+import subprocess
 import base64
 from pathlib import Path
 from typing import Iterable, Dict, Sequence
@@ -114,9 +116,35 @@ def verify_critical_libs(libs: Dict[str, str] = CRITICAL_LIBS) -> Dict[str, str]
     return failures
 
 
+def _install_packages(packages: Iterable[str]) -> None:
+    for pkg in packages:
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", pkg],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed installing %s: %s", pkg, exc)
+
+
+def _prompt_for_vars(names: Iterable[str]) -> None:
+    if os.getenv("MENACE_NON_INTERACTIVE") == "1" or not sys.stdin.isatty():
+        return
+    for name in names:
+        try:
+            value = input(f"{name}: ").strip()
+        except EOFError:
+            value = ""
+        if value:
+            os.environ[name] = value
+
+
 def run_startup_checks(pyproject_path: Path | None = None) -> None:
     """Run dependency and configuration checks."""
-    validate_dependencies()
+    missing_optional = validate_dependencies()
+    if missing_optional:
+        _install_packages(missing_optional)
     missing = verify_project_dependencies(pyproject_path or PYPROJECT_PATH)
     mode = os.getenv("MENACE_MODE", "test").lower()
     if missing:
@@ -125,7 +153,14 @@ def run_startup_checks(pyproject_path: Path | None = None) -> None:
             raise RuntimeError(msg)
         else:
             logger.warning(msg)
-    validate_config()
+    vars_missing = validate_config()
+    if vars_missing:
+        _prompt_for_vars(vars_missing)
+        vars_missing = [v for v in vars_missing if not os.getenv(v)]
+        if vars_missing and mode == "production":
+            raise RuntimeError(
+                f"Missing required configuration variables: {', '.join(vars_missing)}"
+            )
     verify_critical_libs()
 
     audit_path = os.getenv("AUDIT_LOG_PATH", "audit.log")
