@@ -480,7 +480,7 @@ Troubleshooting tips:
   all dependencies are installed.
 - Delete ``sandbox_data/recovery.json`` if ``SandboxRecoveryManager`` keeps
   restarting unexpectedly.
-- If synergy metrics diverge wildly, verify that ``synergy_history.json`` is
+- If synergy metrics diverge wildly, verify that ``synergy_history.db`` is
   writable and consider adjusting ``--synergy-threshold-weight``.
 - HTTP 401 errors from the visual agent usually mean ``VISUAL_AGENT_TOKEN`` is
   missing or mismatched. Confirm the token matches the secret configured in
@@ -666,7 +666,8 @@ for an example using the deeper `DQNSynergyLearner`.
 ### Synergy metrics exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when running `run_autonomous.py` to expose the
-latest values from `synergy_history.json` via `SynergyExporter`. The exporter
+latest values from `synergy_history.db` via `SynergyExporter`. Legacy JSON files
+are migrated automatically. The exporter
 listens on `SYNERGY_METRICS_PORT` (default `8003`). Visit
 `http://localhost:8003/metrics` (or your chosen port) to view the Prometheus
 gauges.

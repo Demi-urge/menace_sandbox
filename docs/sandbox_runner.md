@@ -607,7 +607,7 @@ checks:
   adjust the significance thresholds for the Augmented Dickey–Fuller and
   Levene tests.
 
-When ``--synergy-threshold`` is omitted the runner reads ``synergy_history.json``
+When ``--synergy-threshold`` is omitted the runner reads ``synergy_history.db``
 from the data directory and derives the threshold using
 ``_adaptive_synergy_threshold``. Likewise ``--synergy-cycles`` defaults to the
 length of this history with a minimum of ``3``.
@@ -617,7 +617,7 @@ metrics. See [self_improvement_engine.md#synergy-weight-learners](self_improveme
 for details on how the history influences weight adjustments.
 
 Writes to this history file are protected with a ``filelock.FileLock``. The lock
-``synergy_history.json.lock`` is acquired before saving and released once the
+``synergy_history.db.lock`` is acquired before saving and released once the
 update completes to avoid corruption when multiple runs execute concurrently.
 
 Example usage:

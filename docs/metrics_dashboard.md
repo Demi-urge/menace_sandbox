@@ -58,7 +58,8 @@ can be embedded in custom dashboards.
 ### Synergy Prometheus Exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when running `run_autonomous.py` to expose the
-latest values from `synergy_history.json` as Prometheus gauges. The exporter
+latest values from `synergy_history.db` as Prometheus gauges. Legacy JSON files
+are migrated automatically. The exporter
 listens on `SYNERGY_METRICS_PORT` (default 8003).
 
 ```bash
