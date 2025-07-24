@@ -4,6 +4,7 @@ import os
 import time
 import platform
 import hashlib
+import shutil
 from datetime import datetime
 
 # Third party imports
@@ -585,17 +586,32 @@ def _configure_tesseract() -> None:
     env_path = os.getenv("TESSERACT_CMD")
     if env_path:
         pytesseract.pytesseract.tesseract_cmd = env_path
-        return
-
-    system = platform.system()
-    if system == "Windows":
-        default = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-    elif system == "Darwin":
-        default = "/usr/local/bin/tesseract"
     else:
-        default = "/usr/bin/tesseract"
+        system = platform.system()
+        if system == "Windows":
+            default = r"C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+        elif system == "Darwin":
+            default = "/usr/local/bin/tesseract"
+        else:
+            # Linux and other platforms
+            candidates = ["/usr/bin/tesseract", "/usr/local/bin/tesseract"]
+            path = shutil.which("tesseract")
+            if path:
+                candidates.insert(0, path)
+            for cand in candidates:
+                if os.path.exists(cand):
+                    default = cand
+                    break
+            else:
+                default = candidates[0]
 
-    pytesseract.pytesseract.tesseract_cmd = default
+        pytesseract.pytesseract.tesseract_cmd = default
+
+    if not os.path.exists(pytesseract.pytesseract.tesseract_cmd):
+        logger.warning(
+            "tesseract executable not found: %s",
+            pytesseract.pytesseract.tesseract_cmd,
+        )
 
 _configure_tesseract()
 
