@@ -1,6 +1,7 @@
 import importlib.util
 import sys
 import types
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,3 +82,22 @@ def test_plot_predictions(tmp_path):
     resp = client.get("/plots/predictions.png")
     assert resp.status_code == 200
     assert resp.data.startswith(b"\x89PNG") or resp.data == b""
+
+
+def test_weights_route(tmp_path):
+    history = tmp_path / "hist.json"
+    _make_history(history)
+    log = tmp_path / "weights.log"
+    entries = [
+        {"timestamp": 1, "roi": 1.0, "efficiency": 0.5},
+        {"timestamp": 2, "roi": 1.1, "efficiency": 0.6},
+    ]
+    log.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+    dash = SandboxDashboard(history, weights_log=log)
+    client = dash.app.test_client()
+    resp = client.get("/weights")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["labels"] == [0, 1]
+    assert data["weights"]["roi"] == [1.0, 1.1]
+    assert data["weights"]["efficiency"] == [0.5, 0.6]
