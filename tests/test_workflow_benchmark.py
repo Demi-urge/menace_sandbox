@@ -98,7 +98,18 @@ def test_registered_workflow_metrics(monkeypatch, tmp_path):
         pdb,
         tracker,
     )
+    wb.benchmark_registered_workflows(
+        {"ok": ok, "fail": fail},
+        [{"env": "prod"}, {}],
+        mdb,
+        pdb,
+        tracker,
+    )
 
     assert mdb.fetch_eval("ok")
     assert "duration" in tracker.metrics_history
     assert tracker.metrics_history["success"]
+    assert "cpu_time" in tracker.metrics_history
+    assert "memory_delta" in tracker.metrics_history
+    rows = mdb.fetch_eval("ok")
+    assert any(r[1] == "duration_pvalue" for r in rows)
