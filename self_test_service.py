@@ -177,15 +177,39 @@ class SelfTestService:
                 self.docker_host,
             ])
         docker_cmd.extend(["rm", "-f", name])
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *docker_cmd,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(proc.wait(), timeout=10)
-        except Exception:
-            pass
+        attempts = self.container_retries + 1
+        for attempt in range(attempts):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *docker_cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, err = await asyncio.wait_for(proc.communicate(), timeout=10)
+                if proc.returncode == 0:
+                    return
+                msg = (err.decode().strip() if err else f"code {proc.returncode}")
+                self.logger.warning(
+                    "failed to remove container %s (attempt %s/%s): %s",
+                    name,
+                    attempt + 1,
+                    attempts,
+                    msg,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "failed to remove container %s (attempt %s/%s): %s",
+                    name,
+                    attempt + 1,
+                    attempts,
+                    exc,
+                )
+            await asyncio.sleep(0.1)
+        self.logger.error(
+            "could not remove container %s after %s attempts",
+            name,
+            attempts,
+        )
 
     async def _remove_stale_containers(self) -> None:
         docker_cmd = [self.container_runtime]
@@ -195,19 +219,42 @@ class SelfTestService:
                 self.docker_host,
             ])
         docker_cmd.extend(["ps", "-aq", "--filter", "label=menace_self_test=1"])
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *docker_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+        attempts = self.container_retries + 1
+        out: bytes = b""
+        for attempt in range(attempts):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *docker_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=10)
+                if proc.returncode == 0:
+                    break
+                self.logger.warning(
+                    "failed to list stale containers (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    err.decode().strip() if err else f"code {proc.returncode}",
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "failed to list stale containers (attempt %s/%s): %s",
+                    attempt + 1,
+                    attempts,
+                    exc,
+                )
+            await asyncio.sleep(0.1)
+        else:
+            self.logger.error(
+                "could not list stale containers after %s attempts", attempts
             )
-            out, _ = await proc.communicate()
-            for cid in out.decode().splitlines():
-                cid = cid.strip()
-                if cid:
-                    await self._force_remove_container(cid)
-        except Exception:
-            self.logger.warning("failed to clean up stale containers")
+            return
+
+        for cid in out.decode().splitlines():
+            cid = cid.strip()
+            if cid:
+                await self._force_remove_container(cid)
 
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
