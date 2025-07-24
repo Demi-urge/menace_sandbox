@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 CREATE_TABLE = (
     "CREATE TABLE IF NOT EXISTS synergy_history ("
@@ -32,6 +32,23 @@ def fetch_all(conn: sqlite3.Connection) -> List[Dict[str, float]]:
             data = json.loads(text)
             if isinstance(data, dict):
                 out.append({str(k): float(v) for k, v in data.items()})
+        except Exception:
+            continue
+    return out
+
+
+def fetch_after(conn: sqlite3.Connection, last_id: int) -> List[Tuple[int, Dict[str, float]]]:
+    """Return entries with ``id`` greater than ``last_id``."""
+    rows = conn.execute(
+        "SELECT id, entry FROM synergy_history WHERE id > ? ORDER BY id",
+        (int(last_id),),
+    ).fetchall()
+    out: List[Tuple[int, Dict[str, float]]] = []
+    for row_id, text in rows:
+        try:
+            data = json.loads(text)
+            if isinstance(data, dict):
+                out.append((int(row_id), {str(k): float(v) for k, v in data.items()}))
         except Exception:
             continue
     return out
