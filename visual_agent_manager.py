@@ -82,3 +82,16 @@ class VisualAgentManager:
         """Restart the agent with ``token``."""
         self.shutdown()
         return self.start(token)
+
+    # ------------------------------------------------------------------
+    def is_running(self) -> bool:
+        """Return ``True`` if the visual agent process is alive."""
+        pid: int | None = None
+        if self.process and self.process.poll() is None:
+            pid = self.process.pid
+        elif self.pid_file.exists():
+            try:
+                pid = int(self.pid_file.read_text().strip())
+            except Exception:
+                pid = None
+        return bool(pid and _pid_alive(pid))
