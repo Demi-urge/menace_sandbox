@@ -332,6 +332,20 @@ def _check_dependencies(settings: SandboxSettings) -> bool:
     return True
 
 
+def check_env() -> None:
+    """Exit if critical environment variables are unset."""
+    missing = [
+        name
+        for name in ("VISUAL_AGENT_TOKEN", "SANDBOX_REPO_PATH")
+        if not os.getenv(name)
+    ]
+    if missing:
+        raise SystemExit(
+            "Missing required environment variables: "
+            + ", ".join(missing)
+        )
+
+
 def _get_env_override(name: str, current, settings: SandboxSettings):
     """Return parsed environment variable when ``current`` is ``None``."""
     env_val = getattr(settings, name.lower())
@@ -527,6 +541,8 @@ def main(argv: List[str] | None = None) -> None:
     ensure_env(str(env_file))
     if created_env:
         logger.info("created env file at %s", env_file)
+
+    check_env()
 
     try:
         settings = SandboxSettings()
