@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Bot to summarize weekly MetricsDB statistics and post to Discord."""
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
@@ -9,7 +10,9 @@ from typing import Dict, List, Tuple
 from .data_bot import MetricsDB
 from .alert_dispatcher import send_discord_alert
 
-DEFAULT_WEBHOOK = "https://discord.com/api/webhooks/PLACEHOLDER"
+DEFAULT_WEBHOOK = os.getenv(
+    "WEEKLY_METRICS_WEBHOOK", "https://discord.com/api/webhooks/PLACEHOLDER"
+)
 
 
 @dataclass

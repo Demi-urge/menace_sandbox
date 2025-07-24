@@ -35,3 +35,23 @@ def test_compile_message(tmp_path, monkeypatch):
     bot.send_weekly_report()
     assert "Profit" in captured['msg']
     assert captured['webhook'] == "http://example.com"
+
+
+def test_env_webhook_used(tmp_path, monkeypatch):
+    db = MetricsDB(tmp_path / "m.db")
+    monkeypatch.setenv("WEEKLY_METRICS_WEBHOOK", "http://env.example")
+
+    import importlib
+    import menace.weekly_metrics_bot as wmb
+    importlib.reload(wmb)
+
+    captured = {}
+
+    def fake_alert(msg: str, webhook: str) -> bool:
+        captured["webhook"] = webhook
+        return True
+
+    monkeypatch.setattr(wmb, "send_discord_alert", fake_alert)
+    bot = wmb.WeeklyMetricsBot(db)
+    bot.send_weekly_report()
+    assert captured["webhook"] == "http://env.example"

@@ -537,6 +537,8 @@ start unattended.  At minimum the following variables must be defined:
   webhook(s) for maintenance notifications. Set to the webhook URL
   ``https://discordapp.com/api/webhooks/1386593502602723348/I--gtkFFi0m9ZCToGCCAP0PswtKA0m7UYsp3UQSqZU0qDGkbk-1W8zQS8g_zuCBdCcXf`` to
   receive alerts.
+- ``WEEKLY_METRICS_WEBHOOK`` – Discord webhook used by ``WeeklyMetricsBot``.
+  Defaults to ``https://discord.com/api/webhooks/PLACEHOLDER`` when unset.
 - ``DATABASE_URL`` – connection string for the persistent database. When
   ``MENACE_MODE=production`` this must point to a production-ready database
   rather than the default SQLite file.
