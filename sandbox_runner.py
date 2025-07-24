@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+import signal
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -555,6 +556,17 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     import sandbox_runner.environment as env
 
     env._cleanup_pools()
+
+    def _handle_signal(signum, frame) -> None:  # pragma: no cover - signal path
+        env._cleanup_pools()
+        env._await_cleanup_task()
+        sys.exit(0)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handle_signal)
+        except Exception:
+            logger.exception("signal handler setup failed")
 
     tmp = tempfile.mkdtemp(prefix="menace_sandbox_")
     logger.info("sandbox temporary directory", extra=log_record(path=tmp))
