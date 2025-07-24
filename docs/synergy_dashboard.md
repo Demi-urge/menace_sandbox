@@ -8,6 +8,13 @@ Start the server:
 python -m menace.self_improvement_engine synergy-dashboard --port 8020
 ```
 
+When polling a Prometheus exporter you can limit the number of in-memory
+history entries with `--max-history` (default is 1000):
+
+```bash
+python -m menace.self_improvement_engine synergy-dashboard --exporter-host localhost --max-history 500
+```
+
 Use `--file` to override the location. The dashboard can run under different WSGI/ASGI servers:
 
 ```bash

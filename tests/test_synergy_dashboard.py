@@ -306,6 +306,32 @@ def test_dashboard_update_loop(monkeypatch):
         dash.stop()
 
 
+def test_dashboard_max_history(monkeypatch):
+    updates = [{"synergy_roi": i} for i in range(5)]
+    iterator = iter(updates)
+
+    def fake_fetch(self):
+        try:
+            return next(iterator)
+        except StopIteration:
+            return {}
+
+    monkeypatch.setattr(SynergyDashboard, "_fetch_exporter_metrics", fake_fetch)
+
+    dash = SynergyDashboard(
+        exporter_host="localhost", refresh_interval=0.01, max_history=2
+    )
+    try:
+        for _ in range(200):
+            if len(dash._history) >= 2 and dash._history[-1].get("synergy_roi") == updates[-1]["synergy_roi"]:
+                break
+            time.sleep(0.02)
+        assert len(dash._history) <= 2
+        assert dash._history == updates[-2:]
+    finally:
+        dash.stop()
+
+
 def test_dashboard_exporter_unreachable(monkeypatch):
     import requests
 
