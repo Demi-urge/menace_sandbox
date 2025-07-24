@@ -1,17 +1,22 @@
 import importlib.util
 import sys
 from pathlib import Path
+import json
+import shutil
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_module():
+def load_module(monkeypatch=None):
     path = ROOT / "run_autonomous.py"
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod
+    if monkeypatch is not None:
+        monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     spec.loader.exec_module(mod)
     return mod
 
@@ -55,12 +60,13 @@ def setup_stubs(monkeypatch):
     sr_stub.cli = cli_stub
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
+    monkeypatch.setenv("SAVE_SYNERGY_HISTORY", "0")
 
 
 def test_files_created(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
+    mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setattr(mod, "generate_presets", lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}])
@@ -75,7 +81,7 @@ def test_files_created(monkeypatch, tmp_path):
 def test_cli_overrides_env(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
+    mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
@@ -95,7 +101,7 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
 
 def test_get_env_override(monkeypatch):
     setup_stubs(monkeypatch)
-    mod = load_module()
+    mod = load_module(monkeypatch)
     monkeypatch.setenv("TEST_FLOAT", "1.25")
     monkeypatch.setenv("TEST_INT", "7")
     import types
@@ -110,7 +116,7 @@ def test_main_exits_on_failed_install(monkeypatch, tmp_path):
     """Verify main exits when dependency installation fails."""
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
+    mod = load_module(monkeypatch)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: False)
     mod.main([])
@@ -122,7 +128,7 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "presets.json").write_text('[{"CPU_LIMIT": "foo"}]')
-    mod = load_module()
+    mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
@@ -143,7 +149,7 @@ def test_corrupt_synergy_history_load(monkeypatch, tmp_path):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "synergy_history.json").write_text("{bad json")
-    mod = load_module()
+    mod = load_module(monkeypatch)
     hist, ma = mod.load_previous_synergy(data_dir)
     assert hist == []
     assert ma == []
@@ -155,7 +161,61 @@ def test_main_ignores_corrupt_synergy(monkeypatch, tmp_path):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (data_dir / "synergy_history.json").write_text("not json")
-    mod = load_module()
+    mod = load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(data_dir),
+    ])
+
+
+def test_main_recovers_corrupt_presets(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "presets.json").write_text("{bad json")
+    monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    mod = load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(data_dir),
+    ])
+
+    text = (data_dir / "presets.json").read_text()
+    assert json.loads(text)
+
+
+def test_main_ignores_corrupt_synergy_db(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    import sqlite3
+    conn = sqlite3.connect(str(data_dir / "synergy_history.db"))
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO synergy_history(entry) VALUES ('not json')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    mod = load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
