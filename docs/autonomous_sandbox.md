@@ -81,6 +81,41 @@ manager.
 After the system tools are in place install the Python requirements via
 `./setup_env.sh` or `pip install -r requirements.txt`.
 
+### Package checklist
+
+1. **Install base utilities** – make sure `python3`, `pip` and `git` are
+   available on your system.
+2. **Install required packages** – use your package manager to install all
+   system tools listed above. On Debian/Ubuntu this command covers them:
+
+   ```bash
+   sudo apt install ffmpeg tesseract-ocr chromium-browser qemu-system-x86
+   ```
+
+3. **Install Python dependencies** – run the provided helper script to create
+   a virtual environment and install all packages from `requirements.txt`:
+
+   ```bash
+   ./setup_env.sh
+   ```
+
+4. **Install optional extras** – reinforcement learning and dashboard features
+   rely on additional libraries. They can be set up with:
+
+   ```bash
+   scripts/setup_optional.sh
+   ```
+
+5. **Verify the environment** – execute the bootstrap script which checks that
+   all optional tools are available and installs anything missing:
+
+   ```bash
+   python scripts/bootstrap_env.py
+   ```
+
+   If any dependency fails to install, run the command again or consult the
+   troubleshooting section below.
+
 ## Recommended environment variables
 
 `auto_env_setup.ensure_env()` generates a `.env` file with sensible defaults. The following variables are particularly relevant for the autonomous workflow:
@@ -284,3 +319,10 @@ local installation.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
   firewall blocks the connection. The dashboard starts automatically once the
   sandbox loop begins.
+- **Tests fail** – ensure all packages listed in the checklist are installed and
+  rerun `./setup_env.sh` to reinstall the Python environment. Some tests rely on
+  optional tools such as `ffmpeg` or Docker. Execute `pytest -x` to stop on the
+  first failure and inspect the output for missing dependencies.
+- **Authentication errors** – HTTP 401 responses from the visual agent usually
+  indicate an invalid token. Confirm that `VISUAL_AGENT_TOKEN` matches the
+  secret configured in `.env` and restart the service when the token changes.
