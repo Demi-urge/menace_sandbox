@@ -11,7 +11,7 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
-from .metrics_exporter import Gauge, start_metrics_server
+from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
 
 # Gauges tracking exporter uptime and failures
 exporter_uptime = Gauge(
@@ -140,11 +140,22 @@ class SynergyExporter:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+        if self._health_server:
+            try:
+                self._health_server.shutdown()
+                self._health_server.server_close()
+            except Exception:  # pragma: no cover - runtime issues
+                self.logger.exception("failed to stop health server")
+            if self._health_thread:
+                self._health_thread.join(timeout=1.0)
+            self._health_server = None
+            self._health_thread = None
         if self.start_time is not None:
             try:
                 exporter_uptime.set(time.time() - self.start_time)
             except Exception:  # pragma: no cover - metrics library issues
                 pass
+        stop_metrics_server()
 
 
 def start_synergy_exporter(
