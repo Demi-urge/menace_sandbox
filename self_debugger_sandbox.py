@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from .logging_utils import log_record
+from .retry_utils import with_retry
 import os
 import shutil
 import subprocess
@@ -626,10 +627,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         """Return the most recent patch scores."""
         if self._score_backend:
             try:
-                rows = self._score_backend.fetch_recent(limit)
+                rows = with_retry(
+                    lambda: self._score_backend.fetch_recent(limit),
+                    logger=self.logger,
+                )
                 if rows:
                     return rows
-            except Exception:
+            except Exception as exc:
+                self.logger.warning(
+                    "patch score backend unreachable",
+                    extra=log_record(action="fetch", error=str(exc)),
+                )
                 self.logger.exception("patch score backend fetch failed")
         if not self._history_conn:
             return []
@@ -852,24 +860,31 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             self.audit_trail.record(payload)
             if self._score_backend:
                 try:
-                    self._score_backend.store(
-                        {
-                            "description": description,
-                            "result": result,
-                            "coverage_delta": coverage_delta,
-                            "error_delta": error_delta,
-                            "roi_delta": roi_delta,
-                            "complexity": complexity,
-                            "synergy_roi": synergy_roi,
-                            "synergy_efficiency": synergy_efficiency,
-                            "synergy_resilience": synergy_resilience,
-                            "synergy_antifragility": synergy_antifragility,
-                            "flakiness": flakiness,
-                            "runtime_impact": runtime_impact,
-                            "score": score,
-                        }
+                    with_retry(
+                        lambda: self._score_backend.store(
+                            {
+                                "description": description,
+                                "result": result,
+                                "coverage_delta": coverage_delta,
+                                "error_delta": error_delta,
+                                "roi_delta": roi_delta,
+                                "complexity": complexity,
+                                "synergy_roi": synergy_roi,
+                                "synergy_efficiency": synergy_efficiency,
+                                "synergy_resilience": synergy_resilience,
+                                "synergy_antifragility": synergy_antifragility,
+                                "flakiness": flakiness,
+                                "runtime_impact": runtime_impact,
+                                "score": score,
+                            }
+                        ),
+                        logger=self.logger,
                     )
-                except Exception:
+                except Exception as exc:
+                    self.logger.warning(
+                        "patch score backend unreachable",
+                        extra=log_record(action="store", error=str(exc)),
+                    )
                     self.logger.exception("patch score backend store failed")
             if self._history_conn:
                 try:
