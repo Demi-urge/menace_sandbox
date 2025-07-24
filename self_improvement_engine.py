@@ -852,8 +852,10 @@ class SelfImprovementEngine:
                     weights = cache.get("weights", weights)
                     stats = cache.get("stats", stats)
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("synergy weight history processing failed: %s", exc)
-                cache = None
+                self.logger.exception(
+                    "synergy weight history processing failed: %s", exc
+                )
+                raise shd.HistoryParseError(str(exc)) from exc
         if cache is None:
             self._synergy_cache = {"count": 0, "weights": weights, "stats": stats}
 

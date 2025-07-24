@@ -94,14 +94,21 @@ if "joblib" not in sys.modules:
 
 if "sklearn" not in sys.modules:
     sk_mod = types.ModuleType("sklearn")
+    sk_mod.__path__ = []
+    sk_mod.__spec__ = importlib.machinery.ModuleSpec("sklearn", loader=None, is_package=True)
     fe_mod = types.ModuleType("sklearn.feature_extraction")
+    fe_mod.__path__ = []
+    fe_mod.__spec__ = importlib.machinery.ModuleSpec("sklearn.feature_extraction", loader=None, is_package=True)
     text_mod = types.ModuleType("sklearn.feature_extraction.text")
     text_mod.TfidfVectorizer = object
+    text_mod.__spec__ = importlib.machinery.ModuleSpec("sklearn.feature_extraction.text", loader=None, is_package=True)
     fe_mod.text = text_mod
     cluster_mod = types.ModuleType("sklearn.cluster")
     cluster_mod.KMeans = object
+    cluster_mod.__spec__ = importlib.machinery.ModuleSpec("sklearn.cluster", loader=None, is_package=True)
     lm_mod = types.ModuleType("sklearn.linear_model")
     lm_mod.LinearRegression = object
+    lm_mod.__spec__ = importlib.machinery.ModuleSpec("sklearn.linear_model", loader=None, is_package=True)
     sk_mod.feature_extraction = fe_mod
     sys.modules["sklearn"] = sk_mod
     sys.modules["sklearn.feature_extraction"] = fe_mod
@@ -136,10 +143,25 @@ sys.modules.setdefault(
 
 sys.modules.setdefault("pulp", types.ModuleType("pulp"))
 
+pyd_dc = types.ModuleType("dataclasses")
+pyd_mod = types.ModuleType("pydantic")
+pyd_mod.Field = lambda default=None, **k: default
+pyd_dc.dataclass = lambda *a, **k: (lambda cls: cls)
+pyd_mod.dataclasses = pyd_dc
+pyd_mod.BaseModel = object
+pyd_mod.ValidationError = type("ValidationError", (Exception,), {})
+sys.modules.setdefault("pydantic", pyd_mod)
+sys.modules.setdefault("pydantic.dataclasses", pyd_dc)
+ps_mod = types.ModuleType("pydantic_settings")
+ps_mod.BaseSettings = object
+ps_mod.SettingsConfigDict = dict
+sys.modules.setdefault("pydantic_settings", ps_mod)
+
 pytest.importorskip("pandas")
 import pandas
 
 import menace.self_improvement_engine as sie
+from menace import synergy_history_db as shd
 
 # use lightweight stubs to avoid heavy initialisation
 sie.InfoDB = lambda *a, **k: object()
@@ -228,6 +250,11 @@ class _DummyDB:
         return list(self._recs)
 
 
+class _BadDB:
+    def filter(self):
+        raise RuntimeError("parse error")
+
+
 class _DummyTracker:
     def __init__(self, metrics):
         self.metrics_history = metrics
@@ -288,6 +315,13 @@ def test_synergy_weight_cache():
     db._recs = list(rec_b)
     second = engine._weighted_synergy_adjustment()
     assert first == pytest.approx(second)
+
+
+def test_synergy_history_parse_error():
+    engine = sie.SelfImprovementEngine(interval=0, patch_db=_BadDB())
+    engine.tracker = _DummyTracker({})
+    with pytest.raises(shd.HistoryParseError):
+        engine._weighted_synergy_adjustment()
 
 
 def test_energy_scaling_with_synergy_weights(tmp_path):
