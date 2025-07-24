@@ -3,6 +3,7 @@ from __future__ import annotations
 """Service running self tests on a schedule."""
 
 import asyncio
+import time
 from asyncio import Lock
 from filelock import FileLock
 import json
@@ -308,7 +309,7 @@ class SelfTestService:
 
         for cid in out.decode().splitlines():
             cid = cid.strip()
-            if cid:
+            if cid and all(ch in "0123456789abcdef" for ch in cid.lower()):
                 await self._force_remove_container(cid)
 
     async def _cleanup_containers(self) -> None:
@@ -362,8 +363,6 @@ class SelfTestService:
                 _file_lock.acquire()
                 acquired = True
                 use_container = await self._docker_available()
-            if use_container:
-                await self._remove_stale_containers()
             use_pipe = self.result_callback is not None or use_container
             workers_list = [self.workers for _ in paths]
             if use_container and self.workers > 1 and len(paths) > 1:
@@ -739,6 +738,26 @@ class SelfTestService:
         return self._task
 
     # ------------------------------------------------------------------
+    def run_scheduled(
+        self,
+        interval: float = 86400.0,
+        *,
+        runs: int | None = None,
+    ) -> None:
+        """Run :meth:`_run_once` repeatedly with a delay between runs."""
+
+        count = 0
+        while True:
+            try:
+                asyncio.run(self._run_once())
+            except Exception:
+                self.logger.exception("self test run failed")
+            count += 1
+            if runs is not None and count >= runs:
+                break
+            time.sleep(interval)
+
+    # ------------------------------------------------------------------
     async def stop(self) -> None:
         """Stop the schedule loop and wait for completion."""
 
@@ -819,6 +838,57 @@ def cli(argv: list[str] | None = None) -> int:
         help="Container timeout in seconds",
     )
 
+    sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
+    sched.add_argument("paths", nargs="*", help="Test paths or patterns")
+    sched.add_argument("--interval", type=float, default=86400.0, help="Run interval in seconds")
+    sched.add_argument("--workers", type=int, default=1, help="Number of pytest workers")
+    sched.add_argument(
+        "--container-image",
+        default="python:3.11-slim",
+        help="Docker image when using containers",
+    )
+    sched.add_argument(
+        "--container-runtime",
+        default="docker",
+        help="Container runtime executable",
+    )
+    sched.add_argument(
+        "--docker-host",
+        help="Docker/Podman host or URL",
+    )
+    sched.add_argument(
+        "--history",
+        help="Path to JSON/DB file storing run history",
+    )
+    sched.add_argument(
+        "--state",
+        help="Path to JSON file storing current run state",
+    )
+    sched.add_argument(
+        "--pytest-args",
+        default=None,
+        help="Additional arguments passed to pytest",
+    )
+    sched.add_argument(
+        "--retries",
+        type=int,
+        default=1,
+        help="Container retry attempts on failure",
+    )
+    sched.add_argument(
+        "--timeout",
+        type=float,
+        default=300.0,
+        help="Container timeout in seconds",
+    )
+    sched.add_argument(
+        "--no-container",
+        dest="use_container",
+        action="store_false",
+        help="Run tests on the host instead of a container",
+    )
+    sched.set_defaults(use_container=True)
+
     clean = sub.add_parser("cleanup", help="Remove stale test containers")
     clean.add_argument(
         "--container-runtime",
@@ -868,6 +938,30 @@ def cli(argv: list[str] | None = None) -> int:
                 if err:
                     print(err, file=sys.stderr)
             return 1
+        return 0
+
+    if args.cmd == "run-scheduled":
+        pytest_args = []
+        if args.pytest_args:
+            pytest_args.extend(shlex.split(args.pytest_args))
+        if args.paths:
+            pytest_args.extend(args.paths)
+        service = SelfTestService(
+            pytest_args=" ".join(pytest_args) if pytest_args else None,
+            workers=args.workers,
+            container_image=args.container_image,
+            container_runtime=args.container_runtime,
+            docker_host=args.docker_host,
+            use_container=args.use_container,
+            history_path=args.history,
+            state_path=args.state,
+            container_retries=args.retries,
+            container_timeout=args.timeout,
+        )
+        try:
+            service.run_scheduled(interval=args.interval)
+        except KeyboardInterrupt:
+            pass
         return 0
 
     if args.cmd == "cleanup":
