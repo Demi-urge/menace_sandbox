@@ -29,6 +29,12 @@ class DummyNP(types.ModuleType):
     def std(self, arr):
         return 0.0
 
+    def min(self, arr):
+        return float(min(arr)) if arr else 0.0
+
+    def max(self, arr):
+        return float(max(arr)) if arr else 0.0
+
 np_stub = DummyNP("numpy")
 sys.modules["numpy"] = np_stub
 sys.modules.setdefault("numpy", np_stub)
@@ -123,11 +129,21 @@ def test_registered_workflow_metrics(monkeypatch, tmp_path):
     assert "cpu_percent" in tracker.metrics_history
     assert "memory_delta" in tracker.metrics_history
     assert "memory_usage" in tracker.metrics_history
+    assert "memory_peak" in tracker.metrics_history
     assert "latency" in tracker.metrics_history
     assert "latency_median" in tracker.metrics_history
+    assert "latency_min" in tracker.metrics_history
+    assert "latency_max" in tracker.metrics_history
+    assert "cpu_user_time" in tracker.metrics_history
+    assert "cpu_system_time" in tracker.metrics_history
     rows = mdb.fetch_eval("ok")
     pvalue_metrics = {r[1] for r in rows if r[1].endswith("_pvalue")}
     assert "duration_pvalue" in pvalue_metrics
     assert "cpu_time_pvalue" in pvalue_metrics
+    assert "cpu_user_time_pvalue" in pvalue_metrics
+    assert "cpu_system_time_pvalue" in pvalue_metrics
     assert "memory_usage_pvalue" in pvalue_metrics
+    assert "memory_peak_pvalue" in pvalue_metrics
     assert "latency_median_pvalue" in pvalue_metrics
+    assert "latency_min_pvalue" in pvalue_metrics
+    assert "latency_max_pvalue" in pvalue_metrics

@@ -258,6 +258,16 @@ workflow_cpu_time_gauge = Gauge(
     "User+system CPU time consumed by the workflow",
     labelnames=["workflow"],
 )
+workflow_cpu_user_time_gauge = Gauge(
+    "workflow_cpu_user_time_seconds",
+    "User CPU time consumed by the workflow",
+    labelnames=["workflow"],
+)
+workflow_cpu_system_time_gauge = Gauge(
+    "workflow_cpu_system_time_seconds",
+    "System CPU time consumed by the workflow",
+    labelnames=["workflow"],
+)
 workflow_net_io_gauge = Gauge(
     "workflow_network_bytes",
     "Network I/O during the run",
@@ -281,6 +291,21 @@ workflow_latency_p95_gauge = Gauge(
 workflow_latency_median_gauge = Gauge(
     "workflow_latency_median_seconds",
     "Median workflow latency",
+    labelnames=["workflow"],
+)
+workflow_latency_min_gauge = Gauge(
+    "workflow_latency_min_seconds",
+    "Minimum workflow latency",
+    labelnames=["workflow"],
+)
+workflow_latency_max_gauge = Gauge(
+    "workflow_latency_max_seconds",
+    "Maximum workflow latency",
+    labelnames=["workflow"],
+)
+workflow_peak_memory_gauge = Gauge(
+    "workflow_peak_memory_mb",
+    "Approximate peak resident memory during execution",
     labelnames=["workflow"],
 )
 
@@ -360,9 +385,14 @@ __all__ = [
     "workflow_memory_gauge",
     "workflow_memory_usage_gauge",
     "workflow_cpu_time_gauge",
+    "workflow_cpu_user_time_gauge",
+    "workflow_cpu_system_time_gauge",
     "workflow_net_io_gauge",
     "workflow_disk_read_gauge",
     "workflow_disk_write_gauge",
     "workflow_latency_p95_gauge",
     "workflow_latency_median_gauge",
+    "workflow_latency_min_gauge",
+    "workflow_latency_max_gauge",
+    "workflow_peak_memory_gauge",
 ]
