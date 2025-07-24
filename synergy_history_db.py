@@ -2,6 +2,15 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple
+import logging
+
+from . import RAISE_ERRORS
+
+logger = logging.getLogger(__name__)
+
+
+class HistoryParseError(RuntimeError):
+    """Raised when synergy history parsing fails."""
 
 CREATE_TABLE = (
     "CREATE TABLE IF NOT EXISTS synergy_history ("
@@ -17,6 +26,34 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute(CREATE_TABLE)
     conn.commit()
     return conn
+
+
+def load_history(path: str | Path) -> List[Dict[str, float]]:
+    """Return synergy history entries from ``path`` SQLite database."""
+    p = Path(path)
+    if not p.exists():
+        return []
+    try:
+        with sqlite3.connect(p) as conn:
+            rows = conn.execute(
+                "SELECT entry FROM synergy_history ORDER BY id"
+            ).fetchall()
+        hist: List[Dict[str, float]] = []
+        for (text,) in rows:
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    hist.append({str(k): float(v) for k, v in data.items()})
+            except Exception as exc:
+                logger.exception("invalid history entry: %s", exc)
+                if RAISE_ERRORS:
+                    raise HistoryParseError(str(exc)) from exc
+        return hist
+    except Exception as exc:
+        logger.exception("failed to load history from %s: %s", p, exc)
+        if RAISE_ERRORS:
+            raise HistoryParseError(str(exc)) from exc
+        return []
 
 
 def insert_entry(conn: sqlite3.Connection, entry: Dict[str, float]) -> None:
@@ -48,9 +85,13 @@ def fetch_after(conn: sqlite3.Connection, last_id: int) -> List[Tuple[int, Dict[
         try:
             data = json.loads(text)
             if isinstance(data, dict):
-                out.append((int(row_id), {str(k): float(v) for k, v in data.items()}))
-        except Exception:
-            continue
+                out.append(
+                    (int(row_id), {str(k): float(v) for k, v in data.items()})
+                )
+        except Exception as exc:
+            logger.exception("failed to parse history row %s: %s", row_id, exc)
+            if RAISE_ERRORS:
+                raise HistoryParseError(str(exc)) from exc
     return out
 
 
@@ -64,8 +105,10 @@ def fetch_latest(conn: sqlite3.Connection) -> Dict[str, float]:
         data = json.loads(row[0])
         if isinstance(data, dict):
             return {str(k): float(v) for k, v in data.items()}
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("failed to parse latest history entry: %s", exc)
+        if RAISE_ERRORS:
+            raise HistoryParseError(str(exc)) from exc
     return {}
 
 
@@ -77,7 +120,10 @@ def migrate_json_to_db(json_path: str | Path, db_path: str | Path) -> None:
         data = json.loads(jp.read_text())
         if not isinstance(data, list):
             return
-    except Exception:
+    except Exception as exc:
+        logger.exception("failed to read %s: %s", jp, exc)
+        if RAISE_ERRORS:
+            raise HistoryParseError(str(exc)) from exc
         return
     conn = connect(db_path)
     try:
