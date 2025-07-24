@@ -45,6 +45,13 @@ from .autoscaler import Autoscaler
 from .trend_predictor import TrendPredictor
 from .identity_seeder import seed_identity
 from .session_vault import SessionVault
+from .visual_agent_job_queue import VisualAgentJobQueue
+
+try:  # pragma: no cover - optional dependency
+    from .visual_agent_client import VisualAgentClient, VisualAgentClientStub
+except Exception:  # pragma: no cover - missing dependency
+    VisualAgentClient = None  # type: ignore
+    VisualAgentClientStub = None  # type: ignore
 
 
 class _SimpleScheduler:
@@ -133,6 +140,7 @@ class MenaceOrchestrator:
         *,
         on_restart: Callable[[str], None] | None = None,
         auto_bootstrap: bool | None = None,
+        visual_agent_client: object | None = None,
     ) -> None:
         #run_startup_checks()
         self.pipeline = ModelAutomationPipeline(pathway_db=pathway_db, myelination_threshold=myelination_threshold)
@@ -191,6 +199,21 @@ class MenaceOrchestrator:
         self.last_plan: str | None = None
         self.discrepancy_detector = DiscrepancyDetectionBot()
         self.bottleneck_detector = EfficiencyBot()
+        self.visual_client = visual_agent_client
+        if self.visual_client is None and VisualAgentClient:
+            try:
+                self.visual_client = VisualAgentClient()
+            except Exception:
+                self.logger.exception("visual agent client init failed")
+                if VisualAgentClientStub:
+                    try:
+                        self.visual_client = VisualAgentClientStub()
+                    except Exception:
+                        self.visual_client = None
+        if self.visual_client is not None:
+            self.visual_queue = VisualAgentJobQueue(self.visual_client)
+        else:
+            self.visual_queue = None
 
     # ------------------------------------------------------------------
     def status_summary(self) -> Dict[str, object]:
@@ -241,6 +264,8 @@ class MenaceOrchestrator:
 
     def register_engine(self, name: str, engine: SelfCodingEngine) -> None:
         """Associate a :class:`SelfCodingEngine` with an oversight node."""
+        if getattr(engine, "llm_client", None) is None and self.visual_queue:
+            engine.llm_client = self.visual_queue
         self.engines[name] = engine
 
     # ------------------------------------------------------------------
@@ -553,6 +578,12 @@ class MenaceOrchestrator:
             self.scheduler.shutdown(wait=False)
         else:
             self.scheduler.shutdown()
+
+    def shutdown(self) -> None:
+        """Clean up resources including the visual agent queue."""
+        self.stop_scheduled_jobs()
+        if self.visual_queue is not None:
+            self.visual_queue.stop()
 
 
 __all__ = ["BotNode", "MenaceOrchestrator"]
