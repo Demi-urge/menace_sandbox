@@ -260,3 +260,75 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
 
     assert len(called) == 1
     assert called[0][0]["synergy_roi"] == 0.2
+
+
+def test_trainer_resume_progress(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+    db_mod = importlib.import_module("menace.synergy_history_db")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = db_mod.connect(hist_file)
+    db_mod.insert_entry(conn, {"synergy_roi": 0.1})
+    db_mod.insert_entry(conn, {"synergy_roi": 0.2})
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    calls = {"count": 0}
+
+    def fake_cli(_args: list[str]) -> int:
+        calls["count"] += 1
+        return 0
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=progress_file,
+    )
+    trainer.start()
+    try:
+        for _ in range(40):
+            if calls["count"]:
+                break
+            time.sleep(0.05)
+        assert calls["count"] >= 1
+    finally:
+        trainer.stop()
+
+    assert trainer._last_id == 2
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 2
+
+    conn = db_mod.connect(hist_file)
+    db_mod.insert_entry(conn, {"synergy_roi": 0.3})
+    conn.close()
+
+    calls["count"] = 0
+    trainer2 = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=progress_file,
+    )
+
+    assert trainer2._last_id == 2
+
+    trainer2.start()
+    try:
+        for _ in range(40):
+            if calls["count"]:
+                break
+            time.sleep(0.05)
+        assert calls["count"] >= 1
+    finally:
+        trainer2.stop()
+
+    assert trainer2._last_id == 3
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 3
