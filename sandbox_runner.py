@@ -552,6 +552,10 @@ class SandboxContext:
 
 
 def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxContext:
+    import sandbox_runner.environment as env
+
+    env._cleanup_pools()
+
     tmp = tempfile.mkdtemp(prefix="menace_sandbox_")
     logger.info("sandbox temporary directory", extra=log_record(path=tmp))
     repo = SANDBOX_REPO_PATH

@@ -281,6 +281,8 @@ _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "360
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
 
+_POOL_LABEL = "menace_sandbox_pool"
+
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
@@ -364,6 +366,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 detach=True,
                 network_disabled=True,
                 volumes={td: {"bind": "/code", "mode": "rw"}},
+                labels={_POOL_LABEL: "1"},
             )
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
             _log_pool_metrics(image)
@@ -643,9 +646,7 @@ async def _cleanup_worker() -> None:
 
 
 def _cleanup_pools() -> None:
-    """Stop and remove pooled containers."""
-    if _DOCKER_CLIENT is None:
-        return
+    """Stop and remove pooled containers and stale ones."""
     global _CLEANUP_TASK
     if _CLEANUP_TASK:
         _CLEANUP_TASK.cancel()
@@ -653,20 +654,49 @@ def _cleanup_pools() -> None:
     for t in list(_WARMUP_TASKS.values()):
         t.cancel()
     _WARMUP_TASKS.clear()
-    for pool in list(_CONTAINER_POOLS.values()):
-        for c in list(pool):
-            _stop_and_remove(c)
-            td = _CONTAINER_DIRS.pop(c.id, None)
-            if td:
-                try:
-                    shutil.rmtree(td)
-                except Exception:
-                    logger.exception(
-                        "temporary directory removal failed for %s", td
+
+    if _DOCKER_CLIENT is not None:
+        for pool in list(_CONTAINER_POOLS.values()):
+            for c in list(pool):
+                _stop_and_remove(c)
+                td = _CONTAINER_DIRS.pop(c.id, None)
+                if td:
+                    try:
+                        shutil.rmtree(td)
+                    except Exception:
+                        logger.exception(
+                            "temporary directory removal failed for %s", td
+                        )
+                _CONTAINER_LAST_USED.pop(c.id, None)
+                _CONTAINER_CREATED.pop(c.id, None)
+        _CONTAINER_POOLS.clear()
+
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for cid in proc.stdout.splitlines():
+                cid = cid.strip()
+                if cid:
+                    try:
+                        logger.info("removing stale sandbox container %s", cid)
+                    except Exception:
+                        pass
+                    subprocess.run(
+                        ["docker", "rm", "-f", cid],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
                     )
-            _CONTAINER_LAST_USED.pop(c.id, None)
-            _CONTAINER_CREATED.pop(c.id, None)
-    _CONTAINER_POOLS.clear()
+        else:
+            pass
+    except Exception:
+        pass
 
 
 def _await_cleanup_task() -> None:
@@ -695,7 +725,8 @@ if _DOCKER_CLIENT is not None:
     if _CLEANUP_TASK is None:
         _CLEANUP_TASK = asyncio.create_task(_cleanup_worker())
     atexit.register(_await_cleanup_task)
-    atexit.register(_cleanup_pools)
+
+atexit.register(_cleanup_pools)
 
 
 
