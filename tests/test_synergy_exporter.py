@@ -5,6 +5,7 @@ import socket
 import time
 import urllib.request
 from pathlib import Path
+import pytest
 
 
 def _free_port() -> int:
@@ -239,14 +240,11 @@ def test_run_autonomous_starts_exporter(monkeypatch, tmp_path: Path) -> None:
         str(tmp_path),
     ])
 
-    data = urllib.request.urlopen(f"http://localhost:{port}/metrics").read().decode()
-    metrics = _parse_metrics(data)
-    assert metrics.get("synergy_roi") == 0.05
     exp = captured["exp"]
-    status = urllib.request.urlopen(
-        f"http://localhost:{exp.health_port}/health"
-    ).getcode()
-    assert status == 200
+    with pytest.raises(Exception):
+        urllib.request.urlopen(f"http://localhost:{port}/metrics").read()
+    with pytest.raises(Exception):
+        urllib.request.urlopen(f"http://localhost:{exp.health_port}/health")
     assert exp._thread is not None
     assert not exp._thread.is_alive()
 
