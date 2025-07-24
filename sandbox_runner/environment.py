@@ -917,6 +917,32 @@ def _await_cleanup_task() -> None:
             pass
     _CLEANUP_TASK = None
 
+
+def ensure_cleanup_worker() -> None:
+    """Ensure background cleanup worker task is active."""
+    global _CLEANUP_TASK
+    if _DOCKER_CLIENT is None:
+        return
+    task = _CLEANUP_TASK
+    if task is None:
+        _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        return
+    try:
+        done = task.done()
+    except Exception:
+        done = True
+    if not done:
+        return
+    cancelled = False
+    exc = None
+    try:
+        cancelled = task.cancelled()
+        exc = task.exception()
+    except Exception:
+        pass
+    if cancelled or exc is not None:
+        _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+
 import atexit
 
 purge_leftovers()
@@ -1358,6 +1384,8 @@ def simulate_execution_environment(
         bool(input_stub),
         container,
     )
+
+    ensure_cleanup_worker()
 
     analysis = static_behavior_analysis(code_str)
     env_result = {
