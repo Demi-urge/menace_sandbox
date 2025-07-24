@@ -21,6 +21,10 @@ class CircuitOpenError(ResilienceError):
     """Raised when an operation is attempted while the circuit is open."""
 
 
+class PublishError(ResilienceError):
+    """Raised when an event cannot be published after retries."""
+
+
 T = TypeVar("T")
 
 
@@ -82,4 +86,11 @@ class CircuitBreaker:
             return result
 
 
-__all__ = ["ResilienceError", "RetryError", "CircuitOpenError", "retry_with_backoff", "CircuitBreaker"]
+__all__ = [
+    "ResilienceError",
+    "RetryError",
+    "CircuitOpenError",
+    "PublishError",
+    "retry_with_backoff",
+    "CircuitBreaker",
+]

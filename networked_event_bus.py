@@ -9,6 +9,14 @@ import threading
 import logging
 import queue
 
+from .resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    PublishError,
+    retry_with_backoff,
+)
+from .logging_utils import set_correlation_id
+
 try:
     import pika
 except Exception:  # pragma: no cover - optional
@@ -39,6 +47,7 @@ class NetworkedEventBus:
         self._async_subs: Dict[str, List[Callable[[str, object], Awaitable[None]]]] = {}
         self._consumers: Dict[str, threading.Thread] = {}
         self._closing = threading.Event()
+        self._circuit = CircuitBreaker()
         if pika:
             self._conn = pika.BlockingConnection(pika.ConnectionParameters(host=host))
             self._channel = self._conn.channel()
@@ -83,6 +92,10 @@ class NetworkedEventBus:
                     if body is None:
                         continue
                     data = json.loads(body.decode("utf-8"))
+                    cid = None
+                    if isinstance(data, dict):
+                        cid = data.get("correlation_id")
+                    set_correlation_id(str(cid) if cid is not None else None)
                     for cb in self._subs.get(topic, []):
                         try:
                             cb(topic, data)
@@ -99,6 +112,7 @@ class NetworkedEventBus:
                             logging.getLogger(__name__).error(
                                 "async subscriber failed: %s", exc
                             )
+                    set_correlation_id(None)
                     channel.basic_ack(method_frame.delivery_tag)
                 try:
                     channel.close()
@@ -122,6 +136,10 @@ class NetworkedEventBus:
                         data = q.get(timeout=0.1)
                     except queue.Empty:
                         continue
+                    cid = None
+                    if isinstance(data, dict):
+                        cid = data.get("correlation_id")
+                    set_correlation_id(str(cid) if cid is not None else None)
                     for cb in self._subs.get(topic, []):
                         try:
                             cb(topic, data)
@@ -138,6 +156,7 @@ class NetworkedEventBus:
                             logging.getLogger(__name__).error(
                                 "async subscriber failed: %s", exc
                             )
+                    set_correlation_id(None)
                     q.task_done()
 
         thread = threading.Thread(target=_consume, daemon=True)
@@ -146,8 +165,12 @@ class NetworkedEventBus:
 
     # ------------------------------------------------------------------
     def publish(self, topic: str, event: object) -> None:
+        if isinstance(event, dict):
+            cid = event.get("correlation_id")
+            set_correlation_id(str(cid) if cid is not None else None)
+        logger = logging.getLogger(__name__)
         if self._channel:
-            try:
+            def _send() -> None:
                 self._channel.queue_declare(queue=topic, durable=True)
                 self._channel.basic_publish(
                     exchange="",
@@ -155,18 +178,27 @@ class NetworkedEventBus:
                     body=json.dumps(event).encode("utf-8"),
                     properties=pika.BasicProperties(delivery_mode=2),
                 )
-            except Exception as exc:
-                logging.getLogger(__name__).warning(
-                    "publish failed: %s", exc, exc_info=True
+
+            try:
+                retry_with_backoff(
+                    lambda: self._circuit.call(_send),
+                    attempts=3,
+                    logger=logger,
                 )
+            except CircuitOpenError as exc:
+                logger.error("circuit open during publish: %s", exc)
+                raise PublishError("circuit open") from exc
+            except Exception as exc:
+                logger.warning("publish failed after retries: %s", exc, exc_info=True)
+                raise PublishError(str(exc)) from exc
         else:
             q = self._queues.setdefault(topic, queue.Queue())
             try:
                 q.put(event)
             except Exception as exc:
-                logging.getLogger(__name__).warning(
-                    "publish failed: %s", exc, exc_info=True
-                )
+                logger.warning("publish failed: %s", exc, exc_info=True)
+                raise PublishError(str(exc)) from exc
+        set_correlation_id(None)
 
     # ------------------------------------------------------------------
     def close(self) -> None:
@@ -192,4 +224,4 @@ class NetworkedEventBus:
                 logging.getLogger(__name__).error("connection close failed: %s", exc)
 
 
-__all__ = ["NetworkedEventBus"]
+__all__ = ["NetworkedEventBus", "PublishError"]
