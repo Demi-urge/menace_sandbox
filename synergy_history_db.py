@@ -132,3 +132,24 @@ def migrate_json_to_db(json_path: str | Path, db_path: str | Path) -> None:
                 insert_entry(conn, {str(k): float(v) for k, v in entry.items()})
     finally:
         conn.close()
+
+
+def record(path: str | Path, entry: Dict[str, float]) -> None:
+    """Append ``entry`` to the history database at ``path``."""
+    conn = connect(path)
+    try:
+        insert_entry(conn, entry)
+    finally:
+        conn.close()
+
+
+__all__ = [
+    "connect",
+    "load_history",
+    "insert_entry",
+    "fetch_all",
+    "fetch_after",
+    "fetch_latest",
+    "migrate_json_to_db",
+    "record",
+]
