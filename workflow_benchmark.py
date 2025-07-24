@@ -6,6 +6,11 @@ from typing import Callable
 from time import perf_counter, sleep
 import logging
 
+try:
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    psutil = None  # type: ignore
+
 from .data_bot import MetricsDB
 from .neuroplasticity import PathwayDB, PathwayRecord, Outcome
 
@@ -21,6 +26,9 @@ def benchmark_workflow(
     Returns True if the workflow succeeded.
     """
     start = perf_counter()
+    proc = psutil.Process() if psutil else None
+    cpu_start = proc.cpu_times() if proc else None
+    mem_start = proc.memory_info().rss if proc else 0
     success = False
     result = None
     try:
@@ -29,10 +37,20 @@ def benchmark_workflow(
     except Exception:
         success = False
     duration = perf_counter() - start
+    cpu_time = 0.0
+    mem_delta = 0.0
+    if proc and cpu_start:
+        end_times = proc.cpu_times()
+        cpu_time = float(
+            (end_times.user + end_times.system) - (cpu_start.user + cpu_start.system)
+        )
+        mem_delta = float(max(proc.memory_info().rss - mem_start, 0)) / (1024 * 1024)
     for i in range(3):
         try:
             metrics_db.log_eval(name, "duration", duration)
             metrics_db.log_eval(name, "success", 1.0 if success else 0.0)
+            metrics_db.log_eval(name, "cpu_time", cpu_time)
+            metrics_db.log_eval(name, "memory_delta", mem_delta)
             break
         except Exception:
             logging.exception("metrics logging failed on attempt %s", i + 1)
@@ -45,7 +63,7 @@ def benchmark_workflow(
         inputs="",
         outputs=str(result),
         exec_time=duration,
-        resources="",
+        resources=f"cpu_time={cpu_time:.4f},memory_delta={mem_delta:.2f}MB",
         outcome=Outcome.SUCCESS if success else Outcome.FAILURE,
         roi=1.0 if success else 0.0,
     )
@@ -81,6 +99,9 @@ def benchmark_registered_workflows(
     """
 
     presets = env_presets or [{}]
+    baseline: dict[str, list[tuple]] = {
+        n: metrics_db.fetch_eval(n) for n in workflows
+    }
     for preset in presets:
         for name, func in workflows.items():
             prev_rows = metrics_db.fetch_eval(name)
@@ -107,7 +128,26 @@ def benchmark_registered_workflows(
                 if metric == "success":
                     success = val
 
-            tracker.update(0.0, success, modules=[name], metrics=metrics)
+            _, _, stop = tracker.update(0.0, success, modules=[name], metrics=metrics)
+            if stop:
+                return
+
+    # statistical significance tests for duration metric
+    for name in workflows:
+        prev_rows = baseline.get(name, [])
+        all_rows = metrics_db.fetch_eval(name)
+        new_rows = all_rows[len(prev_rows) :]
+        prev_durations = [float(v) for _, m, v, _ in prev_rows if m == "duration"]
+        new_durations = [float(v) for _, m, v, _ in new_rows if m == "duration"]
+        if len(prev_durations) >= 2 and len(new_durations) >= 2:
+            try:
+                from scipy import stats
+
+                _, p_val = stats.ttest_ind(prev_durations, new_durations, equal_var=False)
+            except Exception:
+                p_val = 1.0
+            metrics_db.log_eval(name, "duration_pvalue", float(p_val))
+            tracker.metrics_history.setdefault("duration_pvalue", []).append(float(p_val))
 
 
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
