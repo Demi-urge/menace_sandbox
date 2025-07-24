@@ -8,6 +8,26 @@ import logging.config
 import os
 from pathlib import Path
 from typing import Any, Dict
+import contextvars
+
+
+_correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "correlation_id", default=None
+)
+
+
+class CorrelationIDFilter(logging.Filter):
+    """Inject correlation ID into log records if present."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - tiny
+        cid = _correlation_id.get(None)
+        record.correlation_id = cid
+        return True
+
+
+def set_correlation_id(cid: str | None) -> None:
+    """Bind ``cid`` to the current context for log correlation."""
+    _correlation_id.set(cid)
 
 
 class JSONFormatter(logging.Formatter):
@@ -20,6 +40,9 @@ class JSONFormatter(logging.Formatter):
             "name": record.name,
             "message": record.getMessage(),
         }
+        cid = getattr(record, "correlation_id", None)
+        if cid:
+            data["correlation_id"] = cid
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(data)
@@ -28,13 +51,20 @@ class JSONFormatter(logging.Formatter):
 _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
     "version": 1,
     "formatters": {
-        "default": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
+        "default": {
+            "format": "%(asctime)s %(levelname)s %(name)s [%(correlation_id)s]: %(message)s"
+        },
         "json": {"()": "logging_utils.JSONFormatter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "default"}
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "default",
+            "filters": ["correlation"],
+        }
     },
     "root": {"level": "INFO", "handlers": ["console"]},
+    "filters": {"correlation": {"()": "logging_utils.CorrelationIDFilter"}},
 }
 
 
@@ -78,4 +108,11 @@ def log_record(**fields: Any) -> Dict[str, Any]:
     return {k: v for k, v in fields.items() if v is not None}
 
 
-__all__ = ["setup_logging", "get_logger", "log_record", "JSONFormatter"]
+__all__ = [
+    "setup_logging",
+    "get_logger",
+    "log_record",
+    "JSONFormatter",
+    "set_correlation_id",
+    "CorrelationIDFilter",
+]
