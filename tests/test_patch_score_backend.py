@@ -148,3 +148,79 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
     engine.run_cycle()
     assert calls["store"]["description"] == engine.bot_name
     assert engine.recent_scores(1) == [("e", "ok")]
+
+
+def test_http_backend_retries(monkeypatch):
+    calls = {"post": 0, "get": 0}
+
+    class Resp:
+        def __init__(self, data=None):
+            self._data = data or []
+
+        def json(self):
+            return self._data
+
+        def raise_for_status(self):
+            pass
+
+    def fail_then_ok_post(url, json=None, timeout=5):
+        calls["post"] += 1
+        if calls["post"] == 1:
+            raise RuntimeError("boom")
+        return Resp()
+
+    def fail_then_ok_get(url, params=None, timeout=5):
+        calls["get"] += 1
+        if calls["get"] == 1:
+            raise RuntimeError("boom")
+        return Resp([["a", "ok"]])
+
+    monkeypatch.setattr(psb.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        psb,
+        "requests",
+        types.SimpleNamespace(post=fail_then_ok_post, get=fail_then_ok_get),
+    )
+
+    be = psb.HTTPPatchScoreBackend("http://x")
+    be.store({"description": "a"})
+    rows = be.fetch_recent(1)
+    assert calls["post"] == 2
+    assert calls["get"] == 2
+    assert rows == [("a", "ok")]
+
+
+def test_s3_backend_retries(monkeypatch):
+    counts = {"put": 0, "list": 0, "get": 0}
+
+    class FakeClient:
+        def put_object(self, Bucket=None, Key=None, Body=None):
+            counts["put"] += 1
+            if counts["put"] == 1:
+                raise RuntimeError("fail")
+            return None
+
+        def list_objects_v2(self, Bucket=None, Prefix=None):
+            counts["list"] += 1
+            if counts["list"] == 1:
+                raise RuntimeError("fail")
+            return {"Contents": [{"Key": "k", "LastModified": 1}]}
+
+        def get_object(self, Bucket=None, Key=None):
+            counts["get"] += 1
+            if counts["get"] == 1:
+                raise RuntimeError("fail")
+            return {"Body": types.SimpleNamespace(read=lambda: b'["x","ok"]')}
+
+    fake_boto3 = types.SimpleNamespace(client=lambda *_a, **_k: FakeClient())
+    monkeypatch.setattr(psb, "boto3", fake_boto3)
+    monkeypatch.setattr(psb.time, "sleep", lambda *_: None)
+
+    be = psb.S3PatchScoreBackend("b", "p")
+    be.store({"d": 1})
+    rows = be.fetch_recent(1)
+
+    assert counts["put"] == 2
+    assert counts["list"] == 2
+    assert counts["get"] == 2
+    assert rows == [("x", "ok")]
