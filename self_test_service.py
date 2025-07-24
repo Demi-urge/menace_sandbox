@@ -297,6 +297,16 @@ class SelfTestService:
             if cid:
                 await self._force_remove_container(cid)
 
+    async def _cleanup_containers(self) -> None:
+        """Remove containers labelled for self tests and exit."""
+        try:
+            if await self._docker_available():
+                await self._remove_stale_containers()
+        finally:
+            if self._lock_acquired:
+                _container_lock.release()
+                self._lock_acquired = False
+
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
@@ -766,6 +776,23 @@ def cli(argv: list[str] | None = None) -> int:
         help="Container timeout in seconds",
     )
 
+    clean = sub.add_parser("cleanup", help="Remove stale test containers")
+    clean.add_argument(
+        "--container-runtime",
+        default="docker",
+        help="Container runtime executable",
+    )
+    clean.add_argument(
+        "--docker-host",
+        help="Docker/Podman host or URL",
+    )
+    clean.add_argument(
+        "--retries",
+        type=int,
+        default=1,
+        help="Container retry attempts on failure",
+    )
+
     args = parser.parse_args(argv)
 
     if args.cmd == "run":
@@ -797,6 +824,19 @@ def cli(argv: list[str] | None = None) -> int:
                     print(out, file=sys.stderr)
                 if err:
                     print(err, file=sys.stderr)
+            return 1
+        return 0
+
+    if args.cmd == "cleanup":
+        service = SelfTestService(
+            container_runtime=args.container_runtime,
+            docker_host=args.docker_host,
+            container_retries=args.retries,
+        )
+        try:
+            asyncio.run(service._cleanup_containers())
+        except Exception as exc:
+            print(f"cleanup failed: {exc}", file=sys.stderr)
             return 1
         return 0
 
