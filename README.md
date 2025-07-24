@@ -208,6 +208,7 @@ libcst
 kafka-python
 pyspark
 stable-baselines3
+torch
 sentry-sdk
 ```
 
@@ -232,9 +233,9 @@ MENACE_HARDWARE=1 pytest tests/hardware
 ### Optional dependencies
 
 Some features such as anomaly detection and the `ErrorForecaster` make use of
-extra packages like **pandas** and **PyTorch** when available. The code now
-implements self-contained fallbacks so that functionality remains intact even
-without these libraries.
+additional libraries. **pandas** and **PyTorch** are now installed by default,
+yet the modules still implement fallbacks so functionality remains intact even
+if those libraries are unavailable.
 
 ### Cloud deployment
 
@@ -276,6 +277,12 @@ VM_SETTINGS={"windows_image":"/vm-images/windows.qcow2","macos_image":"/vm-image
 ```
 
 to your `.env` file. `run_autonomous.py` reads this configuration automatically.
+
+### Container health checks
+
+The provided `Dockerfile` now defines a `HEALTHCHECK` that executes
+`python -m menace.startup_health_check`. This validates essential files and
+configuration before the container is marked healthy.
 
 
 ### Production configuration

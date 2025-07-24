@@ -12,5 +12,7 @@ RUN apt-get update && \
     # Install Python dependencies declared in pyproject.toml
     pip install --no-cache-dir -e .
 
+HEALTHCHECK --interval=30s --timeout=5s CMD ["python", "-m", "menace.startup_health_check"]
+
 CMD ["clipped-master"]
 

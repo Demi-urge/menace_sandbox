@@ -63,6 +63,7 @@ dependencies = [
     ,"kafka-python"
     ,"pyspark"
     ,"stable-baselines3"
+    ,"torch"
     ,"sentry-sdk"
     ,"cryptography"
 ]
@@ -70,6 +71,12 @@ dependencies = [
 [project.scripts]
 menace-master = "service_supervisor:main"
 environment-cli = "environment_cli:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "hypothesis"
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
