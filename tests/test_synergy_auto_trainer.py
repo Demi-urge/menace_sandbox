@@ -495,3 +495,69 @@ def test_missing_files_created(monkeypatch, tmp_path: Path, caplog) -> None:
     assert trainer.history_file.exists()
     assert trainer.weights_file.exists()
     assert "missing - created empty file" in caplog.text
+
+
+def test_trainer_start_stop_restart(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.1}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    calls = {"count": 0}
+
+    def fake_cli(_args: list[str]) -> int:
+        calls["count"] += 1
+        return 0
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=tmp_path / "progress.json",
+    )
+
+    trainer.start()
+    try:
+        for _ in range(20):
+            if calls["count"]:
+                break
+            time.sleep(0.05)
+    finally:
+        trainer.stop()
+
+    assert trainer._thread is None
+
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.2}),),
+    )
+    conn.commit()
+    conn.close()
+
+    trainer._stop.clear()
+    trainer.start()
+    try:
+        for _ in range(20):
+            if calls["count"] >= 2:
+                break
+            time.sleep(0.05)
+    finally:
+        trainer.stop()
+
+    assert trainer._thread is None
+    assert calls["count"] >= 2
