@@ -287,8 +287,48 @@ _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
 _CONTAINER_CREATED: Dict[str, float] = {}
-_WARMUP_TASKS: Dict[str, asyncio.Task] = {}
-_CLEANUP_TASK: asyncio.Task | None = None
+_WARMUP_TASKS: Dict[str, Any] = {}
+_CLEANUP_TASK: Any | None = None
+
+_BACKGROUND_LOOP: asyncio.AbstractEventLoop | None = None
+_BACKGROUND_THREAD: threading.Thread | None = None
+
+def _get_event_loop() -> asyncio.AbstractEventLoop | None:
+    """Return a running event loop or ``None`` if unavailable."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return _BACKGROUND_LOOP
+
+def _ensure_background_loop() -> asyncio.AbstractEventLoop:
+    """Start a background event loop if not already running."""
+    global _BACKGROUND_LOOP, _BACKGROUND_THREAD
+    if _BACKGROUND_LOOP is None:
+        _BACKGROUND_LOOP = asyncio.new_event_loop()
+
+        def _runner(loop: asyncio.AbstractEventLoop) -> None:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        _BACKGROUND_THREAD = threading.Thread(
+            target=_runner, args=(_BACKGROUND_LOOP,), daemon=True, name="sandbox-bg-loop"
+        )
+        _BACKGROUND_THREAD.start()
+    return _BACKGROUND_LOOP
+
+def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> Any:
+    """Schedule ``coro`` on an available event loop."""
+    loop = _get_event_loop()
+    if loop is not None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if loop is running:
+            return loop.create_task(coro)
+        return asyncio.run_coroutine_threadsafe(coro, loop)
+    loop = _ensure_background_loop()
+    return asyncio.run_coroutine_threadsafe(coro, loop)
 _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
@@ -336,7 +376,7 @@ def _ensure_pool_size_async(image: str) -> None:
         finally:
             _WARMUP_TASKS.pop(image, None)
 
-    task = asyncio.create_task(_worker())
+    task = _schedule_coroutine(_worker())
     _WARMUP_TASKS[image] = task
 
 async def _create_pool_container(image: str) -> tuple[Any, str]:
@@ -649,8 +689,7 @@ def _cleanup_pools() -> None:
     """Stop and remove pooled containers and stale ones."""
     global _CLEANUP_TASK
     if _CLEANUP_TASK:
-        _CLEANUP_TASK.cancel()
-        _CLEANUP_TASK = None
+        _await_cleanup_task()
     for t in list(_WARMUP_TASKS.values()):
         t.cancel()
     _WARMUP_TASKS.clear()
@@ -705,16 +744,17 @@ def _await_cleanup_task() -> None:
     task = _CLEANUP_TASK
     if not task:
         return
-    async def _cancel_and_wait() -> None:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:  # pragma: no cover - expected on cancel
-            pass
     try:
-        asyncio.run(_cancel_and_wait())
+        loop = getattr(task, "get_loop", lambda: None)()
     except Exception:
-        logger.exception("cleanup task awaiting failed")
+        loop = None
+    if loop is not None and loop.is_running():
+        loop.call_soon_threadsafe(task.cancel)
+    else:
+        try:
+            task.cancel()
+        except Exception:
+            pass
     _CLEANUP_TASK = None
 
 import atexit
@@ -723,7 +763,7 @@ if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
     _ensure_pool_size_async(default_img)
     if _CLEANUP_TASK is None:
-        _CLEANUP_TASK = asyncio.create_task(_cleanup_worker())
+        _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
     atexit.register(_await_cleanup_task)
 
 atexit.register(_cleanup_pools)
