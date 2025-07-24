@@ -156,3 +156,14 @@ __all__ = [
     "run_startup_diagnostics",
     "halt_on_failure",
 ]
+
+
+def main() -> None:
+    """Run diagnostics and exit non-zero on failure."""
+    report = run_startup_diagnostics()
+    halt_on_failure(report)
+    print("startup checks passed")
+
+
+if __name__ == "__main__":
+    main()
