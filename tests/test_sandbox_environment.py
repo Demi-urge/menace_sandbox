@@ -38,6 +38,7 @@ def _setup(monkeypatch):
     env._CLEANUP_METRICS.clear()
     env._STALE_CONTAINERS_REMOVED = 0
     env._STALE_VMS_REMOVED = 0
+    env._RUNTIME_VMS_REMOVED = 0
 
 
 def test_disk_usage_cleanup(monkeypatch, tmp_path):

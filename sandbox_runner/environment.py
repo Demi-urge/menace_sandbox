@@ -342,6 +342,8 @@ _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
 _STALE_VMS_REMOVED = 0
+_CLEANUP_FAILURES = 0
+_RUNTIME_VMS_REMOVED = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -388,11 +390,68 @@ def _remove_active_container(cid: str) -> None:
         _write_active_containers(ids)
 
 
+def _purge_stale_vms(*, record_runtime: bool = False) -> int:
+    """Terminate leftover QEMU processes and remove overlay files."""
+    global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED
+    removed_vms = 0
+    if psutil is not None:
+        try:
+            tmp_dirs: set[str] = set()
+            for p in psutil.process_iter(["name", "cmdline"]):
+                name = p.info.get("name") or ""
+                if name.startswith("qemu-system"):
+                    try:
+                        logger.info("terminating stale qemu process %s", p.pid)
+                    except Exception:
+                        pass
+                    try:
+                        for arg in p.info.get("cmdline") or []:
+                            if "overlay.qcow2" in arg:
+                                if arg.startswith("file="):
+                                    arg = arg.split("=", 1)[1]
+                                tmp_dirs.add(str(Path(arg).parent))
+                        p.kill()
+                        p.wait(timeout=5)
+                        removed_vms += 1
+                    except Exception:
+                        logger.exception("failed to terminate qemu %s", p.pid)
+            for d in tmp_dirs:
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    logger.exception("temporary directory removal failed for %s", d)
+        except Exception as exc:
+            logger.debug("qemu process cleanup failed: %s", exc)
+
+    tmp_root = Path(tempfile.gettempdir())
+    try:
+        for overlay in tmp_root.rglob("overlay.qcow2"):
+            try:
+                logger.info("removing leftover overlay %s", overlay)
+            except Exception:
+                pass
+            try:
+                overlay.unlink()
+                removed_vms += 1
+            except Exception:
+                logger.exception("failed to remove overlay %s", overlay)
+            try:
+                shutil.rmtree(overlay.parent, ignore_errors=True)
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", overlay.parent)
+    except Exception as exc:
+        logger.debug("overlay cleanup failed: %s", exc)
+
+    _STALE_VMS_REMOVED += removed_vms
+    if record_runtime:
+        _RUNTIME_VMS_REMOVED += removed_vms
+    return removed_vms
+
+
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
-    global _STALE_CONTAINERS_REMOVED, _STALE_VMS_REMOVED
+    global _STALE_CONTAINERS_REMOVED
     removed_containers = 0
-    removed_vms = 0
     try:
         ids = _read_active_containers()
         for cid in ids:
@@ -438,58 +497,9 @@ def purge_leftovers() -> None:
     except Exception as exc:
         logger.debug("leftover container cleanup failed: %s", exc)
 
-    if psutil is not None:
-        try:
-            tmp_dirs: set[str] = set()
-            for p in psutil.process_iter(["name", "cmdline"]):
-                name = p.info.get("name") or ""
-                if name.startswith("qemu-system"):
-                    try:
-                        logger.info("terminating stale qemu process %s", p.pid)
-                    except Exception:
-                        pass
-                    try:
-                        for arg in p.info.get("cmdline") or []:
-                            if "overlay.qcow2" in arg:
-                                if arg.startswith("file="):
-                                    arg = arg.split("=", 1)[1]
-                                tmp_dirs.add(str(Path(arg).parent))
-                        p.kill()
-                        p.wait(timeout=5)
-                        removed_vms += 1
-                    except Exception:
-                        logger.exception("failed to terminate qemu %s", p.pid)
-            for d in tmp_dirs:
-                try:
-                    shutil.rmtree(d, ignore_errors=True)
-                except Exception:
-                    logger.exception(
-                        "temporary directory removal failed for %s", d
-                    )
-        except Exception as exc:
-            logger.debug("qemu process cleanup failed: %s", exc)
-
-    tmp_root = Path(tempfile.gettempdir())
-    try:
-        for overlay in tmp_root.rglob("overlay.qcow2"):
-            try:
-                logger.info("removing leftover overlay %s", overlay)
-            except Exception:
-                pass
-            try:
-                overlay.unlink()
-                removed_vms += 1
-            except Exception:
-                logger.exception("failed to remove overlay %s", overlay)
-            try:
-                shutil.rmtree(overlay.parent, ignore_errors=True)
-            except Exception:
-                logger.exception("temporary directory removal failed for %s", overlay.parent)
-    except Exception as exc:
-        logger.debug("overlay cleanup failed: %s", exc)
+    removed_vms = _purge_stale_vms()
 
     _STALE_CONTAINERS_REMOVED += removed_containers
-    _STALE_VMS_REMOVED += removed_vms
 
 
 def _docker_available() -> bool:
@@ -700,6 +710,8 @@ def collect_metrics(
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
     result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
     result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
+    result["cleanup_failures"] = float(_CLEANUP_FAILURES)
+    result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     return result
 
 
@@ -733,8 +745,28 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 logger.error("failed to remove container %s: %s", cid, exc)
             else:
                 time.sleep(base_delay * (2 ** attempt))
+
+    exists = False
     if cid:
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                exists = True
+        except Exception as exc:  # pragma: no cover - unexpected runtime issues
+            logger.debug("container existence check failed for %s: %s", cid, exc)
+
+    if cid and not exists:
         _remove_active_container(cid)
+    elif cid and exists:
+        global _CLEANUP_FAILURES
+        _CLEANUP_FAILURES += 1
+        logger.error("container %s still exists after removal attempts", cid)
 
 
 def _log_pool_metrics(image: str) -> None:
@@ -878,6 +910,7 @@ async def _cleanup_worker() -> None:
                 cleaned, replaced = _cleanup_idle_containers()
                 total_cleaned += cleaned
                 total_replaced += replaced
+                vm_removed = _purge_stale_vms(record_runtime=True)
                 if cleaned:
                     logger.info(
                         "cleaned %d idle containers (total %d)", cleaned, total_cleaned
@@ -887,6 +920,12 @@ async def _cleanup_worker() -> None:
                         "replaced %d unhealthy containers (total %d)",
                         replaced,
                         total_replaced,
+                    )
+                if vm_removed:
+                    logger.info(
+                        "removed %d stale VM files (total %d)",
+                        vm_removed,
+                        _RUNTIME_VMS_REMOVED,
                     )
             except Exception:
                 logger.exception("idle container cleanup failed")
