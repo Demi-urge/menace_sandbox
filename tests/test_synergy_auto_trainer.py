@@ -474,3 +474,24 @@ def test_iteration_failure_retries(monkeypatch, tmp_path: Path) -> None:
 
     data = json.loads(progress_file.read_text())
     assert data["last_id"] == 2
+
+
+def test_missing_files_created(monkeypatch, tmp_path: Path, caplog) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
+    caplog.set_level(logging.WARNING)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=tmp_path / "missing_history.db",
+        weights_file=tmp_path / "missing_weights.json",
+        progress_file=tmp_path / "progress.json",
+        interval=0.1,
+    )
+
+    assert trainer.history_file == data_dir / "missing_history.db"
+    assert trainer.weights_file == data_dir / "missing_weights.json"
+    assert trainer.history_file.exists()
+    assert trainer.weights_file.exists()
+    assert "missing - created empty file" in caplog.text
