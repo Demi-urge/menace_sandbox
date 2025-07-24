@@ -5,6 +5,10 @@ import socket
 import time
 import urllib.request
 from pathlib import Path
+import os
+import sys
+import subprocess
+import signal
 import pytest
 
 
@@ -250,3 +254,52 @@ def test_run_autonomous_starts_exporter(monkeypatch, tmp_path: Path) -> None:
 
     me = importlib.import_module("menace.metrics_exporter")
     me.stop_metrics_server()
+
+
+def test_cli_standalone(monkeypatch, tmp_path: Path) -> None:
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.42}),),
+    )
+    conn.commit()
+    conn.close()
+
+    port = _free_port()
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root.parent) + os.pathsep + env.get("PYTHONPATH", "")
+    script = f"""
+import importlib.util, sys, os
+root = r'{root}'
+parent = os.path.dirname(root)
+sys.path.insert(0, parent)
+sys.path.insert(1, root)
+spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))
+mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+sys.modules.setdefault('menace', mod)
+spec = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))
+mod2 = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod2)
+mod2.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '0.05'])
+"""
+    proc = subprocess.Popen([sys.executable, "-c", script], env=env)
+    try:
+        metrics = {}
+        for _ in range(50):
+            try:
+                data = urllib.request.urlopen(f"http://localhost:{port}/metrics").read().decode()
+                metrics = _parse_metrics(data)
+                if metrics.get("synergy_roi") == 0.42:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.05)
+        assert metrics.get("synergy_roi") == 0.42
+    finally:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=5)
+    assert proc.returncode == 0

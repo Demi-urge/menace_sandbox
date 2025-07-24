@@ -150,6 +150,14 @@ from menace.synergy_exporter import start_synergy_exporter
 start_synergy_exporter(history_file="sandbox_data/synergy_history.db", port=8003)
 ```
 
+The module also provides a small command line interface:
+
+```bash
+python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db --port 8003
+```
+
+Use `--interval` to change the polling frequency.
+
 A minimal Prometheus configuration to scrape the exporter looks like this:
 
 ```yaml

@@ -266,6 +266,14 @@ values on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` (default port
 for an explanation of the exported metrics and how the synergy weights influence
 ROI.
 
+Alternatively start the exporter directly from the command line:
+
+```bash
+python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db --port 8003
+```
+
+Use `--interval` to change how often the history file is scanned for updates.
+
 ### Synergy dashboard
 
 The history can also be viewed in a small dashboard. Start it with
