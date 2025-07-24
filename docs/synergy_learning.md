@@ -106,6 +106,13 @@ The helper CLI directly edits `synergy_weights.json` and records each change in
 These commands modify the file in place so subsequent sandbox runs pick up the
 new weights automatically.
 
+## Visualising weight history
+
+`sandbox_dashboard.py` reads `sandbox_data/synergy_weights.log` and exposes the
+recorded values at `/weights`. When you open the dashboard root page it shows a
+Chart.js graph of how each weight has changed over time. Use this view to track
+training progress alongside ROI metrics.
+
 ## Weight update walkthrough
 
 1. Each iteration the ROI tracker stores the latest synergy metrics in
