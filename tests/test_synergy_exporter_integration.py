@@ -116,3 +116,80 @@ mod2.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '
     assert proc.returncode == 0
     assert trainer._thread is not None
     assert not trainer._thread.is_alive()
+
+
+def test_synergy_tools_command(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    db_mod = importlib.import_module("menace.synergy_history_db")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = db_mod.connect(hist_file)
+    db_mod.insert_entry(conn, {"synergy_roi": 0.3})
+    conn.close()
+
+    weights_file = tmp_path / "synergy_weights.json"
+    weights_file.write_text("{}")
+
+    port = _free_port()
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(root.parent) + os.pathsep + env.get("PYTHONPATH", "")
+    env["EXPORT_SYNERGY_METRICS"] = "1"
+    env["AUTO_TRAIN_SYNERGY"] = "1"
+    env["AUTO_TRAIN_INTERVAL"] = "0.05"
+    env["SYNERGY_METRICS_PORT"] = str(port)
+
+    script = f"""
+import importlib.util, sys, os, json
+root = r'{root}'
+parent = os.path.dirname(root)
+sys.path.insert(0, parent)
+sys.path.insert(1, root)
+spec = importlib.util.spec_from_file_location('menace', os.path.join(root, '__init__.py'))
+menace_mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(menace_mod)
+sys.modules.setdefault('menace', menace_mod)
+spec = importlib.util.spec_from_file_location('menace.synergy_auto_trainer', os.path.join(root, 'synergy_auto_trainer.py'))
+sat = importlib.util.module_from_spec(spec); spec.loader.exec_module(sat)
+spec2 = importlib.util.spec_from_file_location('menace.synergy_exporter', os.path.join(root, 'synergy_exporter.py'))
+se = importlib.util.module_from_spec(spec2); spec2.loader.exec_module(se)
+import types
+a_mod = types.ModuleType('menace.audit_trail')
+class DummyTrail:
+    def __init__(self, path, private_key=None):
+        self.path = path
+    def record(self, message):
+        pass
+a_mod.AuditTrail = DummyTrail
+sys.modules['menace.audit_trail'] = a_mod
+spec3 = importlib.util.spec_from_file_location('synergy_tools', os.path.join(root, 'synergy_tools.py'))
+tools = importlib.util.module_from_spec(spec3); spec3.loader.exec_module(tools)
+log_file = os.path.join(r'{tmp_path}', 'called.json')
+def fake_cli(args):
+    with open(log_file, 'w') as fh:
+        json.dump(list(args), fh)
+    return 0
+sat.synergy_weight_cli.cli = fake_cli
+tools.main(['--sandbox-data-dir', r'{tmp_path}'])
+"""
+
+    proc = subprocess.Popen([sys.executable, "-c", script], env=env, cwd=tmp_path)
+    try:
+        metrics = {}
+        for _ in range(60):
+            try:
+                data = urllib.request.urlopen(f"http://localhost:{port}/metrics").read().decode()
+                metrics = _parse_metrics(data)
+                if metrics.get("synergy_roi") == 0.3:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.05)
+        assert metrics.get("synergy_roi") == 0.3
+    finally:
+        proc.send_signal(signal.SIGINT)
+        proc.wait(timeout=5)
+
+    assert proc.returncode == 0
+    call_path = tmp_path / "called.json"
+    assert call_path.exists()
+    args = json.loads(call_path.read_text())
+    assert "train" in args
