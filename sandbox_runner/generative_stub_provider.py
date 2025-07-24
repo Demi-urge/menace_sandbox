@@ -83,7 +83,15 @@ _CACHE.update(_load_cache())
 def _atexit_save_cache() -> None:
     """Persist the cache on shutdown without blocking the event loop."""
     try:
-        asyncio.run(asyncio.to_thread(_save_cache))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None or loop.is_closed():
+            _save_cache()
+        else:
+            loop.run_until_complete(asyncio.to_thread(_save_cache))
     except Exception:
         logger.exception("cache save failed")
 

@@ -3,11 +3,14 @@ import os
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 import asyncio
+import subprocess
+import sys
 import sandbox_runner.generative_stub_provider as gsp
 import importlib
 import time
 import pytest
 import logging
+from pathlib import Path
 
 class DummyGen:
     def __init__(self):
@@ -220,3 +223,33 @@ def test_generated_stub_bad_type(monkeypatch, tmp_path, caplog):
 
     assert res == [{"x": 0, "y": 0}]
     assert "invalid stub generated" in caplog.text
+
+
+def test_import_exit_no_errors(tmp_path):
+    cache = tmp_path / "cache.json"
+    test_file = tmp_path / "t.py"
+    test_file.write_text(
+        "import sandbox_runner.generative_stub_provider\n"
+        "def test_dummy():\n    pass\n"
+    )
+
+    root = Path(__file__).resolve().parents[1]
+    parent = root.parent
+    env = os.environ.copy()
+    env.update(
+        {
+            "MENACE_LIGHT_IMPORTS": "1",
+            "SANDBOX_STUB_CACHE": str(cache),
+            "PYTHONPATH": os.pathsep.join([str(parent), str(root)]),
+        }
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", str(test_file), "-q"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(root),
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
