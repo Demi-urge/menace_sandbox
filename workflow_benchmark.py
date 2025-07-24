@@ -51,18 +51,27 @@ def benchmark_workflow(
         success = False
     duration = perf_counter() - start
     cpu_time = 0.0
+    cpu_user = 0.0
+    cpu_system = 0.0
     mem_delta = 0.0
+    mem_peak = 0.0
     net_delta = 0.0
     disk_read = 0.0
     disk_write = 0.0
     if proc and cpu_start:
         end_times = proc.cpu_times()
-        cpu_time = float(
-            (end_times.user + end_times.system) - (cpu_start.user + cpu_start.system)
-        )
+        cpu_user = float(end_times.user - cpu_start.user)
+        cpu_system = float(end_times.system - cpu_start.system)
+        cpu_time = cpu_user + cpu_system
         mem_end = proc.memory_info().rss
         mem_delta = float(max(mem_end - mem_start, 0)) / (1024 * 1024)
         mem_usage = float(mem_end) / (1024 * 1024)
+        try:
+            mem_peak = float(getattr(proc.memory_info(), "peak_wset", mem_end)) / (
+                1024 * 1024
+            )
+        except Exception:
+            mem_peak = mem_usage
     if psutil and net_start:
         end_net = psutil.net_io_counters()
         net_delta = float(
@@ -81,9 +90,12 @@ def benchmark_workflow(
             metrics_db.log_eval(name, "latency", latency)
             metrics_db.log_eval(name, "success", 1.0 if success else 0.0)
             metrics_db.log_eval(name, "cpu_time", cpu_time)
+            metrics_db.log_eval(name, "cpu_user_time", cpu_user)
+            metrics_db.log_eval(name, "cpu_system_time", cpu_system)
             metrics_db.log_eval(name, "cpu_percent", cpu_percent)
             metrics_db.log_eval(name, "memory_delta", mem_delta)
             metrics_db.log_eval(name, "memory_usage", mem_usage)
+            metrics_db.log_eval(name, "memory_peak", mem_peak)
             metrics_db.log_eval(name, "net_io", net_delta)
             metrics_db.log_eval(name, "disk_read", disk_read)
             metrics_db.log_eval(name, "disk_write", disk_write)
@@ -111,6 +123,8 @@ def benchmark_workflow(
             metrics_db.log_eval(name, "latency_p95", p95)
             if np is not None:
                 median = float(np.median(vals)) if vals else latency
+                lat_min = float(np.min(vals)) if vals else latency
+                lat_max = float(np.max(vals)) if vals else latency
             else:
                 if vals:
                     vals_sorted = sorted(vals)
@@ -119,17 +133,28 @@ def benchmark_workflow(
                         median = float(vals_sorted[mid])
                     else:
                         median = float((vals_sorted[mid - 1] + vals_sorted[mid]) / 2.0)
+                    lat_min = float(vals_sorted[0])
+                    lat_max = float(vals_sorted[-1])
                 else:
                     median = latency
+                    lat_min = latency
+                    lat_max = latency
             metrics_db.log_eval(name, "latency_median", median)
+            metrics_db.log_eval(name, "latency_min", lat_min)
+            metrics_db.log_eval(name, "latency_max", lat_max)
             if me:
                 me.workflow_latency_p95_gauge.labels(name).set(p95)
                 me.workflow_latency_median_gauge.labels(name).set(median)
+                me.workflow_latency_min_gauge.labels(name).set(lat_min)
+                me.workflow_latency_max_gauge.labels(name).set(lat_max)
                 me.workflow_duration_gauge.labels(name).set(duration)
                 me.workflow_cpu_percent_gauge.labels(name).set(cpu_percent)
                 me.workflow_memory_gauge.labels(name).set(mem_delta)
                 me.workflow_memory_usage_gauge.labels(name).set(mem_usage)
+                me.workflow_peak_memory_gauge.labels(name).set(mem_peak)
                 me.workflow_cpu_time_gauge.labels(name).set(cpu_time)
+                me.workflow_cpu_user_time_gauge.labels(name).set(cpu_user)
+                me.workflow_cpu_system_time_gauge.labels(name).set(cpu_system)
                 me.workflow_net_io_gauge.labels(name).set(net_delta)
                 me.workflow_disk_read_gauge.labels(name).set(disk_read)
                 me.workflow_disk_write_gauge.labels(name).set(disk_write)
@@ -254,12 +279,17 @@ def benchmark_registered_workflows(
         metrics_to_test = [
             "duration",
             "cpu_time",
+            "cpu_user_time",
+            "cpu_system_time",
             "memory_delta",
             "memory_usage",
+            "memory_peak",
             "cpu_percent",
             "latency",
             "latency_p95",
             "latency_median",
+            "latency_min",
+            "latency_max",
             "net_io",
             "disk_read",
             "disk_write",
@@ -280,13 +310,19 @@ def benchmark_registered_workflows(
                 p_val = 1.0
             metrics_db.log_eval(name, f"{metric}_pvalue", float(p_val))
             tracker.metrics_history.setdefault(f"{metric}_pvalue", []).append(float(p_val))
-            if me and metric in ("latency_p95", "latency_median"):
-                gauge = (
-                    me.workflow_latency_p95_gauge
-                    if metric == "latency_p95"
-                    else me.workflow_latency_median_gauge
-                )
-                gauge.labels(name).set(new_vals[-1] if new_vals else 0.0)
+            if me:
+                gauge_map = {
+                    "latency_p95": me.workflow_latency_p95_gauge,
+                    "latency_median": me.workflow_latency_median_gauge,
+                    "latency_min": me.workflow_latency_min_gauge,
+                    "latency_max": me.workflow_latency_max_gauge,
+                    "memory_peak": me.workflow_peak_memory_gauge,
+                    "cpu_user_time": me.workflow_cpu_user_time_gauge,
+                    "cpu_system_time": me.workflow_cpu_system_time_gauge,
+                }
+                gauge = gauge_map.get(metric)
+                if gauge is not None:
+                    gauge.labels(name).set(new_vals[-1] if new_vals else 0.0)
 
 
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
