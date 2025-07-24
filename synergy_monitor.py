@@ -104,3 +104,77 @@ class ExporterMonitor:
             if not _exporter_health_ok(self.exporter):
                 self._restart()
             self._stop.wait(self.interval)
+
+
+TRAINER_CHECK_INTERVAL = float(os.getenv("SYNERGY_TRAINER_CHECK_INTERVAL", "10"))
+
+
+class AutoTrainerMonitor:
+    """Background monitor to keep the auto trainer running."""
+
+    def __init__(
+        self,
+        trainer: "SynergyAutoTrainer",
+        log: AuditTrail,
+        *,
+        interval: float = TRAINER_CHECK_INTERVAL,
+    ) -> None:
+        from menace.synergy_auto_trainer import SynergyAutoTrainer
+
+        self.trainer: SynergyAutoTrainer = trainer
+        self.log = log
+        self.interval = float(interval)
+        self.restart_count = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        try:
+            self.trainer.stop()
+        except Exception:
+            logger.exception("failed to stop synergy auto trainer")
+
+    def _restart(self) -> None:
+        from menace.synergy_auto_trainer import SynergyAutoTrainer
+
+        try:
+            self.trainer.stop()
+        except Exception:
+            logger.exception("failed to stop synergy auto trainer")
+        try:
+            self.trainer = SynergyAutoTrainer(
+                history_file=str(self.trainer.history_file),
+                weights_file=str(self.trainer.weights_file),
+                interval=self.trainer.interval,
+                progress_file=str(self.trainer.progress_file),
+            )
+            self.trainer.start()
+            self.restart_count += 1
+            self.log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "auto_trainer_restarted",
+                    "restart_count": self.restart_count,
+                }
+            )
+        except Exception as exc:
+            logger.warning("failed to restart synergy auto trainer: %s", exc)
+            self.log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "auto_trainer_restart_failed",
+                    "error": str(exc),
+                }
+            )
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if self.trainer._thread is None or not self.trainer._thread.is_alive():
+                self._restart()
+            self._stop.wait(self.interval)

@@ -116,7 +116,7 @@ from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db
-from synergy_monitor import ExporterMonitor
+from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
@@ -648,6 +648,7 @@ def main(argv: List[str] | None = None) -> None:
 
     synergy_exporter: SynergyExporter | None = None
     exporter_monitor: ExporterMonitor | None = None
+    trainer_monitor: AutoTrainerMonitor | None = None
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
         port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
         if not _port_available(port):
@@ -694,7 +695,9 @@ def main(argv: List[str] | None = None) -> None:
         )
         try:
             auto_trainer.start()
-            cleanup_funcs.append(auto_trainer.stop)
+            trainer_monitor = AutoTrainerMonitor(auto_trainer, exporter_log)
+            trainer_monitor.start()
+            cleanup_funcs.append(trainer_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy auto trainer: %s", exc)
 
@@ -1016,6 +1019,19 @@ def main(argv: List[str] | None = None) -> None:
             )
         except Exception:
             logger.exception("failed to stop synergy exporter")
+
+    if trainer_monitor is not None:
+        try:
+            trainer_monitor.stop()
+            exporter_log.record(
+                {
+                    "timestamp": int(time.time()),
+                    "event": "auto_trainer_stopped",
+                    "restart_count": trainer_monitor.restart_count,
+                }
+            )
+        except Exception:
+            logger.exception("failed to stop synergy auto trainer")
 
     if history_conn is not None:
         history_conn.close()
