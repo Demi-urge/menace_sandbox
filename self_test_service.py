@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from asyncio import Lock
+from filelock import FileLock
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
 
 _container_lock = Lock()
+_file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
 
 
 class SelfTestService:
@@ -299,13 +301,21 @@ class SelfTestService:
 
     async def _cleanup_containers(self) -> None:
         """Remove containers labelled for self tests and exit."""
+        acquired = False
         try:
+            _file_lock.acquire()
+            acquired = True
             if await self._docker_available():
                 await self._remove_stale_containers()
         finally:
             if self._lock_acquired:
                 _container_lock.release()
                 self._lock_acquired = False
+            if acquired:
+                try:
+                    _file_lock.release()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     async def _run_once(self) -> None:
@@ -334,8 +344,12 @@ class SelfTestService:
         proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
 
         use_container = False
+        acquired = False
         try:
-            use_container = self.use_container and await self._docker_available()
+            if self.use_container:
+                _file_lock.acquire()
+                acquired = True
+                use_container = await self._docker_available()
             if use_container:
                 await self._remove_stale_containers()
             use_pipe = self.result_callback is not None or use_container
@@ -641,6 +655,11 @@ class SelfTestService:
             if self._lock_acquired:
                 _container_lock.release()
                 self._lock_acquired = False
+            if acquired:
+                try:
+                    _file_lock.release()
+                except Exception:
+                    pass
 
     async def _schedule_loop(self, interval: float) -> None:
         assert self._async_stop is not None
