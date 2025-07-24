@@ -278,6 +278,11 @@ workflow_latency_p95_gauge = Gauge(
     "95th percentile latency for recent runs",
     labelnames=["workflow"],
 )
+workflow_latency_median_gauge = Gauge(
+    "workflow_latency_median_seconds",
+    "Median workflow latency",
+    labelnames=["workflow"],
+)
 
 # Additional counters for failure visibility
 error_bot_exceptions = Gauge(
@@ -359,4 +364,5 @@ __all__ = [
     "workflow_disk_read_gauge",
     "workflow_disk_write_gauge",
     "workflow_latency_p95_gauge",
+    "workflow_latency_median_gauge",
 ]

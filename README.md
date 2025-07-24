@@ -831,8 +831,9 @@ additionally inspects Terraform directories and host lists to set
 
 Run `start_metrics_server(8001)` before executing `benchmark_registered_workflows()`
 to publish metrics that Grafana can chart in real time. The dashboard examples in
-[docs/metrics_dashboard.md](docs/metrics_dashboard.md) show how to track ROI and
-resource usage over time.
+[docs/metrics_dashboard.md](docs/metrics_dashboard.md) show how to track ROI,
+resource usage and latency statistics like the new median latency gauge over
+time.
 
 ### New autonomous helpers
 - `VaultSecretProvider` fetches and caches secrets from an optional remote vault.

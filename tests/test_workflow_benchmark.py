@@ -16,6 +16,13 @@ class DummyNP(types.ModuleType):
         f = int(k)
         return float(data[f])
 
+    def median(self, data):
+        data = sorted(data)
+        mid = len(data) // 2
+        if len(data) % 2:
+            return float(data[mid])
+        return float((data[mid - 1] + data[mid]) / 2)
+
     def abs(self, arr):
         return [abs(x) for x in arr]
 
@@ -117,8 +124,10 @@ def test_registered_workflow_metrics(monkeypatch, tmp_path):
     assert "memory_delta" in tracker.metrics_history
     assert "memory_usage" in tracker.metrics_history
     assert "latency" in tracker.metrics_history
+    assert "latency_median" in tracker.metrics_history
     rows = mdb.fetch_eval("ok")
     pvalue_metrics = {r[1] for r in rows if r[1].endswith("_pvalue")}
     assert "duration_pvalue" in pvalue_metrics
     assert "cpu_time_pvalue" in pvalue_metrics
     assert "memory_usage_pvalue" in pvalue_metrics
+    assert "latency_median_pvalue" in pvalue_metrics

@@ -19,7 +19,9 @@ Add the port to your Prometheus `scrape_configs` and the gauges will
 appear under names such as `learning_cv_score` and
 `evolution_cycle_count`. Workflow benchmarking exposes
 `workflow_cpu_time_seconds`, `workflow_memory_usage_mb`,
-`workflow_network_bytes` and disk I/O gauges for real-time dashboards.
+`workflow_network_bytes`, latency percentiles and disk I/O gauges for
+real-time dashboards. The median latency is exported via
+`workflow_latency_median_seconds`.
 
 ## Dashboard Options
 
