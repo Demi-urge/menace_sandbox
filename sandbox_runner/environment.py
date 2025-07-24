@@ -290,6 +290,7 @@ _CONTAINER_CREATED: Dict[str, float] = {}
 _POOL_LOCK = threading.Lock()
 _WARMUP_TASKS: Dict[str, Any] = {}
 _CLEANUP_TASK: Any | None = None
+_REAPER_TASK: Any | None = None
 
 _BACKGROUND_LOOP: asyncio.AbstractEventLoop | None = None
 _BACKGROUND_THREAD: threading.Thread | None = None
@@ -862,6 +863,42 @@ def _cleanup_idle_containers() -> tuple[int, int]:
     return cleaned, replaced
 
 
+def _reap_orphan_containers() -> int:
+    """Remove containers labeled with :data:`_POOL_LABEL` not in the pool."""
+    if _DOCKER_CLIENT is None:
+        return 0
+    try:
+        containers = _DOCKER_CLIENT.containers.list(
+            all=True, filters={"label": f"{_POOL_LABEL}=1"}
+        )
+    except Exception as exc:  # pragma: no cover - docker may be unavailable
+        logger.warning("orphan container listing failed: %s", exc)
+        return 0
+    active = {c.id for pool in _CONTAINER_POOLS.values() for c in pool}
+    removed = 0
+    for c in list(containers):
+        if c.id in active:
+            continue
+        try:
+            _verify_container(c)
+        except Exception:
+            pass
+        _stop_and_remove(c)
+        removed += 1
+        with _POOL_LOCK:
+            td = _CONTAINER_DIRS.pop(c.id, None)
+        if td:
+            try:
+                shutil.rmtree(td)
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", td)
+        with _POOL_LOCK:
+            _CONTAINER_LAST_USED.pop(c.id, None)
+            _CONTAINER_CREATED.pop(c.id, None)
+        _CLEANUP_METRICS["orphan"] += 1
+    return removed
+
+
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
@@ -897,11 +934,33 @@ async def _cleanup_worker() -> None:
         raise
 
 
+async def _reaper_worker() -> None:
+    """Background task to reap orphan containers."""
+    total_removed = 0
+    try:
+        while True:
+            await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            try:
+                removed = _reap_orphan_containers()
+                total_removed += removed
+                if removed:
+                    logger.info(
+                        "reaped %d orphan containers (total %d)", removed, total_removed
+                    )
+            except Exception:
+                logger.exception("orphan container cleanup failed")
+    except asyncio.CancelledError:  # pragma: no cover - cancellation path
+        logger.debug("reaper worker cancelled")
+        raise
+
+
 def _cleanup_pools() -> None:
     """Stop and remove pooled containers and stale ones."""
-    global _CLEANUP_TASK
+    global _CLEANUP_TASK, _REAPER_TASK
     if _CLEANUP_TASK:
         _await_cleanup_task()
+    if _REAPER_TASK:
+        _await_reaper_task()
     for t in list(_WARMUP_TASKS.values()):
         t.cancel()
     _WARMUP_TASKS.clear()
@@ -973,6 +1032,26 @@ def _await_cleanup_task() -> None:
     _CLEANUP_TASK = None
 
 
+def _await_reaper_task() -> None:
+    """Cancel ``_REAPER_TASK`` if running and await completion."""
+    global _REAPER_TASK
+    task = _REAPER_TASK
+    if not task:
+        return
+    try:
+        loop = getattr(task, "get_loop", lambda: None)()
+    except Exception:
+        loop = None
+    if loop is not None and loop.is_running():
+        loop.call_soon_threadsafe(task.cancel)
+    else:
+        try:
+            task.cancel()
+        except Exception:
+            pass
+    _REAPER_TASK = None
+
+
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
     global _CLEANUP_TASK
@@ -981,6 +1060,29 @@ def ensure_cleanup_worker() -> None:
     task = _CLEANUP_TASK
     if task is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        if _REAPER_TASK is None:
+            _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        return
+    try:
+        done = task.done()
+    except Exception:
+        done = True
+    if not done:
+        if _REAPER_TASK is None:
+            _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        return
+    cancelled = False
+    exc = None
+    try:
+        cancelled = task.cancelled()
+        exc = task.exception()
+    except Exception:
+        pass
+    if cancelled or exc is not None:
+        _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+    task = _REAPER_TASK
+    if task is None:
+        _REAPER_TASK = _schedule_coroutine(_reaper_worker())
         return
     try:
         done = task.done()
@@ -996,7 +1098,7 @@ def ensure_cleanup_worker() -> None:
     except Exception:
         pass
     if cancelled or exc is not None:
-        _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        _REAPER_TASK = _schedule_coroutine(_reaper_worker())
 
 import atexit
 
@@ -1007,7 +1109,10 @@ if _DOCKER_CLIENT is not None:
     _ensure_pool_size_async(default_img)
     if _CLEANUP_TASK is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+    if _REAPER_TASK is None:
+        _REAPER_TASK = _schedule_coroutine(_reaper_worker())
     atexit.register(_await_cleanup_task)
+    atexit.register(_await_reaper_task)
 
 atexit.register(_cleanup_pools)
 
