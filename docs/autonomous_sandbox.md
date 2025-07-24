@@ -365,6 +365,22 @@ python -m menace.synergy_exporter --history-file /var/menace/synergy_history.db 
 - `SYNERGY_METRICS_PORT=8003` – exporter HTTP port.
 - `SYNERGY_EXPORTER_CHECK_INTERVAL=10` – health check interval.
 
+### Standalone synergy-tools
+
+Use the `synergy_tools.py` helper to run the exporter and trainer without
+starting the full sandbox:
+
+```bash
+export AUTO_TRAIN_SYNERGY=1
+export EXPORT_SYNERGY_METRICS=1
+export AUTO_TRAIN_INTERVAL=600
+export SYNERGY_METRICS_PORT=8003
+python synergy_tools.py --sandbox-data-dir sandbox_data
+```
+
+Press <kbd>Ctrl+C</kbd> to stop both services. The same environment variables are
+respected as when running `run_autonomous.py`.
+
 ### Troubleshooting synergy services
 
 - **Port already in use** – adjust `SYNERGY_METRICS_PORT` or use `--port` when
