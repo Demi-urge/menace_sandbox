@@ -9,6 +9,16 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 import os
 import logging
+import time
+
+from .resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    PublishError,
+    ResilienceError,
+    retry_with_backoff,
+)
+from .logging_utils import set_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +58,10 @@ class ContentItem:
     industry: str = ""
 
 
+class DiscoveryError(ResilienceError):
+    """Raised when passive discovery fails permanently."""
+
+
 class PassiveDiscoveryBot:
     """Passive network of crawlers fetching idea related content."""
 
@@ -81,6 +95,7 @@ class PassiveDiscoveryBot:
             "scalable",
             "infrastructure",
         ]
+        self._circuit = CircuitBreaker()
 
     def _apply_prediction_bots(self, base: float, feats: Iterable[float]) -> float:
         """Combine predictions from assigned bots."""
@@ -119,11 +134,25 @@ class PassiveDiscoveryBot:
         self.keywords = data
 
     async def _fetch(self, url: str, params: Optional[dict[str, str]] = None) -> str:
+        """Fetch ``url`` using retry and circuit breaker."""
+
+        def _do() -> str:
+            resp = self.session.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            return resp.text
+
         try:
-            resp = await asyncio.to_thread(self.session.get, url, params=params, timeout=10)
-        except Exception:
+            return await asyncio.to_thread(
+                lambda: retry_with_backoff(
+                    lambda: self._circuit.call(_do), logger=logger
+                )
+            )
+        except CircuitOpenError as exc:
+            logger.error("fetch circuit open for %s: %s", url, exc)
+            raise DiscoveryError("circuit open") from exc
+        except Exception as exc:
+            logger.error("fetch failed for %s", url, exc_info=True)
             return ""
-        return resp.text if resp.status_code == 200 else ""
 
     async def _fetch_reddit(self) -> List[ContentItem]:
         text = await self._fetch("https://www.reddit.com/r/Entrepreneur/top.json")
@@ -277,23 +306,30 @@ class PassiveDiscoveryBot:
         quick-return phrases while higher values prefer long term or scalable
         concepts.
         """
-        tasks = [
-            self._fetch_reddit(),
-            self._fetch_twitter(),
-            self._fetch_substack(),
-            self._fetch_quora(),
-            self._fetch_indie_hackers(),
-            self._fetch_blogs(),
-        ]
-        results = await asyncio.gather(*tasks)
-        items = [i for sub in results for i in sub]
-        processed = [self._process(i) for i in items]
-        if energy is not None:
-            terms = self.quick_terms if energy < 0.5 else self.scale_terms
-            filtered = [i for i in processed if any(t in i.text.lower() for t in terms)]
-            if filtered:
-                processed = filtered
-        return processed
+        cid = f"discovery-{int(time.time() * 1000)}"
+        set_correlation_id(cid)
+        try:
+            tasks = [
+                self._fetch_reddit(),
+                self._fetch_twitter(),
+                self._fetch_substack(),
+                self._fetch_quora(),
+                self._fetch_indie_hackers(),
+                self._fetch_blogs(),
+            ]
+            results = await asyncio.gather(*tasks)
+            items = [i for sub in results for i in sub]
+            processed = [self._process(i) for i in items]
+            if energy is not None:
+                terms = self.quick_terms if energy < 0.5 else self.scale_terms
+                filtered = [
+                    i for i in processed if any(t in i.text.lower() for t in terms)
+                ]
+                if filtered:
+                    processed = filtered
+            return processed
+        finally:
+            set_correlation_id(None)
 
     async def run_cycle(self, delay: int = 3600) -> None:
         while True:
@@ -311,10 +347,26 @@ def send_to_stage2(item: ContentItem) -> None:
     except Exception:  # pragma: no cover - optional
         return
     url = os.getenv("STAGE2_URL", "http://localhost:8000/stage2")
+
+    circuit = send_to_stage2._circuit  # type: ignore[attr-defined]
+
+    def _post() -> object:
+        return requests.post(url, json=item.__dict__, timeout=5)
+
+    cid = f"stage2-{int(time.time() * 1000)}"
+    set_correlation_id(cid)
     try:
-        requests.post(url, json=item.__dict__, timeout=5)
-    except Exception:  # pragma: no cover - network
-        logging.getLogger(__name__).warning("Failed to forward item to Stage 2")
+        retry_with_backoff(lambda: circuit.call(_post), logger=logging.getLogger(__name__))
+    except CircuitOpenError as exc:
+        logging.getLogger(__name__).error("Stage 2 circuit open: %s", exc)
+        raise PublishError(str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - network
+        logging.getLogger(__name__).warning("Failed to forward item to Stage 2: %s", exc)
+    finally:
+        set_correlation_id(None)
+
+
+send_to_stage2._circuit = CircuitBreaker()  # type: ignore[attr-defined]
 
 
 __all__ = ["ContentItem", "PassiveDiscoveryBot", "send_to_stage2"]
