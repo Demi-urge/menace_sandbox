@@ -21,28 +21,39 @@ Follow these steps when launching the sandbox for the first time:
    sudo apt install ffmpeg tesseract-ocr chromium-browser qemu-system-x86
    ```
 
-3. **Install Python packages**. Use the helper script which installs
+3. **Run the personal setup script** which installs Python packages,
+   verifies optional tools and creates a `.env` file:
+
+   ```bash
+   scripts/setup_personal.sh
+   ```
+
+   The script wraps `setup_env.sh` and `setup_dependencies.py` and fails if
+   `ffmpeg`, `tesseract`, `qemu-system-x86_64` or `docker` are missing.
+   When used, you can skip steps 4–7 below.
+
+4. **Install Python packages**. Use the helper script which installs
    everything from `requirements.txt` and sets up a development environment:
 
    ```bash
    ./setup_env.sh
    ```
 
-4. **Install optional packages** used by reinforcement learning and the
+5. **Install optional packages** used by reinforcement learning and the
    metrics dashboard:
 
    ```bash
    scripts/setup_optional.sh
    ```
 
-5. **Bootstrap the environment** to verify optional dependencies and
+6. **Bootstrap the environment** to verify optional dependencies and
    install anything missing:
 
    ```bash
    python scripts/bootstrap_env.py
    ```
 
-6. **Create a `.env` file** with sensible defaults. The easiest way is:
+7. **Create a `.env` file** with sensible defaults. The easiest way is:
 
    ```bash
    python -c 'import auto_env_setup as a; a.ensure_env()'
@@ -50,7 +61,7 @@ Follow these steps when launching the sandbox for the first time:
 
    Edit the resulting `.env` to add missing API keys.
 
-7. **Start the visual agent** in one terminal and the autonomous loop in
+8. **Start the visual agent** in one terminal and the autonomous loop in
    another as described below.
 
 ## System packages
