@@ -371,10 +371,11 @@ python -m menace.synergy_exporter --history-file /var/menace/synergy_history.db 
 - `SYNERGY_METRICS_PORT=8003` – exporter HTTP port.
 - `SYNERGY_EXPORTER_CHECK_INTERVAL=10` – health check interval.
 
-### Standalone synergy-tools
+### Launching `synergy_tools.py` locally
 
-Use the `synergy_tools.py` helper to run the exporter and trainer without
-starting the full sandbox:
+Use the `synergy_tools.py` helper to run the exporter and trainer on a personal
+machine without starting the full sandbox. Set the relevant environment
+variables to enable each service:
 
 ```bash
 export AUTO_TRAIN_SYNERGY=1
@@ -384,8 +385,15 @@ export SYNERGY_METRICS_PORT=8003
 python synergy_tools.py --sandbox-data-dir sandbox_data
 ```
 
+`EXPORT_SYNERGY_METRICS` starts the Prometheus exporter while
+`AUTO_TRAIN_SYNERGY` enables periodic weight training.
+Adjust `AUTO_TRAIN_INTERVAL` or `SYNERGY_METRICS_PORT` to fit your setup.
 Press <kbd>Ctrl+C</kbd> to stop both services. The same environment variables are
 respected as when running `run_autonomous.py`.
+
+Note that the visual agent accepts only a single request at a time.
+If you run the sandbox alongside these tools, wait until `/status` returns
+`{"active": false}` before sending another job.
 
 ### Troubleshooting synergy services
 
