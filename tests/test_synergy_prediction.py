@@ -93,3 +93,44 @@ def test_tracker_delegates_synergy_predictor(monkeypatch):
     val = tracker.predict_synergy()
     assert val == pytest.approx(9.9)
     monkeypatch.delenv("SANDBOX_SYNERGY_MODEL", raising=False)
+
+
+def test_tracker_delegates_lstm_synergy_predictor(monkeypatch):
+    tracker = ROITracker()
+    tracker.metrics_history["synergy_roi"] = [float(i) for i in range(11)]
+
+    class DummyPred:
+        def predict(self, hist):
+            return 8.8
+
+    monkeypatch.setenv("SANDBOX_SYNERGY_MODEL", "lstm")
+    import menace.synergy_predictor as sp
+
+    monkeypatch.setattr(sp, "torch", object())
+    monkeypatch.setattr(sp, "LSTMSynergyPredictor", lambda: DummyPred())
+    val = tracker.predict_synergy()
+    assert val == pytest.approx(8.8)
+    monkeypatch.delenv("SANDBOX_SYNERGY_MODEL", raising=False)
+
+
+def test_tracker_lstm_falls_back_without_torch(monkeypatch):
+    tracker = ROITracker()
+    tracker.metrics_history["synergy_roi"] = [float(i) for i in range(11)]
+
+    class DummyLSTM:
+        def predict(self, hist):
+            raise AssertionError("should not be called")
+
+    class DummyARIMA:
+        def predict(self, hist):
+            return 3.3
+
+    monkeypatch.setenv("SANDBOX_SYNERGY_MODEL", "lstm")
+    import menace.synergy_predictor as sp
+
+    monkeypatch.setattr(sp, "torch", None)
+    monkeypatch.setattr(sp, "LSTMSynergyPredictor", lambda: DummyLSTM())
+    monkeypatch.setattr(sp, "ARIMASynergyPredictor", lambda: DummyARIMA())
+    val = tracker.predict_synergy()
+    assert val == pytest.approx(3.3)
+    monkeypatch.delenv("SANDBOX_SYNERGY_MODEL", raising=False)
