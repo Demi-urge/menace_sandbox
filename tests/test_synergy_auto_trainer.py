@@ -3,6 +3,7 @@ import sqlite3
 import time
 import types
 import importlib
+import logging
 from pathlib import Path
 
 
@@ -192,3 +193,70 @@ def test_restart_skips_processed(monkeypatch, tmp_path: Path) -> None:
     _, data = called[0]
     assert len(data) == 1
     assert data[0]["synergy_roi"] == 0.2
+
+
+def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.1}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    def bad_cli(_args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", bad_cli)
+    caplog.set_level(logging.WARNING)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+    trainer._train_once()
+
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 1
+    assert "boom" in caplog.text
+
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.2}),),
+    )
+    conn.commit()
+    conn.close()
+
+    called: list[list[dict[str, float]]] = []
+
+    def ok_cli(args):
+        with open(args[-1]) as fh:
+            called.append(json.load(fh))
+        return 0
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", ok_cli)
+
+    trainer2 = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+    trainer2._train_once()
+
+    assert len(called) == 1
+    assert called[0][0]["synergy_roi"] == 0.2

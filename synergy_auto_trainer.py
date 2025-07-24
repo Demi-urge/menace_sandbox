@@ -59,16 +59,26 @@ class SynergyAutoTrainer:
         try:
             json.dump([h[1] for h in hist], tmp)
             tmp.close()
+            rc = 0
             try:
-                synergy_weight_cli.cli([
+                rc = synergy_weight_cli.cli([
                     "--path",
                     str(self.weights_file),
                     "train",
                     tmp.name,
                 ])
-            except SystemExit:
-                self.logger.info("synergy_weight_cli requested exit")
+            except SystemExit as exc:
+                rc = int(getattr(exc, "code", 1) or 0)
+                self.logger.info("synergy_weight_cli requested exit (%s)", rc)
+            except Exception as exc:  # pragma: no cover - runtime issues
+                rc = 1
+                self.logger.warning("synergy_weight_cli failed: %s", exc)
             else:
+                if rc != 0:
+                    self.logger.warning(
+                        "synergy_weight_cli returned non-zero exit code %s", rc
+                    )
+            finally:
                 self._last_id = hist[-1][0]
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("training failed: %s", exc)
