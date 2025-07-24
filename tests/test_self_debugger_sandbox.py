@@ -782,8 +782,10 @@ def test_weights_persist_across_instances(tmp_path):
 
 
 def test_composite_score_uses_tracker_synergy():
-    tracker = rt.ROITracker()
-    tracker.update(0.0, 0.1, metrics={"synergy_roi": 0.5, "synergy_efficiency": 0.4})
+    tracker = types.SimpleNamespace(
+        synergy_metrics_history={"synergy_roi": [0.5], "synergy_efficiency": [0.4]},
+        metrics_history={},
+    )
     dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
     base = dbg._composite_score(0.1, 0.0, 0.1, 0.0, 0.0, 0.0)
     with_tracker = dbg._composite_score(
@@ -1077,3 +1079,77 @@ def test_coverage_revert_records_history(monkeypatch, tmp_path):
     assert engine.rollback_mgr.calls == ["1"]
     rows = dbg.recent_scores(2)
     assert any(r[1] == "reverted" for r in rows)
+
+
+def test_analyse_and_fix_records_history(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "scores.db"))
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(
+        DummyTelem(), DummyEngine(), audit_trail=trail, flakiness_runs=2
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
+    )
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+
+    def fake_run(path, env=None):
+        return 80.0, 0.0
+
+    monkeypatch.setattr(dbg, "_run_tests", fake_run)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    tracker = types.SimpleNamespace(
+        synergy_metrics_history={"synergy_roi": [0.5], "synergy_efficiency": [0.4]},
+        metrics_history={},
+    )
+
+    dbg.analyse_and_fix(patch_db=patch_db, tracker=tracker)
+
+    assert patch_db.flaky
+
+    cur = dbg._history_conn.execute(
+        "SELECT filename, flakiness FROM flakiness_history ORDER BY id DESC LIMIT 1"
+    )
+    row = cur.fetchone()
+    assert row is not None
+    assert "test_auto.py" in row[0]
+    assert row[1] >= 0.0
+
+    rows = dbg.recent_scores(1)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r[0] == "auto_debug"
+    assert r[6] > 0.0
+    assert r[7] > 0.0
+
+
+def test_roi_metrics_change_between_runs(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "scores.db"))
+    patch_db = sds.PatchHistoryDB(tmp_path / "p.db")
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), flakiness_runs=1)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
+    )
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_run_tests", lambda p, env=None: (75.0, 0.0))
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    tracker = types.SimpleNamespace(
+        synergy_metrics_history={"synergy_roi": [0.2], "synergy_efficiency": [0.3]},
+        metrics_history={},
+    )
+    dbg.analyse_and_fix(patch_db=patch_db, tracker=tracker)
+
+    tracker.synergy_metrics_history["synergy_roi"].append(0.7)
+    tracker.synergy_metrics_history["synergy_efficiency"].append(0.6)
+    dbg.analyse_and_fix(patch_db=patch_db, tracker=tracker)
+
+    rows = dbg.recent_scores(2)
+    assert len(rows) >= 2
+    assert rows[0][6] != rows[1][6]
+    assert rows[0][7] != rows[1][7]
