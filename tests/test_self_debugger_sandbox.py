@@ -798,6 +798,23 @@ def test_composite_score_uses_tracker_synergy():
     assert with_tracker > base
 
 
+def test_composite_score_custom_weights():
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine())
+    base = dbg._composite_score(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0)
+    weighted = dbg._composite_score(
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        weights={"roi": 0.0, "efficiency": 0.0},
+    )
+    assert weighted < base
+
+
 def test_synergy_metrics_affect_patch_acceptance(monkeypatch, tmp_path):
     engine = DummyEngine()
     trail = DummyTrail()
