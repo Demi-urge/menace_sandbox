@@ -117,6 +117,7 @@ from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db
 from synergy_monitor import ExporterMonitor
+from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
@@ -560,10 +561,7 @@ def main(argv: List[str] | None = None) -> None:
     history_conn: sqlite3.Connection | None = None
     if args.save_synergy_history or args.recover:
         synergy_history, synergy_ma_prev = load_previous_synergy(data_dir)
-        history_conn = sqlite3.connect(str(data_dir / "synergy_history.db"))
-        history_conn.execute(
-            "CREATE TABLE IF NOT EXISTS synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
-        )
+        history_conn = shd.connect_locked(data_dir / "synergy_history.db")
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
 
@@ -839,11 +837,7 @@ def main(argv: List[str] | None = None) -> None:
             if missing and args.save_synergy_history and history_conn is not None:
                 try:
                     for entry in missing:
-                        history_conn.execute(
-                            "INSERT INTO synergy_history(entry) VALUES (?)",
-                            (json.dumps(entry),),
-                        )
-                    history_conn.commit()
+                        insert_entry(history_conn, entry)
                 except Exception:
                     logger.exception("failed to save synergy history")
             if tracker.roi_history:
@@ -957,11 +951,7 @@ def main(argv: List[str] | None = None) -> None:
             synergy_history.append(syn_vals)
             if args.save_synergy_history and history_conn is not None:
                 try:
-                    history_conn.execute(
-                        "INSERT INTO synergy_history(entry) VALUES (?)",
-                        (json.dumps(syn_vals),),
-                    )
-                    history_conn.commit()
+                    insert_entry(history_conn, syn_vals)
                 except Exception:
                     logger.exception("failed to save synergy history")
             ma_entry: dict[str, float] = {}

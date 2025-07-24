@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import sqlite3
 import tempfile
 import threading
 from pathlib import Path
@@ -56,7 +55,7 @@ class SynergyAutoTrainer:
         if not self.history_file.exists():
             return []
         try:
-            with sqlite3.connect(self.history_file) as conn:
+            with shd.connect_locked(self.history_file) as conn:
                 return shd.fetch_after(conn, self._last_id)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception(
