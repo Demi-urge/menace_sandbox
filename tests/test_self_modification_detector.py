@@ -47,3 +47,10 @@ def test_lockdown_trigger_on_mismatch(monkeypatch):
 def test_no_lockdown_on_match(monkeypatch):
     called = _run_once(monkeypatch, {"a.py": "1"}, {"a.py": "1"})
     assert called == []
+
+
+def test_save_reference_hashes_logs_warning(tmp_path, caplog):
+    path = tmp_path / "sub" / "ref.json"
+    caplog.set_level("ERROR")
+    smd.save_reference_hashes({"a": "1"}, str(path))
+    assert "failed writing reference hashes" in caplog.text
