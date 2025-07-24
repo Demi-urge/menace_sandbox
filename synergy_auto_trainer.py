@@ -45,8 +45,10 @@ class SynergyAutoTrainer:
             with sqlite3.connect(self.history_file) as conn:
                 return shd.fetch_after(conn, self._last_id)
         except Exception as exc:  # pragma: no cover - runtime issues
-            self.logger.exception("failed to load history: %s", exc)
-            return []
+            self.logger.exception(
+                "failed to load history from %s: %s", self.history_file, exc
+            )
+            raise
 
     # --------------------------------------------------------------
     def _train_once(self) -> None:
@@ -65,21 +67,22 @@ class SynergyAutoTrainer:
                     tmp.name,
                 ])
             except SystemExit:
-                pass
-            except Exception as exc:  # pragma: no cover - runtime issues
-                self.logger.exception("training failed: %s", exc)
+                self.logger.info("synergy_weight_cli requested exit")
             else:
                 self._last_id = hist[-1][0]
-                try:
-                    self.progress_file.parent.mkdir(parents=True, exist_ok=True)
-                    self.progress_file.write_text(json.dumps({"last_id": self._last_id}))
-                except Exception:
-                    pass
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.exception("training failed: %s", exc)
+            raise
         finally:
             try:
+                self.progress_file.parent.mkdir(parents=True, exist_ok=True)
+                self.progress_file.write_text(json.dumps({"last_id": self._last_id}))
+            except Exception as exc:
+                self.logger.exception("failed to update progress: %s", exc)
+            try:
                 os.unlink(tmp.name)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.warning("failed to remove temp file %s: %s", tmp.name, exc)
 
     # --------------------------------------------------------------
     def _loop(self) -> None:
