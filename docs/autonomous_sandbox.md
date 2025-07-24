@@ -401,9 +401,12 @@ Adjust `AUTO_TRAIN_INTERVAL` or `SYNERGY_METRICS_PORT` to fit your setup.
 Press <kbd>Ctrl+C</kbd> to stop both services. The same environment variables are
 respected as when running `run_autonomous.py`.
 
-Note that the visual agent accepts only a single request at a time.
-If you run the sandbox alongside these tools, wait until `/status` returns
-`{"active": false}` before sending another job.
+#### Visual agent concurrency
+
+Only one visual agent request can run at any time. Additional tasks are queued
+until the current job completes. Poll the `/status` endpoint and wait for
+`{"active": false}` before submitting the next job, whether using
+`synergy_tools.py` or the sandbox itself.
 
 ### Troubleshooting synergy services
 
