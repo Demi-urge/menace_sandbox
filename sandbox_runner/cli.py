@@ -868,6 +868,11 @@ def main(argv: List[str] | None = None) -> None:
         action="store_true",
         help="remove leftover containers and QEMU overlay files",
     )
+    parser.add_argument(
+        "--purge-stale",
+        action="store_true",
+        help="remove stale containers and VM overlays then exit",
+    )
 
     sub = parser.add_subparsers(dest="cmd")
     p_rank = sub.add_parser("rank-scenarios", help="rank preset runs")
@@ -1076,6 +1081,12 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["GPT_SECTION_PROMPT_MAX_LENGTH"] = str(args.max_prompt_length)
     if args.summary_depth is not None:
         os.environ["GPT_SECTION_SUMMARY_DEPTH"] = str(args.summary_depth)
+
+    if getattr(args, "purge_stale", False):
+        from sandbox_runner.environment import purge_leftovers
+
+        purge_leftovers()
+        return
 
     if getattr(args, "cleanup", False):
         from sandbox_runner.environment import purge_leftovers

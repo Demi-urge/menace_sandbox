@@ -706,6 +706,16 @@ overlay files by running:
 python -m sandbox_runner.cli --cleanup
 ```
 
+For additional safety you can schedule periodic cleanup with the
+`--purge-stale` command. Run it hourly via cron:
+
+```cron
+0 * * * * /usr/bin/python -m sandbox_runner.cli --purge-stale
+```
+
+Or create a `systemd` timer that executes the same command at your preferred
+interval.
+
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
 of cleanup events may indicate resource leaks or overly strict timeouts.  When
