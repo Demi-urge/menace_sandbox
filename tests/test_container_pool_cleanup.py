@@ -18,9 +18,21 @@ class DummyContainer:
 class DummyContainers:
     def __init__(self):
         self.count = 0
+        self.items = []
     def run(self, *a, **k):
         self.count += 1
-        return DummyContainer(self.count)
+        c = DummyContainer(self.count)
+        self.items.append(c)
+        return c
+
+    def list(self, *a, **k):
+        return list(self.items)
+
+    def get(self, cid):
+        for c in self.items:
+            if c.id == cid:
+                return c
+        raise KeyError(cid)
 
 class DummyClient:
     def __init__(self):
@@ -226,3 +238,30 @@ def test_unhealthy_container_purged_in_cleanup(monkeypatch, tmp_path):
     assert cleaned == 0 and replaced == 1
     assert bad.removed
     assert not env._CONTAINER_POOLS["img"]
+
+
+def test_orphan_container_reaped(monkeypatch, tmp_path):
+    dummy = DummyClient()
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._CONTAINER_LAST_USED.clear()
+    env._CONTAINER_CREATED.clear()
+    env._WARMUP_TASKS.clear()
+    c = DummyContainer("x")
+    dummy.containers.items.append(c)
+    env._CONTAINER_DIRS[c.id] = str(tmp_path)
+    env._CONTAINER_LAST_USED[c.id] = env.time.time()
+    env._CONTAINER_CREATED[c.id] = env.time.time()
+    monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
+
+    async def run_worker():
+        task = asyncio.create_task(env._reaper_worker())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_worker())
+    assert c.stopped and c.removed
+    assert c.id not in env._CONTAINER_DIRS
