@@ -7,6 +7,18 @@ import threading
 from pathlib import Path
 import time
 
+from .metrics_exporter import Gauge
+
+# Prometheus gauges tracking trainer state
+synergy_trainer_iterations = Gauge(
+    "synergy_trainer_iterations",
+    "Total number of synergy training cycles executed",
+)
+synergy_trainer_last_id = Gauge(
+    "synergy_trainer_last_id",
+    "ID of the last processed synergy history entry",
+)
+
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
 
@@ -55,6 +67,11 @@ class SynergyAutoTrainer:
         hist = self._load_history()
         if not hist:
             return
+        # update metrics for each successful cycle
+        try:
+            synergy_trainer_iterations.inc()
+        except Exception:
+            pass
         tmp = tempfile.NamedTemporaryFile("w", delete=False)
         try:
             json.dump([h[1] for h in hist], tmp)
@@ -80,6 +97,10 @@ class SynergyAutoTrainer:
                     )
             finally:
                 self._last_id = hist[-1][0]
+                try:
+                    synergy_trainer_last_id.set(float(self._last_id))
+                except Exception:
+                    pass
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("training failed: %s", exc)
             raise
@@ -104,6 +125,11 @@ class SynergyAutoTrainer:
     def start(self) -> None:
         if self._thread:
             return
+        try:
+            synergy_trainer_iterations.set(0.0)
+            synergy_trainer_last_id.set(float(self._last_id))
+        except Exception:
+            pass
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -155,6 +181,11 @@ def cli(argv: list[str] | None = None) -> int:
     )
 
     if args.run_once:
+        try:
+            synergy_trainer_iterations.set(0.0)
+            synergy_trainer_last_id.set(float(trainer._last_id))
+        except Exception:
+            pass
         trainer._train_once()
         return 0
 
@@ -175,4 +206,10 @@ def main(argv: list[str] | None = None) -> None:
     sys.exit(cli(argv))
 
 
-__all__ = ["SynergyAutoTrainer", "cli", "main"]
+__all__ = [
+    "SynergyAutoTrainer",
+    "cli",
+    "main",
+    "synergy_trainer_iterations",
+    "synergy_trainer_last_id",
+]

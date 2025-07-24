@@ -303,6 +303,12 @@ python -m menace.synergy_auto_trainer --history-file sandbox_data/synergy_histor
 Use this manual invocation to refresh the weights once or run the trainer in
 isolation. Pass `--interval` or `--run-once` to control how often it updates.
 
+When the Prometheus exporter is running the trainer also publishes two gauges:
+
+- `synergy_trainer_iterations` – number of training cycles completed
+- `synergy_trainer_last_id` – ID of the last history row processed
+
+
 ### Enabling auto trainer with exporter
 
 Follow these steps to run the background trainer and the metrics exporter side
