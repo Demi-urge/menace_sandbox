@@ -841,7 +841,7 @@ time.
 ### New autonomous helpers
 - `VaultSecretProvider` fetches and caches secrets from an optional remote vault.
 - `EnvironmentRestorationService` periodically re-applies the bootstrap process after crashes.
-- `SelfTestService` executes the full test suite on a schedule for early failure detection.
+- `SelfTestService` executes the full test suite on a schedule for early failure detection. A new `run-scheduled` CLI command runs tests repeatedly inside Docker/Podman.
 - `BotTestingBot` now uses `BotTestingSettings` for configurable runs and database retries.
 - `ServiceSupervisor` now logs restarts to `restart.log` for persistent auditing.
 - `ClusterServiceSupervisor` supports failover hosts via `FAILOVER_HOSTS`.

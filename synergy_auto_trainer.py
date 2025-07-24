@@ -118,8 +118,12 @@ class SynergyAutoTrainer:
     # --------------------------------------------------------------
     def _loop(self) -> None:
         while not self._stop.is_set():
-            self._train_once()
-            self._stop.wait(self.interval)
+            try:
+                self._train_once()
+            except Exception as exc:  # pragma: no cover - runtime issues
+                self.logger.exception("training cycle failed: %s", exc)
+            if self._stop.wait(self.interval):
+                break
 
     # --------------------------------------------------------------
     def start(self) -> None:
@@ -130,7 +134,17 @@ class SynergyAutoTrainer:
             synergy_trainer_last_id.set(float(self._last_id))
         except Exception:
             pass
-        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+        def run() -> None:
+            while not self._stop.is_set():
+                try:
+                    self._loop()
+                except Exception as exc:  # pragma: no cover - runtime issues
+                    self.logger.exception("trainer loop crashed: %s", exc)
+                if self._stop.wait(self.interval):
+                    break
+
+        self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
