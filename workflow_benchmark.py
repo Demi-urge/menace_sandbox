@@ -109,8 +109,22 @@ def benchmark_workflow(
                 else:
                     p95 = latency
             metrics_db.log_eval(name, "latency_p95", p95)
+            if np is not None:
+                median = float(np.median(vals)) if vals else latency
+            else:
+                if vals:
+                    vals_sorted = sorted(vals)
+                    mid = len(vals_sorted) // 2
+                    if len(vals_sorted) % 2:
+                        median = float(vals_sorted[mid])
+                    else:
+                        median = float((vals_sorted[mid - 1] + vals_sorted[mid]) / 2.0)
+                else:
+                    median = latency
+            metrics_db.log_eval(name, "latency_median", median)
             if me:
                 me.workflow_latency_p95_gauge.labels(name).set(p95)
+                me.workflow_latency_median_gauge.labels(name).set(median)
                 me.workflow_duration_gauge.labels(name).set(duration)
                 me.workflow_cpu_percent_gauge.labels(name).set(cpu_percent)
                 me.workflow_memory_gauge.labels(name).set(mem_delta)
@@ -195,6 +209,8 @@ def benchmark_registered_workflows(
             success = 0.0
             prev_success_vals = [float(v) for _, m, v, _ in prev_rows if m == "success"]
             prev_success = prev_success_vals[-1] if prev_success_vals else 0.0
+            prev_lat_vals = [float(v) for _, m, v, _ in prev_rows if m == "latency_median"]
+            prev_lat = prev_lat_vals[-1] if prev_lat_vals else 0.0
             for _, metric, value, _ in new_rows:
                 try:
                     val = float(value)
@@ -206,7 +222,7 @@ def benchmark_registered_workflows(
 
             _, _, stop = tracker.update(prev_success, success, modules=[name], metrics=metrics)
             # early stop when improvement is negligible or success rate stagnates
-            if abs(success - prev_success) <= tracker.diminishing():
+            if abs(success - prev_success) <= tracker.diminishing() and abs(metrics.get("latency_median", metrics.get("latency", 0.0)) - prev_lat) <= tracker.diminishing():
                 stop = True
             if len(prev_success_vals) >= 2 and len([v for _, m, v, _ in new_rows if m == "success"]) >= 2:
                 try:
@@ -243,6 +259,7 @@ def benchmark_registered_workflows(
             "cpu_percent",
             "latency",
             "latency_p95",
+            "latency_median",
             "net_io",
             "disk_read",
             "disk_write",
@@ -263,8 +280,13 @@ def benchmark_registered_workflows(
                 p_val = 1.0
             metrics_db.log_eval(name, f"{metric}_pvalue", float(p_val))
             tracker.metrics_history.setdefault(f"{metric}_pvalue", []).append(float(p_val))
-            if me and metric == "latency_p95":
-                me.workflow_latency_p95_gauge.labels(name).set(new_vals[-1] if new_vals else 0.0)
+            if me and metric in ("latency_p95", "latency_median"):
+                gauge = (
+                    me.workflow_latency_p95_gauge
+                    if metric == "latency_p95"
+                    else me.workflow_latency_median_gauge
+                )
+                gauge.labels(name).set(new_vals[-1] if new_vals else 0.0)
 
 
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
