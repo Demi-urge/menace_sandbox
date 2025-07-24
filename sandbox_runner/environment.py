@@ -262,11 +262,12 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
 # Docker container pooling support
 try:  # pragma: no cover - optional dependency
     import docker  # type: ignore
-    from docker.errors import DockerException
+    from docker.errors import DockerException, APIError
 except Exception as exc:  # pragma: no cover - docker may be unavailable
     logger.warning("docker import failed: %s", exc)
     docker = None  # type: ignore
     DockerException = Exception  # type: ignore
+    APIError = Exception  # type: ignore
     _DOCKER_CLIENT = None
 else:
     try:
@@ -1320,7 +1321,7 @@ async def _execute_in_container(
     error_msg = ""
     try:
         import docker  # type: ignore
-        from docker.errors import DockerException
+        from docker.errors import DockerException, APIError
     except Exception as exc:  # pragma: no cover - optional dependency
         error_msg = str(exc)
         logger.warning("docker import failed: %s", exc)
@@ -1406,7 +1407,15 @@ async def _execute_in_container(
                     )
                     _record_active_container(container.id)
 
-                    result = container.wait()
+                    timeout = int(env.get("TIMEOUT", 300))
+                    try:
+                        result = container.wait(timeout=timeout)
+                    except (docker.errors.APIError, subprocess.TimeoutExpired):
+                        try:
+                            container.kill()
+                        except Exception:
+                            logger.exception("container kill failed")
+                        result = {"StatusCode": -1}
                     stdout_path = Path(td) / "stdout.log"
                     stderr_path = Path(td) / "stderr.log"
                     try:
@@ -1502,12 +1511,21 @@ async def _execute_in_container(
                 path = Path(td) / "snippet.py"
                 path.write_text(code_str, encoding="utf-8")
 
-                result = container.exec_run(
-                    ["python", "/code/snippet.py"],
-                    environment={k: str(v) for k, v in env.items()},
-                    workdir=workdir,
-                    demux=True,
-                )
+                timeout = int(env.get("TIMEOUT", 300))
+                try:
+                    result = container.exec_run(
+                        ["python", "/code/snippet.py"],
+                        environment={k: str(v) for k, v in env.items()},
+                        workdir=workdir,
+                        demux=True,
+                        timeout=timeout,
+                    )
+                except (docker.errors.APIError, subprocess.TimeoutExpired):
+                    try:
+                        container.kill()
+                    except Exception:
+                        logger.exception("container kill failed")
+                    result = type("ExecResult", (), {"exit_code": -1, "output": (b"", b"")})()
 
                 stdout_path = Path(td) / "stdout.log"
                 stderr_path = Path(td) / "stderr.log"
