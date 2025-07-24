@@ -222,6 +222,10 @@ only train on new entries. When running `run_autonomous.py` the same trainer is
 started automatically if `AUTO_TRAIN_SYNERGY=1`; invoke it manually only when
 you want to retrain outside the autonomous loop.
 
+Failed training attempts no longer stop the background process. The trainer logs
+the error and retries after the configured interval so progress in
+`last_ts.json` (or the specified `--progress-file`) is preserved.
+
 ## Synergy weights and SelfDebuggerSandbox scoring
 
 `SelfDebuggerSandbox` evaluates patches using a composite score derived from
