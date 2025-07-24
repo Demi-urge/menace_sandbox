@@ -305,3 +305,111 @@ def test_autonomous_synergy_spike(monkeypatch):
     cli.full_autonomous_run(args)
 
     assert "synergy convergence reached" not in log_calls
+
+def test_run_autonomous_synergy_files(monkeypatch, tmp_path):
+    """run_autonomous should update synergy history and weights files"""
+    import importlib
+    import json
+    import sqlite3
+    from tests.test_autonomous_integration import setup_stubs, load_module, _free_port
+
+    captured = {}
+    setup_stubs(monkeypatch, tmp_path, captured)
+    mod = load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: list(p))
+    db_mod = importlib.import_module("menace.synergy_history_db")
+    def _direct_conn(path):
+        conn = sqlite3.connect(str(path))
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+        )
+        return conn
+    monkeypatch.setattr(db_mod, "connect_locked", lambda p: _direct_conn(p), raising=False)
+    monkeypatch.setattr(mod, "shd", db_mod, raising=False)
+
+    # lightweight exporter stub
+    se_mod = importlib.import_module("menace.synergy_exporter")
+    class DummyExporter:
+        def __init__(self, *a, **k):
+            pass
+        def start(self):
+            pass
+        def stop(self):
+            pass
+    monkeypatch.setattr(se_mod, "SynergyExporter", DummyExporter)
+
+    # trainer stub storing instance for later
+    sat_mod = importlib.import_module("menace.synergy_auto_trainer")
+    class DummyTrainer:
+        def __init__(self, *, history_file, weights_file, **_k):
+            self.history_file = Path(history_file)
+            self.weights_file = Path(weights_file)
+            captured["trainer"] = self
+        def start(self):
+            pass
+        def stop(self):
+            pass
+        def run_once(self):
+            if self.history_file.exists():
+                conn = sqlite3.connect(self.history_file)
+                rows = conn.execute("SELECT entry FROM synergy_history ORDER BY id").fetchall()
+                conn.close()
+                data = [json.loads(r[0]) for r in rows]
+            else:
+                data = []
+            self.weights_file.write_text(json.dumps({"count": len(data)}))
+    monkeypatch.setattr(sat_mod, "SynergyAutoTrainer", DummyTrainer)
+
+    class DummySettings:
+        def __init__(self):
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_env_presets = None
+            self.auto_dashboard_port = None
+            self.save_synergy_history = True
+            self.visual_agent_autostart = False
+            self.visual_agent_urls = ""
+            self.roi_cycles = None
+            self.synergy_cycles = None
+            self.roi_threshold = None
+            self.synergy_threshold = None
+            self.roi_confidence = None
+            self.synergy_confidence = None
+            self.synergy_threshold_window = None
+            self.synergy_threshold_weight = None
+            self.synergy_ma_window = None
+            self.synergy_stationarity_confidence = None
+            self.synergy_std_threshold = None
+            self.synergy_variance_confidence = None
+    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
+    monkeypatch.chdir(tmp_path)
+
+    port = _free_port()
+    monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
+    monkeypatch.setenv("AUTO_TRAIN_SYNERGY", "1")
+    monkeypatch.setenv("AUTO_TRAIN_INTERVAL", "0.05")
+    monkeypatch.setenv("SYNERGY_METRICS_PORT", str(port))
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+
+    mod.main([
+        "--max-iterations", "1",
+        "--runs", "1",
+        "--preset-count", "1",
+        "--sandbox-data-dir", str(tmp_path),
+    ])
+
+    conn = sqlite3.connect(tmp_path / "synergy_history.db")
+    rows = conn.execute("SELECT entry FROM synergy_history ORDER BY id").fetchall()
+    conn.close()
+    assert rows
+    entry = json.loads(rows[-1][0])
+    assert entry.get("synergy_roi") == 0.05
+
+    trainer = captured.get("trainer")
+    assert trainer is not None
+    trainer.run_once()
+
+    weights_path = tmp_path / "synergy_weights.json"
+    assert weights_path.exists()
+    weights = json.loads(weights_path.read_text())
+    assert weights.get("count") == len(rows)
