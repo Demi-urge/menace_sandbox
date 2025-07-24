@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import types
 import sandbox_runner.environment as env
 
 class DummyContainer:
@@ -253,3 +254,31 @@ def test_unhealthy_container_purged_in_cleanup(monkeypatch, tmp_path):
     assert cleaned == 0 and replaced == 1
     assert bad.removed
     assert not env._CONTAINER_POOLS["img"]
+
+
+def test_stop_and_remove_detects_remaining_container(monkeypatch, caplog):
+    c = DummyContainer("x")
+    env._CLEANUP_FAILURES = 0
+    called = []
+    monkeypatch.setattr(env, "_remove_active_container", lambda cid: called.append(cid))
+
+    def fake_run(cmd, **kw):
+        return types.SimpleNamespace(returncode=0, stdout=f"{c.id}\n")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    caplog.set_level("ERROR")
+    env._stop_and_remove(c)
+    assert env._CLEANUP_FAILURES == 1
+    assert not called
+    assert f"container {c.id} still exists" in caplog.text
+
+
+def test_stop_and_remove_removes_active_on_success(monkeypatch):
+    c = DummyContainer("y")
+    env._CLEANUP_FAILURES = 0
+    called = []
+    monkeypatch.setattr(env, "_remove_active_container", lambda cid: called.append(cid))
+    monkeypatch.setattr(env.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=""))
+    env._stop_and_remove(c)
+    assert called == [c.id]
+    assert env._CLEANUP_FAILURES == 0
