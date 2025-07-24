@@ -71,6 +71,7 @@ dependencies = [
 [project.scripts]
 menace-master = "service_supervisor:main"
 environment-cli = "environment_cli:main"
+menace = "menace_cli:main"
 
 [project.optional-dependencies]
 test = [
