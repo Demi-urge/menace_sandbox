@@ -339,9 +339,71 @@ _POOL_METRICS_FILE = Path(
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 
+_ACTIVE_CONTAINERS_FILE = Path(
+    os.getenv(
+        "SANDBOX_ACTIVE_CONTAINERS",
+        str(ROOT / "sandbox_data" / "active_containers.json"),
+    )
+)
+
+
+def _read_active_containers() -> List[str]:
+    """Return list of active container IDs from file."""
+    try:
+        if _ACTIVE_CONTAINERS_FILE.exists():
+            data = json.loads(_ACTIVE_CONTAINERS_FILE.read_text())
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc)
+    return []
+
+
+def _write_active_containers(ids: List[str]) -> None:
+    """Persist ``ids`` to the active containers file."""
+    try:
+        _ACTIVE_CONTAINERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ACTIVE_CONTAINERS_FILE.write_text(json.dumps(ids))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc)
+
+
+def _record_active_container(cid: str) -> None:
+    """Add ``cid`` to the active containers file."""
+    ids = _read_active_containers()
+    if cid not in ids:
+        ids.append(cid)
+        _write_active_containers(ids)
+
+
+def _remove_active_container(cid: str) -> None:
+    """Remove ``cid`` from the active containers file."""
+    ids = _read_active_containers()
+    if cid in ids:
+        ids.remove(cid)
+        _write_active_containers(ids)
+
 
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
+    try:
+        ids = _read_active_containers()
+        for cid in ids:
+            try:
+                logger.info("removing recorded sandbox container %s", cid)
+            except Exception:
+                pass
+            subprocess.run(
+                ["docker", "rm", "-f", cid],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        if ids:
+            _write_active_containers([])
+    except Exception as exc:
+        logger.debug("active container cleanup failed: %s", exc)
+
     try:
         proc = subprocess.run(
             ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
@@ -484,6 +546,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 volumes={td: {"bind": "/code", "mode": "rw"}},
                 labels={_POOL_LABEL: "1"},
             )
+            _record_active_container(container.id)
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
             _log_pool_metrics(image)
             _CONTAINER_DIRS[container.id] = td
@@ -579,6 +642,8 @@ def _release_container(image: str, container: Any) -> None:
         except Exception:
             logger.exception("container remove failed")
         cid = getattr(container, "id", "")
+        if cid:
+            _remove_active_container(cid)
         td = _CONTAINER_DIRS.pop(cid, None)
         _CONTAINER_LAST_USED.pop(cid, None)
         if td:
@@ -641,6 +706,8 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 logger.error("failed to remove container %s: %s", cid, exc)
             else:
                 time.sleep(base_delay * (2 ** attempt))
+    if cid:
+        _remove_active_container(cid)
 
 
 def _log_pool_metrics(image: str) -> None:
@@ -1085,6 +1152,7 @@ async def _execute_in_container(
                         ["python", "/code/snippet.py"],
                         **kwargs,
                     )
+                    _record_active_container(container.id)
 
                     result = container.wait()
                     stdout_path = Path(td) / "stdout.log"
@@ -1099,6 +1167,7 @@ async def _execute_in_container(
                         stderr_path.write_text("", encoding="utf-8")
                     stats = container.stats(stream=False)
                     container.remove()
+                    _remove_active_container(container.id)
 
                     blk = (
                         stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
