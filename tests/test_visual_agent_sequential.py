@@ -379,3 +379,114 @@ def test_run_endpoint_busy_with_testclient(monkeypatch, tmp_path):
     for p in tmp_path.glob("visual_agent_*"):
         p.unlink(missing_ok=True)
 
+
+def test_task_endpoint_busy(tmp_path):
+    """Concurrent /task requests should yield HTTP 409 for the second."""
+
+    script = tmp_path / "server.py"
+    script.write_text(
+        textwrap.dedent(
+            """
+            import sys, types, threading, importlib, time, os
+            heavy = ['cv2', 'numpy', 'mss', 'pyautogui']
+            for name in heavy:
+                sys.modules[name] = types.ModuleType(name)
+            filelock_mod = types.ModuleType('filelock')
+            class DummyTimeout(Exception):
+                pass
+            class DummyFileLock:
+                def __init__(self, *a, **k):
+                    pass
+                def acquire(self, timeout=0):
+                    pass
+                def release(self):
+                    pass
+            filelock_mod.FileLock = DummyFileLock
+            filelock_mod.Timeout = DummyTimeout
+            sys.modules['filelock'] = filelock_mod
+            pt_mod = types.ModuleType('pytesseract')
+            pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd='')
+            pt_mod.image_to_string = lambda *a, **k: ''
+            pt_mod.image_to_data = lambda *a, **k: {}
+            pt_mod.Output = types.SimpleNamespace(DICT=0)
+            sys.modules['pytesseract'] = pt_mod
+            va = importlib.import_module('menace_visual_agent_2')
+            def fake_run(prompt: str, branch: str | None = None):
+                time.sleep(0.2)
+            va.run_menace_pipeline = fake_run
+            shared = threading.Lock()
+            class DummyLock:
+                def acquire(self, timeout: float = 0):
+                    if not shared.acquire(blocking=False):
+                        raise va.Timeout()
+                def release(self):
+                    if shared.locked():
+                        shared.release()
+                @property
+                def is_locked(self):
+                    return shared.locked()
+            va._global_lock = DummyLock()
+            va.app.add_api_route('/task', va.run_task, methods=['POST'], status_code=202)
+            import uvicorn
+            uvicorn.run(va.app, host='127.0.0.1', port=int(os.environ['MENACE_AGENT_PORT']), log_level='error')
+            """
+        )
+    )
+
+    sock = socket.socket()
+    sock.bind(("localhost", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    env = os.environ.copy()
+    env["MENACE_AGENT_PORT"] = str(port)
+    env["VISUAL_AGENT_TOKEN"] = TOKEN
+    env["SANDBOX_DATA_DIR"] = str(tmp_path)
+    env["VISUAL_AGENT_PID_FILE"] = str(tmp_path / "agent.pid")
+    env["VISUAL_AGENT_LOCK_FILE"] = str(tmp_path / "agent.lock")
+    root = Path(__file__).resolve().parents[1]
+    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+
+    proc = subprocess.Popen([sys.executable, str(script)], env=env)
+    try:
+        for _ in range(50):
+            try:
+                requests.get(f"http://127.0.0.1:{port}/status", timeout=0.1)
+                break
+            except Exception:
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("server did not start")
+
+        responses: dict[str, requests.Response] = {}
+
+        def first():
+            responses['r1'] = requests.post(
+                f"http://127.0.0.1:{port}/task",
+                headers={"x-token": TOKEN},
+                json={"prompt": "p"},
+                timeout=5,
+            )
+
+        def second():
+            time.sleep(0.01)
+            responses['r2'] = requests.post(
+                f"http://127.0.0.1:{port}/task",
+                headers={"x-token": TOKEN},
+                json={"prompt": "p"},
+                timeout=5,
+            )
+
+        t1 = threading.Thread(target=first)
+        t2 = threading.Thread(target=second)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert responses['r1'].status_code == 202
+        assert responses['r2'].status_code == 409
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
