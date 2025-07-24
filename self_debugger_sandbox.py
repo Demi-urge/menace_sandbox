@@ -944,8 +944,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         patch_db: PatchHistoryDB | None = None,
         limit: int = 1,
         tracker: ROITracker | None = None,
+        progress_cb: Callable[[int, int], None] | None = None,
     ) -> None:  # type: ignore[override]
-        """Analyse telemetry and attempt fixes with retries."""
+        """Analyse telemetry and attempt fixes with retries.
+
+        If ``progress_cb`` is provided it will be invoked with the current
+        candidate index (1-based) and the total number of candidates after each
+        evaluation.
+        """
 
         self._score_db = patch_db
         for _ in range(max(1, int(limit))):
@@ -953,6 +959,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             if not logs:
                 return
             tests = self._generate_tests(logs)
+            total_candidates = len(tests)
             best: dict[str, object] | None = None
 
             async def _eval_candidate(idx: int, code: str) -> dict[str, object] | None:
@@ -1107,6 +1114,21 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 else None
                             ),
                         )
+                        self.logger.info(
+                            "candidate evaluation",
+                            extra=log_record(
+                                idx=idx,
+                                coverage_delta=coverage_delta,
+                                roi_delta=roi_delta,
+                                score=score,
+                                result=result,
+                            ),
+                        )
+                        if progress_cb:
+                            try:
+                                progress_cb(idx + 1, total_candidates)
+                            except Exception:
+                                self.logger.exception("progress callback failed")
                         if (
                             pid is not None
                             and result != "reverted"
@@ -1123,7 +1145,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     return {"score": score, "code": code}
 
             async def _eval_all() -> list[dict[str, object] | None]:
-                tasks = [asyncio.create_task(_eval_candidate(i, c)) for i, c in enumerate(tests)]
+                tasks = [
+                    asyncio.create_task(_eval_candidate(i, c))
+                    for i, c in enumerate(tests)
+                ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
                 cleaned: list[dict[str, object] | None] = []
                 for res in results:
