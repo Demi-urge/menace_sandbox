@@ -37,6 +37,12 @@ def _stub_docker(calls):
     dummy = types.ModuleType("docker")
     dummy.from_env = lambda: DummyClient()
     dummy.types = types
+    class DummyErr(Exception):
+        pass
+    errors_mod = types.ModuleType("docker.errors")
+    errors_mod.DockerException = DummyErr
+    dummy.errors = errors_mod
+    sys.modules["docker.errors"] = errors_mod
     sys.modules["docker"] = dummy
 
 
@@ -54,3 +60,9 @@ def test_simulate_execution_cleanup(monkeypatch):
 
     assert "run" in calls and "removed" in calls
     assert not env._CONTAINER_POOLS
+
+def test_simulate_execution_calls_cleanup_check(monkeypatch):
+    called = []
+    monkeypatch.setattr(env, "ensure_cleanup_worker", lambda: called.append(True))
+    env.simulate_execution_environment("print('hi')", container=False)
+    assert called
