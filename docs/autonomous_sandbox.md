@@ -455,3 +455,18 @@ local installation.
 - **Authentication errors** – HTTP 401 responses from the visual agent usually
   indicate an invalid token. Confirm that `VISUAL_AGENT_TOKEN` matches the
   secret configured in `.env` and restart the service when the token changes.
+- **Synergy exporter not running** – ensure `EXPORT_SYNERGY_METRICS=1` is set
+  and that `SYNERGY_METRICS_PORT` is free. Successful startup logs the message
+  "Synergy metrics exporter running" together with the chosen port.
+- **Exporter endpoint unreachable** – `curl http://localhost:${SYNERGY_METRICS_PORT}/health`
+  should return `{"status": "ok"}`. If the sandbox keeps restarting the exporter
+  consider raising `SYNERGY_EXPORTER_CHECK_INTERVAL`.
+- **Missing synergy metrics** – verify that `synergy_history.db` exists and that
+  `/metrics` on `SYNERGY_METRICS_PORT` exposes the expected gauges. When
+  `AUTO_TRAIN_SYNERGY=1` additional trainer metrics appear alongside the
+  exporter gauges.
+- **Self‑test metrics not updating** – check that `SELF_TEST_INTERVAL` is set to
+  a positive value. The counters `self_test_passed_total` and
+  `self_test_failed_total` are available on
+  `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
+  progress in `SELF_TEST_STATE`.
