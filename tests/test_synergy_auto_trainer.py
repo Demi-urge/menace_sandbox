@@ -33,7 +33,10 @@ def test_auto_trainer_runs_cycle(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
 
     trainer = sat.SynergyAutoTrainer(
-        history_file=hist_file, weights_file=weights_file, interval=0.05
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=tmp_path / "progress.json",
     )
     trainer.start()
     try:
@@ -82,6 +85,8 @@ def test_cli_run_once(monkeypatch, tmp_path: Path) -> None:
         str(hist_file),
         "--weights-file",
         str(weights_file),
+        "--progress-file",
+        str(tmp_path / "progress.json"),
         "--run-once",
     ])
 
@@ -96,7 +101,7 @@ def test_cli_continuous(monkeypatch) -> None:
     events: list[str] = []
 
     class DummyTrainer:
-        def __init__(self, *, history_file: str | Path, weights_file: str | Path, interval: float) -> None:
+        def __init__(self, *, history_file: str | Path, weights_file: str | Path, interval: float, progress_file: Path) -> None:
             events.append("init")
 
         def start(self) -> None:
@@ -115,7 +120,75 @@ def test_cli_continuous(monkeypatch) -> None:
 
     monkeypatch.setattr(sat.time, "sleep", raise_after)
 
-    rc = sat.cli(["--history-file", "hf", "--weights-file", "wf", "--interval", "0.01"])
+    rc = sat.cli([
+        "--history-file",
+        "hf",
+        "--weights-file",
+        "wf",
+        "--interval",
+        "0.01",
+        "--progress-file",
+        "prog.json",
+    ])
 
     assert rc == 0
     assert events == ["init", "start", "stop"]
+
+
+def test_restart_skips_processed(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps({"synergy_roi": 0.1}),))
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    called: list[tuple[list[str], list[dict[str, float]]]] = []
+
+    def fake_cli(args):
+        with open(args[-1]) as fh:
+            data = json.load(fh)
+        called.append((list(args), data))
+        return 0
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+    trainer._train_once()
+
+    # add new entry after first run
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.2}),),
+    )
+    conn.commit()
+    conn.close()
+
+    called.clear()
+    trainer2 = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+    trainer2._train_once()
+
+    assert len(called) == 1
+    _, data = called[0]
+    assert len(data) == 1
+    assert data[0]["synergy_roi"] == 0.2

@@ -20,21 +20,30 @@ class SynergyAutoTrainer:
         history_file: str | Path = "synergy_history.db",
         weights_file: str | Path = "synergy_weights.json",
         interval: float = 600.0,
+        progress_file: str | Path = "last_ts.json",
     ) -> None:
         self.history_file = Path(history_file)
         self.weights_file = Path(weights_file)
         self.interval = float(interval)
+        self.progress_file = Path(progress_file)
+        self._last_id = 0
+        if self.progress_file.exists():
+            try:
+                data = json.loads(self.progress_file.read_text())
+                self._last_id = int(data.get("last_id", 0))
+            except Exception:
+                self._last_id = 0
         self.logger = logging.getLogger(self.__class__.__name__)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     # --------------------------------------------------------------
-    def _load_history(self) -> list[dict[str, float]]:
+    def _load_history(self) -> list[tuple[int, dict[str, float]]]:
         if not self.history_file.exists():
             return []
         try:
             with sqlite3.connect(self.history_file) as conn:
-                return shd.fetch_all(conn)
+                return shd.fetch_after(conn, self._last_id)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("failed to load history: %s", exc)
             return []
@@ -46,7 +55,7 @@ class SynergyAutoTrainer:
             return
         tmp = tempfile.NamedTemporaryFile("w", delete=False)
         try:
-            json.dump(hist, tmp)
+            json.dump([h[1] for h in hist], tmp)
             tmp.close()
             try:
                 synergy_weight_cli.cli([
@@ -59,6 +68,13 @@ class SynergyAutoTrainer:
                 pass
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.exception("training failed: %s", exc)
+            else:
+                self._last_id = hist[-1][0]
+                try:
+                    self.progress_file.parent.mkdir(parents=True, exist_ok=True)
+                    self.progress_file.write_text(json.dumps({"last_id": self._last_id}))
+                except Exception:
+                    pass
         finally:
             try:
                 os.unlink(tmp.name)
@@ -107,6 +123,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="training interval in seconds",
     )
     parser.add_argument(
+        "--progress-file",
+        default="last_ts.json",
+        help="file tracking the last processed history id",
+    )
+    parser.add_argument(
         "--run-once",
         action="store_true",
         help="perform a single training cycle and exit",
@@ -117,6 +138,7 @@ def cli(argv: list[str] | None = None) -> int:
         history_file=args.history_file,
         weights_file=args.weights_file,
         interval=args.interval,
+        progress_file=args.progress_file,
     )
 
     if args.run_once:

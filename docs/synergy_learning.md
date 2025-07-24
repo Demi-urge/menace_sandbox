@@ -208,7 +208,9 @@ python -m menace.synergy_auto_trainer --history-file sandbox_data/synergy_histor
 ```
 
 By default it trains continuously every 600 seconds. Use `--interval` to adjust
-the delay or `--run-once` to perform a single update and exit. When running
-`run_autonomous.py` the same trainer is started automatically if
-`AUTO_TRAIN_SYNERGY=1`; invoke it manually only when you want to retrain
-outside the autonomous loop.
+the delay or `--run-once` to perform a single update and exit. The trainer
+records the last processed history entry in `last_ts.json` (configurable with
+`--progress-file`) and resumes from there on the next run so repeated restarts
+only train on new entries. When running `run_autonomous.py` the same trainer is
+started automatically if `AUTO_TRAIN_SYNERGY=1`; invoke it manually only when
+you want to retrain outside the autonomous loop.
