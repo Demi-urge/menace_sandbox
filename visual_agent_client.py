@@ -648,7 +648,16 @@ class VisualAgentClientStub:
 
     def ask_async(self, messages: Iterable[Dict[str, str]]) -> Future:
         fut: Future = Future()
-        fut.set_result({"choices": [{"message": {"content": ""}}]})
+        with self._lock:
+            if self.active:
+                fut.set_exception(RuntimeError("409 busy"))
+                return fut
+            self.active = True
+        try:
+            fut.set_result({"choices": [{"message": {"content": ""}}]})
+        finally:
+            with self._lock:
+                self.active = False
         return fut
 
     def ask(self, messages: Iterable[Dict[str, str]]) -> Dict[str, Any]:
@@ -656,7 +665,16 @@ class VisualAgentClientStub:
 
     def revert_async(self) -> Future:
         fut: Future = Future()
-        fut.set_result(False)
+        with self._lock:
+            if self.active:
+                fut.set_exception(RuntimeError("409 busy"))
+                return fut
+            self.active = True
+        try:
+            fut.set_result(False)
+        finally:
+            with self._lock:
+                self.active = False
         return fut
 
     def revert(self) -> bool:
