@@ -3,29 +3,27 @@ from __future__ import annotations
 """Wrapper for running the autonomous sandbox loop after dependency checks."""
 
 import argparse
+import atexit
+import contextlib
+import importlib
+import importlib.util
 import json
 import logging
 import os
 import shutil
-import sqlite3
-from pathlib import Path
-from typing import List, Callable
-import urllib.request
-import sys
-import subprocess
-import time
-from datetime import datetime
-import importlib
-import importlib.util
-import threading
-import socket
-import contextlib
-import atexit
 import signal
+import socket
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Callable, List
 
-EXPORTER_CHECK_INTERVAL = float(
-    os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10")
-)
+EXPORTER_CHECK_INTERVAL = float(os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10"))
 
 AGENT_MONITOR_INTERVAL = float(os.getenv("VISUAL_AGENT_MONITOR_INTERVAL", "30"))
 
@@ -57,15 +55,13 @@ def _verify_required_dependencies() -> None:
 _verify_required_dependencies()
 
 from filelock import FileLock
-from pydantic import BaseModel, ValidationError, validator
+from pydantic import BaseModel, RootModel, ValidationError, validator
 
 # Default to test mode when using the bundled SQLite database.
 if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
     "DATABASE_URL", ""
 ).startswith("sqlite"):
-    logging.warning(
-        "MENACE_MODE=production with SQLite database; switching to test mode"
-    )
+    logging.warning("MENACE_MODE=production with SQLite database; switching to test mode")
     os.environ["MENACE_MODE"] = "test"
 
 # allow execution directly from the package directory
@@ -80,27 +76,24 @@ elif "menace" not in sys.modules:
     sys.modules["menace"] = menace_pkg
     spec.loader.exec_module(menace_pkg)
 
-from menace.auto_env_setup import ensure_env
-from sandbox_settings import SandboxSettings
-
 import menace.environment_generator as environment_generator
+import sandbox_runner
+import sandbox_runner.cli as cli
+from logging_utils import get_logger, setup_logging
+from menace.audit_trail import AuditTrail
+from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
+from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db
-from menace.audit_trail import AuditTrail
-import sandbox_runner.cli as cli
-from sandbox_runner.cli import full_autonomous_run
-from menace.roi_tracker import ROITracker
-from logging_utils import get_logger, setup_logging
 from sandbox_recovery_manager import SandboxRecoveryManager
-import sandbox_runner
+from sandbox_runner.cli import full_autonomous_run
+from sandbox_settings import SandboxSettings
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(
-        "sandbox_runner", _pkg_dir / "sandbox_runner.py"
-    )
+    spec = importlib.util.spec_from_file_location("sandbox_runner", _pkg_dir / "sandbox_runner.py")
     sr_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sr_mod)
     sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
@@ -265,9 +258,24 @@ class PresetModel(BaseModel):
 
     CPU_LIMIT: str
     MEMORY_LIMIT: str
+    DISK_LIMIT: str | None = None
+    NETWORK_LATENCY_MS: float | None = None
+    NETWORK_JITTER_MS: float | None = None
+    MIN_BANDWIDTH: str | None = None
+    MAX_BANDWIDTH: str | None = None
+    BANDWIDTH_LIMIT: str | None = None
+    PACKET_LOSS: float | None = None
+    PACKET_DUPLICATION: float | None = None
+    SECURITY_LEVEL: int | None = None
+    THREAT_INTENSITY: int | None = None
+    GPU_LIMIT: int | None = None
+    OS_TYPE: str | None = None
+    CONTAINER_IMAGE: str | None = None
+    VM_SETTINGS: dict | None = None
+    FAILURE_MODES: list[str] | str | None = None
 
     class Config:
-        extra = "allow"
+        extra = "forbid"
 
     @validator("CPU_LIMIT", pre=True, allow_reuse=True)
     def _cpu_numeric(cls, v):
@@ -289,13 +297,46 @@ class PresetModel(BaseModel):
             raise ValueError("MEMORY_LIMIT must contain a numeric value") from e
         return val
 
+    @validator(
+        "NETWORK_LATENCY_MS",
+        "NETWORK_JITTER_MS",
+        "PACKET_LOSS",
+        "PACKET_DUPLICATION",
+        pre=True,
+        allow_reuse=True,
+    )
+    def _float_fields(cls, v):
+        if v is None:
+            return v
+        try:
+            return float(v)
+        except Exception as e:
+            raise ValueError("value must be numeric") from e
 
-class SynergyEntry(BaseModel):
+    @validator("SECURITY_LEVEL", "THREAT_INTENSITY", "GPU_LIMIT", pre=True, allow_reuse=True)
+    def _int_fields(cls, v):
+        if v is None:
+            return v
+        try:
+            return int(v)
+        except Exception as e:
+            raise ValueError("value must be an integer") from e
+
+    @validator("FAILURE_MODES", pre=True, allow_reuse=True)
+    def _fm_list(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, str):
+            return [m.strip() for m in v.split(",") if m.strip()]
+        if isinstance(v, list):
+            return [str(m) for m in v]
+        raise ValueError("FAILURE_MODES must be a list or comma separated string")
+
+
+class SynergyEntry(RootModel[dict[str, float]]):
     """Schema for synergy history entries."""
 
-    __root__: dict[str, float]
-
-    @validator("__root__", pre=True, allow_reuse=True)
+    @validator("root", pre=True, allow_reuse=True)
     def _check_values(cls, v):
         if not isinstance(v, dict):
             raise ValueError("entry must be a dict")
@@ -311,11 +352,18 @@ class SynergyEntry(BaseModel):
 def validate_presets(presets: list[dict]) -> list[dict]:
     """Validate preset dictionaries using :class:`PresetModel`."""
     validated: list[dict] = []
+    errors: list[dict] = []
     for idx, p in enumerate(presets):
         try:
-            validated.append(PresetModel.parse_obj(p).dict())
+            model = PresetModel.parse_obj(p)
+            validated.append(model.dict(exclude_none=True))
         except ValidationError as exc:
-            sys.exit(f"Invalid preset at index {idx}: {exc}")
+            for err in exc.errors():
+                new_err = err.copy()
+                new_err["loc"] = ("preset", idx) + tuple(err.get("loc", ()))
+                errors.append(new_err)
+    if errors:
+        raise ValidationError.from_exception_data("PresetModel", errors)
     return validated
 
 
@@ -324,7 +372,7 @@ def validate_synergy_history(hist: list[dict]) -> list[dict[str, float]]:
     validated: list[dict[str, float]] = []
     for idx, entry in enumerate(hist):
         try:
-            validated.append(SynergyEntry.parse_obj(entry).__root__)
+            validated.append(SynergyEntry.parse_obj(entry).root)
         except ValidationError as exc:
             sys.exit(f"Invalid synergy history entry at index {idx}: {exc}")
     return validated
@@ -336,9 +384,7 @@ _SETUP_MARKER = Path(".autonomous_setup_complete")
 def _check_dependencies(settings: SandboxSettings) -> bool:
     """Return ``True`` and warn if the setup script has not been executed."""
     if not _SETUP_MARKER.exists():
-        logger.warning(
-            "Dependencies may be missing. Run 'python setup_dependencies.py' first"
-        )
+        logger.warning("Dependencies may be missing. Run 'python setup_dependencies.py' first")
     return True
 
 
@@ -373,9 +419,7 @@ def load_previous_synergy(
     history: list[dict[str, float]] = []
     try:
         with sqlite3.connect(path) as conn:
-            rows = conn.execute(
-                "SELECT entry FROM synergy_history ORDER BY id"
-            ).fetchall()
+            rows = conn.execute("SELECT entry FROM synergy_history ORDER BY id").fetchall()
         for (text,) in rows:
             data = json.loads(text)
             if isinstance(data, dict):
@@ -419,8 +463,7 @@ def main(argv: List[str] | None = None) -> None:
         "--dashboard-port",
         type=int,
         help=(
-            "start MetricsDashboard on this port for each run"
-            " (overrides AUTO_DASHBOARD_PORT)"
+            "start MetricsDashboard on this port for each run" " (overrides AUTO_DASHBOARD_PORT)"
         ),
     )
     parser.add_argument(
@@ -527,7 +570,6 @@ def main(argv: List[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-
     setup_logging()
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
@@ -576,7 +618,6 @@ def main(argv: List[str] | None = None) -> None:
     if args.synergy_cycles is None:
         args.synergy_cycles = max(3, len(synergy_history))
 
-
     if args.preset_files is None:
         data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
         preset_file = data_dir / "presets.json"
@@ -588,6 +629,8 @@ def main(argv: List[str] | None = None) -> None:
                 if isinstance(presets_raw, dict):
                     presets_raw = [presets_raw]
                 presets = validate_presets(presets_raw)
+            except ValidationError as exc:
+                sys.exit(f"Invalid preset from SANDBOX_ENV_PRESETS: {exc}")
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
@@ -597,6 +640,8 @@ def main(argv: List[str] | None = None) -> None:
                 if isinstance(presets_raw, dict):
                     presets_raw = [presets_raw]
                 presets = validate_presets(presets_raw)
+            except ValidationError as exc:
+                sys.exit(f"Invalid preset file {preset_file}: {exc}")
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
         else:
@@ -611,9 +656,7 @@ def main(argv: List[str] | None = None) -> None:
                 if gen_func is generate_presets:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
-                    presets = validate_presets(
-                        gen_func(str(data_dir), args.preset_count)
-                    )
+                    presets = validate_presets(gen_func(str(data_dir), args.preset_count))
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -658,7 +701,9 @@ def main(argv: List[str] | None = None) -> None:
             logger.error("synergy exporter port %d in use", port)
             port = _free_port()
             logger.info("using port %d for synergy exporter", port)
-        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        history_file = (
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        )
         synergy_exporter = SynergyExporter(
             history_file=str(history_file),
             port=port,
@@ -671,7 +716,9 @@ def main(argv: List[str] | None = None) -> None:
             cleanup_funcs.append(exporter_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
-            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)})
+            exporter_log.record(
+                {"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)}
+            )
 
     auto_trainer = None
     if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
@@ -681,8 +728,12 @@ def main(argv: List[str] | None = None) -> None:
             interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
         except Exception:
             interval = 600.0
-        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
-        weights_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_weights.json"
+        history_file = (
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        )
+        weights_file = (
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_weights.json"
+        )
         auto_trainer = SynergyAutoTrainer(
             history_file=str(history_file),
             weights_file=str(weights_file),
@@ -700,8 +751,9 @@ def main(argv: List[str] | None = None) -> None:
             logger.error("metrics dashboard port %d in use", dash_port)
             dash_port = _free_port()
             logger.info("using port %d for MetricsDashboard", dash_port)
-        from menace.metrics_dashboard import MetricsDashboard
         from threading import Thread
+
+        from menace.metrics_dashboard import MetricsDashboard
 
         history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "roi_history.json"
         dash = MetricsDashboard(str(history_file))
@@ -711,7 +763,9 @@ def main(argv: List[str] | None = None) -> None:
             daemon=True,
         )
         dash_thread.start()
-        cleanup_funcs.append(lambda: dash_thread and dash_thread.is_alive() and dash_thread.join(0.1))
+        cleanup_funcs.append(
+            lambda: dash_thread and dash_thread.is_alive() and dash_thread.join(0.1)
+        )
 
     s_dash = None
     if synergy_dash_port:
@@ -719,10 +773,13 @@ def main(argv: List[str] | None = None) -> None:
             logger.error("synergy dashboard port %d in use", synergy_dash_port)
             synergy_dash_port = _free_port()
             logger.info("using port %d for SynergyDashboard", synergy_dash_port)
-        from menace.self_improvement_engine import SynergyDashboard
         from threading import Thread
 
-        synergy_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        from menace.self_improvement_engine import SynergyDashboard
+
+        synergy_file = (
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+        )
         s_dash = SynergyDashboard(str(synergy_file))
         dash_t = Thread(
             target=s_dash.run,
@@ -753,17 +810,13 @@ def main(argv: List[str] | None = None) -> None:
             for _ in range(5):
                 time.sleep(1)
                 if agent_mgr.process and agent_mgr.process.poll() is not None:
-                    logger.error(
-                        "visual agent exited with code %s", agent_mgr.process.returncode
-                    )
+                    logger.error("visual agent exited with code %s", agent_mgr.process.returncode)
                     sys.exit(1)
                 if _visual_agent_running(settings.visual_agent_urls):
                     started = True
                     break
             if not started:
-                logger.error(
-                    "visual agent failed to start at %s", settings.visual_agent_urls
-                )
+                logger.error("visual agent failed to start at %s", settings.visual_agent_urls)
                 try:
                     agent_mgr.shutdown()
                 except Exception:
@@ -781,9 +834,7 @@ def main(argv: List[str] | None = None) -> None:
     roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold, settings)
     synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold, settings)
     roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence, settings)
-    synergy_confidence = _get_env_override(
-        "SYNERGY_CONFIDENCE", args.synergy_confidence, settings
-    )
+    synergy_confidence = _get_env_override("SYNERGY_CONFIDENCE", args.synergy_confidence, settings)
     synergy_threshold_window = _get_env_override(
         "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window, settings
     )
@@ -877,7 +928,10 @@ def main(argv: List[str] | None = None) -> None:
             with open(pf, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             presets_raw = [data] if isinstance(data, dict) else list(data)
-            presets = validate_presets(presets_raw)
+            try:
+                presets = validate_presets(presets_raw)
+            except ValidationError as exc:
+                sys.exit(f"Invalid preset file {pf}: {exc}")
         else:
             if getattr(args, "disable_preset_evolution", False):
                 presets = validate_presets(generate_presets(args.preset_count))
@@ -891,9 +945,7 @@ def main(argv: List[str] | None = None) -> None:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
                     data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
-                    presets = validate_presets(
-                        gen_func(str(data_dir), args.preset_count)
-                    )
+                    presets = validate_presets(gen_func(str(data_dir), args.preset_count))
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
@@ -939,9 +991,7 @@ def main(argv: List[str] | None = None) -> None:
             module_history.setdefault(mod, []).extend(vals)
 
         syn_vals = {
-            k: v[-1]
-            for k, v in tracker.metrics_history.items()
-            if k.startswith("synergy_") and v
+            k: v[-1] for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v
         }
         if syn_vals:
             synergy_history.append(syn_vals)
@@ -967,9 +1017,7 @@ def main(argv: List[str] | None = None) -> None:
             roi_ma_history.append(ema)
 
         if getattr(args, "auto_thresholds", False):
-            roi_threshold = cli._adaptive_threshold(
-                tracker.roi_history, args.roi_cycles
-            )
+            roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
         elif roi_threshold is None:
             roi_threshold = tracker.diminishing()
         new_flags, _ = cli._diminishing_modules(
