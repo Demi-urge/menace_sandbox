@@ -339,6 +339,8 @@ _POOL_METRICS_FILE = Path(
 )
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
+_STALE_CONTAINERS_REMOVED = 0
+_STALE_VMS_REMOVED = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -387,6 +389,9 @@ def _remove_active_container(cid: str) -> None:
 
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
+    global _STALE_CONTAINERS_REMOVED, _STALE_VMS_REMOVED
+    removed_containers = 0
+    removed_vms = 0
     try:
         ids = _read_active_containers()
         for cid in ids:
@@ -400,6 +405,7 @@ def purge_leftovers() -> None:
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
+            removed_containers += 1
         if ids:
             _write_active_containers([])
     except Exception as exc:
@@ -427,6 +433,7 @@ def purge_leftovers() -> None:
                         stderr=subprocess.DEVNULL,
                         check=False,
                     )
+                    removed_containers += 1
     except Exception as exc:
         logger.debug("leftover container cleanup failed: %s", exc)
 
@@ -448,6 +455,7 @@ def purge_leftovers() -> None:
                                 tmp_dirs.add(str(Path(arg).parent))
                         p.kill()
                         p.wait(timeout=5)
+                        removed_vms += 1
                     except Exception:
                         logger.exception("failed to terminate qemu %s", p.pid)
             for d in tmp_dirs:
@@ -469,6 +477,7 @@ def purge_leftovers() -> None:
                 pass
             try:
                 overlay.unlink()
+                removed_vms += 1
             except Exception:
                 logger.exception("failed to remove overlay %s", overlay)
             try:
@@ -477,6 +486,9 @@ def purge_leftovers() -> None:
                 logger.exception("temporary directory removal failed for %s", overlay.parent)
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
+
+    _STALE_CONTAINERS_REMOVED += removed_containers
+    _STALE_VMS_REMOVED += removed_vms
 
 
 def _docker_available() -> bool:
@@ -685,6 +697,8 @@ def collect_metrics(
     )
     result["container_backoff_base"] = float(_CREATE_BACKOFF_BASE)
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
+    result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
+    result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
     return result
 
 
@@ -793,6 +807,8 @@ def _cleanup_idle_containers() -> tuple[int, int]:
             if reason:
                 pool.remove(c)
                 _stop_and_remove(c)
+                global _STALE_CONTAINERS_REMOVED
+                _STALE_CONTAINERS_REMOVED += 1
                 with _POOL_LOCK:
                     td = _CONTAINER_DIRS.pop(c.id, None)
                 if td:

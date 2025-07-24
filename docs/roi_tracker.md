@@ -232,7 +232,15 @@ each cycle.
 extra_metrics:
   code_quality: 0.0
   maintainability: 0.0
+  stale_containers_removed: 0.0
+  stale_vms_removed: 0.0
 ```
+
+The environment itself tracks operational counters. `collect_metrics` exposes
+cleanup statistics such as `cleanup_disk` or `cleanup_lifetime`. The additional
+fields `stale_containers_removed` and `stale_vms_removed` report how many stale
+Docker containers or VM overlays were purged by `purge_leftovers` or the
+background cleanup worker.
 
 ## Prediction-enabled Metrics Plugins
 

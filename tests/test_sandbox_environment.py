@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import types
+import json
 from pathlib import Path
 import sandbox_runner.environment as env
 
@@ -35,6 +36,8 @@ def _setup(monkeypatch):
     env._CONTAINER_CREATED.clear()
     env._WARMUP_TASKS.clear()
     env._CLEANUP_METRICS.clear()
+    env._STALE_CONTAINERS_REMOVED = 0
+    env._STALE_VMS_REMOVED = 0
 
 
 def test_disk_usage_cleanup(monkeypatch, tmp_path):
@@ -52,8 +55,10 @@ def test_disk_usage_cleanup(monkeypatch, tmp_path):
     cleaned, replaced = env._cleanup_idle_containers()
     assert cleaned == 0 and replaced == 1
     assert env._CLEANUP_METRICS["disk"] == 1
+    assert env._STALE_CONTAINERS_REMOVED == 1
     metrics = asyncio.run(env.collect_metrics_async(0.0, 0.0, None))
     assert metrics.get("cleanup_disk") == 1.0
+    assert metrics["stale_containers_removed"] == 1.0
 
 
 def test_lifetime_cleanup(monkeypatch, tmp_path):
@@ -73,6 +78,9 @@ def test_lifetime_cleanup(monkeypatch, tmp_path):
     cleaned, replaced = env._cleanup_idle_containers()
     assert cleaned == 0 and replaced == 1
     assert env._CLEANUP_METRICS["lifetime"] == 1
+    assert env._STALE_CONTAINERS_REMOVED == 1
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["stale_containers_removed"] == 1.0
 
 
 def test_get_dir_usage_error_logged(monkeypatch, tmp_path, caplog):
@@ -136,4 +144,22 @@ def test_qemu_invocation_and_cleanup(monkeypatch, tmp_path):
     assert str(overlay) in " ".join(cmd)
     assert kwargs.get("timeout") == 5
     assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
+
+
+def test_purge_leftovers_metrics(monkeypatch, tmp_path):
+    _setup(monkeypatch)
+    file = tmp_path / "active.json"
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", file)
+    file.write_text(json.dumps(["a"]))
+
+    def fake_run(cmd, **kw):
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    env.purge_leftovers()
+    assert env._STALE_CONTAINERS_REMOVED == 1
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["stale_containers_removed"] == 1.0
 
