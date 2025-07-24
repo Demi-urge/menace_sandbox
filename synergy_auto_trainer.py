@@ -6,6 +6,7 @@ import tempfile
 import threading
 from pathlib import Path
 import time
+import asyncio
 
 from .metrics_exporter import Gauge
 
@@ -48,6 +49,7 @@ class SynergyAutoTrainer:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._task: asyncio.Task | None = None
 
     # --------------------------------------------------------------
     def _load_history(self) -> list[tuple[int, dict[str, float]]]:
@@ -152,6 +154,31 @@ class SynergyAutoTrainer:
         if self._thread:
             self._thread.join(timeout=1.0)
 
+    # --------------------------------------------------------------
+    async def _async_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await asyncio.to_thread(self._train_once)
+            except Exception as exc:  # pragma: no cover - runtime issues
+                self.logger.exception("training cycle failed: %s", exc)
+            if await asyncio.to_thread(self._stop.wait, self.interval):
+                break
+
+    def start_async(self) -> None:
+        if self._task:
+            return
+        try:
+            synergy_trainer_iterations.set(0.0)
+            synergy_trainer_last_id.set(float(self._last_id))
+        except Exception:
+            pass
+        self._task = asyncio.create_task(self._async_loop())
+
+    async def stop_async(self) -> None:
+        self._stop.set()
+        if self._task:
+            await self._task
+
 # --------------------------------------------------------------
 def cli(argv: list[str] | None = None) -> int:
     """Run the auto trainer as a standalone process."""
@@ -185,6 +212,12 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="perform a single training cycle and exit",
     )
+    parser.add_argument(
+        "--async",
+        dest="async_mode",
+        action="store_true",
+        help="run trainer within asyncio event loop",
+    )
     args = parser.parse_args(argv)
 
     trainer = SynergyAutoTrainer(
@@ -202,6 +235,20 @@ def cli(argv: list[str] | None = None) -> int:
             pass
         trainer._train_once()
         return 0
+
+    if args.async_mode:
+        async def runner() -> int:
+            trainer.start_async()
+            try:
+                while True:
+                    await asyncio.sleep(1)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                await trainer.stop_async()
+            return 0
+
+        return asyncio.run(runner())
 
     trainer.start()
     try:
