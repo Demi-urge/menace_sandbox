@@ -2,6 +2,7 @@ import importlib.util
 import sys
 import types
 import os
+import shutil
 from pathlib import Path
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -80,12 +81,62 @@ class DummyTracker:
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_module():
+def load_module(monkeypatch=None):
     path = ROOT / "run_autonomous.py"
     sys.modules.pop("menace", None)
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod
+    if monkeypatch is not None:
+        monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+        monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+        if "filelock" not in sys.modules:
+            fl = types.ModuleType("filelock")
+            class DummyLock:
+                def __init__(self, *a, **k):
+                    pass
+                def acquire(self, timeout=0):
+                    pass
+                def release(self):
+                    pass
+            fl.FileLock = DummyLock
+            fl.Timeout = RuntimeError
+            monkeypatch.setitem(sys.modules, "filelock", fl)
+        if "dotenv" not in sys.modules:
+            dmod = types.ModuleType("dotenv")
+            dmod.dotenv_values = lambda *a, **k: {}
+            monkeypatch.setitem(sys.modules, "dotenv", dmod)
+        if "pydantic" not in sys.modules:
+            pmod = types.ModuleType("pydantic")
+            class BaseModel:
+                def __init__(self, **kw):
+                    for k, v in kw.items():
+                        setattr(self, k, v)
+                def dict(self):
+                    return self.__dict__
+                @classmethod
+                def parse_obj(cls, obj):
+                    return cls(**obj)
+            class BaseSettings:
+                pass
+            class ValidationError(Exception):
+                pass
+            def Field(default, **kw):
+                return default
+            def validator(*a, **k):
+                def wrap(fn):
+                    return fn
+                return wrap
+            pmod.BaseModel = BaseModel
+            pmod.BaseSettings = BaseSettings
+            pmod.ValidationError = ValidationError
+            pmod.Field = Field
+            pmod.validator = validator
+            monkeypatch.setitem(sys.modules, "pydantic", pmod)
+        if "pydantic_settings" not in sys.modules:
+            ps_mod = types.ModuleType("pydantic_settings")
+            ps_mod.BaseSettings = BaseSettings
+            monkeypatch.setitem(sys.modules, "pydantic_settings", ps_mod)
     spec.loader.exec_module(mod)
     return mod
 
@@ -165,9 +216,9 @@ def test_autonomous_full_loop(monkeypatch, tmp_path):
     sys.modules["sandbox_runner"] = sr_stub
     sys.modules["sandbox_runner.cli"] = cli_stub
 
-    mod = load_module()
+    mod = load_module(monkeypatch)
 
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
 
     popen_calls = []
     monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: popen_calls.append(a))
@@ -182,4 +233,109 @@ def test_autonomous_full_loop(monkeypatch, tmp_path):
     assert adapt_calls
     assert run_calls
     assert not popen_calls
+
+
+def test_visual_agent_monitor_restart(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=_Audit)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+
+    eg_mod = types.ModuleType("menace.environment_generator")
+    eg_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1"}]
+    eg_mod.adapt_presets = lambda t, p: p
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_mod)
+
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+
+    sr_stub = types.ModuleType("sandbox_runner")
+    cli_stub = types.ModuleType("sandbox_runner.cli")
+    cli_stub.full_autonomous_run = lambda args, **k: None
+    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
+    cli_stub._ema = lambda seq: (0.0, [])
+    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
+    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
+    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+    sr_stub._sandbox_main = lambda p, a: None
+    sr_stub.cli = cli_stub
+    sys.modules["sandbox_runner"] = sr_stub
+    sys.modules["sandbox_runner.cli"] = cli_stub
+
+    class DummyProcess:
+        def poll(self):
+            return None
+        @property
+        def returncode(self):
+            return 0
+
+    class DummyManager:
+        def __init__(self):
+            self.process = DummyProcess()
+            self.start_calls = 0
+            self.restart_calls = 0
+        def start(self, token):
+            self.start_calls += 1
+            return self.process
+        def restart_with_token(self, token):
+            self.restart_calls += 1
+            return self.process
+        def shutdown(self, timeout=5.0):
+            pass
+
+    mgr = DummyManager()
+    vamod = types.ModuleType("visual_agent_manager")
+    vamod.VisualAgentManager = lambda *a, **k: mgr
+    monkeypatch.setitem(sys.modules, "visual_agent_manager", vamod)
+
+    mod = load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    class DummySettings:
+        def __init__(self) -> None:
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_env_presets = None
+            self.auto_dashboard_port = None
+            self.save_synergy_history = True
+            self.visual_agent_autostart = False
+            self.visual_agent_urls = ""
+            self.roi_cycles = None
+            self.synergy_cycles = None
+            self.roi_threshold = None
+            self.synergy_threshold = None
+            self.roi_confidence = None
+            self.synergy_confidence = None
+            self.synergy_threshold_window = None
+            self.synergy_threshold_weight = None
+            self.synergy_ma_window = None
+            self.synergy_stationarity_confidence = None
+            self.synergy_std_threshold = None
+            self.synergy_variance_confidence = None
+
+    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
+    monkeypatch.setattr(mod.sandbox_runner.cli, "adaptive_synergy_convergence", lambda *a, **k: (True, 0.0, {}))
+    monkeypatch.setattr(mod, "_visual_agent_running", lambda urls: False)
+    monkeypatch.setattr(mod.time, "sleep", lambda *_a, **_k: None)
+
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "1")
+    monkeypatch.setenv("VISUAL_AGENT_MONITOR_INTERVAL", "0.01")
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+    monkeypatch.chdir(tmp_path)
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--preset-count",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+    ])
+
+    assert mgr.start_calls == 1
+    assert mgr.restart_calls >= 1
 
