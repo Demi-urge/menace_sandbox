@@ -336,10 +336,21 @@ class DQNSynergyLearner(SynergyWeightLearner):
         self.save()
 
 
+class DoubleDQNSynergyLearner(DQNSynergyLearner):
+    """Synergy learner using a Double DQN strategy."""
+
+    def __init__(
+        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+    ) -> None:
+        super().__init__(path, lr, strategy="double_dqn", target_sync=target_sync)
+
+
 class SACSynergyLearner(DQNSynergyLearner):
     """Synergy learner using a simplified SAC strategy."""
 
-    def __init__(self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10) -> None:
+    def __init__(
+        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+    ) -> None:
         super().__init__(path, lr, strategy="sac", target_sync=target_sync)
 
 
@@ -490,6 +501,19 @@ class SelfImprovementEngine:
             if synergy_weights_lr is not None
             else settings.synergy_weights_lr
         )
+
+        if synergy_learner_cls is SynergyWeightLearner:
+            env_name = os.getenv("SYNERGY_LEARNER", "").lower()
+            mapping = {
+                "dqn": DQNSynergyLearner,
+                "double": DoubleDQNSynergyLearner,
+                "double_dqn": DoubleDQNSynergyLearner,
+                "ddqn": DoubleDQNSynergyLearner,
+                "sac": SACSynergyLearner,
+                "td3": TD3SynergyLearner,
+            }
+            synergy_learner_cls = mapping.get(env_name, synergy_learner_cls)
+
         self.synergy_learner = synergy_learner_cls(
             self.synergy_weights_path, lr=self.synergy_weights_lr
         )

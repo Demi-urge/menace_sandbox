@@ -14,9 +14,9 @@ This page explains how synergy weights are learned and how predictions feed into
 ``maintainability``
 ``throughput``
 
-The learner stores these values in `synergy_weights.json`. Each cycle `SelfImprovementEngine._update_synergy_weights` computes the latest deltas for `synergy_<name>` metrics and calls `SynergyWeightLearner.update`. The default implementation uses an actor–critic policy to nudge weights toward positive ROI changes. A `DQNSynergyLearner` subclass provides a deeper Double DQN variant when PyTorch is available.
+The learner stores these values in `synergy_weights.json`. Each cycle `SelfImprovementEngine._update_synergy_weights` computes the latest deltas for `synergy_<name>` metrics and calls `SynergyWeightLearner.update`. The default implementation uses an actor–critic policy to nudge weights toward positive ROI changes. A `DQNSynergyLearner` subclass provides a deeper Double DQN variant when PyTorch is available. `DoubleDQNSynergyLearner` and `TD3SynergyLearner` expose alternative strategies when you set `SYNERGY_LEARNER` to `double_dqn` or `td3`.
 
-Weights can be edited manually or with `synergy_weight_cli.py`. Environment variables such as `SYNERGY_WEIGHT_ROI` or `SYNERGY_WEIGHT_EFFICIENCY` override the loaded values at startup. The learning rate is controlled by `SYNERGY_WEIGHTS_LR`.
+Weights can be edited manually or with `synergy_weight_cli.py`. Environment variables such as `SYNERGY_WEIGHT_ROI` or `SYNERGY_WEIGHT_EFFICIENCY` override the loaded values at startup. The learning rate is controlled by `SYNERGY_WEIGHTS_LR`. To switch reinforcement-learning strategy set `SYNERGY_LEARNER` to `double_dqn` or `td3` before running the CLI.
 
 ## ARIMASynergyPredictor
 

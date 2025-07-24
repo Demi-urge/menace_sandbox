@@ -8,6 +8,7 @@ weights are learned and how predictions feed into ROI calculations.
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -19,9 +20,29 @@ LOG_PATH = Path("sandbox_data/synergy_weights.log")
 
 def _load_engine(path: str | None):
     """Initialise SelfImprovementEngine with the given weights path."""
-    from menace.self_improvement_engine import SelfImprovementEngine
+    from menace.self_improvement_engine import (
+        SelfImprovementEngine,
+        SynergyWeightLearner,
+        DQNSynergyLearner,
+        DoubleDQNSynergyLearner,
+        SACSynergyLearner,
+        TD3SynergyLearner,
+    )
 
-    return SelfImprovementEngine(interval=0, synergy_weights_path=path)
+    mapping = {
+        "dqn": DQNSynergyLearner,
+        "double": DoubleDQNSynergyLearner,
+        "double_dqn": DoubleDQNSynergyLearner,
+        "ddqn": DoubleDQNSynergyLearner,
+        "sac": SACSynergyLearner,
+        "td3": TD3SynergyLearner,
+    }
+    env_name = os.getenv("SYNERGY_LEARNER", "").lower()
+    cls = mapping.get(env_name, SynergyWeightLearner)
+
+    return SelfImprovementEngine(
+        interval=0, synergy_weights_path=path, synergy_learner_cls=cls
+    )
 
 
 def _log_weights(path: Path, weights: dict[str, float]) -> None:
