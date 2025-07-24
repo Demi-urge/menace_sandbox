@@ -419,9 +419,15 @@ def load_previous_synergy(
     history: list[dict[str, float]] = []
     try:
         with sqlite3.connect(path) as conn:
-            rows = conn.execute("SELECT entry FROM synergy_history ORDER BY id").fetchall()
+            rows = conn.execute(
+                "SELECT entry FROM synergy_history ORDER BY id"
+            ).fetchall()
         for (text,) in rows:
-            data = json.loads(text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                logger.warning("invalid synergy history entry ignored: %s", exc)
+                continue
             if isinstance(data, dict):
                 history.append({str(k): float(v) for k, v in data.items()})
     except Exception as exc:  # pragma: no cover - unexpected errors
@@ -642,6 +648,12 @@ def main(argv: List[str] | None = None) -> None:
                 presets = validate_presets(presets_raw)
             except ValidationError as exc:
                 sys.exit(f"Invalid preset file {preset_file}: {exc}")
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "preset file %s is corrupted: %s", preset_file, exc
+                )
+                presets = validate_presets(generate_presets(args.preset_count))
+                preset_file.write_text(json.dumps(presets))
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
         else:
@@ -925,8 +937,13 @@ def main(argv: List[str] | None = None) -> None:
             sys.exit(1)
         if args.preset_files:
             pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
-            with open(pf, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
+            try:
+                with open(pf, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except json.JSONDecodeError as exc:
+                logger.warning("preset file %s is corrupted: %s", pf, exc)
+                data = generate_presets(args.preset_count)
+                pf.write_text(json.dumps(data))
             presets_raw = [data] if isinstance(data, dict) else list(data)
             try:
                 presets = validate_presets(presets_raw)
