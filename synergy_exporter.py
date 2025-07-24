@@ -8,6 +8,7 @@ import sqlite3
 import logging
 import threading
 import time
+import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
@@ -176,4 +177,47 @@ __all__ = [
     "start_synergy_exporter",
     "exporter_uptime",
     "exporter_failures",
+    "cli",
+    "main",
 ]
+
+
+def cli(argv: list[str] | None = None) -> int:
+    """Run the exporter as a standalone process."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--history-file",
+        default="synergy_history.db",
+        help="SQLite history database",
+    )
+    parser.add_argument("--port", type=int, default=8003, help="metrics port")
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=5.0,
+        help="update interval in seconds",
+    )
+    args = parser.parse_args(argv)
+
+    exporter = start_synergy_exporter(
+        history_file=args.history_file, port=args.port, interval=args.interval
+    )
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        exporter.stop()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    sys.exit(cli(argv))
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    main()
