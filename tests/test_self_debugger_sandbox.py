@@ -1037,3 +1037,43 @@ def test_parallel_candidate_scoring_runtime(monkeypatch, tmp_path):
     assert rec["score"] > 0
     assert len(patch_db.flaky) >= 1
     assert elapsed < 0.5
+
+
+def test_coverage_revert_records_history(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "scores.db"))
+
+    class RB:
+        def __init__(self):
+            self.calls = []
+
+        def rollback(self, pid):
+            self.calls.append(pid)
+
+    class CovEngine(DummyEngine):
+        def __init__(self):
+            super().__init__()
+            self.rollback_mgr = RB()
+
+    engine = CovEngine()
+    trail = DummyTrail()
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), engine, audit_trail=trail)
+    monkeypatch.setattr(
+        dbg, "_generate_tests", lambda logs: ["def test_ok():\n    assert True\n"]
+    )
+    monkeypatch.setattr(sds.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(dbg, "_test_flakiness", lambda p, env=None, *, runs=None: 0.0)
+    monkeypatch.setattr(dbg, "_code_complexity", lambda p: 0.0)
+
+    cov_vals = [80.0, 50.0]
+
+    async def fake_cov(p, env=None):
+        return cov_vals.pop(0)
+
+    monkeypatch.setattr(dbg, "_coverage_percent", fake_cov)
+
+    dbg.analyse_and_fix()
+
+    assert engine.rollback_mgr.calls == ["1"]
+    rows = dbg.recent_scores(2)
+    assert any(r[1] == "reverted" for r in rows)
