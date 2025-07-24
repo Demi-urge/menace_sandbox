@@ -39,6 +39,7 @@ def benchmark_workflow(
     proc = psutil.Process() if psutil else None
     cpu_start = proc.cpu_times() if proc else None
     mem_start = proc.memory_info().rss if proc else 0
+    mem_usage = mem_start
     net_start = psutil.net_io_counters() if psutil else None
     disk_start = psutil.disk_io_counters() if psutil else None
     success = False
@@ -59,7 +60,9 @@ def benchmark_workflow(
         cpu_time = float(
             (end_times.user + end_times.system) - (cpu_start.user + cpu_start.system)
         )
-        mem_delta = float(max(proc.memory_info().rss - mem_start, 0)) / (1024 * 1024)
+        mem_end = proc.memory_info().rss
+        mem_delta = float(max(mem_end - mem_start, 0)) / (1024 * 1024)
+        mem_usage = float(mem_end) / (1024 * 1024)
     if psutil and net_start:
         end_net = psutil.net_io_counters()
         net_delta = float(
@@ -80,6 +83,7 @@ def benchmark_workflow(
             metrics_db.log_eval(name, "cpu_time", cpu_time)
             metrics_db.log_eval(name, "cpu_percent", cpu_percent)
             metrics_db.log_eval(name, "memory_delta", mem_delta)
+            metrics_db.log_eval(name, "memory_usage", mem_usage)
             metrics_db.log_eval(name, "net_io", net_delta)
             metrics_db.log_eval(name, "disk_read", disk_read)
             metrics_db.log_eval(name, "disk_write", disk_write)
@@ -110,6 +114,11 @@ def benchmark_workflow(
                 me.workflow_duration_gauge.labels(name).set(duration)
                 me.workflow_cpu_percent_gauge.labels(name).set(cpu_percent)
                 me.workflow_memory_gauge.labels(name).set(mem_delta)
+                me.workflow_memory_usage_gauge.labels(name).set(mem_usage)
+                me.workflow_cpu_time_gauge.labels(name).set(cpu_time)
+                me.workflow_net_io_gauge.labels(name).set(net_delta)
+                me.workflow_disk_read_gauge.labels(name).set(disk_read)
+                me.workflow_disk_write_gauge.labels(name).set(disk_write)
             break
         except Exception:
             logging.exception("metrics logging failed on attempt %s", i + 1)
@@ -124,8 +133,9 @@ def benchmark_workflow(
         exec_time=duration,
         resources=(
             f"cpu_time={cpu_time:.4f},memory_delta={mem_delta:.2f}MB,"
-            f"cpu_percent={cpu_percent:.2f},net_io={net_delta:.0f},"
-            f"disk_read={disk_read:.0f},disk_write={disk_write:.0f}"
+            f"cpu_percent={cpu_percent:.2f},memory_usage={mem_usage:.2f}MB,"
+            f"net_io={net_delta:.0f},disk_read={disk_read:.0f},"
+            f"disk_write={disk_write:.0f}"
         ),
         outcome=Outcome.SUCCESS if success else Outcome.FAILURE,
         roi=1.0 if success else 0.0,
@@ -229,6 +239,7 @@ def benchmark_registered_workflows(
             "duration",
             "cpu_time",
             "memory_delta",
+            "memory_usage",
             "cpu_percent",
             "latency",
             "latency_p95",
