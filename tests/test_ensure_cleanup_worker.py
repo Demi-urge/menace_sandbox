@@ -40,3 +40,38 @@ def test_restart_on_exception(monkeypatch):
     env._CLEANUP_TASK = DummyTask(done=True, exc=RuntimeError("boom"))
     env.ensure_cleanup_worker()
     assert env._CLEANUP_TASK is new_task
+
+
+def test_reaper_restart_when_cancelled(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+    new_task = object()
+    def fake_schedule(coro):
+        coro.close()
+        return new_task
+    monkeypatch.setattr(env, "_schedule_coroutine", fake_schedule)
+    env._CLEANUP_TASK = DummyTask(done=True)
+    env._REAPER_TASK = DummyTask(done=True, cancelled=True)
+    env.ensure_cleanup_worker()
+    assert env._REAPER_TASK is new_task
+
+
+def test_reaper_no_restart_when_running(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+    task = DummyTask(done=False)
+    env._CLEANUP_TASK = DummyTask(done=True)
+    env._REAPER_TASK = task
+    env.ensure_cleanup_worker()
+    assert env._REAPER_TASK is task
+
+
+def test_reaper_restart_on_exception(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+    new_task = object()
+    def fake_schedule(coro):
+        coro.close()
+        return new_task
+    monkeypatch.setattr(env, "_schedule_coroutine", fake_schedule)
+    env._CLEANUP_TASK = DummyTask(done=True)
+    env._REAPER_TASK = DummyTask(done=True, exc=RuntimeError("boom"))
+    env.ensure_cleanup_worker()
+    assert env._REAPER_TASK is new_task
