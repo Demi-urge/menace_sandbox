@@ -47,6 +47,7 @@ class SelfTestService:
         container_retries: int = 1,
         container_timeout: float = 300.0,
         history_path: str | Path | None = None,
+        state_path: str | Path | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -78,6 +79,15 @@ class SelfTestService:
             self.container_timeout = container_timeout
         self.offline_install = os.getenv("MENACE_OFFLINE_INSTALL", "0") == "1"
         self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
+        state_env = os.getenv("SELF_TEST_STATE")
+        self.state_path = Path(state_path or state_env) if (state_path or state_env) else None
+        self._state: dict[str, Any] | None = None
+        if self.state_path and self.state_path.exists():
+            try:
+                with open(self.state_path, "r", encoding="utf-8") as fh:
+                    self._state = json.load(fh) or None
+            except Exception:
+                self.logger.exception("failed to load state file")
         if self.history_path and self.history_path.suffix == ".db":
             self._history_db = sqlite3.connect(self.history_path)
             self._history_db.execute(
@@ -132,6 +142,37 @@ class SelfTestService:
                     json.dump(data, fh)
         except Exception:
             self.logger.exception("failed to store history")
+
+    # ------------------------------------------------------------------
+    def _save_state(
+        self,
+        queue: list[str],
+        passed: int,
+        failed: int,
+        coverage_sum: float,
+        runtime: float,
+    ) -> None:
+        if not self.state_path:
+            return
+        try:
+            data = {
+                "queue": queue,
+                "passed": passed,
+                "failed": failed,
+                "coverage_sum": coverage_sum,
+                "runtime": runtime,
+            }
+            with open(self.state_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+        except Exception:
+            self.logger.exception("failed to store state")
+
+    def _clear_state(self) -> None:
+        if self.state_path and self.state_path.exists():
+            try:
+                os.unlink(self.state_path)
+            except Exception:
+                self.logger.exception("failed to delete state file")
 
     async def _docker_available(self) -> bool:
         """Return ``True`` if the docker CLI is available and acquire the container lock."""
@@ -263,11 +304,24 @@ class SelfTestService:
         if not paths:
             paths = [None]
 
-        passed = 0
-        failed = 0
-        coverage_total = 0.0
-        runtime_total = 0.0
-        proc_info: list[tuple[list[str], str | None, bool, str | None]] = []
+        if self._state:
+            saved_queue = self._state.get("queue")
+            if saved_queue:
+                paths = list(saved_queue)
+            passed = int(self._state.get("passed", 0))
+            failed = int(self._state.get("failed", 0))
+            coverage_total = float(self._state.get("coverage_sum", 0.0))
+            runtime_total = float(self._state.get("runtime", 0.0))
+        else:
+            passed = 0
+            failed = 0
+            coverage_total = 0.0
+            runtime_total = 0.0
+        self._state = None
+
+        queue: list[str] = list(paths)
+        self._save_state(queue, passed, failed, coverage_total, runtime_total)
+        proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
 
         use_container = False
         try:
@@ -366,9 +420,9 @@ class SelfTestService:
                     ]
 
                     full_cmd = [*docker_cmd, *container_cmd]
-                    proc_info.append((full_cmd, None, True, cname))
+                    proc_info.append((full_cmd, None, True, cname, p))
                 else:
-                    proc_info.append((cmd, tmp_name, False, None))
+                    proc_info.append((cmd, tmp_name, False, None, p))
 
             async def _process(
                 cmd: list[str], tmp: str | None, is_container: bool, name: str | None
@@ -484,7 +538,7 @@ class SelfTestService:
                         self.logger.exception("error logging failed")
                 return pcount, fcount, cov, runtime, failed_flag, out_snip, err_snip, log_snip
 
-            tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name in proc_info]
+            tasks = [asyncio.create_task(_process(cmd, tmp, is_c, name)) for cmd, tmp, is_c, name, _ in proc_info]
 
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_exc: Exception | None = None
@@ -493,7 +547,7 @@ class SelfTestService:
             stderr_snip = ""
             logs_snip = ""
 
-            for res in results:
+            for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
                     if first_exc is None:
                         first_exc = res
@@ -508,6 +562,10 @@ class SelfTestService:
                     stdout_snip += out_snip
                     stderr_snip += err_snip
                     logs_snip += log_snip
+
+                if p in queue:
+                    queue.remove(p)
+                self._save_state(queue, passed, failed, coverage_total, runtime_total)
 
                 if self.result_callback:
                     partial = {
@@ -554,6 +612,9 @@ class SelfTestService:
                     self.result_callback(self.results)
                 except Exception:
                     self.logger.exception("result callback failed")
+
+            if not queue:
+                self._clear_state()
 
             if self.data_bot:
                 try:
@@ -684,6 +745,10 @@ def cli(argv: list[str] | None = None) -> int:
         help="Path to JSON/DB file storing run history",
     )
     run.add_argument(
+        "--state",
+        help="Path to JSON file storing current run state",
+    )
+    run.add_argument(
         "--pytest-args",
         default=None,
         help="Additional arguments passed to pytest",
@@ -717,6 +782,7 @@ def cli(argv: list[str] | None = None) -> int:
             docker_host=args.docker_host,
             use_container=args.use_container,
             history_path=args.history,
+            state_path=args.state,
             container_retries=args.retries,
             container_timeout=args.timeout,
         )

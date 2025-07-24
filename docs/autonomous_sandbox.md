@@ -323,6 +323,9 @@ local installation.
   rerun `./setup_env.sh` to reinstall the Python environment. Some tests rely on
   optional tools such as `ffmpeg` or Docker. Execute `pytest -x` to stop on the
   first failure and inspect the output for missing dependencies.
+- **Self tests interrupted** – `SelfTestService` saves its progress to
+  `sandbox_data/self_test_state.json` (configurable via `SELF_TEST_STATE`).
+  Restarting the sandbox automatically resumes any incomplete test run.
 - **Authentication errors** – HTTP 401 responses from the visual agent usually
   indicate an invalid token. Confirm that `VISUAL_AGENT_TOKEN` matches the
   secret configured in `.env` and restart the service when the token changes.
