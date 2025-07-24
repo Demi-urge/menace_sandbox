@@ -126,6 +126,10 @@ To automatically start a local visual agent before running the sandbox use:
 ```bash
 python scripts/launch_personal.py
 ```
+Alternatively start the agent on demand and run the sandbox with:
+```bash
+python scripts/run_personal_sandbox.py
+```
 
 To run the sandbox directly with metrics visualisation, use the convenience
 script which installs dependencies via `setup_env.sh` before launching the
