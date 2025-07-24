@@ -784,12 +784,14 @@ class ROITracker:
         model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
         if model_name and len(history) > 10:
             try:
-                from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+                from . import synergy_predictor as sp
 
                 if model_name.lower() == "arima":
-                    return float(ARIMASynergyPredictor().predict(history))
+                    return float(sp.ARIMASynergyPredictor().predict(history))
                 if model_name.lower() == "lstm":
-                    return float(LSTMSynergyPredictor().predict(history))
+                    if getattr(sp, "torch", None) is None:
+                        return float(sp.ARIMASynergyPredictor().predict(history))
+                    return float(sp.LSTMSynergyPredictor().predict(history))
             except Exception:
                 logger.exception("synergy predictor failed")
 
@@ -881,12 +883,14 @@ class ROITracker:
         model_name = os.getenv("SANDBOX_SYNERGY_MODEL")
         if model_name and len(history) > 10:
             try:
-                from .synergy_predictor import ARIMASynergyPredictor, LSTMSynergyPredictor
+                from . import synergy_predictor as sp
 
                 if model_name.lower() == "arima":
-                    return float(ARIMASynergyPredictor().predict(history))
+                    return float(sp.ARIMASynergyPredictor().predict(history))
                 if model_name.lower() == "lstm":
-                    return float(LSTMSynergyPredictor().predict(history))
+                    if getattr(sp, "torch", None) is None:
+                        return float(sp.ARIMASynergyPredictor().predict(history))
+                    return float(sp.LSTMSynergyPredictor().predict(history))
             except Exception:
                 logger.exception("synergy predictor failed")
 
