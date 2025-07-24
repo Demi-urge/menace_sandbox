@@ -1085,7 +1085,7 @@ def _await_reaper_task() -> None:
 
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
-    global _CLEANUP_TASK
+    global _CLEANUP_TASK, _REAPER_TASK
     if _DOCKER_CLIENT is None:
         return
     task = _CLEANUP_TASK
@@ -1128,7 +1128,7 @@ def ensure_cleanup_worker() -> None:
         exc = task.exception()
     except Exception:
         pass
-    if cancelled or exc is not None:
+    if done or cancelled or exc is not None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
 
 import atexit
