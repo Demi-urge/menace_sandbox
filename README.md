@@ -73,6 +73,7 @@
 - Automatic first-run sandbox improving the codebase before live execution
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
+Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.
 Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md).
 A new `menace` CLI wraps common workflows so you no longer need to remember individual scripts.
 
