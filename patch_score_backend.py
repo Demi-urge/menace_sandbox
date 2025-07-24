@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Callable, TypeVar
 from urllib.parse import urlparse
 
 try:  # pragma: no cover - optional dependency
@@ -22,6 +22,23 @@ except Exception:  # pragma: no cover - dependency may be missing
 
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+def _retry(func: Callable[[], T], tries: int = 3, delay: float = 1.0, backoff: float = 2.0) -> T:
+    """Call ``func`` with retries and exponential backoff."""
+    wait = delay
+    for attempt in range(tries):
+        try:
+            return func()
+        except Exception as exc:  # pragma: no cover - best effort logging
+            if attempt == tries - 1:
+                raise
+            logger.warning("retry %s/%s after error: %s", attempt + 1, tries, exc)
+            time.sleep(wait)
+            wait *= backoff
+
 
 
 class PatchScoreBackend:
@@ -60,7 +77,7 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
             logger.debug("requests unavailable; skipping HTTP backend")
             return
         try:  # pragma: no cover - network issues
-            resp = self._get_session().post(self.url, json=record, timeout=5)
+            resp = _retry(lambda: self._get_session().post(self.url, json=record, timeout=5))
             resp.raise_for_status()
         except Exception as exc:  # pragma: no cover
             logger.error("HTTP patch score store failed: %s", exc)
@@ -70,7 +87,7 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
         if not requests:
             return []
         try:  # pragma: no cover - network issues
-            resp = self._get_session().get(self.url, params={"limit": limit}, timeout=5)
+            resp = _retry(lambda: self._get_session().get(self.url, params={"limit": limit}, timeout=5))
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, dict):
@@ -105,8 +122,10 @@ class S3PatchScoreBackend(PatchScoreBackend):
             return
         key = f"{self.prefix.rstrip('/')}/{int(time.time()*1000)}.json"
         try:  # pragma: no cover - network issues
-            client.put_object(
-                Bucket=self.bucket, Key=key, Body=json.dumps(record).encode()
+            _retry(
+                lambda: client.put_object(
+                    Bucket=self.bucket, Key=key, Body=json.dumps(record).encode()
+                )
             )
         except Exception as exc:  # pragma: no cover
             logger.error("S3 patch score store failed: %s", exc)
@@ -117,14 +136,18 @@ class S3PatchScoreBackend(PatchScoreBackend):
         if client is None:
             return []
         try:  # pragma: no cover - network issues
-            resp = client.list_objects_v2(
-                Bucket=self.bucket, Prefix=self.prefix.rstrip("/") + "/"
+            resp = _retry(
+                lambda: client.list_objects_v2(
+                    Bucket=self.bucket, Prefix=self.prefix.rstrip("/") + "/"
+                )
             )
             items = resp.get("Contents", [])
             items.sort(key=lambda x: x["LastModified"], reverse=True)
             results: List[Tuple] = []
             for obj in items[:limit]:
-                body = client.get_object(Bucket=self.bucket, Key=obj["Key"])["Body"].read()
+                body = _retry(
+                    lambda: client.get_object(Bucket=self.bucket, Key=obj["Key"])["Body"].read()
+                )
                 results.append(tuple(json.loads(body)))
             return results
         except Exception as exc:  # pragma: no cover
