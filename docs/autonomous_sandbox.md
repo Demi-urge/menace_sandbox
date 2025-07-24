@@ -474,7 +474,8 @@ local installation.
   `AUTO_TRAIN_SYNERGY=1` additional trainer metrics appear alongside the
   exporter gauges.
 - **Self‑test metrics not updating** – check that `SELF_TEST_INTERVAL` is set to
-  a positive value. The counters `self_test_passed_total` and
-  `self_test_failed_total` are available on
+  a positive value. The gauges `self_test_passed_total`,
+  `self_test_failed_total`, `self_test_average_runtime_seconds` and
+  `self_test_average_coverage` are available on
   `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
   progress in `SELF_TEST_STATE`.

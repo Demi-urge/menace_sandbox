@@ -16,8 +16,9 @@ Coverage percentage and total runtime are recorded in `MetricsDB` when a
 `result_callback` which receives a dictionary after each file and a final
 summary.
 
-After each run the gauges `self_test_passed_total` and
-`self_test_failed_total` expose the number of passed and failed tests for
+After each run the gauges `self_test_passed_total`, `self_test_failed_total`,
+`self_test_average_runtime_seconds` and `self_test_average_coverage` expose the
+number of passed and failed tests plus the average runtime and coverage for
 Prometheus scraping.
 
 ## Command Line Interface
