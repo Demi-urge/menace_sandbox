@@ -172,8 +172,10 @@ factors contribute to overall ROI.
 ## Background training and exporter monitoring
 
 Set `AUTO_TRAIN_SYNERGY=1` to start a background trainer that periodically updates
-`synergy_weights.json` from the data stored in `synergy_history.db`. The interval
-defaults to 600 seconds and can be adjusted with `AUTO_TRAIN_INTERVAL`.
+`synergy_weights.json` from the data stored in `synergy_history.db`. When this
+environment variable is enabled, `SelfImprovementEngine` launches the task in
+the background. The update interval defaults to 600 seconds and can be adjusted
+with `AUTO_TRAIN_INTERVAL`.
 
 When `EXPORT_SYNERGY_METRICS=1` is enabled the exporter is monitored and
 automatically restarted if its health check fails. Control how frequently the

@@ -84,6 +84,8 @@ from .neuroplasticity import PathwayRecord, Outcome
 from .self_coding_engine import SelfCodingEngine
 from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
+from . import synergy_weight_cli
+from . import synergy_history_db as shd
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -563,6 +565,8 @@ class SelfImprovementEngine:
         self._cycle_running = False
         self._schedule_task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
+        self._trainer_stop: threading.Event | None = None
+        self._trainer_thread: threading.Thread | None = None
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -581,6 +585,14 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "failed to subscribe to self_improve events: %s", exc
                 )
+
+        if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
+            try:
+                interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
+            except Exception:
+                interval = 600.0
+            hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
+            self._start_synergy_trainer(hist_file, interval)
 
     # ------------------------------------------------------------------
     def recent_scores(self, limit: int = 20) -> list[tuple]:
@@ -656,6 +668,63 @@ class SelfImprovementEngine:
         self.synergy_learner.weights["maintainability"] = self.synergy_weight_maintainability
         self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.synergy_learner.save()
+
+    # ------------------------------------------------------------------
+    def _train_synergy_weights_once(self, history_file: Path) -> None:
+        if not history_file.exists():
+            return
+        try:
+            with sqlite3.connect(history_file) as conn:
+                hist = shd.fetch_all(conn)
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.exception("failed to load history: %s", exc)
+            return
+        if not hist:
+            return
+        tmp = tempfile.NamedTemporaryFile("w", delete=False)
+        try:
+            json.dump(hist, tmp)
+            tmp.close()
+            try:
+                synergy_weight_cli.cli([
+                    "--path",
+                    str(self.synergy_weights_path),
+                    "train",
+                    tmp.name,
+                ])
+            except SystemExit:
+                pass
+            except Exception as exc:  # pragma: no cover - runtime issues
+                self.logger.exception("training failed: %s", exc)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except Exception:
+                pass
+
+    def _synergy_trainer_loop(self, history_file: Path, interval: float) -> None:
+        assert self._trainer_stop is not None
+        while not self._trainer_stop.is_set():
+            self._train_synergy_weights_once(history_file)
+            self._trainer_stop.wait(interval)
+
+    def _start_synergy_trainer(self, history_file: Path, interval: float) -> None:
+        if self._trainer_thread:
+            return
+        self._trainer_stop = threading.Event()
+        self._trainer_thread = threading.Thread(
+            target=self._synergy_trainer_loop,
+            args=(history_file, interval),
+            daemon=True,
+        )
+        self._trainer_thread.start()
+
+    def stop_synergy_trainer(self) -> None:
+        if self._trainer_thread and self._trainer_stop:
+            self._trainer_stop.set()
+            self._trainer_thread.join(timeout=1.0)
+            self._trainer_thread = None
+            self._trainer_stop = None
 
     # ------------------------------------------------------------------
     def _metric_delta(self, name: str, window: int = 3) -> float:
