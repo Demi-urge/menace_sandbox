@@ -27,6 +27,14 @@ class CoverageSubprocessError(RuntimeError):
     def __init__(self, output: str) -> None:
         super().__init__(output)
         self.output = output
+
+
+class RollbackError(RuntimeError):
+    """Raised when a rollback operation fails during sandbox evaluation."""
+
+
+class CandidateEvaluationError(RuntimeError):
+    """Raised when evaluating a candidate patch fails but is recoverable."""
 import sqlite3
 import threading
 
@@ -1042,7 +1050,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         ):
                             try:
                                 self.engine.rollback_mgr.rollback(str(pid))
-                            except Exception:
+                            except Exception as exc:
+                                reason = f"rollback failed: {exc}"
                                 self.logger.exception("rollback failed")
                             result = "reverted"
                             reverted = True
@@ -1063,12 +1072,15 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         else:
                             score = float("-inf")
                     except asyncio.CancelledError:
+                        reason = "evaluation cancelled"
                         self.logger.error("candidate eval cancelled")
                         return None
                     except RuntimeError as exc:
+                        reason = f"sandbox tests failed: {exc}"
                         self.logger.error("sandbox tests failed", exc_info=exc)
                         score = float("-inf")
-                    except Exception:
+                    except Exception as exc:
+                        reason = f"{type(exc).__name__}: {exc}"
                         self.logger.exception("patch failed")
                         score = float("-inf")
                     finally:
@@ -1081,6 +1093,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             error_delta=error_delta,
                             roi_delta=roi_delta,
                             score=score,
+                            reason=reason,
                             flakiness=flakiness,
                             runtime_impact=runtime_delta,
                             complexity=complexity,
@@ -1101,7 +1114,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         ):
                             try:
                                 self.engine.rollback_patch(str(pid))
-                            except Exception:
+                            except Exception as exc:
                                 self.logger.exception(
                                     "candidate rollback failed"
                                 )
@@ -1189,7 +1202,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                     if pid is not None and getattr(self.engine, "rollback_mgr", None):
                         try:
                             self.engine.rollback_mgr.rollback(str(pid))
-                        except Exception:
+                        except Exception as exc:
+                            reason = f"rollback failed: {exc}"
                             self.logger.exception("rollback failed")
                     result = "reverted"
                     reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
@@ -1201,14 +1215,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 ):
                     try:
                         self.engine.rollback_mgr.rollback(str(pid))
-                    except Exception:
+                    except Exception as exc:
+                        reason = f"rollback failed: {exc}"
                         self.logger.exception("rollback failed")
                     result = "reverted"
                 else:
                     patched = not reverted and patch_score >= self.score_threshold
             except RuntimeError as exc:
+                reason = f"sandbox tests failed: {exc}"
                 self.logger.error("sandbox tests failed", exc_info=exc)
-            except Exception:
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
                 self.logger.exception("patch failed")
             finally:
                 self._log_patch(
