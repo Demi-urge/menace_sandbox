@@ -246,6 +246,9 @@ docker compose -f docker-compose.synergy.yml down
 Failed training attempts no longer stop the background process. The trainer logs
 the error and retries after the configured interval so progress in
 `last_ts.json` (or the specified `--progress-file`) is preserved.
+If `synergy_weight_cli.py` exits with a non-zero code the trainer raises
+`SynergyWeightCliError`, writes the error to the log and continues with the next
+cycle.
 
 ## Running exporter and auto trainer together
 
