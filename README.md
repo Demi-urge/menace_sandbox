@@ -335,6 +335,8 @@ The deployment helpers use the following variables:
 - `SANDBOX_BRAINSTORM_RETRIES` – consecutive low-ROI cycles before brainstorming.
 - `SANDBOX_OFFLINE_SUGGESTIONS` – enable heuristic patches when GPT is unavailable.
 - `SANDBOX_SUGGESTION_CACHE` – JSON file with cached suggestions.
+- `PATCH_SCORE_BACKEND_URL` – optional patch score storage. Use `file://path` to
+  save scores locally.
 - `SANDBOX_PRESET_RL_STRATEGY` – RL algorithm used by `AdaptivePresetAgent` (default `q_learning`).
 - `OPENAI_FALLBACK_MODEL` – fallback GPT model name.
 - `OPENAI_FALLBACK_ATTEMPTS` – retry count for OpenAI calls.
@@ -366,6 +368,7 @@ missing. Notable defaults include:
 - `SANDBOX_BRAINSTORM_RETRIES=3`
 - `SANDBOX_OFFLINE_SUGGESTIONS=0`
 - `SANDBOX_SUGGESTION_CACHE=`
+- `PATCH_SCORE_BACKEND_URL=`
 - `OPENAI_FALLBACK_MODEL=gpt-4o-mini`
 - `OPENAI_FALLBACK_ATTEMPTS=3`
 - `OPENAI_RETRY_DELAY=1.0`
