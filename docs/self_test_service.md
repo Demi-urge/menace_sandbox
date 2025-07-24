@@ -55,6 +55,16 @@ python -m menace.self_test_service run \
     tests/unit
 ```
 
+Run tests continuously on a schedule using Docker or Podman:
+
+```bash
+python -m menace.self_test_service run-scheduled --interval 3600 --history test_history.json
+```
+
+The `run-scheduled` command shares the same options as `run` and writes each
+cycle's pass/fail counts, coverage and runtime to the file specified with
+`--history`.
+
 ## Offline Workflow
 
 Set `MENACE_OFFLINE_INSTALL=1` when dependencies and container images are
