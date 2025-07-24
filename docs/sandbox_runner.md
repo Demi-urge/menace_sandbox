@@ -672,10 +672,13 @@ consistently failing to launch.
 
 ## Automatic Cleanup
 
-The sandbox launches a background worker that periodically removes idle or
-unhealthy containers from the pool.  The worker is started automatically when
-`sandbox_runner.environment` is imported and logs how many containers were
-cleaned or replaced.  Cleanup events accumulate in a set of metrics exposed via
+When `sandbox_runner.environment` is imported it immediately calls
+`purge_leftovers()` to remove containers and QEMU overlay files that may have
+been left behind by a previous crash.  Once this cross-run sweep has finished
+two background workers are launched.  The regular cleanup worker removes idle or
+unhealthy containers and deletes stale VM overlays while the reaper worker
+collects orphaned containers that were not tracked correctly.  Both workers log
+their actions and the counts accumulate in a set of metrics exposed through
 `collect_metrics()`:
 
 - `cleanup_idle` – containers removed after exceeding
@@ -691,6 +694,11 @@ Additional metrics include `container_failures_<image>` and
 `container_backoff_base` reports the current exponential backoff base used when
 creation repeatedly fails.
 
+If you embed the sandbox into another application call
+`register_signal_handlers()` after importing the environment.  The installed
+handlers shut down the cleanup workers and remove pooled containers on
+`SIGINT` or `SIGTERM` so interrupted runs do not leak resources.
+
 If the process crashes you can safely clean up any leftover containers or QEMU
 overlay files by running:
 
@@ -698,10 +706,20 @@ overlay files by running:
 python -m sandbox_runner.cli --cleanup
 ```
 
-Keep an eye on the logs for messages from the cleanup worker.  A steady stream
+
+Keep an eye on the logs for messages from the cleanup workers.  A steady stream
 of cleanup events may indicate resource leaks or overly strict timeouts.  When
-the worker exits it logs `cleanup worker cancelled`; if this appears
-unexpectedly check for unhandled exceptions.
+either worker exits it logs `cleanup worker cancelled` or `reaper worker
+cancelled`; if this appears unexpectedly check for unhandled exceptions.
+
+### Known Limitations
+
+- The VM cleanup relies on `psutil`; if it is missing only overlay files are
+  removed.
+- Docker must be available for container cleanup to succeed and containers
+  started outside the sandbox will not be touched.
+- On platforms that lock open files (e.g. Windows) stale overlay directories may
+  remain until the system releases them.
 
 ## Troubleshooting
 
