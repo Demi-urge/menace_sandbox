@@ -14,6 +14,8 @@ import time
 import logging
 
 from .automated_reviewer import AutomatedReviewer
+from .resilience import CircuitBreaker, CircuitOpenError, retry_with_backoff
+from .logging_utils import set_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,7 @@ class UnifiedEventBus:
                 asyncio.set_event_loop(self._loop)
         self._persist: Optional[sqlite3.Connection] = None
         self._network: Optional[EventBus] = None
+        self._circuit: CircuitBreaker | None = None
         self._rethrow_errors = rethrow_errors
         self._collect_errors = collect_errors
         self.callback_errors: List[Exception] = []
@@ -77,6 +80,7 @@ class UnifiedEventBus:
                 from .networked_event_bus import NetworkedEventBus
 
                 self._network = NetworkedEventBus(host=rabbitmq_host, loop=self._loop)
+                self._circuit = CircuitBreaker()
             except Exception:  # pragma: no cover - optional
                 self._network = None
         if persist_path:
@@ -145,13 +149,30 @@ class UnifiedEventBus:
 
     def publish(self, topic: str, event: object) -> None:
         """Send *event* to all subscribers of *topic*."""
+        if isinstance(event, dict) and "correlation_id" in event:
+            set_correlation_id(str(event.get("correlation_id")))
         if self._network:
             callbacks: List[Callable[[str, object], None]] = []
             async_callbacks: List[Callable[[str, object], Awaitable[None]]] = []
             try:
-                self._network.publish(topic, event)
+                assert self._circuit is not None
+                retry_with_backoff(
+                    lambda: self._circuit.call(lambda: self._network.publish(topic, event)),
+                    attempts=3,
+                    logger=logger,
+                )
+            except CircuitOpenError as exc:
+                logger.error("event bus circuit open: %s", exc)
+                if self._collect_errors:
+                    self.callback_errors.append(exc)
+                if self._rethrow_errors:
+                    raise
             except Exception as exc:  # pragma: no cover - runtime issues
                 logger.warning("event publication failed: %s", exc, exc_info=True)
+                if self._collect_errors:
+                    self.callback_errors.append(exc)
+                if self._rethrow_errors:
+                    raise
         else:
             with self._lock:
                 callbacks = list(self._subs.get(topic, []))
@@ -199,6 +220,7 @@ class UnifiedEventBus:
                         self.callback_errors.append(exc)
                     if self._rethrow_errors:
                         raise
+        set_correlation_id(None)
 
     def close(self) -> None:
         """Close the underlying networked bus if used."""
@@ -207,6 +229,9 @@ class UnifiedEventBus:
                 close = getattr(self._network, "close", None)
                 if close:
                     close()
+                if self._circuit:
+                    self._circuit._failures = 0
+                    self._circuit._opened_until = 0.0
             except Exception as exc:  # pragma: no cover - optional
                 logger.error("failed closing networked bus", exc_info=True)
                 if self._collect_errors:
