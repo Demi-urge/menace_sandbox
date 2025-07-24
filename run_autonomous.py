@@ -27,6 +27,8 @@ EXPORTER_CHECK_INTERVAL = float(
     os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10")
 )
 
+AGENT_MONITOR_INTERVAL = float(os.getenv("VISUAL_AGENT_MONITOR_INTERVAL", "30"))
+
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
 REQUIRED_PYTHON_PKGS = ["filelock", "pydantic", "dotenv"]
@@ -222,6 +224,39 @@ class ExporterMonitor:
         while not self._stop.is_set():
             if not _exporter_health_ok(self.exporter):
                 self._restart()
+            self._stop.wait(self.interval)
+
+
+class VisualAgentMonitor:
+    """Background monitor that restarts the visual agent if it stops responding."""
+
+    def __init__(self, manager, urls: str, *, interval: float = AGENT_MONITOR_INTERVAL) -> None:
+        self.manager = manager
+        self.urls = urls
+        self.interval = float(interval)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        try:
+            self.manager.shutdown()
+        except Exception:
+            logger.exception("failed to shutdown visual agent")
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if not _visual_agent_running(self.urls):
+                try:
+                    tok = os.getenv("VISUAL_AGENT_TOKEN", "")
+                    self.manager.restart_with_token(tok)
+                except Exception:
+                    logger.exception("failed to restart visual agent")
             self._stop.wait(self.interval)
 
 
@@ -699,36 +734,45 @@ def main(argv: List[str] | None = None) -> None:
         cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
     agent_proc = None
+    agent_mgr = None
+    agent_monitor = None
     autostart = settings.visual_agent_autostart
-    if autostart and not _visual_agent_running(settings.visual_agent_urls):
-        cmd = [sys.executable, str(_pkg_dir / "menace_visual_agent_2.py")]
-        if os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1":
-            cmd.append("--auto-recover")
-        try:
-            agent_proc = subprocess.Popen(cmd)
-        except Exception:  # pragma: no cover - runtime dependent
-            logger.exception("failed to launch visual agent")
-            sys.exit(1)
+    if autostart:
+        from visual_agent_manager import VisualAgentManager
 
-        started = False
-        for _ in range(5):
-            time.sleep(1)
-            if agent_proc.poll() is not None:
-                logger.error(
-                    "visual agent exited with code %s", agent_proc.returncode
-                )
-                sys.exit(1)
-            if _visual_agent_running(settings.visual_agent_urls):
-                started = True
-                break
-        if not started:
-            logger.error("visual agent failed to start at %s", settings.visual_agent_urls)
+        agent_mgr = VisualAgentManager(str(_pkg_dir / "menace_visual_agent_2.py"))
+        if not _visual_agent_running(settings.visual_agent_urls):
             try:
-                agent_proc.terminate()
-                agent_proc.wait(timeout=5)
-            except Exception:
-                pass
-            sys.exit(1)
+                agent_mgr.start(os.getenv("VISUAL_AGENT_TOKEN", ""))
+                agent_proc = agent_mgr.process
+            except Exception:  # pragma: no cover - runtime dependent
+                logger.exception("failed to launch visual agent")
+                sys.exit(1)
+
+            started = False
+            for _ in range(5):
+                time.sleep(1)
+                if agent_mgr.process and agent_mgr.process.poll() is not None:
+                    logger.error(
+                        "visual agent exited with code %s", agent_mgr.process.returncode
+                    )
+                    sys.exit(1)
+                if _visual_agent_running(settings.visual_agent_urls):
+                    started = True
+                    break
+            if not started:
+                logger.error(
+                    "visual agent failed to start at %s", settings.visual_agent_urls
+                )
+                try:
+                    agent_mgr.shutdown()
+                except Exception:
+                    pass
+                sys.exit(1)
+
+        agent_monitor = VisualAgentMonitor(agent_mgr, settings.visual_agent_urls)
+        agent_monitor.start()
+        cleanup_funcs.append(agent_monitor.stop)
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
@@ -803,17 +847,13 @@ def main(argv: List[str] | None = None) -> None:
         last_tracker = None
 
     run_idx = 0
-    mgr = None
     while args.runs is None or run_idx < args.runs:
         run_idx += 1
         if run_idx > 1:
             new_tok = os.getenv("VISUAL_AGENT_TOKEN_ROTATE")
-            if new_tok and _visual_agent_running(settings.visual_agent_urls):
+            if new_tok and agent_mgr and _visual_agent_running(settings.visual_agent_urls):
                 try:
-                    from visual_agent_manager import VisualAgentManager
-
-                    mgr = mgr or VisualAgentManager()
-                    mgr.restart_with_token(new_tok)
+                    agent_mgr.restart_with_token(new_tok)
                     os.environ["VISUAL_AGENT_TOKEN"] = new_tok
                     os.environ.pop("VISUAL_AGENT_TOKEN_ROTATE", None)
                     logger.info("visual agent token rotated")
@@ -826,10 +866,10 @@ def main(argv: List[str] | None = None) -> None:
             args.runs if args.runs is not None else "?",
         )
         # exporter health is monitored in background
-        if agent_proc and agent_proc.poll() is not None:
+        if agent_mgr and agent_mgr.process and agent_mgr.process.poll() is not None:
             logger.error(
                 "visual agent process terminated with code %s",
-                agent_proc.returncode,
+                agent_mgr.process.returncode,
             )
             sys.exit(1)
         if args.preset_files:
@@ -957,16 +997,11 @@ def main(argv: List[str] | None = None) -> None:
             logger.info("convergence reached", extra={"run": run_idx, "ema": ema_val})
             break
 
-    if agent_proc and agent_proc.poll() is None:
+    if agent_monitor is not None:
         try:
-            agent_proc.terminate()
-            try:
-                agent_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                agent_proc.kill()
+            agent_monitor.stop()
         except Exception:
             logger.exception("failed to shutdown visual agent")
-        agent_proc = None
 
     if exporter_monitor is not None:
         try:
