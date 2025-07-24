@@ -494,6 +494,38 @@ def test_failure_modes_network(monkeypatch):
     assert res["exit_code"] != 0
 
 
+def test_failure_modes_network_partition(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    import sandbox_runner
+
+    code = "import socket; s=socket.socket(); s.connect(('example.com',80))"
+    res, _ = asyncio.run(
+        sandbox_runner._section_worker(
+            code,
+            {"FAILURE_MODES": "network_partition"},
+            0.0,
+        )
+    )
+
+    assert res["exit_code"] != 0
+
+
+def test_failure_modes_disk(monkeypatch):
+    _setup_mm_stubs(monkeypatch)
+    import sandbox_runner
+
+    code = "with open('f','w') as f: f.write('ok')\nprint(open('f').read())"
+    res, _ = asyncio.run(
+        sandbox_runner._section_worker(
+            code,
+            {"FAILURE_MODES": "disk"},
+            0.0,
+        )
+    )
+
+    assert res["stdout"].strip() == "ok"
+
+
 def test_workflow_run_called(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
     class DummyTracker:

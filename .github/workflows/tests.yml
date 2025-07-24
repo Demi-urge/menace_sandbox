@@ -24,5 +24,7 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: bash ./setup_env.sh
-      - name: Run tests
-        run: pytest
+      - name: Run unit and integration tests
+        run: pytest -k "not fuzz"
+      - name: Run fuzz and property-based tests
+        run: pytest tests/fuzz tests/test_bot_testing_bot_property.py tests/test_communication_testing_bot_property.py
