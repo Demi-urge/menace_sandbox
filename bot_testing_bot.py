@@ -132,8 +132,8 @@ class TestingLogDB:
             cols = [r[1] for r in cur.fetchall()]
             if "code_hash" not in cols:
                 self.conn.execute("ALTER TABLE results ADD COLUMN code_hash TEXT")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("failed to adjust test results schema: %s", exc)
         self.conn.commit()
 
     def log(self, result: TestResult) -> None:
@@ -236,8 +236,8 @@ class BotTestingBot:
         if ann in CUSTOM_GENERATORS:
             try:
                 return CUSTOM_GENERATORS[ann]()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("custom generator failed for %s: %s", ann, exc)
         if ann is inspect._empty:
             return gen_str()
         if not fake and param.default is not inspect._empty:
@@ -248,8 +248,8 @@ class BotTestingBot:
         if st is not None:
             try:
                 return st.from_type(ann).example()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("hypothesis example failed for %s: %s", ann, exc)
         origin = get_origin(ann)
         args = get_args(ann)
         if origin is list and args:

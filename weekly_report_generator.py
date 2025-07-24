@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 from datetime import datetime, timedelta
 from collections import Counter, defaultdict
 import statistics
@@ -23,6 +24,8 @@ LOCK_HISTORY_LOG = os.path.join(LOG_DIR, "lock_history.jsonl")
 
 REPORT_DIR = os.path.join(os.path.dirname(__file__), "reports")
 
+logger = logging.getLogger(__name__)
+
 
 def _parse_timestamp(value: Any) -> datetime | None:
     """Return ``datetime`` for *value* if possible."""
@@ -36,11 +39,12 @@ def _parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, str):
         try:
             return datetime.fromisoformat(value)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("failed to parse ISO timestamp %s", value, exc_info=exc)
         try:
             return datetime.utcfromtimestamp(float(value))
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to parse numeric timestamp %s", value, exc_info=exc)
             return None
     return None
 
@@ -207,12 +211,13 @@ def send_to_discord(report_path: str, webhook_url: str) -> None:
     try:
         with open(report_path, "r", encoding="utf-8") as fh:
             content = fh.read()
-    except Exception:
+    except Exception as exc:
+        logger.exception("failed to read report %s", report_path, exc_info=exc)
         return
     try:
         requests.post(webhook_url, json={"content": f"```{content}```"})
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("failed to send report to Discord: %s", exc)
 
 
 __all__ = [

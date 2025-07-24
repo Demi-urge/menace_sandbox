@@ -4,6 +4,7 @@ import os
 import subprocess
 import shutil
 import time
+import logging
 
 """Shared models repository configuration."""
 
@@ -15,6 +16,8 @@ MODELS_REPO_PUSH_URL = os.getenv("MODELS_REPO_PUSH_URL")
 
 # Marker file indicating a model build is in progress
 ACTIVE_MODEL_FILE = MODELS_REPO_PATH / ".active_model"
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_models_repo() -> Path:
@@ -63,6 +66,6 @@ def model_build_lock(model_id: int, poll_interval: float = 0.1):
         try:
             if ACTIVE_MODEL_FILE.exists() and ACTIVE_MODEL_FILE.read_text() == str(model_id):
                 ACTIVE_MODEL_FILE.unlink()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception("failed to remove active model file: %s", exc)
 

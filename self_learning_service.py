@@ -3,6 +3,7 @@ from __future__ import annotations
 """Background service for automatic incremental learning."""
 
 import time
+import logging
 from typing import Optional
 from threading import Event, Thread
 
@@ -15,6 +16,8 @@ from .learning_engine import LearningEngine
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
+
+logger = logging.getLogger(__name__)
 
 
 def main(
@@ -56,8 +59,8 @@ def main(
 
                 with open(persist_progress, "w", encoding="utf-8") as fh:
                     json.dump(results, fh)
-            except Exception:  # pragma: no cover - persistence failures
-                pass
+            except Exception as exc:  # pragma: no cover - persistence failures
+                logger.exception("failed to persist progress: %s", exc)
 
 
 __all__ = ["main"]
