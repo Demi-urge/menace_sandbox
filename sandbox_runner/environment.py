@@ -341,6 +341,7 @@ _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
 _STALE_VMS_REMOVED = 0
+_CLEANUP_FAILURES = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -699,6 +700,7 @@ def collect_metrics(
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
     result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
     result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
+    result["cleanup_failures"] = float(_CLEANUP_FAILURES)
     return result
 
 
@@ -732,8 +734,28 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 logger.error("failed to remove container %s: %s", cid, exc)
             else:
                 time.sleep(base_delay * (2 ** attempt))
+
+    exists = False
     if cid:
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                exists = True
+        except Exception as exc:  # pragma: no cover - unexpected runtime issues
+            logger.debug("container existence check failed for %s: %s", cid, exc)
+
+    if cid and not exists:
         _remove_active_container(cid)
+    elif cid and exists:
+        global _CLEANUP_FAILURES
+        _CLEANUP_FAILURES += 1
+        logger.error("container %s still exists after removal attempts", cid)
 
 
 def _log_pool_metrics(image: str) -> None:
