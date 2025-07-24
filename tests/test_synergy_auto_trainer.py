@@ -350,6 +350,47 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
     assert called[0][0]["synergy_roi"] == 0.2
 
 
+def test_nonzero_exit_raises(monkeypatch, tmp_path: Path, caplog) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.3}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    def bad_exit(_args: list[str]) -> int:
+        return 2
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", bad_exit)
+    caplog.set_level(logging.ERROR)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+
+    with pytest.raises(sat.SynergyWeightCliError):
+        trainer._train_once()
+
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 1
+    assert "non-zero exit code" in caplog.text
+
+
 def test_trainer_resume_progress(monkeypatch, tmp_path: Path) -> None:
     sat = importlib.import_module("menace.synergy_auto_trainer")
     db_mod = importlib.import_module("menace.synergy_history_db")

@@ -24,6 +24,14 @@ from . import synergy_weight_cli
 from . import synergy_history_db as shd
 
 
+class SynergyWeightCliError(RuntimeError):
+    """Raised when ``synergy_weight_cli`` exits with a non-zero status."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"synergy_weight_cli exited with code {code}")
+        self.code = code
+
+
 class SynergyAutoTrainer:
     """Periodically train synergy weights from history."""
 
@@ -124,9 +132,10 @@ class SynergyAutoTrainer:
                 self.logger.warning("synergy_weight_cli failed: %s", exc)
             else:
                 if rc != 0:
-                    self.logger.warning(
+                    self.logger.error(
                         "synergy_weight_cli returned non-zero exit code %s", rc
                     )
+                    raise SynergyWeightCliError(rc)
             finally:
                 self._last_id = hist[-1][0]
                 try:
@@ -305,4 +314,5 @@ __all__ = [
     "main",
     "synergy_trainer_iterations",
     "synergy_trainer_last_id",
+    "SynergyWeightCliError",
 ]
