@@ -609,11 +609,13 @@ development. The service must always run with a single worker:
 ```python
 uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 ```
-Only one connection is processed at a time. If `/run` returns `409` queue the request and retry once `/status` reports the agent idle.
+Only one connection is processed at a time. If `/run` returns `409` queue the
+request and retry once `/status` reports the agent idle.
 
 The server enforces this single-connection policy via a global lock. Any
 additional `/run` request made while a job is active immediately receives HTTP
-409.
+409.  The orchestrator automatically serialises requests by wrapping the client
+in a ``VisualAgentJobQueue`` so multiple workflows can safely share the agent.
 
 Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
 
