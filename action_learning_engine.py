@@ -216,14 +216,14 @@ class ActionLearningEngine:
         if env_cfg:
             try:
                 self.reward_weights.update(json.loads(env_cfg))
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("invalid reward weights from env: %s", exc)
         if reward_weights_path:
             try:
                 with open(reward_weights_path) as fh:
                     self.reward_weights.update(json.load(fh))
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("failed to load reward weights file: %s", exc)
         if reward_weights:
             self.reward_weights.update(reward_weights)
         self.env_params = env_params or {}
@@ -315,8 +315,8 @@ class ActionLearningEngine:
         if self.observation_features_fn:
             try:
                 return tuple(self.observation_features_fn(action, rec))
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("observation feature function failed: %s", exc)
         return (
             self._roi_trend(action),
             self._predict_success(action, rec),
@@ -448,8 +448,8 @@ class ActionLearningEngine:
             try:
                 with open(f"{path}.meta.json", "w", encoding="utf-8") as fh:
                     json.dump(meta, fh)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.logger.exception("failed to write policy metadata: %s", exc)
             self.meta = meta
             return True
         except Exception:

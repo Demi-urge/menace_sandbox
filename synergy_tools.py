@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> None:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        pass
+        logger.warning("synergy tools interrupted")
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry

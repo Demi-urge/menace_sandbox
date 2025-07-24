@@ -48,8 +48,8 @@ class _ContextFileLock(FileLock):
             if self.lock.is_locked:
                 try:
                     self.lock.release()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.exception("failed to release file lock: %s", exc)
 
     def _pid_running(self, pid: int) -> bool:
         """Return True if ``pid`` refers to a running process."""
@@ -130,9 +130,9 @@ class _ContextFileLock(FileLock):
             try:
                 os.remove(self.lock_file)
             except FileNotFoundError:
-                pass
-            except Exception:
-                pass
+                logger.warning("lock file already removed: %s", self.lock_file)
+            except Exception as exc:
+                logger.exception("failed to remove lock file: %s", exc)
 
 try:
     import requests  # type: ignore
@@ -280,8 +280,8 @@ class VisualAgentClient:
         if gauge is not None:
             try:
                 gauge.set(avg)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("failed to set wait time metric: %s", exc)
 
     def _metrics_loop(self) -> None:
         while not self._stop_event.wait(self.metrics_interval):
@@ -320,8 +320,8 @@ class VisualAgentClient:
                         if gauge is not None:
                             try:
                                 gauge.set(qsize)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                logger.exception("failed to set queue depth metric: %s", exc)
                         break
                 except Exception:
                     continue

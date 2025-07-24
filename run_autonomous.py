@@ -772,8 +772,11 @@ def main(argv: List[str] | None = None) -> None:
                 logger.error("visual agent failed to start at %s", settings.visual_agent_urls)
                 try:
                     agent_mgr.shutdown()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.exception(
+                        "failed to shutdown visual agent after startup failure: %s",
+                        exc,
+                    )
                 sys.exit(1)
 
         agent_monitor = VisualAgentMonitor(agent_mgr, settings.visual_agent_urls)
