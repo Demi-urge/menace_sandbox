@@ -20,6 +20,7 @@ import time
 import inspect
 import random
 import threading
+import signal
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
@@ -1115,6 +1116,24 @@ if _DOCKER_CLIENT is not None:
     atexit.register(_await_reaper_task)
 
 atexit.register(_cleanup_pools)
+
+
+def register_signal_handlers() -> None:
+    """Install signal handlers for graceful shutdown."""
+
+    def _handler(signum, frame) -> None:  # pragma: no cover - signal path
+        try:
+            _cleanup_pools()
+            _await_cleanup_task()
+            _await_reaper_task()
+        except Exception:
+            logger.exception("signal cleanup failed")
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, _handler)
+        except Exception:
+            logger.exception("signal handler setup failed")
 
 
 

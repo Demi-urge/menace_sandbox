@@ -433,7 +433,9 @@ Delete the file to force the sandbox to run again. The sandbox copies
 before starting and writes the updated versions back when finishing so the
 learning state persists between runs.
 Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry point
-``_run_sandbox`` used by ``menace_master.py``.
+``_run_sandbox`` used by ``menace_master.py``. When importing
+``sandbox_runner.environment`` directly, call ``register_signal_handlers()`` to
+clean up pooled containers on ``Ctrl+C`` or ``SIGTERM``.
 
 For a completely autonomous optimisation loop run:
 
