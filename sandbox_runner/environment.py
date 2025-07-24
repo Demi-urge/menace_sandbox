@@ -367,6 +367,36 @@ def purge_leftovers() -> None:
     except Exception as exc:
         logger.debug("leftover container cleanup failed: %s", exc)
 
+    if psutil is not None:
+        try:
+            tmp_dirs: set[str] = set()
+            for p in psutil.process_iter(["name", "cmdline"]):
+                name = p.info.get("name") or ""
+                if name.startswith("qemu-system"):
+                    try:
+                        logger.info("terminating stale qemu process %s", p.pid)
+                    except Exception:
+                        pass
+                    try:
+                        for arg in p.info.get("cmdline") or []:
+                            if "overlay.qcow2" in arg:
+                                if arg.startswith("file="):
+                                    arg = arg.split("=", 1)[1]
+                                tmp_dirs.add(str(Path(arg).parent))
+                        p.kill()
+                        p.wait(timeout=5)
+                    except Exception:
+                        logger.exception("failed to terminate qemu %s", p.pid)
+            for d in tmp_dirs:
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    logger.exception(
+                        "temporary directory removal failed for %s", d
+                    )
+        except Exception as exc:
+            logger.debug("qemu process cleanup failed: %s", exc)
+
     tmp_root = Path(tempfile.gettempdir())
     try:
         for overlay in tmp_root.rglob("overlay.qcow2"):
