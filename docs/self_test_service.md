@@ -57,3 +57,6 @@ Set `MENACE_OFFLINE_INSTALL=1` when dependencies and container images are
 available locally.  If `--use-container` is specified the service loads a
 prebuilt image tarball before running the tests.  Provide the tarball path via
 `MENACE_SELF_TEST_IMAGE_TAR`.
+
+Container runs are serialized across processes using a file lock. Set the lock
+file path with `SELF_TEST_LOCK_FILE` (default `sandbox_data/self_test.lock`).
