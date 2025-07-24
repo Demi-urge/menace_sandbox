@@ -332,6 +332,50 @@ by side:
    exporter is ready and each time the trainer updates the weights. Point a
    Prometheus instance at the exporter URL to record the metrics.
 
+### Configuring SynergyAutoTrainer and SynergyExporter
+
+For production deployments both services usually run alongside the sandbox.
+Export the following variables before launching `run_autonomous.py`:
+
+```bash
+export AUTO_TRAIN_SYNERGY=1
+export AUTO_TRAIN_INTERVAL=600
+export EXPORT_SYNERGY_METRICS=1
+export SYNERGY_METRICS_PORT=8003
+export SYNERGY_EXPORTER_CHECK_INTERVAL=10
+python run_autonomous.py
+```
+
+The settings above refresh `synergy_weights.json` every ten minutes and expose
+the latest metrics on `http://localhost:8003/metrics`. You can run the tools
+manually when debugging:
+
+```bash
+python -m menace.synergy_auto_trainer --history-file /var/menace/synergy_history.db \
+    --weights-file /var/menace/synergy_weights.json --interval 600
+python -m menace.synergy_exporter --history-file /var/menace/synergy_history.db \
+    --port 8003 --interval 5
+```
+
+**Recommended variables**
+
+- `AUTO_TRAIN_SYNERGY=1` – enable the background trainer.
+- `AUTO_TRAIN_INTERVAL=600` – training frequency in seconds.
+- `EXPORT_SYNERGY_METRICS=1` – expose metrics for Prometheus.
+- `SYNERGY_METRICS_PORT=8003` – exporter HTTP port.
+- `SYNERGY_EXPORTER_CHECK_INTERVAL=10` – health check interval.
+
+### Troubleshooting synergy services
+
+- **Port already in use** – adjust `SYNERGY_METRICS_PORT` or use `--port` when
+  starting the exporter. `netstat -tlnp` helps identify conflicting processes.
+- **History file not found** – ensure the path passed to `--history-file` exists
+  and is writable.
+- **Weights never update** – verify that `AUTO_TRAIN_SYNERGY=1` is set and that
+  the trainer can write its progress file.
+- **Exporter stale** – confirm the exporter process is running and that
+  `http://localhost:${SYNERGY_METRICS_PORT}/health` returns `{"status": "ok"}`.
+
 ### Advanced synergy learning
 
 The default learner uses a lightweight actor–critic strategy. To enable deeper
