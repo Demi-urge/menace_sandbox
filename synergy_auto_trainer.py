@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 import time
 import asyncio
+from filelock import FileLock
 
 from .metrics_exporter import Gauge
 
@@ -52,16 +53,20 @@ class SynergyAutoTrainer:
             )
             self.history_file = new_path
 
-        if not self.weights_file.exists():
-            new_path = data_dir / self.weights_file.name
-            new_path.parent.mkdir(parents=True, exist_ok=True)
-            new_path.touch()
-            logging.getLogger(self.__class__.__name__).warning(
-                "weights file %s missing - created empty file at %s",
-                self.weights_file,
-                new_path,
-            )
-            self.weights_file = new_path
+        weights_path = self.weights_file
+        if not weights_path.exists():
+            weights_path = data_dir / self.weights_file.name
+        lock = FileLock(str(weights_path) + ".lock")
+        with lock:
+            if not weights_path.exists():
+                weights_path.parent.mkdir(parents=True, exist_ok=True)
+                weights_path.touch()
+                logging.getLogger(self.__class__.__name__).warning(
+                    "weights file %s missing - created empty file at %s",
+                    self.weights_file,
+                    weights_path,
+                )
+            self.weights_file = weights_path
 
         if self.progress_file.exists():
             try:
@@ -102,13 +107,15 @@ class SynergyAutoTrainer:
             json.dump([h[1] for h in hist], tmp)
             tmp.close()
             rc = 0
+            lock = FileLock(str(self.weights_file) + ".lock")
             try:
-                rc = synergy_weight_cli.cli([
-                    "--path",
-                    str(self.weights_file),
-                    "train",
-                    tmp.name,
-                ])
+                with lock:
+                    rc = synergy_weight_cli.cli([
+                        "--path",
+                        str(self.weights_file),
+                        "train",
+                        tmp.name,
+                    ])
             except SystemExit as exc:
                 rc = int(getattr(exc, "code", 1) or 0)
                 self.logger.info("synergy_weight_cli requested exit (%s)", rc)
