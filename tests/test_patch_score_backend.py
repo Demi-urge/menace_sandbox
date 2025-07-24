@@ -1,4 +1,5 @@
 import types
+import logging
 from tests.test_self_debugger_sandbox import (
     DummyTelem,
     DummyEngine,
@@ -224,3 +225,56 @@ def test_s3_backend_retries(monkeypatch):
     assert counts["list"] == 2
     assert counts["get"] == 2
     assert rows == [("x", "ok")]
+
+
+def test_sandbox_backend_retries(monkeypatch, tmp_path):
+    calls = {"store": 0, "fetch": 0}
+
+    class FlakyBackend(psb.PatchScoreBackend):
+        def store(self, rec):
+            calls["store"] += 1
+            if calls["store"] == 1:
+                raise RuntimeError("fail")
+
+        def fetch_recent(self, limit=20):
+            calls["fetch"] += 1
+            if calls["fetch"] == 1:
+                raise RuntimeError("fail")
+            return [("x", "ok")]
+
+    monkeypatch.setenv("PATCH_SCORE_BACKEND_URL", "http://x")
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "s.db"))
+    monkeypatch.setattr(psb, "backend_from_url", lambda u: FlakyBackend())
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *_: None)
+
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    dbg._log_patch("d", "ok")
+    rows = dbg.recent_scores(1)
+
+    assert calls["store"] == 2
+    assert calls["fetch"] == 2
+    assert rows == [("x", "ok")]
+
+
+def test_sandbox_backend_unreachable_warns(monkeypatch, caplog, tmp_path):
+    class FailBackend(psb.PatchScoreBackend):
+        def store(self, rec):
+            raise RuntimeError("boom")
+
+        def fetch_recent(self, limit=20):
+            raise RuntimeError("boom")
+
+    monkeypatch.setenv("PATCH_SCORE_BACKEND_URL", "http://x")
+    monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "s.db"))
+    monkeypatch.setattr(psb, "backend_from_url", lambda u: FailBackend())
+    import time as _time
+    monkeypatch.setattr(_time, "sleep", lambda *_: None)
+
+    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    caplog.set_level(logging.WARNING)
+    dbg._log_patch("d", "ok")
+    rows = dbg.recent_scores(1)
+
+    assert "patch score backend unreachable" in caplog.text
+    assert rows[0][:2] == ("d", "ok")
