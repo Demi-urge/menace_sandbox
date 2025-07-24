@@ -20,6 +20,7 @@
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
+- Workflow benchmarking metrics exported to Prometheus with automatic early stopping when improvements level off
 - `metrics_exporter` tries to install `prometheus_client` during bootstrap and
   serves a fallback HTTP endpoint if the install fails
 - Centralised logging via Elasticsearch or Splunk and optional Sentry alerts ([docs/monitoring_pipeline.md](docs/monitoring_pipeline.md))

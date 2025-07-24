@@ -232,6 +232,28 @@ visual_agent_queue_depth = Gauge(
     "visual_agent_queue_depth", "Queue length reported by VisualAgentClient"
 )
 
+# Gauges for workflow benchmarking
+workflow_duration_gauge = Gauge(
+    "workflow_duration_seconds",
+    "Execution time of a workflow run",
+    labelnames=["workflow"],
+)
+workflow_cpu_percent_gauge = Gauge(
+    "workflow_cpu_percent",
+    "Average CPU utilisation during the run",
+    labelnames=["workflow"],
+)
+workflow_memory_gauge = Gauge(
+    "workflow_memory_mb",
+    "Resident memory usage after execution",
+    labelnames=["workflow"],
+)
+workflow_latency_p95_gauge = Gauge(
+    "workflow_latency_p95_seconds",
+    "95th percentile latency for recent runs",
+    labelnames=["workflow"],
+)
+
 # Additional counters for failure visibility
 error_bot_exceptions = Gauge(
     "error_bot_exceptions_total", "Exceptions encountered in ErrorBot"
@@ -303,4 +325,8 @@ __all__ = [
     "visual_agent_queue_depth",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
+    "workflow_duration_gauge",
+    "workflow_cpu_percent_gauge",
+    "workflow_memory_gauge",
+    "workflow_latency_p95_gauge",
 ]
