@@ -39,7 +39,9 @@ except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
 
 
-_CONFIG_PATH = os.getenv("CI_CONFIG_PATH", "config/competitive_intelligence.json")
+_CONFIG_PATH = os.getenv(
+    "CI_CONFIG_PATH", "config/competitive_intelligence.json"
+)
 _REQUIRED_CFG_KEYS: Dict[str, type] = {
     "positive": list,
     "negative": list,
@@ -65,6 +67,7 @@ def _load_fallback_config(path: str) -> Dict[str, Any]:
 
 
 _CFG = _load_fallback_config(_CONFIG_PATH)
+
 
 def _parse_env_list(val: str | None) -> list[str]:
     if not val:
@@ -101,29 +104,27 @@ def _normalize_timestamp(ts: Any) -> str:
             return str(ts)
     return dt.replace(microsecond=0).isoformat()
 
+
 _POSITIVE = set(
-    _parse_env_list(os.getenv("CI_POSITIVE"))
-    or _CFG.get("positive", [])
+    _parse_env_list(os.getenv("CI_POSITIVE")) or _CFG.get("positive", [])
 )
 _NEGATIVE = set(
-    _parse_env_list(os.getenv("CI_NEGATIVE"))
-    or _CFG.get("negative", [])
+    _parse_env_list(os.getenv("CI_NEGATIVE")) or _CFG.get("negative", [])
 )
-_AI_KEYWORDS = (
-    _parse_env_list(os.getenv("CI_AI_KEYWORDS"))
-    or _CFG.get(
-        "ai_keywords",
-        [],
-    )
+_AI_KEYWORDS = _parse_env_list(os.getenv("CI_AI_KEYWORDS")) or _CFG.get(
+    "ai_keywords",
+    [],
 )
 
-_SENTIMENT_WEIGHTS: Dict[str, float] = (
-    _parse_env_dict(os.getenv("CI_SENTIMENT_WEIGHTS"))
-    or _CFG.get("sentiment_weights", {})
-)
+_SENTIMENT_WEIGHTS: Dict[str, float] = _parse_env_dict(
+    os.getenv("CI_SENTIMENT_WEIGHTS")
+) or _CFG.get("sentiment_weights", {})
 
 # Configurable embedding model and detection parameters
-_EMBED_MODEL = os.getenv("CI_EMBED_MODEL", _CFG.get("embedding_model", "all-MiniLM-L6-v2"))
+_EMBED_MODEL = os.getenv(
+    "CI_EMBED_MODEL", _CFG.get("embedding_model", "all-MiniLM-L6-v2")
+)
+
 
 def _parse_float(val: str | None, default: float) -> float:
     try:
@@ -134,25 +135,27 @@ def _parse_float(val: str | None, default: float) -> float:
         logger.warning("invalid CI_AI_THRESHOLD %r, using %s", val, default)
         return default
 
+
 _AI_THRESHOLD = _parse_float(
     os.getenv("CI_AI_THRESHOLD"),
     float(_CFG.get("ai_threshold", 0.6)),
 )
-_EMBED_STRATEGY = os.getenv("CI_EMBED_STRATEGY", _CFG.get("embed_strategy", "max"))
+_EMBED_STRATEGY = os.getenv(
+    "CI_EMBED_STRATEGY", _CFG.get("embed_strategy", "max")
+)
 _EMBED_TOPK = int(os.getenv("CI_EMBED_TOPK", str(_CFG.get("embed_top_k", 3))))
 _ENTITY_BLACKLIST = set(
     _parse_env_list(os.getenv("CI_ENTITY_BLACKLIST"))
-    or _CFG.get(
-        "entity_blacklist",
-        []
-    )
+    or _CFG.get("entity_blacklist", [])
 )
 
 _RETENTION_DAYS = int(
     os.getenv("CI_RETENTION_DAYS", str(_CFG.get("retention_days", 365)))
 )
 
-_STRICT_MODE = os.getenv("CI_STRICT_MODE", str(_CFG.get("strict_mode", "false"))).lower() in {"1", "true", "yes"}
+_STRICT_MODE = os.getenv(
+    "CI_STRICT_MODE", str(_CFG.get("strict_mode", "false"))
+).lower() in {"1", "true", "yes"}
 
 _SENTIMENT_MODEL = None
 if pipeline is not None:
@@ -197,6 +200,7 @@ class CompetitorUpdate:
     content: str
     source: str
     timestamp: str
+    category: str = ""
     sentiment: float = 0.0
     entities: List[str] = field(default_factory=list)
     ai_signals: bool = False
@@ -205,9 +209,11 @@ class CompetitorUpdate:
 class IntelligenceDB:
     """SQLite-backed storage for competitor updates."""
 
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
-    def __init__(self, path: Path | str = Path("intelligence.db"), *, pool: bool = True) -> None:
+    def __init__(
+        self, path: Path | str = Path("intelligence.db"), *, pool: bool = True
+    ) -> None:
         self.path = Path(path)
         self.pool = pool
         self._local = threading.local()
@@ -262,15 +268,24 @@ class IntelligenceDB:
         )
 
     def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
-        """Placeholder for future schema migration."""
-        pass
+        """Add ``category`` column to ``updates`` table."""
+        cols = [
+            r[1] for r in conn.execute("PRAGMA table_info(updates)").fetchall()
+        ]
+        if "category" not in cols:
+            conn.execute(
+                "ALTER TABLE updates ADD COLUMN category TEXT DEFAULT ''"
+            )
+        conn.commit()
 
     _MIGRATIONS: Dict[int, Any] = {
         0: _create_v1_schema,
         1: _migrate_v1_to_v2,
     }
 
-    def _migrate(self, conn: sqlite3.Connection, from_version: int, to_version: int) -> None:
+    def _migrate(
+        self, conn: sqlite3.Connection, from_version: int, to_version: int
+    ) -> None:
         current = from_version
         while current < to_version:
             step = self._MIGRATIONS.get(current)
@@ -308,8 +323,8 @@ class IntelligenceDB:
         cur = conn.execute(
             """
             INSERT INTO updates
-                (title, content, source, timestamp, sentiment, entities, ai_signals)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (title, content, source, timestamp, sentiment, entities, ai_signals, category)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 update.title,
@@ -319,6 +334,7 @@ class IntelligenceDB:
                 update.sentiment,
                 ",".join(update.entities),
                 int(update.ai_signals),
+                update.category,
             ),
         )
         conn.commit()
@@ -330,7 +346,7 @@ class IntelligenceDB:
     def fetch(self, limit: int = 50) -> List[CompetitorUpdate]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT title, content, source, timestamp, sentiment, entities, ai_signals"
+            "SELECT title, content, source, timestamp, sentiment, entities, ai_signals, category"
             " FROM updates ORDER BY id DESC LIMIT ?",
             (limit,),
         ).fetchall()
@@ -347,6 +363,7 @@ class IntelligenceDB:
                     sentiment=r[4],
                     entities=r[5].split(",") if r[5] else [],
                     ai_signals=bool(r[6]),
+                    category=r[7],
                 )
             )
         return results
@@ -355,7 +372,9 @@ class IntelligenceDB:
         """Delete records older than ``older_than_days`` days."""
         cutoff = datetime.utcnow() - timedelta(days=older_than_days)
         conn = self._get_conn()
-        cur = conn.execute("DELETE FROM updates WHERE timestamp < ?", (cutoff.isoformat(),))
+        cur = conn.execute(
+            "DELETE FROM updates WHERE timestamp < ?", (cutoff.isoformat(),)
+        )
         conn.commit()
         removed = cur.rowcount
         if not self.pool:
@@ -379,7 +398,9 @@ def fetch_updates(url: str) -> List[CompetitorUpdate]:
         return []
 
     if resp.status_code != 200:
-        logger.error("fetch_updates %s returned status %s", url, resp.status_code)
+        logger.error(
+            "fetch_updates %s returned status %s", url, resp.status_code
+        )
         return []
 
     try:
@@ -389,8 +410,14 @@ def fetch_updates(url: str) -> List[CompetitorUpdate]:
         return []
     updates: List[CompetitorUpdate] = []
     for item in data.get("items", []):
-        raw_ts = item.get("timestamp") or item.get("time") or item.get("published")
-        ts = _normalize_timestamp(raw_ts) if raw_ts is not None else datetime.utcnow().isoformat()
+        raw_ts = (
+            item.get("timestamp") or item.get("time") or item.get("published")
+        )
+        ts = (
+            _normalize_timestamp(raw_ts)
+            if raw_ts is not None
+            else datetime.utcnow().isoformat()
+        )
         updates.append(
             CompetitorUpdate(
                 title=str(item.get("title", "")),
@@ -412,7 +439,7 @@ def analyse_sentiment(text: str, *, strict_mode: bool | None = None) -> float:
             return score if label == "POSITIVE" else -score
         except Exception:
             logger.exception("sentiment pipeline failed")
-            if (strict_mode if strict_mode is not None else _STRICT_MODE):
+            if strict_mode if strict_mode is not None else _STRICT_MODE:
                 raise
     text_lower = text.lower()
     score = 0.0
@@ -424,7 +451,9 @@ def analyse_sentiment(text: str, *, strict_mode: bool | None = None) -> float:
     return score
 
 
-def extract_entities(text: str, *, strict_mode: bool | None = None) -> List[str]:
+def extract_entities(
+    text: str, *, strict_mode: bool | None = None
+) -> List[str]:
     """Extract entities using spaCy when available."""
     if _NLP_MODEL is not None:
         try:
@@ -434,14 +463,16 @@ def extract_entities(text: str, *, strict_mode: bool | None = None) -> List[str]
                 return ents
         except Exception:
             logger.exception("entity extraction failed")
-            if (strict_mode if strict_mode is not None else _STRICT_MODE):
+            if strict_mode if strict_mode is not None else _STRICT_MODE:
                 raise
     matches = re.findall(r"\b([A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*)\b", text)
     results = [m for m in matches if m not in _ENTITY_BLACKLIST]
     return results
 
 
-def detect_ai_signals(update: CompetitorUpdate, *, strict_mode: bool | None = None) -> bool:
+def detect_ai_signals(
+    update: CompetitorUpdate, *, strict_mode: bool | None = None
+) -> bool:
     """Heuristic detection of AI-related signals."""
     text = f"{update.title} {update.content}"
     if _EMBEDDER and _AI_EMBEDDINGS:
@@ -460,7 +491,7 @@ def detect_ai_signals(update: CompetitorUpdate, *, strict_mode: bool | None = No
                 return True
         except Exception:
             logger.exception("AI embedding detection failed")
-            if (strict_mode if strict_mode is not None else _STRICT_MODE):
+            if strict_mode if strict_mode is not None else _STRICT_MODE:
                 raise
     text_lower = text.lower()
     return sum(k in text_lower for k in _AI_KEYWORDS) > 1
@@ -469,7 +500,12 @@ def detect_ai_signals(update: CompetitorUpdate, *, strict_mode: bool | None = No
 class CompetitiveIntelligenceBot:
     """Gather and analyse competitor information."""
 
-    def __init__(self, db: IntelligenceDB | None = None, *, strict_mode: bool | None = None) -> None:
+    def __init__(
+        self,
+        db: IntelligenceDB | None = None,
+        *,
+        strict_mode: bool | None = None,
+    ) -> None:
         self.db = db or IntelligenceDB()
         self.strict_mode = _STRICT_MODE if strict_mode is None else strict_mode
 
@@ -479,11 +515,17 @@ class CompetitiveIntelligenceBot:
             updates.extend(fetch_updates(url))
         return updates
 
-    def analyse(self, updates: Iterable[CompetitorUpdate]) -> List[CompetitorUpdate]:
+    def analyse(
+        self, updates: Iterable[CompetitorUpdate]
+    ) -> List[CompetitorUpdate]:
         analysed: List[CompetitorUpdate] = []
         for up in updates:
-            up.sentiment = analyse_sentiment(up.content, strict_mode=self.strict_mode)
-            up.entities = extract_entities(up.content, strict_mode=self.strict_mode)
+            up.sentiment = analyse_sentiment(
+                up.content, strict_mode=self.strict_mode
+            )
+            up.entities = extract_entities(
+                up.content, strict_mode=self.strict_mode
+            )
             up.ai_signals = detect_ai_signals(up, strict_mode=self.strict_mode)
             analysed.append(up)
         return analysed
