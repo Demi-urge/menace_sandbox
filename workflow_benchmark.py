@@ -7,6 +7,16 @@ from time import perf_counter, sleep
 import logging
 
 try:
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    np = None  # type: ignore
+
+try:
+    from . import metrics_exporter as me
+except Exception:  # pragma: no cover - optional dependency
+    me = None  # type: ignore
+
+try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
@@ -73,6 +83,33 @@ def benchmark_workflow(
             metrics_db.log_eval(name, "net_io", net_delta)
             metrics_db.log_eval(name, "disk_read", disk_read)
             metrics_db.log_eval(name, "disk_write", disk_write)
+            if np is not None:
+                vals = [
+                    float(v)
+                    for _, m, v, _ in metrics_db.fetch_eval(name)
+                    if m == "latency"
+                ]
+                if vals:
+                    p95 = float(np.percentile(vals, 95))
+                else:
+                    p95 = latency
+            else:
+                vals = [
+                    float(v)
+                    for _, m, v, _ in metrics_db.fetch_eval(name)
+                    if m == "latency"
+                ]
+                if vals:
+                    idx = int(0.95 * (len(vals) - 1))
+                    p95 = float(sorted(vals)[idx])
+                else:
+                    p95 = latency
+            metrics_db.log_eval(name, "latency_p95", p95)
+            if me:
+                me.workflow_latency_p95_gauge.labels(name).set(p95)
+                me.workflow_duration_gauge.labels(name).set(duration)
+                me.workflow_cpu_percent_gauge.labels(name).set(cpu_percent)
+                me.workflow_memory_gauge.labels(name).set(mem_delta)
             break
         except Exception:
             logging.exception("metrics logging failed on attempt %s", i + 1)
@@ -158,8 +195,20 @@ def benchmark_registered_workflows(
                     success = val
 
             _, _, stop = tracker.update(prev_success, success, modules=[name], metrics=metrics)
+            # early stop when improvement is negligible or success rate stagnates
             if abs(success - prev_success) <= tracker.diminishing():
                 stop = True
+            if len(prev_success_vals) >= 2 and len([v for _, m, v, _ in new_rows if m == "success"]) >= 2:
+                try:
+                    from scipy import stats
+
+                    old = prev_success_vals[-2:]
+                    new = [float(v) for _, m, v, _ in new_rows if m == "success"]
+                    _, p_succ = stats.ttest_ind(old, new, equal_var=False)
+                except Exception:
+                    p_succ = 1.0
+                if p_succ > 0.5 and abs(success - prev_success) <= tracker.diminishing():
+                    stop = True
             if stop:
                 stop_all = True
                 break
@@ -182,6 +231,11 @@ def benchmark_registered_workflows(
             "memory_delta",
             "cpu_percent",
             "latency",
+            "latency_p95",
+            "net_io",
+            "disk_read",
+            "disk_write",
+            "success",
         ]
 
         for metric in metrics_to_test:
@@ -198,6 +252,8 @@ def benchmark_registered_workflows(
                 p_val = 1.0
             metrics_db.log_eval(name, f"{metric}_pvalue", float(p_val))
             tracker.metrics_history.setdefault(f"{metric}_pvalue", []).append(float(p_val))
+            if me and metric == "latency_p95":
+                me.workflow_latency_p95_gauge.labels(name).set(new_vals[-1] if new_vals else 0.0)
 
 
 __all__ = ["benchmark_workflow", "benchmark_registered_workflows"]
