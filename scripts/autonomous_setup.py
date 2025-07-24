@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Fully automated setup for the autonomous sandbox."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+from auto_env_setup import ensure_env, interactive_setup
+from auto_resource_setup import ensure_proxies, ensure_accounts
+from setup_dependencies import check_and_install
+from sandbox_settings import SandboxSettings
+from environment_bootstrap import EnvironmentBootstrapper
+from environment_generator import generate_presets, adapt_presets
+from roi_tracker import ROITracker
+
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def run_tests() -> None:
+    """Execute the project's test suite."""
+    logger.info("running tests")
+    subprocess.check_call([sys.executable, "-m", "pytest", "-q"])
+
+
+def discover_hardware() -> dict[str, list[str]]:
+    """Return available GPUs and network interfaces."""
+    gpus: list[str] = []
+    try:
+        import GPUtil  # type: ignore
+
+        gpus = [g.name for g in GPUtil.getGPUs()]
+    except Exception:
+        try:
+            out = subprocess.check_output(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                text=True,
+            )
+            gpus = [line.strip() for line in out.splitlines() if line.strip()]
+        except Exception:
+            gpus = []
+
+    interfaces: list[str] = []
+    try:
+        import psutil  # type: ignore
+
+        interfaces = list(psutil.net_if_addrs().keys())
+    except Exception:
+        interfaces = []
+
+    return {"gpus": gpus, "network_interfaces": interfaces}
+
+
+def main() -> None:
+    logger.info("ensuring environment")
+    ensure_env()
+    os.environ.setdefault("MENACE_NON_INTERACTIVE", "1")
+    interactive_setup()
+
+    logger.info("ensuring resources")
+    ensure_proxies("proxies.json")
+    ensure_accounts("accounts.json")
+
+    logger.info("installing dependencies")
+    check_and_install(SandboxSettings())
+
+    run_tests()
+
+    logger.info("bootstrapping environment")
+    EnvironmentBootstrapper().bootstrap()
+
+    logger.info("generating presets")
+    presets = generate_presets()
+    presets = adapt_presets(ROITracker(), presets)
+    Path("sandbox_data").mkdir(exist_ok=True)
+    Path("sandbox_data/latest_presets.json").write_text(
+        json.dumps(presets, indent=2)
+    )
+
+    logger.info("discovering hardware")
+    hw = discover_hardware()
+    Path("hardware.json").write_text(json.dumps(hw, indent=2))
+
+    logger.info("setup complete")
+
+
+if __name__ == "__main__":
+    main()
