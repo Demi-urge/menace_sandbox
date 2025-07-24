@@ -58,7 +58,16 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
     """Send patch scores to a remote HTTP API."""
 
     url: str
+    fallback_dir: str | None = None
     _session: "requests.Session | None" = None
+    _fallback: FilePatchScoreBackend | None = None
+
+    # ------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        if self.fallback_dir is None:
+            self.fallback_dir = os.getenv("PATCH_SCORE_FALLBACK_DIR")
+        if self.fallback_dir:
+            self._fallback = FilePatchScoreBackend(self.fallback_dir)
 
     # ------------------------------------------------------------------
     def _get_session(self) -> "requests.Session":
@@ -75,17 +84,21 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
     def store(self, record: Dict[str, object]) -> None:
         if not requests:
             logger.debug("requests unavailable; skipping HTTP backend")
+            if self._fallback:
+                self._fallback.store(record)
             return
         try:  # pragma: no cover - network issues
             resp = _retry(lambda: self._get_session().post(self.url, json=record, timeout=5))
             resp.raise_for_status()
         except Exception as exc:  # pragma: no cover
             logger.error("HTTP patch score store failed: %s", exc)
+            if self._fallback:
+                self._fallback.store(record)
 
     # ------------------------------------------------------------------
     def fetch_recent(self, limit: int = 20) -> List[Tuple]:
         if not requests:
-            return []
+            return self._fallback.fetch_recent(limit) if self._fallback else []
         try:  # pragma: no cover - network issues
             resp = _retry(lambda: self._get_session().get(self.url, params={"limit": limit}, timeout=5))
             resp.raise_for_status()
@@ -95,6 +108,8 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
             return [tuple(r) for r in data]
         except Exception as exc:  # pragma: no cover
             logger.error("HTTP patch score fetch failed: %s", exc)
+            if self._fallback:
+                return self._fallback.fetch_recent(limit)
             return []
 
 
