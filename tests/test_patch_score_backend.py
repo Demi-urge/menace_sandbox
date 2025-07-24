@@ -278,3 +278,26 @@ def test_sandbox_backend_unreachable_warns(monkeypatch, caplog, tmp_path):
 
     assert "patch score backend unreachable" in caplog.text
     assert rows[0][:2] == ("d", "ok")
+
+
+def _fail(*_a, **_k):
+    raise RuntimeError("boom")
+
+
+def test_http_backend_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(psb.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(psb, "requests", types.SimpleNamespace(post=_fail, get=_fail))
+    be = psb.HTTPPatchScoreBackend("http://x", fallback_dir=str(tmp_path))
+    be.store(["z", "ok"])
+    rows = be.fetch_recent(1)
+    assert rows == [("z", "ok")]
+
+
+def test_http_backend_fallback_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("PATCH_SCORE_FALLBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(psb.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(psb, "requests", types.SimpleNamespace(post=_fail, get=_fail))
+    be = psb.HTTPPatchScoreBackend("http://x")
+    be.store(["q", "ok"])
+    rows = be.fetch_recent(1)
+    assert rows == [("q", "ok")]
