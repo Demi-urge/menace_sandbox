@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
 from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
+from . import synergy_auto_trainer  # ensure trainer gauges are registered
 
 # Gauges tracking exporter uptime and failures
 exporter_uptime = Gauge(
