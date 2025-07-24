@@ -43,8 +43,11 @@ def generate_code_hashes(directory_path: str) -> Dict[str, str]:
 
 def save_reference_hashes(hash_dict: Dict[str, str], output_path: str) -> None:
     """Persist ``hash_dict`` to ``output_path`` in JSON format."""
-    with open(output_path, "w", encoding="utf-8") as fh:
-        json.dump(hash_dict, fh, indent=2, sort_keys=True)
+    try:
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(hash_dict, fh, indent=2, sort_keys=True)
+    except Exception:
+        _LOGGER.exception("failed writing reference hashes %s", output_path)
 
 
 def load_reference_hashes(path: str) -> Dict[str, str]:
