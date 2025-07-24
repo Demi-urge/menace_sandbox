@@ -303,6 +303,35 @@ python -m menace.synergy_auto_trainer --history-file sandbox_data/synergy_histor
 Use this manual invocation to refresh the weights once or run the trainer in
 isolation. Pass `--interval` or `--run-once` to control how often it updates.
 
+### Enabling auto trainer with exporter
+
+Follow these steps to run the background trainer and the metrics exporter side
+by side:
+
+1. **Set the required environment variables**. Both components are enabled via
+   flags when launching `run_autonomous.py`:
+
+   ```bash
+   export AUTO_TRAIN_SYNERGY=1
+   export EXPORT_SYNERGY_METRICS=1
+   ```
+
+   Adjust `AUTO_TRAIN_INTERVAL` or `SYNERGY_METRICS_PORT` if the defaults are not
+   suitable.
+
+2. **Start the sandbox** normally:
+
+   ```bash
+   python run_autonomous.py
+   ```
+
+   The exporter listens on `http://localhost:${SYNERGY_METRICS_PORT}/metrics` and
+   the trainer updates `synergy_weights.json` at the configured interval.
+
+3. **Verify that both services are running**. The sandbox logs report when the
+   exporter is ready and each time the trainer updates the weights. Point a
+   Prometheus instance at the exporter URL to record the metrics.
+
 ### Advanced synergy learning
 
 The default learner uses a lightweight actor–critic strategy. To enable deeper
@@ -346,6 +375,10 @@ local installation.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
   firewall blocks the connection. The dashboard starts automatically once the
   sandbox loop begins.
+- **Patch score backend unreachable** – verify that `PATCH_SCORE_BACKEND_URL`
+  points to a reachable HTTP or S3 endpoint. Check network connectivity and
+  credentials when using S3. The sandbox falls back to local storage if the
+  backend cannot be contacted.
 - **Tests fail** – ensure all packages listed in the checklist are installed and
   rerun `./setup_env.sh` to reinstall the Python environment. Some tests rely on
   optional tools such as `ffmpeg` or Docker. Execute `pytest -x` to stop on the

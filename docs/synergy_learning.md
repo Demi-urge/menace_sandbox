@@ -214,3 +214,17 @@ records the last processed history entry in `last_ts.json` (configurable with
 only train on new entries. When running `run_autonomous.py` the same trainer is
 started automatically if `AUTO_TRAIN_SYNERGY=1`; invoke it manually only when
 you want to retrain outside the autonomous loop.
+
+## Synergy weights and SelfDebuggerSandbox scoring
+
+`SelfDebuggerSandbox` evaluates patches using a composite score derived from
+recent metrics. When the sandbox runs as part of `SelfImprovementEngine` these
+metrics are multiplied by the current synergy weights prior to scoring. Higher
+weights therefore increase the influence of the corresponding metrics on patch
+ranking. For example, a large `synergy_reliability` weight boosts patches that
+improve reliability metrics while a negative weight reduces their impact.
+
+The sandbox loads the values from `synergy_weights.json` unless overrides are
+provided via environment variables such as `SYNERGY_WEIGHT_ROI`. You can also
+pass a custom mapping to `_composite_score` when integrating the sandbox into
+other tooling.
