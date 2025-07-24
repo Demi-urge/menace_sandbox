@@ -645,3 +645,41 @@ def test_cli_cleanup(monkeypatch):
     mod.cli(["cleanup"])
 
     assert called
+
+
+def test_gauge_updates(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 3, "failed": 1}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    mod.self_test_passed_total.set(0)
+    mod.self_test_failed_total.set(0)
+    svc = mod.SelfTestService()
+    asyncio.run(svc._run_once())
+
+    def _get(gauge):
+        if hasattr(gauge, "_value"):
+            return gauge._value.get()
+        return gauge.labels().get()
+
+    assert _get(mod.self_test_passed_total) == 3
+    assert _get(mod.self_test_failed_total) == 1

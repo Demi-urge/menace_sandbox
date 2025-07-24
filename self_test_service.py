@@ -21,6 +21,18 @@ from .data_bot import DataBot
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
 
+try:
+    from . import metrics_exporter as _me
+except Exception:  # pragma: no cover - package may not be available
+    import metrics_exporter as _me  # type: ignore
+
+self_test_passed_total = _me.Gauge(
+    "self_test_passed_total", "Total number of passed self tests"
+)
+self_test_failed_total = _me.Gauge(
+    "self_test_failed_total", "Total number of failed self tests"
+)
+
 _container_lock = Lock()
 _file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
 
@@ -647,6 +659,12 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("failed to store metrics")
 
+            try:
+                self_test_passed_total.set(float(passed))
+                self_test_failed_total.set(float(failed))
+            except Exception:
+                self.logger.exception("failed to update metrics")
+
             if first_exc:
                 raise first_exc
             if any_failed:
@@ -737,7 +755,13 @@ class SelfTestService:
             self._task = None
 
 
-__all__ = ["SelfTestService", "cli", "main"]
+__all__ = [
+    "SelfTestService",
+    "self_test_passed_total",
+    "self_test_failed_total",
+    "cli",
+    "main",
+]
 
 
 def cli(argv: list[str] | None = None) -> int:
