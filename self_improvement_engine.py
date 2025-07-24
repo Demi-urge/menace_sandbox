@@ -1840,7 +1840,23 @@ def synergy_ma(
 
 
 class SynergyDashboard:
-    """Expose synergy metrics via a small Flask app."""
+    """Expose synergy metrics via a small Flask app.
+
+    Parameters
+    ----------
+    history_file:
+        Path to the SQLite history database.
+    ma_window:
+        Window size for moving averages.
+    exporter_host/exporter_port:
+        When set, fetch metrics from a Prometheus exporter instead of the
+        history file.
+    refresh_interval:
+        How often to poll the exporter.
+    max_history:
+        Maximum number of history entries to keep in memory when using an
+        exporter. ``None`` disables trimming.
+    """
 
     def __init__(
         self,
@@ -1850,6 +1866,7 @@ class SynergyDashboard:
         exporter_host: str | None = None,
         exporter_port: int = 8003,
         refresh_interval: float = 5.0,
+        max_history: int | None = None,
     ) -> None:
         from flask import Flask, jsonify  # type: ignore
 
@@ -1859,6 +1876,7 @@ class SynergyDashboard:
         self.exporter_host = exporter_host
         self.exporter_port = exporter_port
         self.refresh_interval = float(refresh_interval)
+        self.max_history = max_history
         self._history: list[dict[str, float]] = []
         self._last_metrics: dict[str, float] = {}
         self._stop = threading.Event()
@@ -1917,6 +1935,8 @@ class SynergyDashboard:
             vals = self._fetch_exporter_metrics()
             if vals:
                 self._history.append(vals)
+                if self.max_history and len(self._history) > self.max_history:
+                    self._history = self._history[-self.max_history :]
             self._stop.wait(self.refresh_interval)
 
     def stop(self) -> None:
@@ -2039,6 +2059,12 @@ def cli(argv: list[str] | None = None) -> None:
     p_dash.add_argument("--exporter-port", type=int, default=8003)
     p_dash.add_argument("--refresh-interval", type=float, default=5.0)
     p_dash.add_argument(
+        "--max-history",
+        type=int,
+        default=1000,
+        help="max entries to keep in memory when polling an exporter",
+    )
+    p_dash.add_argument(
         "--wsgi",
         choices=["flask", "gunicorn", "uvicorn"],
         default="flask",
@@ -2057,6 +2083,7 @@ def cli(argv: list[str] | None = None) -> None:
             exporter_host=args.exporter_host,
             exporter_port=args.exporter_port,
             refresh_interval=args.refresh_interval,
+            max_history=args.max_history,
         )
         dash.run(port=args.port, wsgi=args.wsgi)
         return
