@@ -73,6 +73,16 @@ def test_backend_from_url_file(tmp_path):
     assert be.directory.endswith(str(tmp_path))
 
 
+def test_backend_from_url_fallback(tmp_path):
+    path = str(tmp_path)
+    be = psb.backend_from_url(path)
+    assert isinstance(be, psb.FilePatchScoreBackend)
+    assert be.directory == path
+
+    be2 = psb.backend_from_url("foo://bar")
+    assert isinstance(be2, psb.FilePatchScoreBackend)
+
+
 def test_sandbox_uses_backend(monkeypatch, tmp_path):
     calls = {}
 

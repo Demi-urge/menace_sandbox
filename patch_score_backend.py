@@ -184,7 +184,10 @@ def backend_from_url(url: str) -> PatchScoreBackend:
     if parts.scheme == "file":
         path = parts.netloc + parts.path
         return FilePatchScoreBackend(path)
-    raise ValueError(f"unsupported backend URL: {url}")
+    if not parts.scheme:
+        path = url or "."
+        return FilePatchScoreBackend(path)
+    return FilePatchScoreBackend(url)
 
 
 __all__ = [
