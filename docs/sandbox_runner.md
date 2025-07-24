@@ -670,6 +670,39 @@ logged when the consecutive count reaches `SANDBOX_POOL_FAIL_THRESHOLD`
 (default `5`). Review this file and the warnings to identify images that are
 consistently failing to launch.
 
+## Automatic Cleanup
+
+The sandbox launches a background worker that periodically removes idle or
+unhealthy containers from the pool.  The worker is started automatically when
+`sandbox_runner.environment` is imported and logs how many containers were
+cleaned or replaced.  Cleanup events accumulate in a set of metrics exposed via
+`collect_metrics()`:
+
+- `cleanup_idle` – containers removed after exceeding
+  `SANDBOX_CONTAINER_IDLE_TIMEOUT`.
+- `cleanup_unhealthy` – pooled containers that failed a health check.
+- `cleanup_lifetime` – containers purged after
+  `SANDBOX_CONTAINER_MAX_LIFETIME` seconds.
+- `cleanup_disk` – containers removed because their temporary directory grew
+  beyond `SANDBOX_CONTAINER_DISK_LIMIT`.
+
+Additional metrics include `container_failures_<image>` and
+`consecutive_failures_<image>` for each image the pool attempted to create.
+`container_backoff_base` reports the current exponential backoff base used when
+creation repeatedly fails.
+
+If the process crashes you can safely clean up any leftover containers or QEMU
+overlay files by running:
+
+```bash
+python -m sandbox_runner.cli --cleanup
+```
+
+Keep an eye on the logs for messages from the cleanup worker.  A steady stream
+of cleanup events may indicate resource leaks or overly strict timeouts.  When
+the worker exits it logs `cleanup worker cancelled`; if this appears
+unexpectedly check for unhandled exceptions.
+
 ## Troubleshooting
 
 - **Missing dependencies** – rerun `./setup_env.sh` to install required packages and verify that `ffmpeg` and `tesseract` are available.
