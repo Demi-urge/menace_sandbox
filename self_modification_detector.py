@@ -10,6 +10,8 @@ import threading
 import time
 from typing import Dict, List
 
+import requests
+
 
 _LOGGER = logging.getLogger(__name__)
 _REFERENCE_HASHES: Dict[str, str] = {}
@@ -51,6 +53,19 @@ def load_reference_hashes(path: str) -> Dict[str, str]:
         return json.load(fh)
 
 
+def _fetch_reference_hashes(url: str) -> Dict[str, str] | None:
+    """Return reference hashes from ``url`` if possible."""
+    try:
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items()}
+    except Exception as exc:  # pragma: no cover - network errors not deterministic
+        _LOGGER.error("failed to fetch reference hashes: %s", exc)
+    return None
+
+
 def detect_self_modification(reference_hashes: Dict[str, str], current_hashes: Dict[str, str]) -> List[str]:
     """Return list of files whose hashes differ from ``reference_hashes``."""
     changed: List[str] = []
@@ -74,12 +89,21 @@ def trigger_lockdown(file_list: List[str]) -> None:
     raise SystemExit("lockdown triggered due to self modification")
 
 
-def monitor_self_integrity(interval_seconds: int = 10) -> None:
-    """Start a background watchdog verifying code integrity."""
+def monitor_self_integrity(interval_seconds: int = 10, reference_url: str | None = None) -> None:
+    """Start a background watchdog verifying code integrity.
+
+    If ``reference_url`` is provided, reference hashes are periodically fetched
+    from this location and compared against local hashes.
+    """
 
     def _monitor() -> None:
         directory = os.path.dirname(os.path.abspath(__file__))
         reference = _REFERENCE_HASHES
+        if reference_url:
+            fetched = _fetch_reference_hashes(reference_url)
+            if fetched:
+                reference.clear()
+                reference.update(fetched)
         if not reference:
             ref_path = os.path.join(directory, "immutable_reference.json")
             try:
@@ -91,6 +115,11 @@ def monitor_self_integrity(interval_seconds: int = 10) -> None:
                 except Exception:
                     pass
         while not _STOP_EVENT.wait(interval_seconds):
+            if reference_url:
+                fetched = _fetch_reference_hashes(reference_url)
+                if fetched:
+                    reference.clear()
+                    reference.update(fetched)
             current = generate_code_hashes(directory)
             modified = detect_self_modification(reference, current)
             if modified:
