@@ -341,6 +341,7 @@ _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
 _STALE_VMS_REMOVED = 0
+_VM_OVERLAYS_REMOVED = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -389,9 +390,10 @@ def _remove_active_container(cid: str) -> None:
 
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
-    global _STALE_CONTAINERS_REMOVED, _STALE_VMS_REMOVED
+    global _STALE_CONTAINERS_REMOVED, _STALE_VMS_REMOVED, _VM_OVERLAYS_REMOVED
     removed_containers = 0
     removed_vms = 0
+    removed_overlays = 0
     try:
         ids = _read_active_containers()
         for cid in ids:
@@ -478,6 +480,7 @@ def purge_leftovers() -> None:
             try:
                 overlay.unlink()
                 removed_vms += 1
+                removed_overlays += 1
             except Exception:
                 logger.exception("failed to remove overlay %s", overlay)
             try:
@@ -489,6 +492,7 @@ def purge_leftovers() -> None:
 
     _STALE_CONTAINERS_REMOVED += removed_containers
     _STALE_VMS_REMOVED += removed_vms
+    _VM_OVERLAYS_REMOVED += removed_overlays
 
 
 def _docker_available() -> bool:
@@ -699,6 +703,7 @@ def collect_metrics(
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
     result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
     result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
+    result["vm_overlays_removed"] = float(_VM_OVERLAYS_REMOVED)
     return result
 
 
@@ -2892,6 +2897,8 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 finally:
                     try:
                         overlay.unlink()
+                        global _VM_OVERLAYS_REMOVED
+                        _VM_OVERLAYS_REMOVED += 1
                     except Exception:
                         pass
             else:
