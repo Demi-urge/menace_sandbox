@@ -1048,6 +1048,8 @@ async def _execute_in_container(
                     if workdir:
                         kwargs["working_dir"] = workdir
 
+                    kwargs["labels"] = {_POOL_LABEL: "1"}
+
                     container = client.containers.run(
                         image,
                         ["python", "/code/snippet.py"],
