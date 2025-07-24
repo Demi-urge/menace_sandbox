@@ -3,3 +3,4 @@ extra_metrics:
   maintainability: 0.0
   stale_containers_removed: 0.0
   stale_vms_removed: 0.0
+  runtime_vms_removed: 0.0
