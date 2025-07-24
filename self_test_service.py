@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+import threading
 
 from .data_bot import DataBot
 from .error_bot import ErrorDB
@@ -120,6 +121,9 @@ class SelfTestService:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._task: asyncio.Task | None = None
         self._async_stop: asyncio.Event | None = None
+        self._health_server: 'HTTPServer' | None = None
+        self._health_thread: threading.Thread | None = None
+        self.health_port: int | None = None
         env_args = os.getenv("SELF_TEST_ARGS") if pytest_args is None else pytest_args
         self.pytest_args = shlex.split(env_args) if env_args else []
         env_workers = os.getenv("SELF_TEST_WORKERS") if workers is None else workers
@@ -181,6 +185,55 @@ class SelfTestService:
                 json.dump(data, fh)
         except Exception:
             self.logger.exception("failed to store state")
+
+    # ------------------------------------------------------------------
+    def _start_health_server(self, port: int) -> None:
+        """Launch a minimal HTTP endpoint returning test status."""
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        svc = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # type: ignore[override]
+                if self.path != "/health":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body = json.dumps(
+                    {
+                        "passed": int(svc.results.get("passed", 0)) if svc.results else 0,
+                        "failed": int(svc.results.get("failed", 0)) if svc.results else 0,
+                        "runtime": float(svc.results.get("runtime", 0.0)) if svc.results else 0.0,
+                        "history": svc.recent_history(),
+                    }
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:  # pragma: no cover - silence
+                return
+
+        server = HTTPServer(("0.0.0.0", port), Handler)
+        self.health_port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self._health_server = server
+        self._health_thread = thread
+
+    def _stop_health_server(self) -> None:
+        if self._health_server:
+            try:
+                self._health_server.shutdown()
+                self._health_server.server_close()
+            except Exception:
+                self.logger.exception("failed to stop health server")
+            if self._health_thread:
+                self._health_thread.join(timeout=1.0)
+            self._health_server = None
+            self._health_thread = None
+            self.health_port = None
 
     def _clear_state(self) -> None:
         if self.state_path and self.state_path.exists():
@@ -727,6 +780,7 @@ class SelfTestService:
         interval: float = 86400.0,
         *,
         loop: asyncio.AbstractEventLoop | None = None,
+        health_port: int | None = None,
     ) -> asyncio.Task:
         """Start the background schedule loop on *loop*."""
 
@@ -734,6 +788,11 @@ class SelfTestService:
             return self._task
         self._loop = loop or asyncio.get_event_loop()
         self._async_stop = asyncio.Event()
+        if health_port is not None:
+            try:
+                self._start_health_server(int(health_port))
+            except Exception:
+                self.logger.exception("failed to start health server")
         self._task = self._loop.create_task(self._schedule_loop(interval))
         return self._task
 
@@ -772,6 +831,7 @@ class SelfTestService:
             pass
         finally:
             self._task = None
+            self._stop_health_server()
 
 
 __all__ = [
