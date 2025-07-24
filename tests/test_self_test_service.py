@@ -628,3 +628,20 @@ def test_container_failure_logs_identifiers(monkeypatch):
     assert "selftest_deadbeef" in err
     assert "docker" in err
     assert "container logs" in svc.results.get("logs", "")
+
+
+def test_cli_cleanup(monkeypatch):
+    called = []
+
+    async def fake_remove(self):
+        called.append(True)
+
+    async def avail(self):
+        return True
+
+    monkeypatch.setattr(mod.SelfTestService, "_remove_stale_containers", fake_remove)
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+
+    mod.cli(["cleanup"])
+
+    assert called

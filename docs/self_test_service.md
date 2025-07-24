@@ -32,6 +32,15 @@ Options include:
 - `--container-runtime` – container runtime executable (e.g. `docker` or `podman`)
 - `--docker-host` – Docker/Podman host or URL for remote engines
 
+Remove stale containers left over from interrupted runs with:
+
+```bash
+python -m menace.self_test_service cleanup
+```
+
+This command accepts `--container-runtime`, `--docker-host` and `--retries`
+options identical to those used with `run`.
+
 Example running tests inside a remote Podman instance:
 
 ```bash
