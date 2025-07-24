@@ -828,6 +828,11 @@ additionally inspects Terraform directories and host lists to set
 ### Monitoring dashboard
 `MetricsDashboard` exposes Prometheus metrics via a Flask endpoint for easy visualization.
 
+Run `start_metrics_server(8001)` before executing `benchmark_registered_workflows()`
+to publish metrics that Grafana can chart in real time. The dashboard examples in
+[docs/metrics_dashboard.md](docs/metrics_dashboard.md) show how to track ROI and
+resource usage over time.
+
 ### New autonomous helpers
 - `VaultSecretProvider` fetches and caches secrets from an optional remote vault.
 - `EnvironmentRestorationService` periodically re-applies the bootstrap process after crashes.

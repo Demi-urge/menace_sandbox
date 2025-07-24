@@ -19,6 +19,9 @@ class DummyNP(types.ModuleType):
     def abs(self, arr):
         return [abs(x) for x in arr]
 
+    def std(self, arr):
+        return 0.0
+
 np_stub = DummyNP("numpy")
 sys.modules["numpy"] = np_stub
 sys.modules.setdefault("numpy", np_stub)
@@ -110,6 +113,10 @@ def test_registered_workflow_metrics(monkeypatch, tmp_path):
     assert "duration" in tracker.metrics_history
     assert tracker.metrics_history["success"]
     assert "cpu_time" in tracker.metrics_history
+    assert "cpu_percent" in tracker.metrics_history
     assert "memory_delta" in tracker.metrics_history
+    assert "latency" in tracker.metrics_history
     rows = mdb.fetch_eval("ok")
-    assert any(r[1] == "duration_pvalue" for r in rows)
+    pvalue_metrics = {r[1] for r in rows if r[1].endswith("_pvalue")}
+    assert "duration_pvalue" in pvalue_metrics
+    assert "cpu_time_pvalue" in pvalue_metrics
