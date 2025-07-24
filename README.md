@@ -103,6 +103,15 @@ installs packages from ``MENACE_WHEEL_DIR`` instead of contacting PyPI.
 scripts/setup_autonomous.sh
 ```
 
+For a completely automated setup that also runs the tests, bootstraps the
+environment and generates presets run:
+
+```bash
+python scripts/autonomous_setup.py
+```
+The helper auto-discovers available GPUs and network interfaces and stores the
+information in ``hardware.json``.
+
 After the base requirements are installed you can bootstrap optional
 dependencies and verify your configuration with:
 
