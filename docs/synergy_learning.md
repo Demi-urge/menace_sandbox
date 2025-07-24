@@ -153,10 +153,19 @@ start_synergy_exporter(history_file="sandbox_data/synergy_history.db", port=8003
 The module also provides a small command line interface:
 
 ```bash
+python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db
+```
+
+The exporter listens on port `8003` by default. Pass `--port` to change it and
+use `--interval` to adjust the polling frequency:
+
+```bash
 python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db --port 8003
 ```
 
-Use `--interval` to change the polling frequency.
+`run_autonomous.py` starts the exporter automatically when
+`EXPORT_SYNERGY_METRICS=1`. Invoke the command above on its own when you only
+need to expose the metrics or debug outside the sandbox loop.
 
 A minimal Prometheus configuration to scrape the exporter looks like this:
 
@@ -195,10 +204,11 @@ Run `synergy_auto_trainer.py` directly to update weights from the history
 database without launching the full sandbox:
 
 ```bash
-python -m menace.synergy_auto_trainer \
-  --history-file sandbox_data/synergy_history.db \
-  --weights-file sandbox_data/synergy_weights.json
+python -m menace.synergy_auto_trainer --history-file sandbox_data/synergy_history.db --weights-file sandbox_data/synergy_weights.json
 ```
 
 By default it trains continuously every 600 seconds. Use `--interval` to adjust
-the delay or `--run-once` to perform a single update and exit.
+the delay or `--run-once` to perform a single update and exit. When running
+`run_autonomous.py` the same trainer is started automatically if
+`AUTO_TRAIN_SYNERGY=1`; invoke it manually only when you want to retrain
+outside the autonomous loop.

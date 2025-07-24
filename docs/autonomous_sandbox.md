@@ -269,6 +269,12 @@ ROI.
 Alternatively start the exporter directly from the command line:
 
 ```bash
+python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db
+```
+
+The exporter listens on port `8003` by default. Pass `--port` to change it:
+
+```bash
 python -m menace.synergy_exporter --history-file sandbox_data/synergy_history.db --port 8003
 ```
 
@@ -283,6 +289,19 @@ python -m menace.self_improvement_engine synergy-dashboard --file sandbox_data/s
 ```
 
 Use `--wsgi gunicorn` or `--wsgi uvicorn` to serve the dashboard via Gunicorn or Uvicorn instead of the Flask development server.
+
+### Synergy auto trainer
+
+Set `AUTO_TRAIN_SYNERGY=1` when invoking `run_autonomous.py` to update
+`synergy_weights.json` automatically from `synergy_history.db`. To train the
+weights without running the full sandbox execute the trainer directly:
+
+```bash
+python -m menace.synergy_auto_trainer --history-file sandbox_data/synergy_history.db --weights-file sandbox_data/synergy_weights.json
+```
+
+Use this manual invocation to refresh the weights once or run the trainer in
+isolation. Pass `--interval` or `--run-once` to control how often it updates.
 
 ### Advanced synergy learning
 
