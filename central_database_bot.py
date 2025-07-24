@@ -4,7 +4,17 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Callable, TypeVar
+import uuid
+
+from .logging_utils import set_correlation_id
+from .resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    RetryError,
+    ResilienceError,
+    retry_with_backoff,
+)
 
 from pydantic import BaseModel
 from .database_router import DatabaseRouter
@@ -45,6 +55,14 @@ class Result:
     detail: str = ""
 
 
+class CentralDatabaseError(ResilienceError):
+    """Base class for CentralDatabaseBot errors."""
+
+
+class RedisUnavailableError(CentralDatabaseError):
+    """Raised when Redis operations fail or circuit is open."""
+
+
 class CentralDatabaseBot(AdminBotBase):
     """Serialize schema-changing operations via a FIFO queue."""
 
@@ -71,11 +89,16 @@ class CentralDatabaseBot(AdminBotBase):
 
         if redis and redis_url:
             try:
-                self.client = redis.from_url(redis_url)
-            except Exception:
+                self.client = retry_with_backoff(
+                    lambda: redis.from_url(redis_url),
+                    attempts=3,
+                    delay=1.0,
+                    logger=self.logger,
+                )
+            except ResilienceError as exc:
                 self.logger.exception("redis connection failed")
                 if not self.fallback_local:
-                    raise
+                    raise RedisUnavailableError(str(exc)) from exc
                 self.client = None
                 self.logger.warning("using local queue due to redis failure")
         else:
@@ -84,6 +107,7 @@ class CentralDatabaseBot(AdminBotBase):
         self.results: list[Result] = []
         self.lock = Redlock([redis_url]) if Redlock and redis_url else None
         self._prepare_invalid_table()
+        self.circuit = CircuitBreaker(max_failures=3, reset_timeout=30.0)
 
     # ------------------------------------------------------------------
     def _prepare_invalid_table(self) -> None:
@@ -98,13 +122,27 @@ class CentralDatabaseBot(AdminBotBase):
         else:
             self.invalid_table = self.meta.tables["invalid_proposals"]
 
+    T = TypeVar("T")
+
+    def _redis_op(self, func: Callable[[], T]) -> T:
+        if not self.client:
+            raise RedisUnavailableError("redis client missing")
+        try:
+            return self.circuit.call(
+                lambda: retry_with_backoff(func, attempts=3, delay=0.5, logger=self.logger)
+            )
+        except CircuitOpenError as exc:
+            raise RedisUnavailableError("redis circuit open") from exc
+        except RetryError as exc:
+            raise RedisUnavailableError(str(exc)) from exc
+
     def enqueue(self, proposal: Proposal) -> None:
         """Push a proposal onto the queue."""
         if self.client:
             try:
-                self.client.xadd(self.stream, proposal.dict())
+                self._redis_op(lambda: self.client.xadd(self.stream, proposal.dict()))
                 return
-            except Exception:
+            except RedisUnavailableError:
                 self.logger.exception("enqueue to redis failed")
                 if self.fallback_local:
                     self.logger.warning("falling back to local queue")
@@ -116,13 +154,13 @@ class CentralDatabaseBot(AdminBotBase):
     def _fetch_one(self) -> Proposal | None:
         if self.client:
             try:
-                res = self.client.xrange(self.stream, count=1)
+                res = self._redis_op(lambda: self.client.xrange(self.stream, count=1))
                 if res:
                     key, fields = res[0]
-                    self.client.xdel(self.stream, key)
+                    self._redis_op(lambda: self.client.xdel(self.stream, key))
                     payload = {k.decode() if isinstance(k, bytes) else k: v.decode() if isinstance(v, bytes) else v for k, v in fields.items()}
                     return Proposal.parse_obj(payload)
-            except Exception:
+            except RedisUnavailableError:
                 self.logger.exception("redis fetch failed")
                 if not self.fallback_local:
                     raise
@@ -135,9 +173,9 @@ class CentralDatabaseBot(AdminBotBase):
         data = {"proposal": result.proposal.dict(), "status": result.status, "detail": result.detail}
         if self.client:
             try:
-                self.client.xadd(self.results_stream, data)
+                self._redis_op(lambda: self.client.xadd(self.results_stream, data))
                 return
-            except Exception:
+            except RedisUnavailableError:
                 self.logger.exception("publish result failed")
                 if self.fallback_local:
                     self.logger.warning("falling back to local queue")
@@ -195,9 +233,12 @@ class CentralDatabaseBot(AdminBotBase):
                 return
         else:
             handle = None
+        cid = uuid.uuid4().hex
+        set_correlation_id(cid)
         try:
             self._apply(prop)
         finally:
+            set_correlation_id(None)
             if self.lock and handle:
                 try:
                     self.lock.unlock(handle)
@@ -209,7 +250,18 @@ class CentralDatabaseBot(AdminBotBase):
             prop = self._fetch_one()
             if not prop:
                 break
-            self._apply(prop)
+            cid = uuid.uuid4().hex
+            set_correlation_id(cid)
+            try:
+                self._apply(prop)
+            finally:
+                set_correlation_id(None)
 
 
-__all__ = ["Proposal", "CentralDatabaseBot", "Result"]
+__all__ = [
+    "Proposal",
+    "CentralDatabaseBot",
+    "Result",
+    "CentralDatabaseError",
+    "RedisUnavailableError",
+]
