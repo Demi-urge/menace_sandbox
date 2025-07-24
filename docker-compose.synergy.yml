@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  synergy_exporter:
+    build: .
+    command: ["python", "-m", "menace.synergy_exporter", "--history-file", "sandbox_data/synergy_history.db"]
+    env_file:
+      - .env
+    volumes:
+      - ./sandbox_data:/app/sandbox_data
+    ports:
+      - "8003:8003"
+  synergy_trainer:
+    build: .
+    command: ["python", "-m", "menace.synergy_auto_trainer", "--history-file", "sandbox_data/synergy_history.db", "--weights-file", "sandbox_data/synergy_weights.json"]
+    env_file:
+      - .env
+    volumes:
+      - ./sandbox_data:/app/sandbox_data

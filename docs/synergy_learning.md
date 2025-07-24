@@ -222,6 +222,27 @@ only train on new entries. When running `run_autonomous.py` the same trainer is
 started automatically if `AUTO_TRAIN_SYNERGY=1`; invoke it manually only when
 you want to retrain outside the autonomous loop.
 
+## Docker Compose setup
+
+`docker-compose.synergy.yml` runs the exporter and trainer as separate
+containers. Start both services with:
+
+```bash
+docker compose -f docker-compose.synergy.yml up
+```
+
+The **synergy_exporter** exposes metrics from
+`sandbox_data/synergy_history.db` on `http://localhost:8003/metrics` while the
+**synergy_trainer** periodically updates
+`sandbox_data/synergy_weights.json`. The compose file mounts `./sandbox_data`
+into each container so history and weights persist between runs. Environment
+variables defined in `.env` control the update interval and exporter port.
+
+Stop the services with:
+
+```bash
+docker compose -f docker-compose.synergy.yml down
+```
 Failed training attempts no longer stop the background process. The trainer logs
 the error and retries after the configured interval so progress in
 `last_ts.json` (or the specified `--progress-file`) is preserved.
