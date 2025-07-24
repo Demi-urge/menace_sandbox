@@ -188,3 +188,17 @@ with `AUTO_TRAIN_INTERVAL`.
 When `EXPORT_SYNERGY_METRICS=1` is enabled the exporter is monitored and
 automatically restarted if its health check fails. Control how frequently the
 monitor checks the exporter with `SYNERGY_EXPORTER_CHECK_INTERVAL`.
+
+## Standalone auto trainer
+
+Run `synergy_auto_trainer.py` directly to update weights from the history
+database without launching the full sandbox:
+
+```bash
+python -m menace.synergy_auto_trainer \
+  --history-file sandbox_data/synergy_history.db \
+  --weights-file sandbox_data/synergy_weights.json
+```
+
+By default it trains continuously every 600 seconds. Use `--interval` to adjust
+the delay or `--run-once` to perform a single update and exit.
