@@ -39,10 +39,13 @@ def _verify_required_dependencies() -> None:
     messages: list[str] = []
     if missing_sys:
         messages.append(
-            "Missing system packages: "
-            + ", ".join(missing_sys)
-            + ". Install them using your package manager."
+            "Missing system packages: " + ", ".join(missing_sys)
         )
+        pkg_line = " ".join(missing_sys)
+        messages.append("Install them on Debian/Ubuntu with:")
+        messages.append(f"  sudo apt-get install {pkg_line}")
+        messages.append("Or on macOS with:")
+        messages.append(f"  brew install {pkg_line}")
     if missing_req:
         messages.append(
             "Missing Python packages: "
@@ -57,7 +60,12 @@ def _verify_required_dependencies() -> None:
         )
 
     if messages:
-        raise SystemExit("\n".join(messages))
+        messages.append(
+            "Refer to docs/autonomous_sandbox.md for manual setup instructions."
+        )
+        msg = "\n".join(messages)
+        print(msg, file=sys.stderr)
+        raise SystemExit(msg)
 
     if missing_opt:
         logging.warning("Missing optional Python packages: %s", ", ".join(missing_opt))
