@@ -39,6 +39,30 @@ class SynergyAutoTrainer:
         self.interval = float(interval)
         self.progress_file = Path(progress_file)
         self._last_id = 0
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+
+        if not self.history_file.exists():
+            new_path = data_dir / self.history_file.name
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            new_path.touch()
+            logging.getLogger(self.__class__.__name__).warning(
+                "history file %s missing - created empty file at %s",
+                self.history_file,
+                new_path,
+            )
+            self.history_file = new_path
+
+        if not self.weights_file.exists():
+            new_path = data_dir / self.weights_file.name
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            new_path.touch()
+            logging.getLogger(self.__class__.__name__).warning(
+                "weights file %s missing - created empty file at %s",
+                self.weights_file,
+                new_path,
+            )
+            self.weights_file = new_path
+
         if self.progress_file.exists():
             try:
                 data = json.loads(self.progress_file.read_text())
