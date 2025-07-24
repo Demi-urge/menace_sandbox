@@ -284,3 +284,23 @@ def test_stop_and_remove_removes_active_on_success(monkeypatch):
     env._stop_and_remove(c)
     assert called == [c.id]
     assert env._CLEANUP_FAILURES == 0
+
+
+def test_stop_and_remove_uses_cli_fallback(monkeypatch):
+    class RemoveFail(DummyContainer):
+        def remove(self, force=True):
+            raise RuntimeError("boom")
+
+    c = RemoveFail("z")
+    cmds = []
+    monkeypatch.setattr(env, "_remove_active_container", lambda cid: None)
+
+    def fake_run(cmd, **kw):
+        cmds.append(cmd)
+        if cmd[:2] == ["docker", "ps"]:
+            return types.SimpleNamespace(returncode=0, stdout=f"{c.id}\n")
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    env._stop_and_remove(c)
+    assert any(cmd[:3] == ["docker", "rm", "-f"] for cmd in cmds)

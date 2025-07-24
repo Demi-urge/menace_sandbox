@@ -727,6 +727,7 @@ async def collect_metrics_async(
 
 def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> None:
     """Stop and remove ``container`` with retries."""
+    global _CLEANUP_FAILURES
     cid = getattr(container, "id", "")
     for attempt in range(retries):
         try:
@@ -762,10 +763,39 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
         except Exception as exc:  # pragma: no cover - unexpected runtime issues
             logger.debug("container existence check failed for %s: %s", cid, exc)
 
+    if cid and exists:
+        try:
+            proc = subprocess.run(
+                ["docker", "rm", "-f", cid],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(proc.stderr or proc.stdout)
+            exists = False
+            try:
+                confirm = subprocess.run(
+                    ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if confirm.returncode == 0 and confirm.stdout.strip():
+                    exists = True
+            except Exception as exc:
+                logger.debug(
+                    "container existence re-check failed for %s: %s", cid, exc
+                )
+        except Exception as exc:
+            _CLEANUP_FAILURES += 1
+            logger.error("docker rm fallback failed for container %s: %s", cid, exc)
+
     if cid and not exists:
         _remove_active_container(cid)
     elif cid and exists:
-        global _CLEANUP_FAILURES
         _CLEANUP_FAILURES += 1
         logger.error("container %s still exists after removal attempts", cid)
 
