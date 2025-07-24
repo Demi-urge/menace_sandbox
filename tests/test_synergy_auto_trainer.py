@@ -4,6 +4,8 @@ import time
 import types
 import importlib
 import logging
+import asyncio
+import pytest
 from pathlib import Path
 
 
@@ -53,6 +55,54 @@ def test_auto_trainer_runs_cycle(monkeypatch, tmp_path: Path) -> None:
 
     assert trainer._thread is not None
     assert not trainer._thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_auto_trainer_runs_cycle_async(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.1}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    called = {}
+
+    def fake_cli(args):
+        called["args"] = list(args)
+        return 0
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=tmp_path / "progress.json",
+    )
+
+    trainer.start_async()
+    for _ in range(20):
+        if called:
+            break
+        await asyncio.sleep(0.05)
+    await trainer.stop_async()
+
+    assert called
+    assert "train" in called["args"]
+    assert str(weights_file) in called["args"]
+    assert trainer._task is not None
+    assert trainer._task.done()
 
 
 def test_cli_run_once(monkeypatch, tmp_path: Path) -> None:
@@ -134,6 +184,44 @@ def test_cli_continuous(monkeypatch) -> None:
 
     assert rc == 0
     assert events == ["init", "start", "stop"]
+
+
+def test_cli_continuous_async(monkeypatch) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    events: list[str] = []
+
+    class DummyTrainer:
+        def __init__(self, *, history_file: str | Path, weights_file: str | Path, interval: float, progress_file: Path) -> None:
+            events.append("init")
+
+        def start_async(self) -> None:
+            events.append("start_async")
+
+        async def stop_async(self) -> None:
+            events.append("stop_async")
+
+    monkeypatch.setattr(sat, "SynergyAutoTrainer", DummyTrainer)
+
+    async def raise_after(_t: float) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(sat.asyncio, "sleep", raise_after)
+
+    rc = sat.cli([
+        "--history-file",
+        "hf",
+        "--weights-file",
+        "wf",
+        "--interval",
+        "0.01",
+        "--progress-file",
+        "prog.json",
+        "--async",
+    ])
+
+    assert rc == 0
+    assert events == ["init", "start_async", "stop_async"]
 
 
 def test_restart_skips_processed(monkeypatch, tmp_path: Path) -> None:
