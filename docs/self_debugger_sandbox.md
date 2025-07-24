@@ -19,3 +19,12 @@ When a backend URL is configured the sandbox sends every patch score to the remo
 
 - **Missing dependencies** – run `./setup_env.sh` to install required Python libraries.
 - **Token errors** – ensure `VISUAL_AGENT_TOKEN` matches the secret expected by the visual agent or requests will return HTTP 401.
+
+## Synergy weights
+
+`_composite_score` normalises recent metrics and feeds the result through a logistic
+function. When the sandbox runs under `SelfImprovementEngine` the synergy metrics
+(`synergy_roi`, `synergy_efficiency`, `synergy_resilience`, `synergy_antifragility`)
+are multiplied by the engine's `synergy_learner.weights`. Custom mappings can be
+supplied via the `weights` parameter of `_composite_score` to override the
+learner values.

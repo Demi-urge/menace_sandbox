@@ -35,7 +35,7 @@ from .audit_trail import AuditTrail
 from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
-from typing import Callable
+from typing import Callable, Mapping
 
 
 class SelfDebuggerSandbox(AutomatedDebugger):
@@ -678,8 +678,14 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         filename: str | None = None,
         *,
         tracker: ROITracker | None = None,
+        weights: Mapping[str, float] | None = None,
     ) -> float:
-        """Return a composite score from multiple metrics."""
+        """Return a composite score from multiple metrics.
+
+        If ``weights`` is ``None`` and the attached engine provides a
+        ``synergy_learner`` with a ``weights`` mapping, those values are used to
+        scale the synergy metrics before applying the logistic transform.
+        """
         if tracker is not None:
             s_roi, s_eff, s_res, s_af = self._recent_synergy_metrics(tracker)
             if synergy_roi is None:
@@ -695,6 +701,13 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         synergy_efficiency = float(synergy_efficiency or 0.0)
         synergy_resilience = float(synergy_resilience or 0.0)
         synergy_antifragility = float(synergy_antifragility or 0.0)
+
+        if weights is None and hasattr(self.engine, "synergy_learner"):
+            try:
+                weights = getattr(self.engine.synergy_learner, "weights", None)
+            except Exception:
+                weights = None
+        weights = weights or {}
 
         if self._score_db:
             with self._db_lock:
@@ -721,6 +734,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         syn_af = synergy_antifragility / (
             mc.get("synergy_antifragility", (0.0, 1.0))[1] + 1e-6
         )
+        syn_r *= float(weights.get("roi", 1.0))
+        syn_e *= float(weights.get("efficiency", 1.0))
+        syn_res *= float(weights.get("resilience", 1.0))
+        syn_af *= float(weights.get("antifragility", 1.0))
         hist_flak = 0.0
         if filename and self._score_db:
             try:
