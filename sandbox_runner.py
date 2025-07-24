@@ -1,32 +1,66 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
+import os
 import shutil
 import sys
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
 REQUIRED_PYTHON_PKGS = ["pydantic", "dotenv"]
+# Optional packages used by sandbox utilities
+OPTIONAL_PYTHON_PKGS = [
+    "matplotlib",
+    "statsmodels",
+    "uvicorn",
+    "fastapi",
+    "sklearn",
+    "stripe",
+    "httpx",
+]
 
 
 def _verify_required_dependencies() -> None:
+    """Exit if required or production optional dependencies are missing."""
+
+    def _have_spec(name: str) -> bool:
+        try:
+            return importlib.util.find_spec(name) is not None
+        except Exception:
+            return name in sys.modules
+
     missing_sys = [t for t in REQUIRED_SYSTEM_TOOLS if shutil.which(t) is None]
-    missing_py = [p for p in REQUIRED_PYTHON_PKGS if importlib.util.find_spec(p) is None]
-    if missing_sys or missing_py:
-        messages: list[str] = []
-        if missing_sys:
-            messages.append(
-                "Missing system packages: "
-                + ", ".join(missing_sys)
-                + ". Install them using your package manager."
-            )
-        if missing_py:
-            messages.append(
-                "Missing Python packages: "
-                + ", ".join(missing_py)
-                + ". Install them with 'pip install <package>'."
-            )
+    missing_req = [p for p in REQUIRED_PYTHON_PKGS if not _have_spec(p)]
+    missing_opt = [p for p in OPTIONAL_PYTHON_PKGS if not _have_spec(p)]
+
+    mode = os.getenv("MENACE_MODE", "test").lower()
+
+    messages: list[str] = []
+    if missing_sys:
+        messages.append(
+            "Missing system packages: "
+            + ", ".join(missing_sys)
+            + ". Install them using your package manager."
+        )
+    if missing_req:
+        messages.append(
+            "Missing Python packages: "
+            + ", ".join(missing_req)
+            + ". Install them with 'pip install <package>'."
+        )
+    if missing_opt and mode == "production":
+        messages.append(
+            "Missing optional Python packages: "
+            + ", ".join(missing_opt)
+            + ". Install them with 'pip install <package>'."
+        )
+
+    if messages:
         raise SystemExit("\n".join(messages))
+
+    if missing_opt:
+        logging.warning("Missing optional Python packages: %s", ", ".join(missing_opt))
 
 
 _verify_required_dependencies()
