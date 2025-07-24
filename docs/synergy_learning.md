@@ -247,6 +247,40 @@ Failed training attempts no longer stop the background process. The trainer logs
 the error and retries after the configured interval so progress in
 `last_ts.json` (or the specified `--progress-file`) is preserved.
 
+## Running exporter and auto trainer together
+
+The exporter and trainer are typically enabled at the same time so that
+`synergy_history.db` is continuously exported while the weights update in the
+background. Add the following variables to your `.env` and launch the sandbox
+normally:
+
+```dotenv
+AUTO_TRAIN_SYNERGY=1
+AUTO_TRAIN_INTERVAL=600
+EXPORT_SYNERGY_METRICS=1
+SYNERGY_METRICS_PORT=8003
+SYNERGY_EXPORTER_CHECK_INTERVAL=10
+```
+
+```bash
+python run_autonomous.py
+```
+
+Metrics are then available on
+`http://localhost:${SYNERGY_METRICS_PORT}/metrics` and
+`synergy_weights.json` refreshes every `${AUTO_TRAIN_INTERVAL}` seconds.
+
+### Troubleshooting
+
+- **Port in use** – change `SYNERGY_METRICS_PORT` or stop the conflicting
+  service.
+- **Weights not updating** – verify `AUTO_TRAIN_SYNERGY=1` and check write
+  permissions for `synergy_weights.json`.
+- **Exporter unreachable** – ensure the logs show "Synergy metrics exporter
+  running" and that
+  `curl http://localhost:${SYNERGY_METRICS_PORT}/health` returns
+  `{"status": "ok"}`.
+
 ## Synergy weights and SelfDebuggerSandbox scoring
 
 `SelfDebuggerSandbox` evaluates patches using a composite score derived from

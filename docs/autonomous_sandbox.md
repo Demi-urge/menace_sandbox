@@ -371,6 +371,16 @@ python -m menace.synergy_exporter --history-file /var/menace/synergy_history.db 
 - `SYNERGY_METRICS_PORT=8003` – exporter HTTP port.
 - `SYNERGY_EXPORTER_CHECK_INTERVAL=10` – health check interval.
 
+### Example `.env` for synergy services
+
+```dotenv
+AUTO_TRAIN_SYNERGY=1
+AUTO_TRAIN_INTERVAL=600
+EXPORT_SYNERGY_METRICS=1
+SYNERGY_METRICS_PORT=8003
+SYNERGY_EXPORTER_CHECK_INTERVAL=10
+```
+
 ### Launching `synergy_tools.py` locally
 
 Use the `synergy_tools.py` helper to run the exporter and trainer on a personal
