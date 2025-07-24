@@ -345,6 +345,7 @@ _CLEANUP_METRICS: Counter[str] = Counter()
 _STALE_CONTAINERS_REMOVED = 0
 _STALE_VMS_REMOVED = 0
 _CLEANUP_FAILURES = 0
+_FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
@@ -713,6 +714,7 @@ def collect_metrics(
     result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
     result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
     result["cleanup_failures"] = float(_CLEANUP_FAILURES)
+    result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     return result
 
@@ -728,7 +730,7 @@ async def collect_metrics_async(
 
 def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> None:
     """Stop and remove ``container`` with retries."""
-    global _CLEANUP_FAILURES
+    global _CLEANUP_FAILURES, _FORCE_KILLS
     cid = getattr(container, "id", "")
     for attempt in range(retries):
         try:
@@ -793,6 +795,38 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
         except Exception as exc:
             _CLEANUP_FAILURES += 1
             logger.error("docker rm fallback failed for container %s: %s", cid, exc)
+
+    if cid and exists:
+        try:
+            subprocess.run(["docker", "kill", cid], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            subprocess.run(
+                ["docker", "rm", "-f", cid],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            exists = False
+            try:
+                confirm = subprocess.run(
+                    ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if confirm.returncode == 0 and confirm.stdout.strip():
+                    exists = True
+            except Exception as exc:
+                logger.debug(
+                    "container existence re-check failed for %s: %s", cid, exc
+                )
+            _FORCE_KILLS += 1
+        except Exception as exc:
+            _CLEANUP_FAILURES += 1
+            logger.error(
+                "docker kill escalation failed for container %s: %s", cid, exc
+            )
 
     if cid and not exists:
         _remove_active_container(cid)

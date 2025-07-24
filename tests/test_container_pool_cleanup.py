@@ -304,3 +304,25 @@ def test_stop_and_remove_uses_cli_fallback(monkeypatch):
     monkeypatch.setattr(env.subprocess, "run", fake_run)
     env._stop_and_remove(c)
     assert any(cmd[:3] == ["docker", "rm", "-f"] for cmd in cmds)
+
+
+def test_stop_and_remove_force_kills(monkeypatch):
+    c = DummyContainer("f")
+    env._FORCE_KILLS = 0
+    called = []
+    monkeypatch.setattr(env, "_remove_active_container", lambda cid: called.append(cid))
+
+    ps_calls = 0
+    def fake_run(cmd, **kw):
+        nonlocal ps_calls
+        if cmd[:2] == ["docker", "ps"]:
+            ps_calls += 1
+            if ps_calls < 3:
+                return types.SimpleNamespace(returncode=0, stdout=f"{c.id}\n")
+            return types.SimpleNamespace(returncode=0, stdout="")
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    env._stop_and_remove(c)
+    assert env._FORCE_KILLS == 1
+    assert called == [c.id]
