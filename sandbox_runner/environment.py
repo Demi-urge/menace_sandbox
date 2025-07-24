@@ -287,6 +287,7 @@ _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
 _CONTAINER_CREATED: Dict[str, float] = {}
+_POOL_LOCK = threading.Lock()
 _WARMUP_TASKS: Dict[str, Any] = {}
 _CLEANUP_TASK: Any | None = None
 
@@ -494,7 +495,8 @@ def _ensure_pool_size_async(image: str) -> None:
     """Warm up pool for ``image`` asynchronously."""
     if _DOCKER_CLIENT is None:
         return
-    pool = _CONTAINER_POOLS.setdefault(image, [])
+    with _POOL_LOCK:
+        pool = _CONTAINER_POOLS.setdefault(image, [])
     _cleanup_idle_containers()
     if len(pool) >= _CONTAINER_POOL_SIZE:
         return
@@ -507,8 +509,9 @@ def _ensure_pool_size_async(image: str) -> None:
             needed = _CONTAINER_POOL_SIZE - len(pool)
             for _ in range(needed):
                 c, _ = await _create_pool_container(image)
-                pool.append(c)
-                _CONTAINER_LAST_USED[c.id] = time.time()
+                with _POOL_LOCK:
+                    pool.append(c)
+                    _CONTAINER_LAST_USED[c.id] = time.time()
         except Exception as exc:
             logger.warning("container warm up failed: %s", exc)
         finally:
@@ -549,9 +552,10 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             _record_active_container(container.id)
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
             _log_pool_metrics(image)
-            _CONTAINER_DIRS[container.id] = td
-            _CONTAINER_LAST_USED[container.id] = time.time()
-            _CONTAINER_CREATED[container.id] = time.time()
+            with _POOL_LOCK:
+                _CONTAINER_DIRS[container.id] = td
+                _CONTAINER_LAST_USED[container.id] = time.time()
+                _CONTAINER_CREATED[container.id] = time.time()
             return container, td
         except Exception as exc:
             last_exc = exc
@@ -596,22 +600,28 @@ def _verify_container(container: Any) -> bool:
 
 async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
-    pool = _CONTAINER_POOLS.setdefault(image, [])
+    with _POOL_LOCK:
+        pool = _CONTAINER_POOLS.setdefault(image, [])
     while pool:
         c = pool.pop()
-        _CONTAINER_LAST_USED.pop(c.id, None)
+        with _POOL_LOCK:
+            _CONTAINER_LAST_USED.pop(c.id, None)
         if _verify_container(c):
             _ensure_pool_size_async(image)
-            return c, _CONTAINER_DIRS[c.id]
+            with _POOL_LOCK:
+                dir_path = _CONTAINER_DIRS[c.id]
+            return c, dir_path
         _stop_and_remove(c)
         _CREATE_FAILURES[image] += 1
-        td = _CONTAINER_DIRS.pop(c.id, None)
+        with _POOL_LOCK:
+            td = _CONTAINER_DIRS.pop(c.id, None)
         if td:
             try:
                 shutil.rmtree(td)
             except Exception:
                 logger.exception("temporary directory removal failed for %s", td)
-        _CONTAINER_LAST_USED.pop(c.id, None)
+        with _POOL_LOCK:
+            _CONTAINER_LAST_USED.pop(c.id, None)
         _ensure_pool_size_async(image)
     container, td = await _create_pool_container(image)
     _ensure_pool_size_async(image)
@@ -634,8 +644,9 @@ def _release_container(image: str, container: Any) -> None:
         container.reload()
         if getattr(container, "status", "running") != "running":
             raise RuntimeError("container not running")
-        _CONTAINER_POOLS.setdefault(image, []).append(container)
-        _CONTAINER_LAST_USED[container.id] = time.time()
+        with _POOL_LOCK:
+            _CONTAINER_POOLS.setdefault(image, []).append(container)
+            _CONTAINER_LAST_USED[container.id] = time.time()
     except Exception:
         try:
             container.remove(force=True)
@@ -644,8 +655,9 @@ def _release_container(image: str, container: Any) -> None:
         cid = getattr(container, "id", "")
         if cid:
             _remove_active_container(cid)
-        td = _CONTAINER_DIRS.pop(cid, None)
-        _CONTAINER_LAST_USED.pop(cid, None)
+        with _POOL_LOCK:
+            td = _CONTAINER_DIRS.pop(cid, None)
+            _CONTAINER_LAST_USED.pop(cid, None)
         if td:
             try:
                 shutil.rmtree(td)
@@ -781,7 +793,8 @@ def _cleanup_idle_containers() -> tuple[int, int]:
             if reason:
                 pool.remove(c)
                 _stop_and_remove(c)
-                td = _CONTAINER_DIRS.pop(c.id, None)
+                with _POOL_LOCK:
+                    td = _CONTAINER_DIRS.pop(c.id, None)
                 if td:
                     try:
                         shutil.rmtree(td)
@@ -789,8 +802,9 @@ def _cleanup_idle_containers() -> tuple[int, int]:
                         logger.exception(
                             "temporary directory removal failed for %s", td
                         )
-                _CONTAINER_LAST_USED.pop(c.id, None)
-                _CONTAINER_CREATED.pop(c.id, None)
+                with _POOL_LOCK:
+                    _CONTAINER_LAST_USED.pop(c.id, None)
+                    _CONTAINER_CREATED.pop(c.id, None)
                 if reason == "idle":
                     cleaned += 1
                 else:
@@ -841,7 +855,8 @@ def _cleanup_pools() -> None:
         for pool in list(_CONTAINER_POOLS.values()):
             for c in list(pool):
                 _stop_and_remove(c)
-                td = _CONTAINER_DIRS.pop(c.id, None)
+                with _POOL_LOCK:
+                    td = _CONTAINER_DIRS.pop(c.id, None)
                 if td:
                     try:
                         shutil.rmtree(td)
@@ -849,9 +864,11 @@ def _cleanup_pools() -> None:
                         logger.exception(
                             "temporary directory removal failed for %s", td
                         )
-                _CONTAINER_LAST_USED.pop(c.id, None)
-                _CONTAINER_CREATED.pop(c.id, None)
-        _CONTAINER_POOLS.clear()
+                with _POOL_LOCK:
+                    _CONTAINER_LAST_USED.pop(c.id, None)
+                    _CONTAINER_CREATED.pop(c.id, None)
+        with _POOL_LOCK:
+            _CONTAINER_POOLS.clear()
 
     try:
         proc = subprocess.run(
