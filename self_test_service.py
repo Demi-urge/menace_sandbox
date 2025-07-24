@@ -34,6 +34,12 @@ self_test_passed_total = _me.Gauge(
 self_test_failed_total = _me.Gauge(
     "self_test_failed_total", "Total number of failed self tests"
 )
+self_test_average_runtime_seconds = _me.Gauge(
+    "self_test_average_runtime_seconds", "Average runtime of the last self test run"
+)
+self_test_average_coverage = _me.Gauge(
+    "self_test_average_coverage", "Average coverage percentage of the last self test run"
+)
 
 _container_lock = Lock()
 _file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
@@ -714,6 +720,8 @@ class SelfTestService:
             try:
                 self_test_passed_total.set(float(passed))
                 self_test_failed_total.set(float(failed))
+                self_test_average_runtime_seconds.set(float(runtime))
+                self_test_average_coverage.set(float(coverage))
             except Exception:
                 self.logger.exception("failed to update metrics")
 
@@ -838,6 +846,8 @@ __all__ = [
     "SelfTestService",
     "self_test_passed_total",
     "self_test_failed_total",
+    "self_test_average_runtime_seconds",
+    "self_test_average_coverage",
     "cli",
     "main",
 ]

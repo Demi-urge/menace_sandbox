@@ -657,7 +657,14 @@ def test_gauge_updates(monkeypatch):
                 break
         if path:
             with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"summary": {"passed": 3, "failed": 1}}, fh)
+                json.dump(
+                    {
+                        "summary": {"passed": 3, "failed": 1, "duration": 2.0},
+                        "coverage": {"percent": 90.0},
+                        "duration": 2.0,
+                    },
+                    fh,
+                )
 
         class P:
             returncode = 0
@@ -673,6 +680,8 @@ def test_gauge_updates(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     mod.self_test_passed_total.set(0)
     mod.self_test_failed_total.set(0)
+    mod.self_test_average_runtime_seconds.set(0)
+    mod.self_test_average_coverage.set(0)
     svc = mod.SelfTestService()
     asyncio.run(svc._run_once())
 
@@ -683,3 +692,5 @@ def test_gauge_updates(monkeypatch):
 
     assert _get(mod.self_test_passed_total) == 3
     assert _get(mod.self_test_failed_total) == 1
+    assert _get(mod.self_test_average_runtime_seconds) == 2.0
+    assert _get(mod.self_test_average_coverage) == 90.0
