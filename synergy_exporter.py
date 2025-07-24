@@ -142,6 +142,7 @@ class SynergyExporter:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+            self._thread = None
         if self._health_server:
             try:
                 self._health_server.shutdown()

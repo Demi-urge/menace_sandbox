@@ -304,3 +304,25 @@ def test_exporter_and_trainer_restart(monkeypatch, tmp_path: Path) -> None:
     ]
     assert exp_restarts and exp_restarts[-1] == len(exp_restarts)
     assert trainer_restarts and trainer_restarts[-1] == len(trainer_restarts)
+
+
+def test_exporter_start_stop_restart(tmp_path: Path) -> None:
+    se = importlib.import_module("menace.synergy_exporter")
+    db_mod = importlib.import_module("menace.synergy_history_db")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = db_mod.connect(hist_file)
+    conn.close()
+
+    port = _free_port()
+    exp = se.SynergyExporter(history_file=hist_file, interval=0.05, port=port)
+
+    exp.start()
+    exp.stop()
+    assert exp._thread is None
+
+    exp._stop.clear()
+    exp.start()
+    exp.stop()
+
+    assert exp._thread is None

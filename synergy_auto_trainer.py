@@ -183,6 +183,7 @@ class SynergyAutoTrainer:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+            self._thread = None
 
     # --------------------------------------------------------------
     async def _async_loop(self) -> None:
@@ -208,6 +209,7 @@ class SynergyAutoTrainer:
         self._stop.set()
         if self._task:
             await self._task
+            self._task = None
 
 # --------------------------------------------------------------
 def cli(argv: list[str] | None = None) -> int:
