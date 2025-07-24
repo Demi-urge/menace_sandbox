@@ -132,6 +132,33 @@ def test_cleanup_worker_logs_stats(monkeypatch, caplog):
     assert "replaced 1 unhealthy containers" in caplog.text
 
 
+def test_cleanup_worker_purges_vms(monkeypatch):
+    calls = []
+
+    async def run_worker():
+        task = asyncio.create_task(env._cleanup_worker())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+
+    def fake_purge(*, record_runtime=False):
+        calls.append(record_runtime)
+        env._RUNTIME_VMS_REMOVED += 1
+        env._STALE_VMS_REMOVED += 1
+        return 1
+
+    monkeypatch.setattr(env, "_purge_stale_vms", fake_purge)
+    env._RUNTIME_VMS_REMOVED = 0
+    env._STALE_VMS_REMOVED = 0
+    asyncio.run(run_worker())
+    assert calls and calls[0] is True
+    assert env._RUNTIME_VMS_REMOVED >= 1
+
+
 def test_rmtree_failure_in_idle_cleanup(monkeypatch, tmp_path, caplog):
     dummy = DummyClient()
     monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
