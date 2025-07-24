@@ -300,6 +300,52 @@ _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
 
 
+def purge_leftovers() -> None:
+    """Remove stale sandbox containers and leftover QEMU overlay files."""
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for cid in proc.stdout.splitlines():
+                cid = cid.strip()
+                if cid:
+                    try:
+                        logger.info("removing stale sandbox container %s", cid)
+                    except Exception:
+                        pass
+                    subprocess.run(
+                        ["docker", "rm", "-f", cid],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+    except Exception as exc:
+        logger.debug("leftover container cleanup failed: %s", exc)
+
+    tmp_root = Path(tempfile.gettempdir())
+    try:
+        for overlay in tmp_root.rglob("overlay.qcow2"):
+            try:
+                logger.info("removing leftover overlay %s", overlay)
+            except Exception:
+                pass
+            try:
+                overlay.unlink()
+            except Exception:
+                logger.exception("failed to remove overlay %s", overlay)
+            try:
+                shutil.rmtree(overlay.parent, ignore_errors=True)
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", overlay.parent)
+    except Exception as exc:
+        logger.debug("overlay cleanup failed: %s", exc)
+
+
 def _docker_available() -> bool:
     """Return ``True`` when Docker client is usable."""
     try:
@@ -718,6 +764,8 @@ def _await_cleanup_task() -> None:
     _CLEANUP_TASK = None
 
 import atexit
+
+purge_leftovers()
 
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")

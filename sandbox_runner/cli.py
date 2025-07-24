@@ -863,6 +863,11 @@ def main(argv: List[str] | None = None) -> None:
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
     )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="remove leftover containers and QEMU overlay files",
+    )
 
     sub = parser.add_subparsers(dest="cmd")
     p_rank = sub.add_parser("rank-scenarios", help="rank preset runs")
@@ -1071,6 +1076,12 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["GPT_SECTION_PROMPT_MAX_LENGTH"] = str(args.max_prompt_length)
     if args.summary_depth is not None:
         os.environ["GPT_SECTION_SUMMARY_DEPTH"] = str(args.summary_depth)
+
+    if getattr(args, "cleanup", False):
+        from sandbox_runner.environment import purge_leftovers
+
+        purge_leftovers()
+        return
 
     if getattr(args, "cmd", None) == "rank-scenarios":
         rank_scenarios(args.paths)
