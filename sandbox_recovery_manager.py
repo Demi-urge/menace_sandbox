@@ -11,6 +11,25 @@ from pathlib import Path
 import sys
 import time
 import traceback
+import uuid
+
+try:
+    from .logging_utils import set_correlation_id
+except Exception:  # pragma: no cover - module not a package
+    from logging_utils import set_correlation_id  # type: ignore
+
+try:
+    from .resilience import (
+        CircuitBreaker,
+        CircuitOpenError,
+        ResilienceError,
+    )
+except Exception:  # pragma: no cover - module not a package
+    from resilience import (
+        CircuitBreaker,  # type: ignore
+        CircuitOpenError,  # type: ignore
+        ResilienceError,  # type: ignore
+    )
 
 try:
     from .metrics_exporter import (
@@ -28,6 +47,10 @@ except Exception:  # pragma: no cover - module may not be a package
 logger = logging.getLogger(__name__)
 
 
+class SandboxRecoveryError(ResilienceError):
+    """Raised when sandbox recovery cannot proceed."""
+
+
 class SandboxRecoveryManager:
     """Wrap ``_sandbox_main`` and restart on uncaught errors."""
 
@@ -39,6 +62,8 @@ class SandboxRecoveryManager:
         max_retries: int | None = None,
         on_retry: Callable[[Exception, float], None] | None = None,
         registry: "CollectorRegistry" | None = None,
+        circuit_max_failures: int = 5,
+        circuit_reset_timeout: float = 60.0,
     ) -> None:
         self.sandbox_main = sandbox_main
         self.retry_delay = retry_delay
@@ -47,6 +72,9 @@ class SandboxRecoveryManager:
         self.on_retry = on_retry
         self.restart_count = 0
         self.last_failure_time: float | None = None
+        self._circuit = CircuitBreaker(
+            max_failures=circuit_max_failures, reset_timeout=circuit_reset_timeout
+        )
 
         self._restart_gauge = sandbox_restart_total
         self._failure_gauge = sandbox_last_failure_ts
@@ -93,10 +121,16 @@ class SandboxRecoveryManager:
     def run(self, preset: Dict[str, Any], args: argparse.Namespace):
         """Execute ``sandbox_main`` retrying on failure."""
         attempts = 0
+        delay = self.retry_delay
         while True:
+            cid = uuid.uuid4().hex
+            set_correlation_id(cid)
             start = time.monotonic()
             try:
-                return self.sandbox_main(preset, args)
+                return self._circuit.call(lambda: self.sandbox_main(preset, args))
+            except CircuitOpenError as exc:
+                self.logger.error("recovery circuit open: %s", exc)
+                raise SandboxRecoveryError("circuit open") from exc
             except Exception as exc:  # pragma: no cover - rare
                 attempts += 1
                 self.restart_count += 1
@@ -114,7 +148,7 @@ class SandboxRecoveryManager:
                 with open(log_file, "a", encoding="utf-8") as fh:
                     ts = time.strftime("%Y-%m-%d %H:%M:%S")
                     fh.write(
-                        f"{ts} attempt={attempts} runtime={runtime:.2f}s\n{tb}\n"
+                        f"{ts} cid={cid} attempt={attempts} runtime={runtime:.2f}s\n{tb}\n"
                     )
 
                 if self.on_retry:
@@ -140,11 +174,15 @@ class SandboxRecoveryManager:
                         self.logger.exception("failed to write recovery metrics")
 
                 if self.max_retries is not None and attempts >= self.max_retries:
-                    raise
-                time.sleep(self.retry_delay)
+                    raise SandboxRecoveryError("maximum retries reached") from exc
+                time.sleep(delay)
+                delay = min(delay * 2, 60.0)
+            finally:
+                set_correlation_id(None)
 
 
 __all__ = [
+    "SandboxRecoveryError",
     "SandboxRecoveryManager",
     "cli",
     "load_metrics",
