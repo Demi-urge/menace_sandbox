@@ -248,6 +248,31 @@ workflow_memory_gauge = Gauge(
     "Resident memory usage after execution",
     labelnames=["workflow"],
 )
+workflow_memory_usage_gauge = Gauge(
+    "workflow_memory_usage_mb",
+    "Resident memory at end of workflow",
+    labelnames=["workflow"],
+)
+workflow_cpu_time_gauge = Gauge(
+    "workflow_cpu_time_seconds",
+    "User+system CPU time consumed by the workflow",
+    labelnames=["workflow"],
+)
+workflow_net_io_gauge = Gauge(
+    "workflow_network_bytes",
+    "Network I/O during the run",
+    labelnames=["workflow"],
+)
+workflow_disk_read_gauge = Gauge(
+    "workflow_disk_read_bytes",
+    "Bytes read from disk",
+    labelnames=["workflow"],
+)
+workflow_disk_write_gauge = Gauge(
+    "workflow_disk_write_bytes",
+    "Bytes written to disk",
+    labelnames=["workflow"],
+)
 workflow_latency_p95_gauge = Gauge(
     "workflow_latency_p95_seconds",
     "95th percentile latency for recent runs",
@@ -328,5 +353,10 @@ __all__ = [
     "workflow_duration_gauge",
     "workflow_cpu_percent_gauge",
     "workflow_memory_gauge",
+    "workflow_memory_usage_gauge",
+    "workflow_cpu_time_gauge",
+    "workflow_net_io_gauge",
+    "workflow_disk_read_gauge",
+    "workflow_disk_write_gauge",
     "workflow_latency_p95_gauge",
 ]
