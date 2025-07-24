@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 import threading
 from pathlib import Path
+import time
 
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
@@ -82,5 +83,61 @@ class SynergyAutoTrainer:
         if self._thread:
             self._thread.join(timeout=1.0)
 
+# --------------------------------------------------------------
+def cli(argv: list[str] | None = None) -> int:
+    """Run the auto trainer as a standalone process."""
+    import argparse
+    import sys
 
-__all__ = ["SynergyAutoTrainer"]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--history-file",
+        default="synergy_history.db",
+        help="SQLite history database",
+    )
+    parser.add_argument(
+        "--weights-file",
+        default="synergy_weights.json",
+        help="Synergy weights JSON file",
+    )
+    parser.add_argument(
+        "--interval",
+        type=float,
+        default=600.0,
+        help="training interval in seconds",
+    )
+    parser.add_argument(
+        "--run-once",
+        action="store_true",
+        help="perform a single training cycle and exit",
+    )
+    args = parser.parse_args(argv)
+
+    trainer = SynergyAutoTrainer(
+        history_file=args.history_file,
+        weights_file=args.weights_file,
+        interval=args.interval,
+    )
+
+    if args.run_once:
+        trainer._train_once()
+        return 0
+
+    trainer.start()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        trainer.stop()
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
+    import sys
+
+    sys.exit(cli(argv))
+
+
+__all__ = ["SynergyAutoTrainer", "cli", "main"]
