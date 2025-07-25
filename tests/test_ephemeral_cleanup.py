@@ -9,7 +9,7 @@ def _stub_docker(containers, labels):
         def __init__(self):
             self.id = "dummy"
             self.removed = False
-        def wait(self):
+        def wait(self, *a, **kw):
             raise RuntimeError("boom")
         def logs(self, stdout=True, stderr=False):
             return b""
@@ -42,6 +42,7 @@ def _stub_docker(containers, labels):
         pass
     errors_mod = types.ModuleType("docker.errors")
     errors_mod.DockerException = DummyErr
+    errors_mod.APIError = DummyErr
     dummy.errors = errors_mod
     sys.modules["docker.errors"] = errors_mod
     sys.modules["docker"] = dummy
@@ -49,7 +50,10 @@ def _stub_docker(containers, labels):
 def test_purge_leftovers_removes_ephemeral(monkeypatch):
     containers = []
     labels = []
+    monkeypatch.setenv("SANDBOX_POOL_LABEL", "test_label")
     _stub_docker(containers, labels)
+    import importlib
+    importlib.reload(env)
     monkeypatch.setattr(env, "_DOCKER_CLIENT", None)
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()

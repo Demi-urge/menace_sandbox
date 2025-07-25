@@ -284,7 +284,8 @@ _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "360
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
 
-_POOL_LABEL = "menace_sandbox_pool"
+# label applied to pooled containers; overridable via SANDBOX_POOL_LABEL
+_POOL_LABEL = os.getenv("SANDBOX_POOL_LABEL", "menace_sandbox_pool")
 
 _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
