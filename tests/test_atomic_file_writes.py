@@ -6,6 +6,7 @@ import pytest
     ("_ACTIVE_CONTAINERS_FILE", env._write_active_containers),
     ("_ACTIVE_OVERLAYS_FILE", env._write_active_overlays),
     ("_FAILED_OVERLAYS_FILE", env._write_failed_overlays),
+    ("FAILED_CLEANUP_FILE", env._write_failed_cleanup),
 ])
 def test_atomic_write_no_corruption(monkeypatch, tmp_path, attr, write_func):
     target = tmp_path / "target.json"
