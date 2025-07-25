@@ -1039,14 +1039,20 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 await asyncio.sleep(wait)
         td = tempfile.mkdtemp(prefix="pool_")
         try:
+            run_kwargs = {
+                "detach": True,
+                "network_disabled": True,
+                "volumes": {td: {"bind": "/code", "mode": "rw"}},
+                "labels": {_POOL_LABEL: "1"},
+            }
+            if _CONTAINER_DISK_LIMIT > 0:
+                run_kwargs["storage_opt"] = {"size": str(_CONTAINER_DISK_LIMIT)}
+
             container = await asyncio.to_thread(
                 _DOCKER_CLIENT.containers.run,
                 image,
                 ["sleep", "infinity"],
-                detach=True,
-                network_disabled=True,
-                volumes={td: {"bind": "/code", "mode": "rw"}},
-                labels={_POOL_LABEL: "1"},
+                **run_kwargs,
             )
             _record_active_container(container.id)
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
