@@ -364,6 +364,13 @@ _ACTIVE_OVERLAYS_FILE = Path(
     )
 )
 
+_FAILED_OVERLAYS_FILE = Path(
+    os.getenv(
+        "SANDBOX_FAILED_OVERLAYS",
+        str(ROOT / "sandbox_data" / "failed_overlays.json"),
+    )
+)
+
 
 def _read_active_containers() -> List[str]:
     """Return list of active container IDs from file."""
@@ -439,22 +446,67 @@ def _remove_active_overlay(path: str) -> None:
         _write_active_overlays(paths)
 
 
+def _read_failed_overlays() -> List[str]:
+    """Return list of overlay directories that failed to delete."""
+    try:
+        if _FAILED_OVERLAYS_FILE.exists():
+            data = json.loads(_FAILED_OVERLAYS_FILE.read_text())
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning(
+            "failed reading failed overlays %s: %s", _FAILED_OVERLAYS_FILE, exc
+        )
+    return []
+
+
+def _write_failed_overlays(paths: List[str]) -> None:
+    """Persist ``paths`` to the failed overlays file."""
+    try:
+        _FAILED_OVERLAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _FAILED_OVERLAYS_FILE.write_text(json.dumps(paths))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning(
+            "failed writing failed overlays %s: %s", _FAILED_OVERLAYS_FILE, exc
+        )
+
+
+def _record_failed_overlay(path: str) -> None:
+    """Record overlay directory ``path`` as failed to delete."""
+    paths = _read_failed_overlays()
+    if path not in paths:
+        paths.append(path)
+        _write_failed_overlays(paths)
+
+
+def _remove_failed_overlay(path: str) -> None:
+    """Remove overlay directory ``path`` from the failed overlays file."""
+    paths = _read_failed_overlays()
+    if path in paths:
+        paths.remove(path)
+        _write_failed_overlays(paths)
+
+
 def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     """Terminate leftover QEMU processes and remove overlay files."""
     global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED
     removed_vms = 0
     recorded = _read_active_overlays()
-    if recorded:
-        for d in recorded:
+    failed_overlays = _read_failed_overlays()
+    to_cleanup = set(recorded + failed_overlays)
+    if to_cleanup:
+        for d in list(to_cleanup):
             try:
                 logger.info("removing recorded overlay dir %s", d)
             except Exception:
                 pass
             try:
-                shutil.rmtree(d, ignore_errors=True)
+                shutil.rmtree(d)
                 removed_vms += 1
+                _remove_failed_overlay(d)
             except Exception:
                 logger.exception("temporary directory removal failed for %s", d)
+                _record_failed_overlay(d)
         _write_active_overlays([])
     if psutil is not None:
         try:
@@ -479,9 +531,11 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         logger.exception("failed to terminate qemu %s", p.pid)
             for d in tmp_dirs:
                 try:
-                    shutil.rmtree(d, ignore_errors=True)
+                    shutil.rmtree(d)
+                    _remove_failed_overlay(d)
                 except Exception:
                     logger.exception("temporary directory removal failed for %s", d)
+                    _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
     else:  # pragma: no cover - fallback path
@@ -513,9 +567,11 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 removed_vms += 1
             for d in tmp_dirs:
                 try:
-                    shutil.rmtree(d, ignore_errors=True)
+                    shutil.rmtree(d)
+                    _remove_failed_overlay(d)
                 except Exception:
                     logger.exception("temporary directory removal failed for %s", d)
+                    _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
 
@@ -546,10 +602,13 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 removed_vms += 1
             except Exception:
                 logger.exception("failed to remove overlay %s", overlay)
+                _record_failed_overlay(str(overlay.parent))
             try:
-                shutil.rmtree(overlay.parent, ignore_errors=True)
+                shutil.rmtree(overlay.parent)
+                _remove_failed_overlay(str(overlay.parent))
             except Exception:
                 logger.exception("temporary directory removal failed for %s", overlay.parent)
+                _record_failed_overlay(str(overlay.parent))
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
 
@@ -591,9 +650,11 @@ def purge_leftovers() -> None:
             except Exception:
                 pass
             try:
-                shutil.rmtree(d, ignore_errors=True)
+                shutil.rmtree(d)
+                _remove_failed_overlay(d)
             except Exception:
                 logger.exception("temporary directory removal failed for %s", d)
+                _record_failed_overlay(d)
         if overlays:
             _write_active_overlays([])
     except Exception as exc:
