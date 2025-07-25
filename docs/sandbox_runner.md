@@ -101,6 +101,8 @@ Network behaviour can be tuned with:
 - `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
   `menace_sandbox_pool`).
 - `SANDBOX_POOL_LOCK` – optional lock file guarding container pool operations.
+- `SANDBOX_OVERLAY_MAX_AGE` – duration after which stray VM overlays are purged
+  (default `7d`).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
