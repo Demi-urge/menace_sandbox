@@ -451,6 +451,13 @@ Cleanup events are logged and aggregated metrics are written to
 ``sandbox_data/cleanup_stats.json``. Failed container launches are recorded in
 ``sandbox_data/pool_failures.json`` while paths that could not be removed are
 stored in ``sandbox_data/failed_cleanup.json`` and ``sandbox_data/failed_overlays.json``.
+The cleanup worker retries any items listed in ``failed_cleanup.json`` during
+each sweep, removing them from the file once deletion succeeds. Retry attempts
+are counted via the ``cleanup_retry_successes`` and ``cleanup_retry_failures``
+metrics with cumulative totals persisted in ``cleanup_stats.json``. Worker
+durations are exposed through the ``cleanup_duration_seconds`` gauge. Override
+the failed cleanup file with ``SANDBOX_FAILED_CLEANUP`` and adjust the alert
+threshold for ``report_failed_cleanup`` using ``SANDBOX_FAILED_CLEANUP_AGE``.
 Inspect these files or call ``collect_metrics()`` to review the cleanup
 history; the metrics dashboard exposes the same information for long term
 monitoring.
