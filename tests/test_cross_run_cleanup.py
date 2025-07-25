@@ -18,6 +18,7 @@ def test_cross_run_cleanup(tmp_path: Path):
     env = os.environ.copy()
     env["PYTHONPATH"] = str(root.parent) + os.pathsep + env.get("PYTHONPATH", "")
     env["ACTIVE_FILE"] = str(tmp_path / "active.json")
+    env["OVERLAY_FILE"] = str(tmp_path / "overlays.json")
     env["TMPDIR"] = str(tmp_path)
 
     run_script = r"""
@@ -27,7 +28,10 @@ import sandbox_runner.environment as env
 
 env._ACTIVE_CONTAINERS_FILE = Path(os.environ['ACTIVE_FILE'])
 env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(env._ACTIVE_CONTAINERS_FILE) + '.lock')
+env._ACTIVE_OVERLAYS_FILE = Path(os.environ['OVERLAY_FILE'])
+env._ACTIVE_OVERLAYS_LOCK = env.FileLock(str(env._ACTIVE_OVERLAYS_FILE) + '.lock')
 env.tempfile.gettempdir = lambda: os.environ['TMPDIR']
+os.environ['SANDBOX_DOCKER'] = '0'
 
 env._DOCKER_CLIENT = None
 env._CONTAINER_POOLS.clear()
@@ -76,10 +80,8 @@ sys.modules['docker.errors'] = errors_mod
 overlay = Path(os.environ['TMPDIR']) / 'left' / 'overlay.qcow2'
 overlay.parent.mkdir(parents=True, exist_ok=True)
 overlay.touch()
-
-async def main():
-    await env._execute_in_container('print(\'hi\')', {'CPU_LIMIT': '1'})
-asyncio.run(main())
+env._record_active_overlay(str(overlay.parent))
+env._record_active_container('c1')
 time.sleep(60)
 """
     proc = _run_script(run_script, env)
@@ -103,6 +105,8 @@ time.sleep(60)
 
         data = json.loads(Path(env["ACTIVE_FILE"]).read_text())
         assert data == ['c1']
+        overlays = json.loads(Path(env["OVERLAY_FILE"]).read_text())
+        assert overlays == [str(overlay.parent)]
     finally:
         if proc.poll() is None:
             proc.kill()
@@ -115,7 +119,10 @@ import sandbox_runner.environment as env
 
 env._ACTIVE_CONTAINERS_FILE = Path(os.environ['ACTIVE_FILE'])
 env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(env._ACTIVE_CONTAINERS_FILE) + '.lock')
+env._ACTIVE_OVERLAYS_FILE = Path(os.environ['OVERLAY_FILE'])
+env._ACTIVE_OVERLAYS_LOCK = env.FileLock(str(env._ACTIVE_OVERLAYS_FILE) + '.lock')
 env.tempfile.gettempdir = lambda: os.environ['TMPDIR']
+os.environ['SANDBOX_DOCKER'] = '0'
 
 env.psutil = None
 removed = []
@@ -128,10 +135,17 @@ def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
 
 env.subprocess.run = fake_run
 env.purge_leftovers()
-print(json.dumps({'removed': removed, 'active': env._read_active_containers()}))
+print(json.dumps({
+    'removed': removed,
+    'active': env._read_active_containers(),
+    'overlays': env._read_active_overlays(),
+}))
 """
     res = subprocess.run([sys.executable, "-c", cleanup_script], env=env, capture_output=True, text=True)
     out = json.loads(res.stdout.strip())
     assert out['removed'] == ['c1']
     assert out['active'] == []
+    assert out['overlays'] == []
     assert not (Path(env["TMPDIR"]) / "left").exists()
+    assert json.loads(Path(env["ACTIVE_FILE"]).read_text()) == []
+    assert json.loads(Path(env["OVERLAY_FILE"]).read_text()) == []
