@@ -279,6 +279,7 @@ else:
 _CONTAINER_POOL_SIZE = int(os.getenv("SANDBOX_CONTAINER_POOL_SIZE", "2"))
 _CONTAINER_IDLE_TIMEOUT = float(os.getenv("SANDBOX_CONTAINER_IDLE_TIMEOUT", "300"))
 _POOL_CLEANUP_INTERVAL = float(os.getenv("SANDBOX_POOL_CLEANUP_INTERVAL", "60"))
+_WORKER_CHECK_INTERVAL = float(os.getenv("SANDBOX_WORKER_CHECK_INTERVAL", "30"))
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
@@ -293,6 +294,7 @@ _POOL_LOCK = threading.Lock()
 _WARMUP_TASKS: Dict[str, Any] = {}
 _CLEANUP_TASK: Any | None = None
 _REAPER_TASK: Any | None = None
+_WORKER_CHECK_TIMER: threading.Timer | None = None
 
 _BACKGROUND_LOOP: asyncio.AbstractEventLoop | None = None
 _BACKGROUND_THREAD: threading.Thread | None = None
@@ -1061,6 +1063,7 @@ def _cleanup_pools() -> None:
         _await_cleanup_task()
     if _REAPER_TASK:
         _await_reaper_task()
+    cancel_cleanup_check()
     for t in list(_WARMUP_TASKS.values()):
         t.cancel()
     _WARMUP_TASKS.clear()
@@ -1200,6 +1203,33 @@ def ensure_cleanup_worker() -> None:
     if done or cancelled or exc is not None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
 
+
+def schedule_cleanup_check(interval: float = _WORKER_CHECK_INTERVAL) -> None:
+    """Periodically call :func:`ensure_cleanup_worker`."""
+
+    global _WORKER_CHECK_TIMER
+
+    def _loop() -> None:
+        global _WORKER_CHECK_TIMER
+        ensure_cleanup_worker()
+        timer = threading.Timer(interval, _loop)
+        timer.daemon = True
+        _WORKER_CHECK_TIMER = timer
+        timer.start()
+
+    _WORKER_CHECK_TIMER = threading.Timer(interval, _loop)
+    _WORKER_CHECK_TIMER.daemon = True
+    _WORKER_CHECK_TIMER.start()
+
+
+def cancel_cleanup_check() -> None:
+    """Stop periodic cleanup worker checks if scheduled."""
+
+    global _WORKER_CHECK_TIMER
+    if _WORKER_CHECK_TIMER is not None:
+        _WORKER_CHECK_TIMER.cancel()
+        _WORKER_CHECK_TIMER = None
+
 import atexit
 
 purge_leftovers()
@@ -1211,8 +1241,10 @@ if _DOCKER_CLIENT is not None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
     if _REAPER_TASK is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+    schedule_cleanup_check(_WORKER_CHECK_INTERVAL)
     atexit.register(_await_cleanup_task)
     atexit.register(_await_reaper_task)
+    atexit.register(cancel_cleanup_check)
 
 atexit.register(_cleanup_pools)
 
