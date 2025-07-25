@@ -11,6 +11,7 @@ def test_windows_locked_overlay_retry(monkeypatch, tmp_path):
     (overlay_dir / "overlay.qcow2").touch()
 
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(tmp_path / "overlays.json") + ".lock"))
     (tmp_path / "overlays.json").write_text(json.dumps([str(overlay_dir)]))
     monkeypatch.setattr(env, "_FAILED_OVERLAYS_FILE", tmp_path / "failed.json")
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))

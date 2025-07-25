@@ -151,6 +151,7 @@ def test_purge_leftovers_metrics(monkeypatch, tmp_path):
     _setup(monkeypatch)
     file = tmp_path / "active.json"
     monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", file)
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(file) + ".lock"))
     file.write_text(json.dumps(["a"]))
 
     def fake_run(cmd, **kw):

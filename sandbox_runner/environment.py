@@ -433,6 +433,10 @@ _OVERLAY_MAX_AGE = 0.0
 
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
 
+# locks protecting active container and overlay records
+_ACTIVE_CONTAINERS_LOCK = FileLock(str(_ACTIVE_CONTAINERS_FILE) + ".lock")
+_ACTIVE_OVERLAYS_LOCK = FileLock(str(_ACTIVE_OVERLAYS_FILE) + ".lock")
+
 
 def _release_pool_lock() -> None:
     """Release the pool file lock if held."""
@@ -466,42 +470,66 @@ def _atomic_write_json(path: Path, data: Any) -> None:
 
 def _read_active_containers() -> List[str]:
     """Return list of active container IDs from file."""
+    with _ACTIVE_CONTAINERS_LOCK:
+        return _read_active_containers_unlocked()
+
+
+def _read_active_containers_unlocked() -> List[str]:
+    """Read active container IDs without acquiring the lock."""
     try:
         if _ACTIVE_CONTAINERS_FILE.exists():
             data = json.loads(_ACTIVE_CONTAINERS_FILE.read_text())
             if isinstance(data, list):
                 return [str(x) for x in data]
     except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed reading active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc)
+        logger.warning(
+            "failed reading active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc
+        )
     return []
 
 
 def _write_active_containers(ids: List[str]) -> None:
     """Persist ``ids`` to the active containers file."""
+    with _ACTIVE_CONTAINERS_LOCK:
+        _write_active_containers_unlocked(ids)
+
+
+def _write_active_containers_unlocked(ids: List[str]) -> None:
+    """Write active container IDs without acquiring the lock."""
     try:
         _atomic_write_json(_ACTIVE_CONTAINERS_FILE, ids)
     except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed writing active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc)
+        logger.warning(
+            "failed writing active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc
+        )
 
 
 def _record_active_container(cid: str) -> None:
     """Add ``cid`` to the active containers file."""
-    ids = _read_active_containers()
-    if cid not in ids:
-        ids.append(cid)
-        _write_active_containers(ids)
+    with _ACTIVE_CONTAINERS_LOCK:
+        ids = _read_active_containers_unlocked()
+        if cid not in ids:
+            ids.append(cid)
+            _write_active_containers_unlocked(ids)
 
 
 def _remove_active_container(cid: str) -> None:
     """Remove ``cid`` from the active containers file."""
-    ids = _read_active_containers()
-    if cid in ids:
-        ids.remove(cid)
-        _write_active_containers(ids)
+    with _ACTIVE_CONTAINERS_LOCK:
+        ids = _read_active_containers_unlocked()
+        if cid in ids:
+            ids.remove(cid)
+            _write_active_containers_unlocked(ids)
 
 
 def _read_active_overlays() -> List[str]:
     """Return list of active overlay directories from file."""
+    with _ACTIVE_OVERLAYS_LOCK:
+        return _read_active_overlays_unlocked()
+
+
+def _read_active_overlays_unlocked() -> List[str]:
+    """Read active overlays without acquiring the lock."""
     try:
         if _ACTIVE_OVERLAYS_FILE.exists():
             data = json.loads(_ACTIVE_OVERLAYS_FILE.read_text())
@@ -514,6 +542,12 @@ def _read_active_overlays() -> List[str]:
 
 def _write_active_overlays(paths: List[str]) -> None:
     """Persist ``paths`` to the active overlays file."""
+    with _ACTIVE_OVERLAYS_LOCK:
+        _write_active_overlays_unlocked(paths)
+
+
+def _write_active_overlays_unlocked(paths: List[str]) -> None:
+    """Write overlay paths without acquiring the lock."""
     try:
         _atomic_write_json(_ACTIVE_OVERLAYS_FILE, paths)
     except Exception as exc:  # pragma: no cover - fs errors
@@ -522,18 +556,20 @@ def _write_active_overlays(paths: List[str]) -> None:
 
 def _record_active_overlay(path: str) -> None:
     """Add overlay directory ``path`` to the active overlays file."""
-    paths = _read_active_overlays()
-    if path not in paths:
-        paths.append(path)
-        _write_active_overlays(paths)
+    with _ACTIVE_OVERLAYS_LOCK:
+        paths = _read_active_overlays_unlocked()
+        if path not in paths:
+            paths.append(path)
+            _write_active_overlays_unlocked(paths)
 
 
 def _remove_active_overlay(path: str) -> None:
     """Remove overlay directory ``path`` from the active overlays file."""
-    paths = _read_active_overlays()
-    if path in paths:
-        paths.remove(path)
-        _write_active_overlays(paths)
+    with _ACTIVE_OVERLAYS_LOCK:
+        paths = _read_active_overlays_unlocked()
+        if path in paths:
+            paths.remove(path)
+            _write_active_overlays_unlocked(paths)
 
 
 def _read_failed_overlays() -> List[str]:

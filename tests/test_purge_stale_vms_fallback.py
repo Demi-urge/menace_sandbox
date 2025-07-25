@@ -8,6 +8,7 @@ def test_purge_stale_vms_removes_untracked_overlay(monkeypatch, tmp_path):
     (overlay_dir / "overlay.qcow2").touch()
 
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(tmp_path / "overlays.json") + ".lock"))
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
     monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
@@ -38,6 +39,7 @@ def test_purge_stale_vms_kills_process_via_pgrep(monkeypatch, tmp_path):
     overlay.touch()
 
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(tmp_path / "overlays.json") + ".lock"))
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
     monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)

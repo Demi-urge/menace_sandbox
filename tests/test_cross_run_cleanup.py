@@ -26,6 +26,7 @@ from pathlib import Path
 import sandbox_runner.environment as env
 
 env._ACTIVE_CONTAINERS_FILE = Path(os.environ['ACTIVE_FILE'])
+env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(env._ACTIVE_CONTAINERS_FILE) + '.lock')
 env.tempfile.gettempdir = lambda: os.environ['TMPDIR']
 
 env._DOCKER_CLIENT = None
@@ -113,6 +114,7 @@ from pathlib import Path
 import sandbox_runner.environment as env
 
 env._ACTIVE_CONTAINERS_FILE = Path(os.environ['ACTIVE_FILE'])
+env._ACTIVE_CONTAINERS_LOCK = env.FileLock(str(env._ACTIVE_CONTAINERS_FILE) + '.lock')
 env.tempfile.gettempdir = lambda: os.environ['TMPDIR']
 
 env.psutil = None

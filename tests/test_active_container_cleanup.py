@@ -6,6 +6,7 @@ import sandbox_runner.environment as env
 def test_recorded_containers_removed(monkeypatch, tmp_path):
     file = tmp_path / "active.json"
     monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", file)
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(file) + ".lock"))
     file.write_text(json.dumps(["a", "b"]))
 
     removed = []

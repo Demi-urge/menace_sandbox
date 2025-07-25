@@ -12,6 +12,10 @@ def test_atomic_write_no_corruption(monkeypatch, tmp_path, attr, write_func):
     target = tmp_path / "target.json"
     target.write_text(json.dumps(["old"]))
     monkeypatch.setattr(env, attr, target)
+    if attr == "_ACTIVE_CONTAINERS_FILE":
+        monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(target) + ".lock"))
+    if attr == "_ACTIVE_OVERLAYS_FILE":
+        monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(target) + ".lock"))
 
     tmp = tmp_path / "tmp.json"
     monkeypatch.setattr(env.tempfile, "NamedTemporaryFile", lambda *a, **k: open(tmp, "w+", encoding="utf-8"))

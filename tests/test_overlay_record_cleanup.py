@@ -10,6 +10,7 @@ def test_recorded_overlay_cleanup(monkeypatch, tmp_path):
     (overlay_dir / "overlay.qcow2").touch()
     file = tmp_path / "overlays.json"
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", file)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(file) + ".lock"))
     env._write_active_overlays([str(overlay_dir)])
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path / "other"))
     monkeypatch.setattr(env, "psutil", None)
