@@ -752,8 +752,9 @@ cancelled`; if this appears unexpectedly check for unhandled exceptions.
    removed.
 - Docker must be available for container cleanup to succeed and containers
   started outside the sandbox will not be touched.
-- On platforms that lock open files (e.g. Windows) stale overlay directories may
-  remain until the system releases them.
+ - On platforms that lock open files (e.g. Windows) overlay directories are
+   retried for deletion in a helper subprocess using exponential backoff. Paths
+   that still fail to delete are recorded for the next purge.
 
 ## Troubleshooting
 

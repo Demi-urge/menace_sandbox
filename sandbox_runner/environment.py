@@ -4,6 +4,7 @@ import ast
 import asyncio
 import json
 import os
+import sys
 import re
 
 try:
@@ -526,6 +527,37 @@ def _remove_failed_overlay(path: str) -> None:
         _write_failed_overlays(paths)
 
 
+def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
+    """Remove ``path`` in a helper process with exponential backoff."""
+    script = textwrap.dedent(
+        """
+        import shutil, sys, time
+        p = sys.argv[1]
+        base = float(sys.argv[2])
+        attempts = int(sys.argv[3])
+        for i in range(attempts):
+            try:
+                shutil.rmtree(p)
+                sys.exit(0)
+            except Exception:
+                time.sleep(base * (2 ** i))
+        sys.exit(1)
+        """
+    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", script, path, str(base), str(attempts)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception as exc:
+        logger.debug("rmtree helper failed: %s", exc)
+        return False
+
+
 def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     """Terminate leftover QEMU processes and remove overlay files."""
     global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED
@@ -544,8 +576,14 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 removed_vms += 1
                 _remove_failed_overlay(d)
             except Exception:
-                logger.exception("temporary directory removal failed for %s", d)
-                _record_failed_overlay(d)
+                if os.name == "nt" and _rmtree_windows(d):
+                    removed_vms += 1
+                    _remove_failed_overlay(d)
+                else:
+                    logger.exception(
+                        "temporary directory removal failed for %s", d
+                    )
+                    _record_failed_overlay(d)
         _write_active_overlays([])
     if psutil is not None:
         try:
@@ -573,8 +611,13 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
                 except Exception:
-                    logger.exception("temporary directory removal failed for %s", d)
-                    _record_failed_overlay(d)
+                    if os.name == "nt" and _rmtree_windows(d):
+                        _remove_failed_overlay(d)
+                    else:
+                        logger.exception(
+                            "temporary directory removal failed for %s", d
+                        )
+                        _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
     else:  # pragma: no cover - fallback path
@@ -609,8 +652,13 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
                 except Exception:
-                    logger.exception("temporary directory removal failed for %s", d)
-                    _record_failed_overlay(d)
+                    if os.name == "nt" and _rmtree_windows(d):
+                        _remove_failed_overlay(d)
+                    else:
+                        logger.exception(
+                            "temporary directory removal failed for %s", d
+                        )
+                        _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
 
@@ -656,8 +704,13 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 shutil.rmtree(overlay.parent)
                 _remove_failed_overlay(str(overlay.parent))
             except Exception:
-                logger.exception("temporary directory removal failed for %s", overlay.parent)
-                _record_failed_overlay(str(overlay.parent))
+                if os.name == "nt" and _rmtree_windows(str(overlay.parent)):
+                    _remove_failed_overlay(str(overlay.parent))
+                else:
+                    logger.exception(
+                        "temporary directory removal failed for %s", overlay.parent
+                    )
+                    _record_failed_overlay(str(overlay.parent))
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
 
@@ -702,8 +755,11 @@ def purge_leftovers() -> None:
                 shutil.rmtree(d)
                 _remove_failed_overlay(d)
             except Exception:
-                logger.exception("temporary directory removal failed for %s", d)
-                _record_failed_overlay(d)
+                if os.name == "nt" and _rmtree_windows(d):
+                    _remove_failed_overlay(d)
+                else:
+                    logger.exception("temporary directory removal failed for %s", d)
+                    _record_failed_overlay(d)
         if overlays:
             _write_active_overlays([])
     except Exception as exc:
