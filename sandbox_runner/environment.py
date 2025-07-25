@@ -519,6 +519,21 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
 
+    if os.name == "nt":  # pragma: no cover - windows process cleanup
+        try:
+            proc = subprocess.run(
+                ["taskkill", "/F", "/T", "/IM", "qemu-system*"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            for line in proc.stdout.splitlines():
+                if "SUCCESS:" in line:
+                    removed_vms += 1
+        except Exception as exc:
+            logger.debug("taskkill failed: %s", exc)
+
     tmp_root = Path(tempfile.gettempdir())
     try:
         for overlay in tmp_root.rglob("overlay.qcow2"):
