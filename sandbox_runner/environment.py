@@ -402,6 +402,13 @@ _FAILED_OVERLAYS_FILE = Path(
     )
 )
 
+FAILED_CLEANUP_FILE = Path(
+    os.getenv(
+        "SANDBOX_FAILED_CLEANUP",
+        str(ROOT / "sandbox_data" / "failed_cleanup.json"),
+    )
+)
+
 # duration after which stray overlay directories are purged
 # defined later once _parse_timespan is available
 _OVERLAY_MAX_AGE = 0.0
@@ -542,6 +549,7 @@ def _record_failed_overlay(path: str) -> None:
     if path not in paths:
         paths.append(path)
         _write_failed_overlays(paths)
+    _record_failed_cleanup(path)
     _OVERLAY_CLEANUP_FAILURES += 1
     try:
         from . import metrics_exporter as _me
@@ -556,6 +564,41 @@ def _record_failed_overlay(path: str) -> None:
             gauge.inc()
         except Exception:
             logger.exception("failed to increment overlay_cleanup_failures")
+
+
+def _read_failed_cleanup() -> Dict[str, float]:
+    """Return mapping of items that failed to clean up and their timestamps."""
+    try:
+        if FAILED_CLEANUP_FILE.exists():
+            data = json.loads(FAILED_CLEANUP_FILE.read_text())
+            if isinstance(data, dict):
+                return {str(k): float(v) for k, v in data.items()}
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
+    return {}
+
+
+def _write_failed_cleanup(entries: Dict[str, float]) -> None:
+    """Persist ``entries`` to the failed cleanup file."""
+    try:
+        _atomic_write_json(FAILED_CLEANUP_FILE, entries)
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
+
+
+def _record_failed_cleanup(item: str) -> None:
+    """Record ``item`` as failed to clean up with current timestamp."""
+    data = _read_failed_cleanup()
+    data[item] = time.time()
+    _write_failed_cleanup(data)
+
+
+def _remove_failed_cleanup(item: str) -> None:
+    """Remove ``item`` from the failed cleanup file."""
+    data = _read_failed_cleanup()
+    if item in data:
+        del data[item]
+        _write_failed_cleanup(data)
 
 
 def _remove_failed_overlay(path: str) -> None:
@@ -614,10 +657,12 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 shutil.rmtree(d)
                 removed_vms += 1
                 _remove_failed_overlay(d)
+                _remove_failed_cleanup(d)
             except Exception:
                 if os.name == "nt" and _rmtree_windows(d):
                     removed_vms += 1
                     _remove_failed_overlay(d)
+                    _remove_failed_cleanup(d)
                 else:
                     logger.exception(
                         "temporary directory removal failed for %s", d
@@ -649,9 +694,11 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 try:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
+                    _remove_failed_cleanup(d)
                 except Exception:
                     if os.name == "nt" and _rmtree_windows(d):
                         _remove_failed_overlay(d)
+                        _remove_failed_cleanup(d)
                     else:
                         logger.exception(
                             "temporary directory removal failed for %s", d
@@ -690,9 +737,11 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 try:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
+                    _remove_failed_cleanup(d)
                 except Exception:
                     if os.name == "nt" and _rmtree_windows(d):
                         _remove_failed_overlay(d)
+                        _remove_failed_cleanup(d)
                     else:
                         logger.exception(
                             "temporary directory removal failed for %s", d
@@ -736,15 +785,18 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
             try:
                 overlay.unlink()
                 removed_vms += 1
+                _remove_failed_cleanup(str(overlay.parent))
             except Exception:
                 logger.exception("failed to remove overlay %s", overlay)
                 _record_failed_overlay(str(overlay.parent))
             try:
                 shutil.rmtree(overlay.parent)
                 _remove_failed_overlay(str(overlay.parent))
+                _remove_failed_cleanup(str(overlay.parent))
             except Exception:
                 if os.name == "nt" and _rmtree_windows(str(overlay.parent)):
                     _remove_failed_overlay(str(overlay.parent))
+                    _remove_failed_cleanup(str(overlay.parent))
                 else:
                     logger.exception(
                         "temporary directory removal failed for %s", overlay.parent
@@ -792,6 +844,7 @@ def purge_leftovers() -> None:
                 stderr=subprocess.DEVNULL,
                 check=False,
             )
+            _remove_failed_cleanup(cid)
             removed_containers += 1
         if ids:
             _write_active_containers([])
@@ -809,9 +862,11 @@ def purge_leftovers() -> None:
             try:
                 shutil.rmtree(d)
                 _remove_failed_overlay(d)
+                _remove_failed_cleanup(d)
             except Exception:
                 if os.name == "nt" and _rmtree_windows(d):
                     _remove_failed_overlay(d)
+                    _remove_failed_cleanup(d)
                 else:
                     logger.exception("temporary directory removal failed for %s", d)
                     _record_failed_overlay(d)
@@ -842,6 +897,7 @@ def purge_leftovers() -> None:
                         stderr=subprocess.DEVNULL,
                         check=False,
                     )
+                    _remove_failed_cleanup(cid)
                     removed_containers += 1
     except Exception as exc:
         logger.debug("leftover container cleanup failed: %s", exc)
@@ -1216,9 +1272,11 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
 
     if cid and not exists:
         _remove_active_container(cid)
+        _remove_failed_cleanup(cid)
     elif cid and exists:
         _CLEANUP_FAILURES += 1
         logger.error("container %s still exists after removal attempts", cid)
+        _record_failed_cleanup(cid)
 
 
 def _log_pool_metrics(image: str) -> None:
@@ -1238,6 +1296,26 @@ def _log_pool_metrics(image: str) -> None:
         _POOL_METRICS_FILE.write_text(json.dumps(metrics))
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed writing pool metrics %s: %s", _POOL_METRICS_FILE, exc)
+
+
+def report_failed_cleanup(threshold: float | None = None, *, alert: bool = False) -> Dict[str, float]:
+    """Return failed cleanup entries older than ``threshold``.
+
+    When ``alert`` is ``True``, log errors and send a diagnostic record
+    if any entries exceed the threshold.
+    """
+    if threshold is None:
+        threshold = _FAILED_CLEANUP_ALERT_AGE
+    data = _read_failed_cleanup()
+    now = time.time()
+    stale = {item: ts for item, ts in data.items() if now - ts >= threshold}
+    if alert and stale:
+        try:
+            logger.error("failed cleanup items: %s", list(stale.keys()))
+        except Exception:
+            pass
+        _log_diagnostic("failed_cleanup", False)
+    return stale
 
 
 def _get_dir_usage(path: str) -> int:
@@ -2308,6 +2386,10 @@ _CONTAINER_DISK_LIMIT = _parse_size(_CONTAINER_DISK_LIMIT_STR)
 
 # finalise overlay age setting now that helper is defined
 _OVERLAY_MAX_AGE = _parse_timespan(os.getenv("SANDBOX_OVERLAY_MAX_AGE", "7d"))
+
+_FAILED_CLEANUP_ALERT_AGE = _parse_timespan(
+    os.getenv("SANDBOX_FAILED_CLEANUP_AGE", "1d")
+)
 
 
 def _rlimits_supported() -> bool:
