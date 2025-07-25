@@ -177,6 +177,14 @@ def test_metrics_exporter_updates(monkeypatch):
         def set(self, v):
             self.value = v
 
+    class DummyLabelGauge:
+        def __init__(self):
+            self.values = {}
+        def labels(self, worker):
+            def set_val(v):
+                self.values[worker] = v
+            return types.SimpleNamespace(set=set_val)
+
     for name in (
         "cleanup_idle",
         "cleanup_unhealthy",
@@ -189,8 +197,10 @@ def test_metrics_exporter_updates(monkeypatch):
         "runtime_vms_removed",
     ):
         setattr(stub, name, DummyGauge())
+    stub.cleanup_duration_gauge = DummyLabelGauge()
 
     monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
 
     env._CLEANUP_METRICS.clear()
     env._CLEANUP_METRICS.update(
@@ -201,6 +211,8 @@ def test_metrics_exporter_updates(monkeypatch):
     env._CLEANUP_FAILURES = 7
     env._FORCE_KILLS = 8
     env._RUNTIME_VMS_REMOVED = 9
+    env._CLEANUP_DURATIONS["cleanup"] = 1.5
+    env._CLEANUP_DURATIONS["reaper"] = 2.5
 
     env.collect_metrics(0.0, 0.0, None)
 
@@ -213,6 +225,8 @@ def test_metrics_exporter_updates(monkeypatch):
     assert stub.cleanup_failures.value == 7.0
     assert stub.force_kills.value == 8.0
     assert stub.runtime_vms_removed.value == 9.0
+    assert stub.cleanup_duration_gauge.values["cleanup"] == 1.5
+    assert stub.cleanup_duration_gauge.values["reaper"] == 2.5
 
 
 

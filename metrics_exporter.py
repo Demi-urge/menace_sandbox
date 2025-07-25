@@ -359,6 +359,13 @@ overlay_cleanup_failures = Gauge(
     "Failed attempts to delete VM overlay directories",
 )
 
+# Gauge tracking duration of cleanup workers
+cleanup_duration_gauge = Gauge(
+    "cleanup_duration_seconds",
+    "Time spent in cleanup worker iterations",
+    labelnames=["worker"],
+)
+
 
 _METRICS_SERVER: "HTTPServer" | None = None
 
@@ -425,6 +432,7 @@ __all__ = [
     "force_kills",
     "runtime_vms_removed",
     "overlay_cleanup_failures",
+    "cleanup_duration_gauge",
     "workflow_duration_gauge",
     "workflow_cpu_percent_gauge",
     "workflow_memory_gauge",

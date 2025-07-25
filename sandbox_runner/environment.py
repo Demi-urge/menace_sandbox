@@ -397,6 +397,7 @@ _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
 _WATCHDOG_METRICS: Counter[str] = Counter()
+_CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
 
 # Optional cleanup of sandbox Docker volumes and networks
 _PRUNE_VOLUMES = str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower() not in {
@@ -1311,6 +1312,8 @@ def collect_metrics(
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
+    result["cleanup_duration_seconds_cleanup"] = float(_CLEANUP_DURATIONS["cleanup"])
+    result["cleanup_duration_seconds_reaper"] = float(_CLEANUP_DURATIONS["reaper"])
     stats = _read_cleanup_stats()
     for k, v in stats.items():
         result[f"{k}_total"] = float(v)
@@ -1343,6 +1346,17 @@ def collect_metrics(
                     gauge.set(result.get(key, 0.0))
                 except Exception:  # pragma: no cover - metrics failures
                     logger.exception("failed to update gauge %s", key)
+        dur_gauge = getattr(_me, "cleanup_duration_gauge", None)
+        if dur_gauge is not None:
+            try:
+                dur_gauge.labels(worker="cleanup").set(
+                    result.get("cleanup_duration_seconds_cleanup", 0.0)
+                )
+                dur_gauge.labels(worker="reaper").set(
+                    result.get("cleanup_duration_seconds_reaper", 0.0)
+                )
+            except Exception:  # pragma: no cover - metrics failures
+                logger.exception("failed to update gauge cleanup_duration_gauge")
     return result
 
 
@@ -1631,6 +1645,7 @@ async def _cleanup_worker() -> None:
     try:
         while True:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            start = time.monotonic()
             try:
                 cleaned, replaced = _cleanup_idle_containers()
                 total_cleaned += cleaned
@@ -1654,6 +1669,22 @@ async def _cleanup_worker() -> None:
                     )
             except Exception:
                 logger.exception("idle container cleanup failed")
+            finally:
+                duration = time.monotonic() - start
+                _CLEANUP_DURATIONS["cleanup"] = duration
+                try:
+                    from . import metrics_exporter as _me
+                except Exception:
+                    try:  # pragma: no cover - package may not be available
+                        import metrics_exporter as _me  # type: ignore
+                    except Exception:
+                        _me = None  # type: ignore
+                gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
+                if gauge is not None:
+                    try:
+                        gauge.labels(worker="cleanup").set(duration)
+                    except Exception:  # pragma: no cover - metrics failures
+                        logger.exception("failed to update cleanup duration")
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("cleanup worker cancelled")
         raise
@@ -1665,6 +1696,7 @@ async def _reaper_worker() -> None:
     try:
         while True:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
                 total_removed += removed
@@ -1674,6 +1706,22 @@ async def _reaper_worker() -> None:
                     )
             except Exception:
                 logger.exception("orphan container cleanup failed")
+            finally:
+                duration = time.monotonic() - start
+                _CLEANUP_DURATIONS["reaper"] = duration
+                try:
+                    from . import metrics_exporter as _me
+                except Exception:
+                    try:  # pragma: no cover - package may not be available
+                        import metrics_exporter as _me  # type: ignore
+                    except Exception:
+                        _me = None  # type: ignore
+                gauge = getattr(_me, "cleanup_duration_gauge", None) if _me else None
+                if gauge is not None:
+                    try:
+                        gauge.labels(worker="reaper").set(duration)
+                    except Exception:  # pragma: no cover - metrics failures
+                        logger.exception("failed to update cleanup duration")
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("reaper worker cancelled")
         raise
