@@ -100,6 +100,7 @@ Network behaviour can be tuned with:
 - `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
 - `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
   `menace_sandbox_pool`).
+- `SANDBOX_POOL_LOCK` – optional lock file guarding container pool operations.
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
