@@ -1,0 +1,60 @@
+import json
+import types
+import sandbox_runner.environment as env
+
+
+def test_retry_failed_cleanup_success(monkeypatch, tmp_path):
+    cid = "c1"
+    overlay = tmp_path / "ov"
+    overlay.mkdir()
+    (overlay / "overlay.qcow2").touch()
+    file = tmp_path / "failed.json"
+    stats_file = tmp_path / "stats.json"
+    file.write_text(json.dumps({cid: 0.0, str(overlay): 0.0}))
+    monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
+    monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
+    monkeypatch.setattr(env.shutil, "rmtree", lambda p: None)
+
+    def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    env._CLEANUP_RETRY_SUCCESSES = 0
+    env._CLEANUP_RETRY_FAILURES = 0
+    env.retry_failed_cleanup()
+    assert json.loads(file.read_text()) == {}
+    assert env._CLEANUP_RETRY_SUCCESSES == 2
+    assert json.loads(stats_file.read_text())["cleanup_retry_successes"] == 2
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["cleanup_retry_successes_total"] == 2.0
+
+
+def test_retry_failed_cleanup_failure(monkeypatch, tmp_path):
+    cid = "c1"
+    overlay = tmp_path / "ov"
+    overlay.mkdir()
+    (overlay / "overlay.qcow2").touch()
+    file = tmp_path / "failed.json"
+    stats_file = tmp_path / "stats.json"
+    file.write_text(json.dumps({cid: 0.0, str(overlay): 0.0}))
+    monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
+    monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
+
+    def fail_rmtree(p):
+        raise OSError("boom")
+
+    def fail_run(cmd, stdout=None, stderr=None, text=None, check=False):
+        return types.SimpleNamespace(returncode=1, stdout="x", stderr="err")
+
+    monkeypatch.setattr(env.shutil, "rmtree", fail_rmtree)
+    monkeypatch.setattr(env.subprocess, "run", fail_run)
+    monkeypatch.setattr(env, "_rmtree_windows", lambda p, attempts=5, base=0.2: False)
+    env._CLEANUP_RETRY_SUCCESSES = 0
+    env._CLEANUP_RETRY_FAILURES = 0
+    env.retry_failed_cleanup()
+    remaining = set(json.loads(file.read_text()).keys())
+    assert cid in remaining and str(overlay) in remaining
+    assert env._CLEANUP_RETRY_FAILURES == 2
+    assert json.loads(stats_file.read_text())["cleanup_retry_failures"] == 2
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["cleanup_retry_failures_total"] == 2.0

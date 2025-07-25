@@ -396,6 +396,8 @@ _CLEANUP_FAILURES = 0
 _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
+_CLEANUP_RETRY_SUCCESSES = 0
+_CLEANUP_RETRY_FAILURES = 0
 _WATCHDOG_METRICS: Counter[str] = Counter()
 _CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
 
@@ -1312,6 +1314,8 @@ def collect_metrics(
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
+    result["cleanup_retry_successes"] = float(_CLEANUP_RETRY_SUCCESSES)
+    result["cleanup_retry_failures"] = float(_CLEANUP_RETRY_FAILURES)
     result["cleanup_duration_seconds_cleanup"] = float(_CLEANUP_DURATIONS["cleanup"])
     result["cleanup_duration_seconds_reaper"] = float(_CLEANUP_DURATIONS["reaper"])
     stats = _read_cleanup_stats()
@@ -1337,6 +1341,8 @@ def collect_metrics(
             "force_kills",
             "runtime_vms_removed",
             "overlay_cleanup_failures",
+            "cleanup_retry_successes",
+            "cleanup_retry_failures",
         ]
         keys.extend(f"{k}_total" for k in stats)
         for key in keys:
@@ -1638,6 +1644,80 @@ def _reap_orphan_containers() -> int:
     return removed
 
 
+def retry_failed_cleanup() -> tuple[int, int]:
+    """Attempt to delete items recorded in :data:`FAILED_CLEANUP_FILE`."""
+    data = _read_failed_cleanup()
+    successes = 0
+    failures = 0
+    for item in list(data.keys()):
+        is_path = os.path.sep in item or os.path.exists(item)
+        if is_path:
+            try:
+                shutil.rmtree(item)
+                _remove_failed_cleanup(item)
+                successes += 1
+                continue
+            except Exception:
+                if os.name == "nt" and _rmtree_windows(item):
+                    _remove_failed_cleanup(item)
+                    successes += 1
+                    continue
+                failures += 1
+                continue
+        try:
+            subprocess.run(
+                ["docker", "rm", "-f", item],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            proc = subprocess.run(
+                ["docker", "ps", "-aq", "--filter", f"id={item}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0 and not proc.stdout.strip():
+                _remove_failed_cleanup(item)
+                successes += 1
+            else:
+                failures += 1
+        except Exception:
+            failures += 1
+
+    global _CLEANUP_RETRY_SUCCESSES, _CLEANUP_RETRY_FAILURES
+    if successes:
+        _CLEANUP_RETRY_SUCCESSES += successes
+        _increment_cleanup_stat("cleanup_retry_successes", successes)
+    if failures:
+        _CLEANUP_RETRY_FAILURES += failures
+        _increment_cleanup_stat("cleanup_retry_failures", failures)
+
+    try:
+        from . import metrics_exporter as _me
+    except Exception:
+        try:  # pragma: no cover - package may not be available
+            import metrics_exporter as _me  # type: ignore
+        except Exception:
+            _me = None  # type: ignore
+    if _me is not None:
+        gauge = getattr(_me, "cleanup_retry_successes", None)
+        if gauge is not None and successes:
+            try:
+                gauge.inc(successes)
+            except Exception:
+                logger.exception("failed to increment cleanup_retry_successes")
+        gauge = getattr(_me, "cleanup_retry_failures", None)
+        if gauge is not None and failures:
+            try:
+                gauge.inc(failures)
+            except Exception:
+                logger.exception("failed to increment cleanup_retry_failures")
+
+    return successes, failures
+
+
 async def _cleanup_worker() -> None:
     """Background task to clean idle containers."""
     total_cleaned = 0
@@ -1647,6 +1727,7 @@ async def _cleanup_worker() -> None:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             start = time.monotonic()
             try:
+                retry_failed_cleanup()
                 cleaned, replaced = _cleanup_idle_containers()
                 total_cleaned += cleaned
                 total_replaced += replaced
