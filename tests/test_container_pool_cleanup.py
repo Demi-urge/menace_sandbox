@@ -360,3 +360,66 @@ def test_pool_container_disk_limit(monkeypatch, tmp_path):
 
     asyncio.run(env._create_pool_container("img"))
     assert kwargs_seen.get("storage_opt") == {"size": "42"}
+
+
+def test_cleanup_worker_records_duration(monkeypatch):
+    stub = types.ModuleType("metrics_exporter")
+    class DummyGauge:
+        def __init__(self):
+            self.values = {}
+        def labels(self, worker):
+            def set_val(v):
+                self.values[worker] = v
+            return types.SimpleNamespace(set=set_val)
+    stub.cleanup_duration_gauge = DummyGauge()
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
+
+    monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
+
+    async def run_worker():
+        task = asyncio.create_task(env._cleanup_worker())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_worker())
+
+    assert stub.cleanup_duration_gauge.values.get("cleanup", 0) > 0
+    assert env._CLEANUP_DURATIONS["cleanup"] > 0
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["cleanup_duration_seconds_cleanup"] > 0
+
+
+def test_reaper_worker_records_duration(monkeypatch):
+    stub = types.ModuleType("metrics_exporter")
+    class DummyGauge:
+        def __init__(self):
+            self.values = {}
+        def labels(self, worker):
+            def set_val(v):
+                self.values[worker] = v
+            return types.SimpleNamespace(set=set_val)
+    stub.cleanup_duration_gauge = DummyGauge()
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
+
+    monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
+    monkeypatch.setattr(env, "_reap_orphan_containers", lambda: 0)
+
+    async def run_worker():
+        task = asyncio.create_task(env._reaper_worker())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_worker())
+
+    assert stub.cleanup_duration_gauge.values.get("reaper", 0) > 0
+    assert env._CLEANUP_DURATIONS["reaper"] > 0
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["cleanup_duration_seconds_reaper"] > 0
