@@ -22,13 +22,15 @@ def test_failed_cleanup_record(monkeypatch, tmp_path):
     assert list(data.keys()) == ["x"]
 
 
-def test_report_failed_cleanup(monkeypatch, tmp_path):
+def test_report_failed_cleanup(monkeypatch, tmp_path, caplog):
     file = tmp_path / "cleanup.json"
     now = time.time() - 120
     file.write_text(json.dumps({"old": now, "new": time.time()}))
     monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
     logs = {}
     monkeypatch.setattr(env, "_log_diagnostic", lambda issue, success: logs.setdefault("called", True))
+    caplog.set_level("ERROR")
     res = env.report_failed_cleanup(threshold=60, alert=True)
     assert "old" in res and "new" not in res
     assert logs.get("called")
+    assert "failed cleanup items" in caplog.text
