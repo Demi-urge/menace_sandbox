@@ -10,6 +10,7 @@ def test_purge_stale_vms_removes_untracked_overlay(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
+    monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
 
     calls = []
 
@@ -39,6 +40,7 @@ def test_purge_stale_vms_kills_process_via_pgrep(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
+    monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
 
     killed = []
 

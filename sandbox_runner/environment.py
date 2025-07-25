@@ -374,6 +374,9 @@ _FAILED_OVERLAYS_FILE = Path(
     )
 )
 
+# duration after which stray overlay directories are purged
+_OVERLAY_MAX_AGE = _parse_timespan(os.getenv("SANDBOX_OVERLAY_MAX_AGE", "7d"))
+
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
 
 
@@ -623,8 +626,18 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
             logger.debug("taskkill failed: %s", exc)
 
     tmp_root = Path(tempfile.gettempdir())
+    threshold = time.time() - _OVERLAY_MAX_AGE
     try:
         for overlay in tmp_root.rglob("overlay.qcow2"):
+            try:
+                mtime = overlay.parent.stat().st_mtime
+            except Exception:
+                try:
+                    mtime = overlay.stat().st_mtime
+                except Exception:
+                    mtime = 0
+            if _OVERLAY_MAX_AGE and mtime > threshold:
+                continue
             try:
                 logger.info("removing leftover overlay %s", overlay)
             except Exception:
@@ -2025,6 +2038,27 @@ def _parse_bandwidth(value: str | int | float) -> int:
         return int(float(s))
     except Exception:
         return 0
+
+
+def _parse_timespan(value: str | int | float) -> float:
+    """Return ``value`` interpreted as seconds."""
+    try:
+        s = str(value).strip().lower()
+        if s.endswith("ms"):
+            return float(s[:-2]) / 1000.0
+        if s.endswith("s"):
+            return float(s[:-1])
+        if s.endswith("m"):
+            return float(s[:-1]) * 60.0
+        if s.endswith("h"):
+            return float(s[:-1]) * 3600.0
+        if s.endswith("d"):
+            return float(s[:-1]) * 86400.0
+        if s.endswith("w"):
+            return float(s[:-1]) * 604800.0
+        return float(s)
+    except Exception:
+        return 0.0
 
 
 def validate_preset(preset: Dict[str, Any]) -> bool:
