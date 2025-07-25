@@ -367,11 +367,11 @@ def test_pool_container_disk_limit(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "_DOCKER_CLIENT", CapClient())
     monkeypatch.setattr(env, "_record_active_container", lambda cid: None)
 
-    async def fake_acquire() -> None:
-        return None
+    @contextlib.asynccontextmanager
+    async def fake_lock():
+        yield
 
-    monkeypatch.setattr(env, "_acquire_pool_lock", fake_acquire)
-    monkeypatch.setattr(env, "_release_pool_lock", lambda: None)
+    monkeypatch.setattr(env, "pool_lock", fake_lock)
 
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()

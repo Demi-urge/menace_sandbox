@@ -468,6 +468,12 @@ def _release_pool_lock() -> None:
     try:
         if _POOL_FILE_LOCK.is_locked:
             _POOL_FILE_LOCK.release()
+        try:
+            os.remove(_POOL_FILE_LOCK.lock_file)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            logger.warning("failed removing pool lock file: %s", exc)
     except Exception as exc:  # pragma: no cover - unexpected errors
         logger.warning("failed releasing pool lock: %s", exc)
 
@@ -475,6 +481,16 @@ def _release_pool_lock() -> None:
 async def _acquire_pool_lock() -> None:
     """Acquire the pool file lock asynchronously."""
     await asyncio.to_thread(_POOL_FILE_LOCK.acquire)
+
+
+@asynccontextmanager
+async def pool_lock() -> Any:
+    """Async context manager acquiring the pool file lock."""
+    await _acquire_pool_lock()
+    try:
+        yield
+    finally:
+        _release_pool_lock()
 
 
 def _atomic_write_json(path: Path, data: Any) -> None:
@@ -1128,8 +1144,7 @@ def _ensure_pool_size_async(image: str) -> None:
 async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity`` with retries."""
     assert _DOCKER_CLIENT is not None
-    await _acquire_pool_lock()
-    try:
+    async with pool_lock():
         attempt = 0
         delay = _CREATE_BACKOFF_BASE
         last_exc: Exception | None = None
@@ -1193,8 +1208,6 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             attempt += 1
         assert last_exc is not None
         raise last_exc
-    finally:
-        _release_pool_lock()
 
 
 def _verify_container(container: Any) -> bool:
@@ -1215,8 +1228,7 @@ def _verify_container(container: Any) -> bool:
 
 async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
-    await _acquire_pool_lock()
-    try:
+    async with pool_lock():
         while True:
             with _POOL_LOCK:
                 pool = _CONTAINER_POOLS.setdefault(image, [])
@@ -1247,8 +1259,6 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
         container, td = await _create_pool_container(image)
         _ensure_pool_size_async(image)
         return container, td
-    finally:
-        _release_pool_lock()
 
 
 @asynccontextmanager
