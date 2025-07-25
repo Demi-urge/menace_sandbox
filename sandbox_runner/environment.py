@@ -67,7 +67,9 @@ from collections import Counter
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
-POOL_LOCK_FILE = Path(os.getenv("SANDBOX_POOL_LOCK", str(ROOT / "sandbox_data" / "pool.lock")))
+POOL_LOCK_FILE = Path(
+    os.getenv("SANDBOX_POOL_LOCK", str(ROOT / "sandbox_data" / "pool.lock"))
+)
 
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
@@ -76,9 +78,12 @@ def _get_history_db() -> InputHistoryDB:
     """Return cached :class:`InputHistoryDB` instance."""
     global _INPUT_HISTORY_DB
     if _INPUT_HISTORY_DB is None:
-        path = os.getenv("SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db"))
+        path = os.getenv(
+            "SANDBOX_INPUT_HISTORY", str(ROOT / "sandbox_data" / "input_history.db")
+        )
         _INPUT_HISTORY_DB = InputHistoryDB(path)
     return _INPUT_HISTORY_DB
+
 
 if DiagnosticManager is not None:
     try:
@@ -306,12 +311,14 @@ _EVENT_STOP: threading.Event | None = None
 _BACKGROUND_LOOP: asyncio.AbstractEventLoop | None = None
 _BACKGROUND_THREAD: threading.Thread | None = None
 
+
 def _get_event_loop() -> asyncio.AbstractEventLoop | None:
     """Return a running event loop or ``None`` if unavailable."""
     try:
         return asyncio.get_running_loop()
     except RuntimeError:
         return _BACKGROUND_LOOP
+
 
 def _ensure_background_loop() -> asyncio.AbstractEventLoop:
     """Start a background event loop if not already running."""
@@ -324,10 +331,14 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
             loop.run_forever()
 
         _BACKGROUND_THREAD = threading.Thread(
-            target=_runner, args=(_BACKGROUND_LOOP,), daemon=True, name="sandbox-bg-loop"
+            target=_runner,
+            args=(_BACKGROUND_LOOP,),
+            daemon=True,
+            name="sandbox-bg-loop",
         )
         _BACKGROUND_THREAD.start()
     return _BACKGROUND_LOOP
+
 
 def stop_background_loop() -> None:
     """Stop ``_BACKGROUND_LOOP`` and join ``_BACKGROUND_THREAD``."""
@@ -352,6 +363,7 @@ def stop_background_loop() -> None:
     _BACKGROUND_LOOP = None
     _BACKGROUND_THREAD = None
 
+
 def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> Any:
     """Schedule ``coro`` on an available event loop."""
     loop = _get_event_loop()
@@ -365,12 +377,16 @@ def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> An
         return asyncio.run_coroutine_threadsafe(coro, loop)
     loop = _ensure_background_loop()
     return asyncio.run_coroutine_threadsafe(coro, loop)
+
+
 _CREATE_FAILURES: Counter[str] = Counter()
 _CONSECUTIVE_CREATE_FAILURES: Counter[str] = Counter()
 _CREATE_BACKOFF_BASE = float(os.getenv("SANDBOX_CONTAINER_BACKOFF", "0.5"))
 _CREATE_RETRY_LIMIT = int(os.getenv("SANDBOX_CONTAINER_RETRIES", "3"))
 _POOL_METRICS_FILE = Path(
-    os.getenv("SANDBOX_POOL_METRICS_FILE", str(ROOT / "sandbox_data" / "pool_failures.json"))
+    os.getenv(
+        "SANDBOX_POOL_METRICS_FILE", str(ROOT / "sandbox_data" / "pool_failures.json")
+    )
 )
 _FAILURE_WARNING_THRESHOLD = int(os.getenv("SANDBOX_POOL_FAIL_THRESHOLD", "5"))
 _CLEANUP_METRICS: Counter[str] = Counter()
@@ -383,14 +399,18 @@ _OVERLAY_CLEANUP_FAILURES = 0
 _WATCHDOG_METRICS: Counter[str] = Counter()
 
 # Optional cleanup of sandbox Docker volumes and networks
-_PRUNE_VOLUMES = (
-    str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower()
-    not in {"0", "false", "no", ""}
-)
-_PRUNE_NETWORKS = (
-    str(os.getenv("SANDBOX_PRUNE_NETWORKS", "0")).lower()
-    not in {"0", "false", "no", ""}
-)
+_PRUNE_VOLUMES = str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower() not in {
+    "0",
+    "false",
+    "no",
+    "",
+}
+_PRUNE_NETWORKS = str(os.getenv("SANDBOX_PRUNE_NETWORKS", "0")).lower() not in {
+    "0",
+    "false",
+    "no",
+    "",
+}
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -433,6 +453,7 @@ _CLEANUP_STATS_FILE = Path(
 _OVERLAY_MAX_AGE = 0.0
 
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
+_PURGE_FILE_LOCK = FileLock(str(POOL_LOCK_FILE) + ".purge")
 
 # locks protecting active container and overlay records
 _ACTIVE_CONTAINERS_LOCK = FileLock(str(_ACTIVE_CONTAINERS_FILE) + ".lock")
@@ -537,7 +558,9 @@ def _read_active_overlays_unlocked() -> List[str]:
             if isinstance(data, list):
                 return [str(x) for x in data]
     except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed reading active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc)
+        logger.warning(
+            "failed reading active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc
+        )
     return []
 
 
@@ -552,7 +575,9 @@ def _write_active_overlays_unlocked(paths: List[str]) -> None:
     try:
         _atomic_write_json(_ACTIVE_OVERLAYS_FILE, paths)
     except Exception as exc:  # pragma: no cover - fs errors
-        logger.warning("failed writing active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc)
+        logger.warning(
+            "failed writing active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc
+        )
 
 
 def _record_active_overlay(path: str) -> None:
@@ -747,9 +772,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     _remove_failed_overlay(d)
                     _remove_failed_cleanup(d)
                 else:
-                    logger.exception(
-                        "temporary directory removal failed for %s", d
-                    )
+                    logger.exception("temporary directory removal failed for %s", d)
                     _record_failed_overlay(d)
         _write_active_overlays([])
     if psutil is not None:
@@ -783,9 +806,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         _remove_failed_overlay(d)
                         _remove_failed_cleanup(d)
                     else:
-                        logger.exception(
-                            "temporary directory removal failed for %s", d
-                        )
+                        logger.exception("temporary directory removal failed for %s", d)
                         _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
@@ -814,7 +835,12 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         if arg.startswith("file="):
                             arg = arg.split("=", 1)[1]
                         tmp_dirs.add(str(Path(arg).parent))
-                subprocess.run(["kill", "-9", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                subprocess.run(
+                    ["kill", "-9", pid],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
                 removed_vms += 1
             for d in tmp_dirs:
                 try:
@@ -826,9 +852,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         _remove_failed_overlay(d)
                         _remove_failed_cleanup(d)
                     else:
-                        logger.exception(
-                            "temporary directory removal failed for %s", d
-                        )
+                        logger.exception("temporary directory removal failed for %s", d)
                         _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
@@ -901,9 +925,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
             try:
                 gauge.inc()
             except Exception:
-                logger.exception(
-                    "failed to increment overlay_cleanup_failures"
-                )
+                logger.exception("failed to increment overlay_cleanup_failures")
 
     _STALE_VMS_REMOVED += removed_vms
     if record_runtime:
@@ -914,140 +936,148 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
     global _STALE_CONTAINERS_REMOVED
-    removed_containers = 0
-    try:
-        ids = _read_active_containers()
-        for cid in ids:
-            try:
-                logger.info("removing recorded sandbox container %s", cid)
-            except Exception:
-                pass
-            subprocess.run(
-                ["docker", "rm", "-f", cid],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-            _remove_failed_cleanup(cid)
-            removed_containers += 1
-        if ids:
-            _write_active_containers([])
-    except Exception as exc:
-        logger.debug("active container cleanup failed: %s", exc)
+    with _PURGE_FILE_LOCK:
+        removed_containers = 0
+        try:
+            ids = _read_active_containers()
+            for cid in ids:
+                try:
+                    logger.info("removing recorded sandbox container %s", cid)
+                except Exception:
+                    pass
+                subprocess.run(
+                    ["docker", "rm", "-f", cid],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                _remove_failed_cleanup(cid)
+                removed_containers += 1
+            if ids:
+                _write_active_containers([])
+        except Exception as exc:
+            logger.debug("active container cleanup failed: %s", exc)
 
-    # remove any recorded overlay directories first
-    try:
-        overlays = _read_active_overlays()
-        for d in overlays:
-            try:
-                logger.info("removing recorded overlay dir %s", d)
-            except Exception:
-                pass
-            try:
-                shutil.rmtree(d)
-                _remove_failed_overlay(d)
-                _remove_failed_cleanup(d)
-            except Exception:
-                if os.name == "nt" and _rmtree_windows(d):
+        # remove any recorded overlay directories first
+        try:
+            overlays = _read_active_overlays()
+            for d in overlays:
+                try:
+                    logger.info("removing recorded overlay dir %s", d)
+                except Exception:
+                    pass
+                try:
+                    shutil.rmtree(d)
                     _remove_failed_overlay(d)
                     _remove_failed_cleanup(d)
-                else:
-                    logger.exception("temporary directory removal failed for %s", d)
-                    _record_failed_overlay(d)
-        if overlays:
-            _write_active_overlays([])
-    except Exception as exc:
-        logger.debug("overlay cleanup failed: %s", exc)
+                except Exception:
+                    if os.name == "nt" and _rmtree_windows(d):
+                        _remove_failed_overlay(d)
+                        _remove_failed_cleanup(d)
+                    else:
+                        logger.exception("temporary directory removal failed for %s", d)
+                        _record_failed_overlay(d)
+            if overlays:
+                _write_active_overlays([])
+        except Exception as exc:
+            logger.debug("overlay cleanup failed: %s", exc)
 
-    try:
-        proc = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            for cid in proc.stdout.splitlines():
-                cid = cid.strip()
-                if cid:
-                    try:
-                        logger.info("removing stale sandbox container %s", cid)
-                    except Exception:
-                        pass
-                    subprocess.run(
-                        ["docker", "rm", "-f", cid],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
-                    _remove_failed_cleanup(cid)
-                    removed_containers += 1
-    except Exception as exc:
-        logger.debug("leftover container cleanup failed: %s", exc)
-
-    removed_vms = _purge_stale_vms()
-
-    if _PRUNE_VOLUMES:
         try:
             proc = subprocess.run(
-                ["docker", "volume", "ls", "-q", "--filter", f"label={_POOL_LABEL}=1"],
+                ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
                 check=False,
             )
             if proc.returncode == 0:
-                for vol in proc.stdout.splitlines():
-                    vol = vol.strip()
-                    if vol:
+                for cid in proc.stdout.splitlines():
+                    cid = cid.strip()
+                    if cid:
                         try:
-                            logger.info("removing stale sandbox volume %s", vol)
+                            logger.info("removing stale sandbox container %s", cid)
                         except Exception:
                             pass
                         subprocess.run(
-                            ["docker", "volume", "rm", "-f", vol],
+                            ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
                         )
+                        _remove_failed_cleanup(cid)
+                        removed_containers += 1
         except Exception as exc:
-            logger.debug("leftover volume cleanup failed: %s", exc)
+            logger.debug("leftover container cleanup failed: %s", exc)
 
-    if _PRUNE_NETWORKS:
-        try:
-            proc = subprocess.run(
-                [
-                    "docker",
-                    "network",
-                    "ls",
-                    "-q",
-                    "--filter",
-                    f"label={_POOL_LABEL}=1",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            if proc.returncode == 0:
-                for net in proc.stdout.splitlines():
-                    net = net.strip()
-                    if net:
-                        try:
-                            logger.info("removing stale sandbox network %s", net)
-                        except Exception:
-                            pass
-                        subprocess.run(
-                            ["docker", "network", "rm", "-f", net],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            check=False,
-                        )
-        except Exception as exc:
-            logger.debug("leftover network cleanup failed: %s", exc)
+        removed_vms = _purge_stale_vms()
 
-    _STALE_CONTAINERS_REMOVED += removed_containers
+        if _PRUNE_VOLUMES:
+            try:
+                proc = subprocess.run(
+                    [
+                        "docker",
+                        "volume",
+                        "ls",
+                        "-q",
+                        "--filter",
+                        f"label={_POOL_LABEL}=1",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    for vol in proc.stdout.splitlines():
+                        vol = vol.strip()
+                        if vol:
+                            try:
+                                logger.info("removing stale sandbox volume %s", vol)
+                            except Exception:
+                                pass
+                            subprocess.run(
+                                ["docker", "volume", "rm", "-f", vol],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                check=False,
+                            )
+            except Exception as exc:
+                logger.debug("leftover volume cleanup failed: %s", exc)
+
+        if _PRUNE_NETWORKS:
+            try:
+                proc = subprocess.run(
+                    [
+                        "docker",
+                        "network",
+                        "ls",
+                        "-q",
+                        "--filter",
+                        f"label={_POOL_LABEL}=1",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if proc.returncode == 0:
+                    for net in proc.stdout.splitlines():
+                        net = net.strip()
+                        if net:
+                            try:
+                                logger.info("removing stale sandbox network %s", net)
+                            except Exception:
+                                pass
+                            subprocess.run(
+                                ["docker", "network", "rm", "-f", net],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                check=False,
+                            )
+            except Exception as exc:
+                logger.debug("leftover network cleanup failed: %s", exc)
+
+        _STALE_CONTAINERS_REMOVED += removed_containers
 
 
 def _docker_available() -> bool:
@@ -1090,6 +1120,7 @@ def _ensure_pool_size_async(image: str) -> None:
 
     task = _schedule_coroutine(_worker())
     _WARMUP_TASKS[image] = task
+
 
 async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity`` with retries."""
@@ -1263,8 +1294,7 @@ def collect_metrics(
 ) -> Dict[str, float]:
     """Return metrics about container failures and cleanup."""
     result = {
-        f"container_failures_{img}": float(cnt)
-        for img, cnt in _CREATE_FAILURES.items()
+        f"container_failures_{img}": float(cnt) for img, cnt in _CREATE_FAILURES.items()
     }
     result.update(
         {
@@ -1337,7 +1367,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
             if attempt == retries - 1:
                 logger.error("failed to stop container %s: %s", cid, exc)
             else:
-                time.sleep(base_delay * (2 ** attempt))
+                time.sleep(base_delay * (2**attempt))
     for attempt in range(retries):
         try:
             container.remove(force=True)
@@ -1346,7 +1376,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
             if attempt == retries - 1:
                 logger.error("failed to remove container %s: %s", cid, exc)
             else:
-                time.sleep(base_delay * (2 ** attempt))
+                time.sleep(base_delay * (2**attempt))
 
     exists = False
     if cid:
@@ -1386,16 +1416,20 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 if confirm.returncode == 0 and confirm.stdout.strip():
                     exists = True
             except Exception as exc:
-                logger.debug(
-                    "container existence re-check failed for %s: %s", cid, exc
-                )
+                logger.debug("container existence re-check failed for %s: %s", cid, exc)
         except Exception as exc:
             _CLEANUP_FAILURES += 1
             logger.error("docker rm fallback failed for container %s: %s", cid, exc)
 
     if cid and exists:
         try:
-            subprocess.run(["docker", "kill", cid], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+            subprocess.run(
+                ["docker", "kill", cid],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
             subprocess.run(
                 ["docker", "rm", "-f", cid],
                 stdout=subprocess.PIPE,
@@ -1415,15 +1449,11 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
                 if confirm.returncode == 0 and confirm.stdout.strip():
                     exists = True
             except Exception as exc:
-                logger.debug(
-                    "container existence re-check failed for %s: %s", cid, exc
-                )
+                logger.debug("container existence re-check failed for %s: %s", cid, exc)
             _FORCE_KILLS += 1
         except Exception as exc:
             _CLEANUP_FAILURES += 1
-            logger.error(
-                "docker kill escalation failed for container %s: %s", cid, exc
-            )
+            logger.error("docker kill escalation failed for container %s: %s", cid, exc)
 
     if cid and not exists:
         _remove_active_container(cid)
@@ -1453,7 +1483,9 @@ def _log_pool_metrics(image: str) -> None:
         logger.warning("failed writing pool metrics %s: %s", _POOL_METRICS_FILE, exc)
 
 
-def report_failed_cleanup(threshold: float | None = None, *, alert: bool = False) -> Dict[str, float]:
+def report_failed_cleanup(
+    threshold: float | None = None, *, alert: bool = False
+) -> Dict[str, float]:
     """Return failed cleanup entries older than ``threshold``.
 
     When ``alert`` is ``True``, log errors and send a diagnostic record
@@ -1756,7 +1788,9 @@ def _await_reaper_task() -> None:
 def start_container_event_listener() -> None:
     """Start background thread listening for container exit events."""
     global _EVENT_THREAD, _EVENT_STOP
-    if _DOCKER_CLIENT is None or (_EVENT_THREAD is not None and _EVENT_THREAD.is_alive()):
+    if _DOCKER_CLIENT is None or (
+        _EVENT_THREAD is not None and _EVENT_THREAD.is_alive()
+    ):
         return
     if _EVENT_THREAD is not None and not _EVENT_THREAD.is_alive():
         _EVENT_THREAD = None
@@ -1946,6 +1980,7 @@ def cancel_cleanup_check() -> None:
         _WORKER_CHECK_TIMER.cancel()
         _WORKER_CHECK_TIMER = None
 
+
 import atexit
 
 purge_leftovers()
@@ -1986,7 +2021,6 @@ def register_signal_handlers() -> None:
             logger.exception("signal handler setup failed")
 
 
-
 # ----------------------------------------------------------------------
 async def _execute_in_container(
     code_str: str,
@@ -2018,8 +2052,14 @@ async def _execute_in_container(
             cgroup_path: Path | None = None
             ipr = None
             tc_idx = None
-            if not rlimit_ok and not _psutil_rlimits_supported() and _cgroup_v2_supported():
-                cgroup_path = _create_cgroup(env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
+            if (
+                not rlimit_ok
+                and not _psutil_rlimits_supported()
+                and _cgroup_v2_supported()
+            ):
+                cgroup_path = _create_cgroup(
+                    env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT")
+                )
                 use_cgroup = cgroup_path is not None
             ipr, tc_idx = _setup_tc_netem(env_vars)
 
@@ -2042,7 +2082,9 @@ async def _execute_in_container(
                         logger.warning("failed to set memory limit: %s", exc)
                 if use_cgroup and cgroup_path is not None:
                     try:
-                        with open(cgroup_path / "cgroup.procs", "w", encoding="utf-8") as fh:
+                        with open(
+                            cgroup_path / "cgroup.procs", "w", encoding="utf-8"
+                        ) as fh:
                             fh.write(str(os.getpid()))
                     except Exception as exc:
                         logger.warning("failed to join cgroup: %s", exc)
@@ -2061,7 +2103,9 @@ async def _execute_in_container(
                 )
                 p = psutil.Process(proc.pid) if psutil else None
                 if p and not rlimit_ok:
-                    _apply_psutil_rlimits(p, env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT"))
+                    _apply_psutil_rlimits(
+                        p, env.get("CPU_LIMIT"), env.get("MEMORY_LIMIT")
+                    )
                 out, err = proc.communicate(timeout=int(env.get("TIMEOUT", "30")))
                 stdout_path.write_text(out, encoding="utf-8")
                 stderr_path.write_text(err, encoding="utf-8")
@@ -2209,7 +2253,9 @@ async def _execute_in_container(
                             from docker.types import DeviceRequest
 
                             kwargs["device_requests"] = [
-                                DeviceRequest(count=int(float(gpu)), capabilities=[["gpu"]])
+                                DeviceRequest(
+                                    count=int(float(gpu)), capabilities=[["gpu"]]
+                                )
                             ]
                         except Exception as exc:
                             logger.warning("GPU limit ignored: %s", exc)
@@ -2249,8 +2295,8 @@ async def _execute_in_container(
                     container.remove()
                     _remove_active_container(container.id)
 
-                    blk = (
-                        stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
+                    blk = stats.get("blkio_stats", {}).get(
+                        "io_service_bytes_recursive", []
                     )
                     disk_io = float(sum(x.get("value", 0) for x in blk))
 
@@ -2263,14 +2309,25 @@ async def _execute_in_container(
 
                     net = stats.get("networks", {})
                     net_io = float(
-                        sum(v.get("rx_bytes", 0) + v.get("tx_bytes", 0) for v in net.values())
+                        sum(
+                            v.get("rx_bytes", 0) + v.get("tx_bytes", 0)
+                            for v in net.values()
+                        )
                     )
 
-                    gstats = stats.get("gpu_stats") or stats.get("accelerator_stats") or []
+                    gstats = (
+                        stats.get("gpu_stats") or stats.get("accelerator_stats") or []
+                    )
                     gpu_usage = 0.0
                     if isinstance(gstats, list) and gstats:
                         gpu_usage = float(
-                            sum(float(g.get("utilization_gpu", 0) or g.get("gpu_utilization", 0)) for g in gstats)
+                            sum(
+                                float(
+                                    g.get("utilization_gpu", 0)
+                                    or g.get("gpu_utilization", 0)
+                                )
+                                for g in gstats
+                            )
                         )
 
                     if attempt:
@@ -2300,7 +2357,7 @@ async def _execute_in_container(
                     _log_diagnostic("local_fallback", True)
                     return _execute_locally(error_msg)
                 attempt += 1
-                time.sleep(min(60.0, delay * (2 ** fails)))
+                time.sleep(min(60.0, delay * (2**fails)))
         return _execute_locally(error_msg)
 
     # use legacy container mode when advanced features are requested
@@ -2308,7 +2365,9 @@ async def _execute_in_container(
         mounts
         or not network_disabled
         or workdir
-        or any(k in env for k in ("CPU_LIMIT", "MEMORY_LIMIT", "DISK_LIMIT", "GPU_LIMIT"))
+        or any(
+            k in env for k in ("CPU_LIMIT", "MEMORY_LIMIT", "DISK_LIMIT", "GPU_LIMIT")
+        )
     ):
         return _run_ephemeral()
 
@@ -2344,7 +2403,9 @@ async def _execute_in_container(
                         container.kill()
                     except Exception:
                         logger.exception("container kill failed")
-                    result = type("ExecResult", (), {"exit_code": -1, "output": (b"", b"")})()
+                    result = type(
+                        "ExecResult", (), {"exit_code": -1, "output": (b"", b"")}
+                    )()
 
                 stdout_path = Path(td) / "stdout.log"
                 stderr_path = Path(td) / "stderr.log"
@@ -2358,9 +2419,7 @@ async def _execute_in_container(
 
                 stats = container.stats(stream=False)
 
-            blk = (
-                stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
-            )
+            blk = stats.get("blkio_stats", {}).get("io_service_bytes_recursive", [])
             disk_io = float(sum(x.get("value", 0) for x in blk))
 
             cpu_total = float(
@@ -2377,7 +2436,12 @@ async def _execute_in_container(
             gpu_usage = 0.0
             if isinstance(gstats, list) and gstats:
                 gpu_usage = float(
-                    sum(float(g.get("utilization_gpu", 0) or g.get("gpu_utilization", 0)) for g in gstats)
+                    sum(
+                        float(
+                            g.get("utilization_gpu", 0) or g.get("gpu_utilization", 0)
+                        )
+                        for g in gstats
+                    )
                 )
 
             if attempt:
@@ -2412,7 +2476,7 @@ async def _execute_in_container(
                 _log_diagnostic("local_fallback", True)
                 return _execute_locally(error_msg)
             attempt += 1
-            time.sleep(min(60.0, delay * (2 ** fails)))
+            time.sleep(min(60.0, delay * (2**fails)))
     return _execute_locally(error_msg)
 
 
@@ -2861,9 +2925,16 @@ async def _section_worker(
             _use_netem = False
             _ns_name = None
             _ipr = None
-            if netem_args and IPRoute is not None and NSPopen is not None and netns is not None:
+            if (
+                netem_args
+                and IPRoute is not None
+                and NSPopen is not None
+                and netns is not None
+            ):
                 try:
-                    _ns_name = f"sandbox_{int(time.time() * 1000)}_{random.randint(0, 9999)}"
+                    _ns_name = (
+                        f"sandbox_{int(time.time() * 1000)}_{random.randint(0, 9999)}"
+                    )
                     netns.create(_ns_name)
                     _ipr = IPRoute()
                     _ipr.bind(netns=_ns_name)
@@ -2922,7 +2993,9 @@ async def _section_worker(
                         _execute_in_container(
                             code,
                             env_input,
-                            network_disabled={"network" in modes or "network_partition" in modes},
+                            network_disabled={
+                                "network" in modes or "network_partition" in modes
+                            },
                         )
                     )
                     metrics.update(netem_metrics)
@@ -2977,7 +3050,9 @@ async def _section_worker(
                     )
                 p = psutil.Process(proc.pid) if psutil else None
                 if p:
-                    _apply_psutil_rlimits(p, env_input.get("CPU_LIMIT"), env_input.get("MEMORY_LIMIT"))
+                    _apply_psutil_rlimits(
+                        p, env_input.get("CPU_LIMIT"), env_input.get("MEMORY_LIMIT")
+                    )
                 net_start = psutil.net_io_counters() if psutil else None
                 cpu_lim = (
                     int(float(env_input.get("CPU_LIMIT", 0))) * 10
@@ -3011,7 +3086,9 @@ async def _section_worker(
                                 proc.kill()
                                 break
                     except Exception:
-                        logger.warning("psutil metrics collection failed", exc_info=True)
+                        logger.warning(
+                            "psutil metrics collection failed", exc_info=True
+                        )
                     time.sleep(0.1)
                 out, err = proc.communicate()
                 net_end = psutil.net_io_counters() if psutil else None
@@ -3175,7 +3252,9 @@ async def _section_worker(
             "netem_latency_ms": float(result.get("netem_latency_ms", 0.0)),
             "netem_jitter_ms": float(result.get("netem_jitter_ms", 0.0)),
             "netem_packet_loss": float(result.get("netem_packet_loss", 0.0)),
-            "netem_packet_duplication": float(result.get("netem_packet_duplication", 0.0)),
+            "netem_packet_duplication": float(
+                result.get("netem_packet_duplication", 0.0)
+            ),
         }
         if SANDBOX_EXTRA_METRICS:
             metrics.update(SANDBOX_EXTRA_METRICS)
@@ -3337,7 +3416,9 @@ def aggregate_history_stubs() -> Dict[str, Any]:
     return result
 
 
-def _random_strategy(count: int, conf: Dict[str, Any] | None = None) -> List[Dict[str, Any]]:
+def _random_strategy(
+    count: int, conf: Dict[str, Any] | None = None
+) -> List[Dict[str, Any]]:
     conf = conf or {}
     modes = conf.get("modes", ["default", "alt", "stress"])
     level_range = conf.get("level_range", [1, 5])
@@ -3385,7 +3466,9 @@ def _smart_value(name: str, hint: Any) -> Any:
     return val
 
 
-def _stub_from_signature(func: Callable[..., Any], *, smart: bool = False) -> Dict[str, Any]:
+def _stub_from_signature(
+    func: Callable[..., Any], *, smart: bool = False
+) -> Dict[str, Any]:
     """Return an input stub derived from ``func`` signature."""
     stub: Dict[str, Any] = {}
     try:
@@ -3485,7 +3568,9 @@ def generate_input_stubs(
 
         if stubs is None:
             if target is not None:
-                base = _stub_from_signature(target, smart=strat in {"smart", "synthetic"})
+                base = _stub_from_signature(
+                    target, smart=strat in {"smart", "synthetic"}
+                )
                 stubs = [dict(base) for _ in range(num)]
             else:
                 conf_env = os.getenv("SANDBOX_STUB_RANDOM_CONFIG", "")
@@ -3848,7 +3933,10 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                         _execute_in_container(
                             code,
                             env,
-                            mounts={str(repo_path): container_repo, tmp_dir: sandbox_tmp},
+                            mounts={
+                                str(repo_path): container_repo,
+                                tmp_dir: sandbox_tmp,
+                            },
                             network_disabled=False,
                         )
                     )
@@ -3927,18 +4015,24 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                             break
                         except subprocess.TimeoutExpired:
                             diagnostics["vm_error"] = "timeout"
-                            logger.error("VM execution timed out; cmd: %s", " ".join(cmd))
+                            logger.error(
+                                "VM execution timed out; cmd: %s", " ".join(cmd)
+                            )
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                         except (FileNotFoundError, PermissionError) as exc:
                             diagnostics["vm_error"] = str(exc)
-                            logger.error("VM setup failed: %s; cmd: %s", exc, " ".join(cmd))
+                            logger.error(
+                                "VM setup failed: %s; cmd: %s", exc, " ".join(cmd)
+                            )
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                             break
                         except Exception as exc:
                             diagnostics["vm_error"] = str(exc)
-                            logger.exception("VM execution failed: %s; cmd: %s", exc, " ".join(cmd))
+                            logger.exception(
+                                "VM execution failed: %s; cmd: %s", exc, " ".join(cmd)
+                            )
                             _CREATE_FAILURES["vm"] += 1
                             vm_used = False
                         if vm_used or attempt >= _CREATE_RETRY_LIMIT - 1:
