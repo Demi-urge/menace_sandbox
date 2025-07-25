@@ -419,6 +419,14 @@ FAILED_CLEANUP_FILE = Path(
     )
 )
 
+# file tracking persistent cleanup statistics
+_CLEANUP_STATS_FILE = Path(
+    os.getenv(
+        "SANDBOX_CLEANUP_STATS",
+        str(ROOT / "sandbox_data" / "cleanup_stats.json"),
+    )
+)
+
 # duration after which stray overlay directories are purged
 # defined later once _parse_timespan is available
 _OVERLAY_MAX_AGE = 0.0
@@ -561,6 +569,7 @@ def _record_failed_overlay(path: str) -> None:
         _write_failed_overlays(paths)
     _record_failed_cleanup(path)
     _OVERLAY_CLEANUP_FAILURES += 1
+    _increment_cleanup_stat("overlay_cleanup_failures")
     try:
         from . import metrics_exporter as _me
     except Exception:
@@ -594,6 +603,33 @@ def _write_failed_cleanup(entries: Dict[str, float]) -> None:
         _atomic_write_json(FAILED_CLEANUP_FILE, entries)
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed writing failed cleanup %s: %s", FAILED_CLEANUP_FILE, exc)
+
+
+def _read_cleanup_stats() -> Dict[str, int]:
+    """Return persistent cleanup statistics."""
+    try:
+        if _CLEANUP_STATS_FILE.exists():
+            data = json.loads(_CLEANUP_STATS_FILE.read_text())
+            if isinstance(data, dict):
+                return {str(k): int(v) for k, v in data.items()}
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading cleanup stats %s: %s", _CLEANUP_STATS_FILE, exc)
+    return {}
+
+
+def _write_cleanup_stats(stats: Dict[str, int]) -> None:
+    """Persist cleanup ``stats`` to file."""
+    try:
+        _atomic_write_json(_CLEANUP_STATS_FILE, stats)
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing cleanup stats %s: %s", _CLEANUP_STATS_FILE, exc)
+
+
+def _increment_cleanup_stat(name: str, amount: int = 1) -> None:
+    """Increment persistent cleanup stat ``name`` by ``amount``."""
+    data = _read_cleanup_stats()
+    data[name] = int(data.get(name, 0)) + amount
+    _write_cleanup_stats(data)
 
 
 def _record_failed_cleanup(item: str) -> None:
@@ -815,6 +851,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
         _OVERLAY_CLEANUP_FAILURES += 1
+        _increment_cleanup_stat("overlay_cleanup_failures")
         try:
             from . import metrics_exporter as _me
         except Exception:
@@ -1206,6 +1243,9 @@ def collect_metrics(
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
+    stats = _read_cleanup_stats()
+    for k, v in stats.items():
+        result[f"{k}_total"] = float(v)
 
     try:
         from . import metrics_exporter as _me
@@ -1215,7 +1255,7 @@ def collect_metrics(
         except Exception:
             _me = None  # type: ignore
     if _me is not None:
-        for key in (
+        keys = [
             "cleanup_idle",
             "cleanup_unhealthy",
             "cleanup_lifetime",
@@ -1226,7 +1266,9 @@ def collect_metrics(
             "force_kills",
             "runtime_vms_removed",
             "overlay_cleanup_failures",
-        ):
+        ]
+        keys.extend(f"{k}_total" for k in stats)
+        for key in keys:
             gauge = getattr(_me, key, None)
             if gauge is not None:
                 try:
