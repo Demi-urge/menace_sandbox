@@ -1727,6 +1727,14 @@ def retry_failed_cleanup() -> tuple[int, int]:
             except Exception:
                 logger.exception("failed to increment cleanup_retry_failures")
 
+    stale = report_failed_cleanup(alert=True)
+    if stale:
+        try:
+            logger.warning("persistent cleanup failures: %s", list(stale.keys()))
+        except Exception:
+            pass
+        _log_diagnostic("cleanup_retry_failure", False)
+
     return successes, failures
 
 
