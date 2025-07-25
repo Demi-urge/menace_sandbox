@@ -14,6 +14,7 @@ def test_old_overlay_cleanup(monkeypatch, tmp_path):
     os.utime(overlay_dir, (old, old))
 
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(tmp_path / "overlays.json") + ".lock"))
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
     monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 5.0)

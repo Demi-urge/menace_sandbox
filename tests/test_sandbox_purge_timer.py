@@ -12,7 +12,9 @@ def test_systemd_purge_timer(monkeypatch, tmp_path):
     (overlay_dir / "overlay.qcow2").touch()
 
     monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", containers)
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(containers) + ".lock"))
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", overlays)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(overlays) + ".lock"))
 
     env._write_active_containers(["c1", "c2"])
     env._write_active_overlays([str(overlay_dir)])

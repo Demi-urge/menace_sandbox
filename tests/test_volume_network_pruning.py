@@ -5,8 +5,10 @@ import sandbox_runner.environment as env
 def test_purge_leftovers_prunes_volumes_and_networks(monkeypatch, tmp_path):
     active_containers = tmp_path / "active.json"
     monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", active_containers)
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(active_containers) + ".lock"))
     active_containers.write_text("[]")
     monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(tmp_path / "overlays.json") + ".lock"))
     env._write_active_overlays([])
     monkeypatch.setattr(env, "_purge_stale_vms", lambda: 0)
 
