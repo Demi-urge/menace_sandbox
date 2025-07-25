@@ -154,6 +154,26 @@ def test_cleanup_worker_purges_vms(monkeypatch):
     assert calls and calls[0] is True
     assert env._RUNTIME_VMS_REMOVED >= 1
 
+
+def test_cleanup_worker_calls_retry(monkeypatch):
+    called = []
+
+    async def run_worker():
+        task = asyncio.create_task(env._cleanup_worker())
+        await asyncio.sleep(0.03)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    monkeypatch.setattr(env, "_POOL_CLEANUP_INTERVAL", 0.01)
+    monkeypatch.setattr(env, "retry_failed_cleanup", lambda: called.append(True) or (0, 0))
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: (0, 0))
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
+
+    asyncio.run(run_worker())
+
+    assert called
+
 def test_rmtree_failure_in_idle_cleanup(monkeypatch, tmp_path, caplog):
     dummy = DummyClient()
     monkeypatch.setattr(env, "_DOCKER_CLIENT", dummy)
