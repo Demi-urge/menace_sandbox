@@ -164,3 +164,54 @@ def test_purge_leftovers_metrics(monkeypatch, tmp_path):
     metrics = env.collect_metrics(0.0, 0.0, None)
     assert metrics["stale_containers_removed"] == 1.0
 
+
+def test_metrics_exporter_updates(monkeypatch):
+    _setup(monkeypatch)
+
+    stub = types.ModuleType("metrics_exporter")
+
+    class DummyGauge:
+        def __init__(self):
+            self.value = None
+        def set(self, v):
+            self.value = v
+
+    for name in (
+        "cleanup_idle",
+        "cleanup_unhealthy",
+        "cleanup_lifetime",
+        "cleanup_disk",
+        "stale_containers_removed",
+        "stale_vms_removed",
+        "cleanup_failures",
+        "force_kills",
+        "runtime_vms_removed",
+    ):
+        setattr(stub, name, DummyGauge())
+
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+
+    env._CLEANUP_METRICS.clear()
+    env._CLEANUP_METRICS.update(
+        {"idle": 1, "unhealthy": 2, "lifetime": 3, "disk": 4}
+    )
+    env._STALE_CONTAINERS_REMOVED = 5
+    env._STALE_VMS_REMOVED = 6
+    env._CLEANUP_FAILURES = 7
+    env._FORCE_KILLS = 8
+    env._RUNTIME_VMS_REMOVED = 9
+
+    env.collect_metrics(0.0, 0.0, None)
+
+    assert stub.cleanup_idle.value == 1.0
+    assert stub.cleanup_unhealthy.value == 2.0
+    assert stub.cleanup_lifetime.value == 3.0
+    assert stub.cleanup_disk.value == 4.0
+    assert stub.stale_containers_removed.value == 5.0
+    assert stub.stale_vms_removed.value == 6.0
+    assert stub.cleanup_failures.value == 7.0
+    assert stub.force_kills.value == 8.0
+    assert stub.runtime_vms_removed.value == 9.0
+
+
+

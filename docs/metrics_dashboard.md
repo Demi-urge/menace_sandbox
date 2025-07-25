@@ -17,7 +17,16 @@ start_metrics_server(8001)  # exposes http://localhost:8001
 
 Add the port to your Prometheus `scrape_configs` and the gauges will
 appear under names such as `learning_cv_score` and
-`evolution_cycle_count`. Workflow benchmarking exposes
+`evolution_cycle_count`:
+
+```yaml
+scrape_configs:
+  - job_name: 'menace'
+    static_configs:
+      - targets: ['localhost:8001']
+```
+
+Workflow benchmarking exposes
 `workflow_cpu_time_seconds`, `workflow_memory_usage_mb`,
 `workflow_network_bytes`, latency percentiles and disk I/O gauges for
 real-time dashboards. The median latency is exported via

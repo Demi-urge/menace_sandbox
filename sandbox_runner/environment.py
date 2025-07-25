@@ -906,6 +906,32 @@ def collect_metrics(
     result["cleanup_failures"] = float(_CLEANUP_FAILURES)
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
+
+    try:
+        from . import metrics_exporter as _me
+    except Exception:
+        try:  # pragma: no cover - package may not be available
+            import metrics_exporter as _me  # type: ignore
+        except Exception:
+            _me = None  # type: ignore
+    if _me is not None:
+        for key in (
+            "cleanup_idle",
+            "cleanup_unhealthy",
+            "cleanup_lifetime",
+            "cleanup_disk",
+            "stale_containers_removed",
+            "stale_vms_removed",
+            "cleanup_failures",
+            "force_kills",
+            "runtime_vms_removed",
+        ):
+            gauge = getattr(_me, key, None)
+            if gauge is not None:
+                try:
+                    gauge.set(result.get(key, 0.0))
+                except Exception:  # pragma: no cover - metrics failures
+                    logger.exception("failed to update gauge %s", key)
     return result
 
 
