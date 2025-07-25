@@ -707,6 +707,10 @@ their actions and the counts accumulate in a set of metrics exposed through
 - `runtime_vms_removed` – VM overlays deleted while the sandbox is running.
 - `cleanup_failures` – failed attempts to stop or remove a container.
 - `force_kills` – containers killed via the fallback CLI removal path.
+- `cleanup_duration_seconds_cleanup` and `cleanup_duration_seconds_reaper` –
+  time spent in each cleanup sweep. Monitor these durations with the
+  `cleanup_duration_seconds` Prometheus gauge. Unusually long sweeps may
+  signal blocked disk operations or Docker issues.
 
 Administrators can tune `SANDBOX_OVERLAY_MAX_AGE` to control when leftover overlay directories are deleted. Lower values free disk space sooner at the expense of longer boot times for VMs. Combine this with `SANDBOX_POOL_CLEANUP_INTERVAL` to run cleanup sweeps more often if overlays accumulate. Reducing `SANDBOX_CONTAINER_IDLE_TIMEOUT` or `SANDBOX_CONTAINER_MAX_LIFETIME` further shortens the lifespan of containers and their overlays.
 
@@ -741,16 +745,38 @@ For additional safety you can schedule periodic cleanup with the
 ```
 
 Or use the provided systemd unit files to run the same command on boot
-and then every hour:
+and then every hour. On a systemd-based distribution:
 
-```bash
-sudo cp systemd/sandbox_purge.* /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now sandbox_purge.timer
+1. Copy the service and timer files into `/etc/systemd/system/`:
+   ```bash
+   sudo cp systemd/sandbox_purge.* /etc/systemd/system/
+   ```
+2. Reload the unit definitions so systemd sees them:
+   ```bash
+   sudo systemctl daemon-reload
+   ```
+3. Enable and start the timer:
+   ```bash
+   sudo systemctl enable --now sandbox_purge.timer
+   ```
+4. Verify the timer is active:
+   ```bash
+   systemctl status sandbox_purge.timer
+   ```
+
+These units assume the repository lives at `%h/menace_sandbox`. Adjust
+`WorkingDirectory` in `sandbox_purge.service` if you cloned the repository
+elsewhere. Once enabled the timer will invoke
+`python -m sandbox_runner.cli --purge-stale` every hour.
+
+On Windows you can achieve the same result with Task Scheduler:
+
+```cmd
+schtasks /Create /SC HOURLY /TN SandboxPurge /TR "C:\\Python311\\python.exe -m sandbox_runner.cli --purge-stale" /F
 ```
 
-These units assume the repository lives at `%h/menace_sandbox`. Once enabled
-the timer will invoke `python -m sandbox_runner.cli --purge-stale` every hour.
+Use the Task Scheduler GUI to adjust the Python path or run conditions if
+needed.
 
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
