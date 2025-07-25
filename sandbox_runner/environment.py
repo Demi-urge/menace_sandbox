@@ -379,6 +379,7 @@ _STALE_VMS_REMOVED = 0
 _CLEANUP_FAILURES = 0
 _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
+_OVERLAY_CLEANUP_FAILURES = 0
 
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
@@ -536,10 +537,25 @@ def _write_failed_overlays(paths: List[str]) -> None:
 
 def _record_failed_overlay(path: str) -> None:
     """Record overlay directory ``path`` as failed to delete."""
+    global _OVERLAY_CLEANUP_FAILURES
     paths = _read_failed_overlays()
     if path not in paths:
         paths.append(path)
         _write_failed_overlays(paths)
+    _OVERLAY_CLEANUP_FAILURES += 1
+    try:
+        from . import metrics_exporter as _me
+    except Exception:
+        try:  # pragma: no cover - package may not be available
+            import metrics_exporter as _me  # type: ignore
+        except Exception:
+            _me = None  # type: ignore
+    gauge = getattr(_me, "overlay_cleanup_failures", None) if _me else None
+    if gauge is not None:
+        try:
+            gauge.inc()
+        except Exception:
+            logger.exception("failed to increment overlay_cleanup_failures")
 
 
 def _remove_failed_overlay(path: str) -> None:
@@ -583,7 +599,7 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
 
 def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     """Terminate leftover QEMU processes and remove overlay files."""
-    global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED
+    global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED, _OVERLAY_CLEANUP_FAILURES
     removed_vms = 0
     recorded = _read_active_overlays()
     failed_overlays = _read_failed_overlays()
@@ -736,6 +752,22 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     _record_failed_overlay(str(overlay.parent))
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
+        _OVERLAY_CLEANUP_FAILURES += 1
+        try:
+            from . import metrics_exporter as _me
+        except Exception:
+            try:  # pragma: no cover - package may not be available
+                import metrics_exporter as _me  # type: ignore
+            except Exception:
+                _me = None  # type: ignore
+        gauge = getattr(_me, "overlay_cleanup_failures", None) if _me else None
+        if gauge is not None:
+            try:
+                gauge.inc()
+            except Exception:
+                logger.exception(
+                    "failed to increment overlay_cleanup_failures"
+                )
 
     _STALE_VMS_REMOVED += removed_vms
     if record_runtime:
@@ -1042,6 +1074,7 @@ def collect_metrics(
     result["cleanup_failures"] = float(_CLEANUP_FAILURES)
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
+    result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
 
     try:
         from . import metrics_exporter as _me
@@ -1061,6 +1094,7 @@ def collect_metrics(
             "cleanup_failures",
             "force_kills",
             "runtime_vms_removed",
+            "overlay_cleanup_failures",
         ):
             gauge = getattr(_me, key, None)
             if gauge is not None:
