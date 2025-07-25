@@ -462,6 +462,13 @@ Inspect these files or call ``collect_metrics()`` to review the cleanup
 history; the metrics dashboard exposes the same information for long term
 monitoring.
 
+When the sandbox isn't running you can still purge leftovers with
+``sandbox-runner cleanup`` (``python -m sandbox_runner.cli cleanup``). The
+command acquires ``_PURGE_FILE_LOCK`` then calls ``purge_leftovers()`` followed
+by ``retry_failed_cleanup()``. Schedule it as a cron job or systemd timer so
+stale containers and VM overlays are removed even if the regular cleanup worker
+isn't active.
+
 For a completely autonomous optimisation loop run:
 
 ```
