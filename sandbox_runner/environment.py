@@ -372,6 +372,22 @@ _FAILED_OVERLAYS_FILE = Path(
 )
 
 
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """Write JSON ``data`` to ``path`` atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        delete=False,
+    ) as fh:
+        json.dump(data, fh)
+        fh.flush()
+        os.fsync(fh.fileno())
+        tmp = Path(fh.name)
+    os.replace(tmp, path)
+
+
 def _read_active_containers() -> List[str]:
     """Return list of active container IDs from file."""
     try:
@@ -387,8 +403,7 @@ def _read_active_containers() -> List[str]:
 def _write_active_containers(ids: List[str]) -> None:
     """Persist ``ids`` to the active containers file."""
     try:
-        _ACTIVE_CONTAINERS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _ACTIVE_CONTAINERS_FILE.write_text(json.dumps(ids))
+        _atomic_write_json(_ACTIVE_CONTAINERS_FILE, ids)
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed writing active containers %s: %s", _ACTIVE_CONTAINERS_FILE, exc)
 
@@ -424,8 +439,7 @@ def _read_active_overlays() -> List[str]:
 def _write_active_overlays(paths: List[str]) -> None:
     """Persist ``paths`` to the active overlays file."""
     try:
-        _ACTIVE_OVERLAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _ACTIVE_OVERLAYS_FILE.write_text(json.dumps(paths))
+        _atomic_write_json(_ACTIVE_OVERLAYS_FILE, paths)
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed writing active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc)
 
@@ -463,8 +477,7 @@ def _read_failed_overlays() -> List[str]:
 def _write_failed_overlays(paths: List[str]) -> None:
     """Persist ``paths`` to the failed overlays file."""
     try:
-        _FAILED_OVERLAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _FAILED_OVERLAYS_FILE.write_text(json.dumps(paths))
+        _atomic_write_json(_FAILED_OVERLAYS_FILE, paths)
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning(
             "failed writing failed overlays %s: %s", _FAILED_OVERLAYS_FILE, exc
