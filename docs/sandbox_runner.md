@@ -98,6 +98,8 @@ Network behaviour can be tuned with:
 - `VISUAL_AGENT_TOKEN` – authentication token passed to `menace_visual_agent_2.py`.
 - `SANDBOX_REPO_PATH` – local path of the sandbox repository clone.
 - `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
+- `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
+  `menace_sandbox_pool`).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
