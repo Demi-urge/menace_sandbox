@@ -1,0 +1,11 @@
+[Unit]
+Description=Run sandbox resource cleanup hourly
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Unit=sandbox_purge.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
