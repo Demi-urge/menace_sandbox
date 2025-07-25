@@ -67,6 +67,12 @@ from collections import Counter
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# path to cleanup log file
+_CLEANUP_LOG_PATH = Path(
+    os.getenv("SANDBOX_CLEANUP_LOG", str(ROOT / "sandbox_data" / "cleanup.log"))
+)
+_CLEANUP_LOG_LOCK = threading.Lock()
 POOL_LOCK_FILE = Path(
     os.getenv("SANDBOX_POOL_LOCK", str(ROOT / "sandbox_data" / "pool.lock"))
 )
@@ -735,6 +741,27 @@ def _remove_failed_cleanup(item: str) -> None:
         _write_failed_cleanup(data)
 
 
+def _write_cleanup_log(entry: Dict[str, Any]) -> None:
+    """Append a cleanup log ``entry`` to :data:`_CLEANUP_LOG_PATH`."""
+    try:
+        _CLEANUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _CLEANUP_LOG_LOCK, open(_CLEANUP_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception as exc:  # pragma: no cover - log failures shouldn't crash
+        logger.warning("failed writing cleanup log: %s", exc)
+
+
+def _log_cleanup_event(resource_id: str, reason: str, success: bool) -> None:
+    """Record a container or VM cleanup attempt."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "resource_id": resource_id,
+        "reason": reason,
+        "success": success,
+    }
+    _write_cleanup_log(entry)
+
+
 def _remove_failed_overlay(path: str) -> None:
     """Remove overlay directory ``path`` from the failed overlays file."""
     paths = _read_failed_overlays()
@@ -800,6 +827,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 logger.info("removing recorded overlay dir %s", d)
             except Exception:
                 pass
+            success = True
             try:
                 shutil.rmtree(d)
                 removed_vms += 1
@@ -813,6 +841,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 else:
                     logger.exception("temporary directory removal failed for %s", d)
                     _record_failed_overlay(d)
+                    success = False
+            _log_cleanup_event(str(d), "vm_overlay", success)
         _write_active_overlays([])
     if psutil is not None:
         try:
@@ -833,9 +863,12 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         p.kill()
                         p.wait(timeout=5)
                         removed_vms += 1
+                        _log_cleanup_event(str(p.pid), "vm_process", True)
                     except Exception:
                         logger.exception("failed to terminate qemu %s", p.pid)
+                        _log_cleanup_event(str(p.pid), "vm_process", False)
             for d in tmp_dirs:
+                success = True
                 try:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
@@ -847,6 +880,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     else:
                         logger.exception("temporary directory removal failed for %s", d)
                         _record_failed_overlay(d)
+                        success = False
+                _log_cleanup_event(str(d), "vm_overlay", success)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
     else:  # pragma: no cover - fallback path
@@ -874,14 +909,16 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         if arg.startswith("file="):
                             arg = arg.split("=", 1)[1]
                         tmp_dirs.add(str(Path(arg).parent))
-                subprocess.run(
+                res = subprocess.run(
                     ["kill", "-9", pid],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
                 )
                 removed_vms += 1
+                _log_cleanup_event(str(pid), "vm_process", res.returncode == 0)
             for d in tmp_dirs:
+                success = True
                 try:
                     shutil.rmtree(d)
                     _remove_failed_overlay(d)
@@ -893,6 +930,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     else:
                         logger.exception("temporary directory removal failed for %s", d)
                         _record_failed_overlay(d)
+                        success = False
+                _log_cleanup_event(str(d), "vm_overlay", success)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
 
@@ -908,6 +947,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
             for line in proc.stdout.splitlines():
                 if "SUCCESS:" in line:
                     removed_vms += 1
+                    _log_cleanup_event("windows_qemu", "vm_process", True)
         except Exception as exc:
             logger.debug("taskkill failed: %s", exc)
 
@@ -928,6 +968,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                 logger.info("removing leftover overlay %s", overlay)
             except Exception:
                 pass
+            success = True
             try:
                 overlay.unlink()
                 removed_vms += 1
@@ -935,6 +976,7 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
             except Exception:
                 logger.exception("failed to remove overlay %s", overlay)
                 _record_failed_overlay(str(overlay.parent))
+                success = False
             try:
                 shutil.rmtree(overlay.parent)
                 _remove_failed_overlay(str(overlay.parent))
@@ -948,6 +990,8 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         "temporary directory removal failed for %s", overlay.parent
                     )
                     _record_failed_overlay(str(overlay.parent))
+                    success = False
+            _log_cleanup_event(str(overlay.parent), "vm_overlay", success)
     except Exception as exc:
         logger.debug("overlay cleanup failed: %s", exc)
         _OVERLAY_CLEANUP_FAILURES += 1
@@ -1230,12 +1274,13 @@ def purge_leftovers() -> None:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception:
                             pass
-                        subprocess.run(
+                        proc_rm = subprocess.run(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
                         )
+                        _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
                         _remove_failed_cleanup(cid)
                         removed_containers += 1
         except Exception as exc:
@@ -1273,12 +1318,13 @@ def purge_leftovers() -> None:
                             logger.info("removing stale sandbox container %s", cid)
                         except Exception:
                             pass
-                        subprocess.run(
+                        proc_rm = subprocess.run(
                             ["docker", "rm", "-f", cid],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
                             check=False,
                         )
+                        _log_cleanup_event(cid, "shutdown", proc_rm.returncode == 0)
                         _remove_failed_cleanup(cid)
                         removed_containers += 1
         except Exception as exc:
@@ -1441,7 +1487,8 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
                 with _POOL_LOCK:
                     dir_path = _CONTAINER_DIRS[c.id]
                 return c, dir_path
-            _stop_and_remove(c)
+            success = _stop_and_remove(c)
+            _log_cleanup_event(c.id, "unhealthy", success)
             _CREATE_FAILURES[image] += 1
             with _POOL_LOCK:
                 td = _CONTAINER_DIRS.pop(c.id, None)
@@ -1583,8 +1630,11 @@ async def collect_metrics_async(
     return collect_metrics(prev_roi, roi, resources)
 
 
-def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> None:
-    """Stop and remove ``container`` with retries."""
+def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) -> bool:
+    """Stop and remove ``container`` with retries.
+
+    Returns ``True`` when the container no longer exists after attempts.
+    """
     global _CLEANUP_FAILURES, _FORCE_KILLS
     cid = getattr(container, "id", "")
     for attempt in range(retries):
@@ -1690,6 +1740,7 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
         _CLEANUP_FAILURES += 1
         logger.error("container %s still exists after removal attempts", cid)
         _record_failed_cleanup(cid)
+    return not exists
 
 
 def _log_pool_metrics(image: str) -> None:
@@ -1791,7 +1842,8 @@ def _cleanup_idle_containers() -> tuple[int, int]:
                     actual_pool = _CONTAINER_POOLS.get(image, [])
                     if c in actual_pool:
                         actual_pool.remove(c)
-                _stop_and_remove(c)
+                success = _stop_and_remove(c)
+                _log_cleanup_event(c.id, reason, success)
                 global _STALE_CONTAINERS_REMOVED
                 _STALE_CONTAINERS_REMOVED += 1
                 with _POOL_LOCK:
@@ -1836,7 +1888,8 @@ def _reap_orphan_containers() -> int:
             _verify_container(c)
         except Exception:
             pass
-        _stop_and_remove(c)
+        success = _stop_and_remove(c)
+        _log_cleanup_event(c.id, "orphan", success)
         removed += 1
         with _POOL_LOCK:
             td = _CONTAINER_DIRS.pop(c.id, None)
@@ -2060,7 +2113,8 @@ def _cleanup_pools() -> None:
                 pools_snapshot = [list(pool) for pool in _CONTAINER_POOLS.values()]
             for pool in pools_snapshot:
                 for c in list(pool):
-                    _stop_and_remove(c)
+                    success = _stop_and_remove(c)
+                    _log_cleanup_event(c.id, "shutdown", success)
                     with _POOL_LOCK:
                         td = _CONTAINER_DIRS.pop(c.id, None)
                     if td:
@@ -2190,7 +2244,8 @@ def start_container_event_listener() -> None:
                     if container is None:
                         continue
                     try:
-                        _stop_and_remove(container)
+                        success = _stop_and_remove(container)
+                        _log_cleanup_event(cid, "event", success)
                     except Exception:
                         logger.exception("event cleanup failed for %s", cid)
                     with _POOL_LOCK:
