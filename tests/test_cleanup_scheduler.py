@@ -1,3 +1,4 @@
+import types
 import sandbox_runner.environment as env
 
 
@@ -92,6 +93,45 @@ def test_scheduler_restarts_on_exception(monkeypatch):
 
     assert env._CLEANUP_TASK is not orig_cleanup
     assert env._REAPER_TASK is not orig_reaper
+    assert env._WORKER_CHECK_TIMER is not timer
+
+    env.cancel_cleanup_check()
+
+
+def test_watchdog_restarts_dead_event_thread(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+
+    called = []
+    def fake_start_listener():
+        called.append(True)
+        env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+
+    monkeypatch.setattr(env, "start_container_event_listener", fake_start_listener)
+
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: False)
+    env._CLEANUP_TASK = DummyTask(done=False)
+    env._REAPER_TASK = DummyTask(done=False)
+    env._WATCHDOG_METRICS.clear()
+
+    class FakeTimer:
+        def __init__(self, interval, func):
+            self.func = func
+            self.daemon = True
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr(env.threading, "Timer", FakeTimer)
+
+    env.schedule_cleanup_check(interval=1)
+    timer = env._WORKER_CHECK_TIMER
+    timer.func()
+
+    assert called
+    assert env._WATCHDOG_METRICS.get("event", 0) >= 1
     assert env._WORKER_CHECK_TIMER is not timer
 
     env.cancel_cleanup_check()
