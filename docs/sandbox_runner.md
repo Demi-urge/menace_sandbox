@@ -110,6 +110,8 @@ Network behaviour can be tuned with:
 - `SANDBOX_WORKER_CHECK_INTERVAL` – frequency for verifying cleanup workers (default `30`).
 - `SANDBOX_CONTAINER_IDLE_TIMEOUT` – idle duration before pooled containers are removed (default `300`).
 - `SANDBOX_CONTAINER_MAX_LIFETIME` – maximum age of a pooled container in seconds (default `3600`).
+  Containers created by the sandbox runner that exceed this age are removed on
+  startup even when the pool label is missing.
 - `SANDBOX_CONTAINER_DISK_LIMIT` – size limit for container directories; `0` disables the check.
 - `SANDBOX_CONTAINER_USER` – user specification passed to Docker containers when set.
 
@@ -688,7 +690,9 @@ consistently failing to launch.
 
 When `sandbox_runner.environment` is imported it immediately calls
 `purge_leftovers()` to remove containers and QEMU overlay files that may have
-been left behind by a previous crash.  Once this cross-run sweep has finished
+been left behind by a previous crash.  Containers older than
+`SANDBOX_CONTAINER_MAX_LIFETIME` whose command includes `sandbox_runner.py` are
+also purged even if the pool label is missing.  Once this cross-run sweep has finished
 two background workers are launched.  The regular cleanup worker removes idle or
 unhealthy containers and deletes stale VM overlays while the reaper worker
 collects orphaned containers that were not tracked correctly.  Both workers log
