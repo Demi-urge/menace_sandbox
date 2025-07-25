@@ -329,6 +329,29 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
         _BACKGROUND_THREAD.start()
     return _BACKGROUND_LOOP
 
+def stop_background_loop() -> None:
+    """Stop ``_BACKGROUND_LOOP`` and join ``_BACKGROUND_THREAD``."""
+    global _BACKGROUND_LOOP, _BACKGROUND_THREAD
+    loop = _BACKGROUND_LOOP
+    thread = _BACKGROUND_THREAD
+    if loop is not None:
+        try:
+            loop.call_soon_threadsafe(loop.stop)
+        except Exception:
+            pass
+    if thread is not None:
+        try:
+            thread.join(timeout=1.0)
+        except Exception:
+            pass
+    if loop is not None:
+        try:
+            loop.close()
+        except Exception:
+            pass
+    _BACKGROUND_LOOP = None
+    _BACKGROUND_THREAD = None
+
 def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> Any:
     """Schedule ``coro`` on an available event loop."""
     loop = _get_event_loop()
@@ -1652,6 +1675,7 @@ if _DOCKER_CLIENT is not None:
 
 atexit.register(_release_pool_lock)
 atexit.register(_cleanup_pools)
+atexit.register(stop_background_loop)
 
 
 def register_signal_handlers() -> None:
