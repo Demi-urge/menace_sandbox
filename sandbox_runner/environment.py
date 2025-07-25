@@ -1466,8 +1466,10 @@ def _await_reaper_task() -> None:
 def start_container_event_listener() -> None:
     """Start background thread listening for container exit events."""
     global _EVENT_THREAD, _EVENT_STOP
-    if _DOCKER_CLIENT is None or _EVENT_THREAD is not None:
+    if _DOCKER_CLIENT is None or (_EVENT_THREAD is not None and _EVENT_THREAD.is_alive()):
         return
+    if _EVENT_THREAD is not None and not _EVENT_THREAD.is_alive():
+        _EVENT_THREAD = None
 
     stop_event = threading.Event()
     _EVENT_STOP = stop_event
@@ -1529,6 +1531,8 @@ def start_container_event_listener() -> None:
                 api.close()
             except Exception:
                 pass
+        global _EVENT_THREAD
+        _EVENT_THREAD = None
 
     thread = threading.Thread(
         target=_worker, daemon=True, name="sandbox-event-listener"
@@ -1557,7 +1561,8 @@ def ensure_cleanup_worker() -> None:
     global _CLEANUP_TASK, _REAPER_TASK
     if _DOCKER_CLIENT is None:
         return
-    start_container_event_listener()
+    if _EVENT_THREAD is None or not _EVENT_THREAD.is_alive():
+        start_container_event_listener()
     task = _CLEANUP_TASK
     if task is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
