@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import types
+import sys
 import sandbox_runner.environment as env
 
 class DummyContainer:
@@ -326,3 +327,36 @@ def test_stop_and_remove_force_kills(monkeypatch):
     env._stop_and_remove(c)
     assert env._FORCE_KILLS == 1
     assert called == [c.id]
+
+
+def test_pool_container_disk_limit(monkeypatch, tmp_path):
+    """Verify storage limit option passed to Docker."""
+    kwargs_seen = {}
+
+    class CapContainers(DummyContainers):
+        def run(self, *a, **k):
+            kwargs_seen.update(k)
+            return super().run(*a, **k)
+
+    class CapClient:
+        def __init__(self):
+            self.containers = CapContainers()
+
+    monkeypatch.setenv("SANDBOX_CONTAINER_DISK_LIMIT", "42")
+    monkeypatch.setattr(env, "_CONTAINER_DISK_LIMIT", env._parse_size("42"))
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", CapClient())
+    monkeypatch.setattr(env, "_record_active_container", lambda cid: None)
+
+    async def fake_acquire() -> None:
+        return None
+
+    monkeypatch.setattr(env, "_acquire_pool_lock", fake_acquire)
+    monkeypatch.setattr(env, "_release_pool_lock", lambda: None)
+
+    env._CONTAINER_POOLS.clear()
+    env._CONTAINER_DIRS.clear()
+    env._CONTAINER_LAST_USED.clear()
+    env._WARMUP_TASKS.clear()
+
+    asyncio.run(env._create_pool_container("img"))
+    assert kwargs_seen.get("storage_opt") == {"size": "42"}
