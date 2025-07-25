@@ -291,6 +291,7 @@ _WORKER_CHECK_INTERVAL = float(os.getenv("SANDBOX_WORKER_CHECK_INTERVAL", "30"))
 _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "3600"))
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
+_CONTAINER_USER = os.getenv("SANDBOX_CONTAINER_USER")
 
 # label applied to pooled containers; overridable via SANDBOX_POOL_LABEL
 _POOL_LABEL = os.getenv("SANDBOX_POOL_LABEL", "menace_sandbox_pool")
@@ -454,6 +455,10 @@ _CLEANUP_STATS_FILE = Path(
 # duration after which stray overlay directories are purged
 # defined later once _parse_timespan is available
 _OVERLAY_MAX_AGE = 0.0
+
+# threshold for logging persistent cleanup failures
+# defined later once _parse_timespan is available
+_FAILED_CLEANUP_ALERT_AGE = 0.0
 
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
 _PURGE_FILE_LOCK = FileLock(str(POOL_LOCK_FILE) + ".purge")
@@ -1185,6 +1190,8 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             }
             if _CONTAINER_DISK_LIMIT > 0:
                 run_kwargs["storage_opt"] = {"size": str(_CONTAINER_DISK_LIMIT)}
+            if _CONTAINER_USER:
+                run_kwargs["user"] = _CONTAINER_USER
 
             container = await asyncio.to_thread(
                 _DOCKER_CLIENT.containers.run,
@@ -2409,6 +2416,10 @@ async def _execute_in_container(
                     disk = env.get("DISK_LIMIT")
                     if disk:
                         kwargs["storage_opt"] = {"size": str(disk)}
+
+                    user = os.getenv("SANDBOX_CONTAINER_USER")
+                    if user:
+                        kwargs["user"] = user
 
                     gpu = env.get("GPU_LIMIT")
                     if gpu:

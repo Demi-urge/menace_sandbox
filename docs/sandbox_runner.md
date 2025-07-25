@@ -111,6 +111,7 @@ Network behaviour can be tuned with:
 - `SANDBOX_CONTAINER_IDLE_TIMEOUT` – idle duration before pooled containers are removed (default `300`).
 - `SANDBOX_CONTAINER_MAX_LIFETIME` – maximum age of a pooled container in seconds (default `3600`).
 - `SANDBOX_CONTAINER_DISK_LIMIT` – size limit for container directories; `0` disables the check.
+- `SANDBOX_CONTAINER_USER` – user specification passed to Docker containers when set.
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
