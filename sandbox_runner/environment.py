@@ -751,12 +751,16 @@ def _verify_container(container: Any) -> bool:
 
 async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
-    with _POOL_LOCK:
-        pool = _CONTAINER_POOLS.setdefault(image, [])
-    while pool:
-        c = pool.pop()
+    while True:
         with _POOL_LOCK:
-            _CONTAINER_LAST_USED.pop(c.id, None)
+            pool = _CONTAINER_POOLS.setdefault(image, [])
+            if pool:
+                c = pool.pop()
+                _CONTAINER_LAST_USED.pop(c.id, None)
+            else:
+                c = None
+        if c is None:
+            break
         if _verify_container(c):
             _ensure_pool_size_async(image)
             with _POOL_LOCK:
@@ -993,7 +997,8 @@ def _get_dir_usage(path: str) -> int:
 
 def _check_disk_usage(cid: str) -> bool:
     """Return ``True`` if container directory exceeds ``_CONTAINER_DISK_LIMIT``."""
-    td = _CONTAINER_DIRS.get(cid)
+    with _POOL_LOCK:
+        td = _CONTAINER_DIRS.get(cid)
     if not td:
         return False
     try:
@@ -1015,10 +1020,13 @@ def _cleanup_idle_containers() -> tuple[int, int]:
     cleaned = 0
     replaced = 0
     now = time.time()
-    for image, pool in list(_CONTAINER_POOLS.items()):
+    with _POOL_LOCK:
+        pools_snapshot = {img: list(pool) for img, pool in _CONTAINER_POOLS.items()}
+    for image, pool in pools_snapshot.items():
         for c in list(pool):
-            last = _CONTAINER_LAST_USED.get(c.id, 0)
-            created = _CONTAINER_CREATED.get(c.id, last)
+            with _POOL_LOCK:
+                last = _CONTAINER_LAST_USED.get(c.id, 0)
+                created = _CONTAINER_CREATED.get(c.id, last)
             reason = None
             if _CONTAINER_DISK_LIMIT and _check_disk_usage(c.id):
                 reason = "disk"
@@ -1029,7 +1037,10 @@ def _cleanup_idle_containers() -> tuple[int, int]:
             elif not _verify_container(c):
                 reason = "unhealthy"
             if reason:
-                pool.remove(c)
+                with _POOL_LOCK:
+                    actual_pool = _CONTAINER_POOLS.get(image, [])
+                    if c in actual_pool:
+                        actual_pool.remove(c)
                 _stop_and_remove(c)
                 global _STALE_CONTAINERS_REMOVED
                 _STALE_CONTAINERS_REMOVED += 1
@@ -1065,7 +1076,8 @@ def _reap_orphan_containers() -> int:
     except Exception as exc:  # pragma: no cover - docker may be unavailable
         logger.warning("orphan container listing failed: %s", exc)
         return 0
-    active = {c.id for pool in _CONTAINER_POOLS.values() for c in pool}
+    with _POOL_LOCK:
+        active = {c.id for pool in _CONTAINER_POOLS.values() for c in pool}
     removed = 0
     for c in list(containers):
         if c.id in active:
@@ -1158,7 +1170,9 @@ def _cleanup_pools() -> None:
     _WARMUP_TASKS.clear()
 
     if _DOCKER_CLIENT is not None:
-        for pool in list(_CONTAINER_POOLS.values()):
+        with _POOL_LOCK:
+            pools_snapshot = [list(pool) for pool in _CONTAINER_POOLS.values()]
+        for pool in pools_snapshot:
             for c in list(pool):
                 _stop_and_remove(c)
                 with _POOL_LOCK:
