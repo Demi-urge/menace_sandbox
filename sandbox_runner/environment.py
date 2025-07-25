@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
 from contextlib import asynccontextmanager
+from filelock import FileLock
 
 try:
     from menace.diagnostic_manager import DiagnosticManager, ResolutionRecord
@@ -65,6 +66,7 @@ from collections import Counter
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
+POOL_LOCK_FILE = Path(os.getenv("SANDBOX_POOL_LOCK", str(ROOT / "sandbox_data" / "pool.lock")))
 
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
@@ -371,6 +373,22 @@ _FAILED_OVERLAYS_FILE = Path(
         str(ROOT / "sandbox_data" / "failed_overlays.json"),
     )
 )
+
+_POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
+
+
+def _release_pool_lock() -> None:
+    """Release the pool file lock if held."""
+    try:
+        if _POOL_FILE_LOCK.is_locked:
+            _POOL_FILE_LOCK.release()
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        logger.warning("failed releasing pool lock: %s", exc)
+
+
+async def _acquire_pool_lock() -> None:
+    """Acquire the pool file lock asynchronously."""
+    await asyncio.to_thread(_POOL_FILE_LOCK.acquire)
 
 
 def _atomic_write_json(path: Path, data: Any) -> None:
@@ -749,21 +767,23 @@ def _ensure_pool_size_async(image: str) -> None:
 async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity`` with retries."""
     assert _DOCKER_CLIENT is not None
-    attempt = 0
-    delay = _CREATE_BACKOFF_BASE
-    last_exc: Exception | None = None
-    while attempt < _CREATE_RETRY_LIMIT:
-        fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
-        if attempt or fails >= 3:
-            wait = min(60.0, delay * (2 ** max(attempt, fails)))
-            logger.warning(
-                "container creation backoff %.2fs before attempt %s/%s for %s",
-                wait,
-                attempt + 1,
-                _CREATE_RETRY_LIMIT,
-                image,
-            )
-            await asyncio.sleep(wait)
+    await _acquire_pool_lock()
+    try:
+        attempt = 0
+        delay = _CREATE_BACKOFF_BASE
+        last_exc: Exception | None = None
+        while attempt < _CREATE_RETRY_LIMIT:
+            fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0)
+            if attempt or fails >= 3:
+                wait = min(60.0, delay * (2 ** max(attempt, fails)))
+                logger.warning(
+                    "container creation backoff %.2fs before attempt %s/%s for %s",
+                    wait,
+                    attempt + 1,
+                    _CREATE_RETRY_LIMIT,
+                    image,
+                )
+                await asyncio.sleep(wait)
         td = tempfile.mkdtemp(prefix="pool_")
         try:
             container = await asyncio.to_thread(
@@ -804,8 +824,10 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 )
             _log_pool_metrics(image)
             attempt += 1
-    assert last_exc is not None
-    raise last_exc
+        assert last_exc is not None
+        raise last_exc
+    finally:
+        _release_pool_lock()
 
 
 def _verify_container(container: Any) -> bool:
@@ -826,36 +848,40 @@ def _verify_container(container: Any) -> bool:
 
 async def _get_pooled_container(image: str) -> tuple[Any, str]:
     """Return a container for ``image`` from the pool, creating if needed."""
-    while True:
-        with _POOL_LOCK:
-            pool = _CONTAINER_POOLS.setdefault(image, [])
-            if pool:
-                c = pool.pop()
-                _CONTAINER_LAST_USED.pop(c.id, None)
-            else:
-                c = None
-        if c is None:
-            break
-        if _verify_container(c):
-            _ensure_pool_size_async(image)
+    await _acquire_pool_lock()
+    try:
+        while True:
             with _POOL_LOCK:
-                dir_path = _CONTAINER_DIRS[c.id]
-            return c, dir_path
-        _stop_and_remove(c)
-        _CREATE_FAILURES[image] += 1
-        with _POOL_LOCK:
-            td = _CONTAINER_DIRS.pop(c.id, None)
-        if td:
-            try:
-                shutil.rmtree(td)
-            except Exception:
-                logger.exception("temporary directory removal failed for %s", td)
-        with _POOL_LOCK:
-            _CONTAINER_LAST_USED.pop(c.id, None)
+                pool = _CONTAINER_POOLS.setdefault(image, [])
+                if pool:
+                    c = pool.pop()
+                    _CONTAINER_LAST_USED.pop(c.id, None)
+                else:
+                    c = None
+            if c is None:
+                break
+            if _verify_container(c):
+                _ensure_pool_size_async(image)
+                with _POOL_LOCK:
+                    dir_path = _CONTAINER_DIRS[c.id]
+                return c, dir_path
+            _stop_and_remove(c)
+            _CREATE_FAILURES[image] += 1
+            with _POOL_LOCK:
+                td = _CONTAINER_DIRS.pop(c.id, None)
+            if td:
+                try:
+                    shutil.rmtree(td)
+                except Exception:
+                    logger.exception("temporary directory removal failed for %s", td)
+            with _POOL_LOCK:
+                _CONTAINER_LAST_USED.pop(c.id, None)
+            _ensure_pool_size_async(image)
+        container, td = await _create_pool_container(image)
         _ensure_pool_size_async(image)
-    container, td = await _create_pool_container(image)
-    _ensure_pool_size_async(image)
-    return container, td
+        return container, td
+    finally:
+        _release_pool_lock()
 
 
 @asynccontextmanager
@@ -1261,62 +1287,66 @@ async def _reaper_worker() -> None:
 def _cleanup_pools() -> None:
     """Stop and remove pooled containers and stale ones."""
     global _CLEANUP_TASK, _REAPER_TASK
-    if _CLEANUP_TASK:
-        _await_cleanup_task()
-    if _REAPER_TASK:
-        _await_reaper_task()
-    cancel_cleanup_check()
-    for t in list(_WARMUP_TASKS.values()):
-        t.cancel()
-    _WARMUP_TASKS.clear()
-
-    if _DOCKER_CLIENT is not None:
-        with _POOL_LOCK:
-            pools_snapshot = [list(pool) for pool in _CONTAINER_POOLS.values()]
-        for pool in pools_snapshot:
-            for c in list(pool):
-                _stop_and_remove(c)
-                with _POOL_LOCK:
-                    td = _CONTAINER_DIRS.pop(c.id, None)
-                if td:
-                    try:
-                        shutil.rmtree(td)
-                    except Exception:
-                        logger.exception(
-                            "temporary directory removal failed for %s", td
-                        )
-                with _POOL_LOCK:
-                    _CONTAINER_LAST_USED.pop(c.id, None)
-                    _CONTAINER_CREATED.pop(c.id, None)
-        with _POOL_LOCK:
-            _CONTAINER_POOLS.clear()
-
+    _POOL_FILE_LOCK.acquire()
     try:
-        proc = subprocess.run(
-            ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            for cid in proc.stdout.splitlines():
-                cid = cid.strip()
-                if cid:
-                    try:
-                        logger.info("removing stale sandbox container %s", cid)
-                    except Exception:
-                        pass
-                    subprocess.run(
-                        ["docker", "rm", "-f", cid],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
-        else:
+        if _CLEANUP_TASK:
+            _await_cleanup_task()
+        if _REAPER_TASK:
+            _await_reaper_task()
+        cancel_cleanup_check()
+        for t in list(_WARMUP_TASKS.values()):
+            t.cancel()
+        _WARMUP_TASKS.clear()
+
+        if _DOCKER_CLIENT is not None:
+            with _POOL_LOCK:
+                pools_snapshot = [list(pool) for pool in _CONTAINER_POOLS.values()]
+            for pool in pools_snapshot:
+                for c in list(pool):
+                    _stop_and_remove(c)
+                    with _POOL_LOCK:
+                        td = _CONTAINER_DIRS.pop(c.id, None)
+                    if td:
+                        try:
+                            shutil.rmtree(td)
+                        except Exception:
+                            logger.exception(
+                                "temporary directory removal failed for %s", td
+                            )
+                    with _POOL_LOCK:
+                        _CONTAINER_LAST_USED.pop(c.id, None)
+                        _CONTAINER_CREATED.pop(c.id, None)
+            with _POOL_LOCK:
+                _CONTAINER_POOLS.clear()
+
+        try:
+            proc = subprocess.run(
+                ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                for cid in proc.stdout.splitlines():
+                    cid = cid.strip()
+                    if cid:
+                        try:
+                            logger.info("removing stale sandbox container %s", cid)
+                        except Exception:
+                            pass
+                        subprocess.run(
+                            ["docker", "rm", "-f", cid],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+            else:
+                pass
+        except Exception:
             pass
-    except Exception:
-        pass
+    finally:
+        _release_pool_lock()
 
 
 def _await_cleanup_task() -> None:
@@ -1450,6 +1480,7 @@ if _DOCKER_CLIENT is not None:
     atexit.register(_await_reaper_task)
     atexit.register(cancel_cleanup_check)
 
+atexit.register(_release_pool_lock)
 atexit.register(_cleanup_pools)
 
 
