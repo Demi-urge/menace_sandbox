@@ -1,5 +1,9 @@
+import os
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+
 import json
 import types
+import time
 import sandbox_runner.environment as env
 
 
@@ -58,3 +62,31 @@ def test_retry_failed_cleanup_failure(monkeypatch, tmp_path):
     assert json.loads(stats_file.read_text())["cleanup_retry_failures"] == 2
     metrics = env.collect_metrics(0.0, 0.0, None)
     assert metrics["cleanup_retry_failures_total"] == 2.0
+
+
+def test_retry_failed_cleanup_persistent(monkeypatch, tmp_path, caplog):
+    cid = "c1"
+    file = tmp_path / "failed.json"
+    stats_file = tmp_path / "stats.json"
+    old = time.time() - 120
+    file.write_text(json.dumps({cid: old}))
+    monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
+    monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
+    monkeypatch.setattr(env, "_FAILED_CLEANUP_ALERT_AGE", 60)
+
+    monkeypatch.setattr(env.shutil, "rmtree", lambda p: (_ for _ in ()).throw(OSError("boom")))
+
+    def fail_run(cmd, stdout=None, stderr=None, text=None, check=False):
+        return types.SimpleNamespace(returncode=1, stdout="x", stderr="err")
+
+    monkeypatch.setattr(env.subprocess, "run", fail_run)
+    monkeypatch.setattr(env, "_rmtree_windows", lambda p, attempts=5, base=0.2: False)
+
+    logs = []
+    monkeypatch.setattr(env, "_log_diagnostic", lambda issue, success: logs.append((issue, success)))
+    caplog.set_level("WARNING")
+
+    env.retry_failed_cleanup()
+
+    assert ("cleanup_retry_failure", False) in logs
+    assert "persistent cleanup failures" in caplog.text
