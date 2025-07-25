@@ -1098,6 +1098,8 @@ def purge_leftovers() -> None:
 
         _STALE_CONTAINERS_REMOVED += removed_containers
 
+    report_failed_cleanup(alert=True)
+
 
 def _docker_available() -> bool:
     """Return ``True`` when Docker client is usable."""
@@ -1742,6 +1744,7 @@ async def _cleanup_worker() -> None:
                 total_cleaned += cleaned
                 total_replaced += replaced
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                report_failed_cleanup(alert=True)
                 if cleaned:
                     logger.info(
                         "cleaned %d idle containers (total %d)", cleaned, total_cleaned
