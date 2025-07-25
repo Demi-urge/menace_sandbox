@@ -399,6 +399,8 @@ _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
 _CLEANUP_RETRY_SUCCESSES = 0
 _CLEANUP_RETRY_FAILURES = 0
+_CONSECUTIVE_CLEANUP_FAILURES = 0
+_CLEANUP_ALERT_THRESHOLD = int(os.getenv("SANDBOX_CLEANUP_ALERT_THRESHOLD", "3"))
 _WATCHDOG_METRICS: Counter[str] = Counter()
 _CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
 
@@ -1391,6 +1393,7 @@ def collect_metrics(
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
     result["cleanup_retry_successes"] = float(_CLEANUP_RETRY_SUCCESSES)
     result["cleanup_retry_failures"] = float(_CLEANUP_RETRY_FAILURES)
+    result["consecutive_cleanup_failures"] = float(_CONSECUTIVE_CLEANUP_FAILURES)
     result["cleanup_duration_seconds_cleanup"] = float(_CLEANUP_DURATIONS["cleanup"])
     result["cleanup_duration_seconds_reaper"] = float(_CLEANUP_DURATIONS["reaper"])
     stats = _read_cleanup_stats()
@@ -1791,12 +1794,25 @@ def retry_failed_cleanup() -> tuple[int, int]:
                 logger.exception("failed to increment cleanup_retry_failures")
 
     stale = report_failed_cleanup(alert=True)
+    global _CONSECUTIVE_CLEANUP_FAILURES
     if stale:
         try:
             logger.warning("persistent cleanup failures: %s", list(stale.keys()))
         except Exception:
             pass
         _log_diagnostic("cleanup_retry_failure", False)
+        _CONSECUTIVE_CLEANUP_FAILURES += 1
+        if _CONSECUTIVE_CLEANUP_FAILURES > _CLEANUP_ALERT_THRESHOLD:
+            try:
+                logger.error(
+                    "cleanup retries failing %s times consecutively",
+                    _CONSECUTIVE_CLEANUP_FAILURES,
+                )
+            except Exception:
+                pass
+            _log_diagnostic("persistent_cleanup_failure", False)
+    else:
+        _CONSECUTIVE_CLEANUP_FAILURES = 0
 
     return successes, failures
 
