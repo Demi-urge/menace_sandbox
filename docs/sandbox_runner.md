@@ -114,6 +114,7 @@ Network behaviour can be tuned with:
   startup even when the pool label is missing.
 - `SANDBOX_CONTAINER_DISK_LIMIT` – size limit for container directories; `0` disables the check.
 - `SANDBOX_CONTAINER_USER` – user specification passed to Docker containers when set.
+- `SANDBOX_CLEANUP_ALERT_THRESHOLD` – consecutive failed cleanup retries before an error is logged (default `3`).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
