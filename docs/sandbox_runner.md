@@ -769,14 +769,15 @@ These units assume the repository lives at `%h/menace_sandbox`. Adjust
 elsewhere. Once enabled the timer will invoke
 `python -m sandbox_runner.cli --purge-stale` every hour.
 
-On Windows you can achieve the same result with Task Scheduler:
+On Windows you can achieve the same result with Task Scheduler.  A predefined
+task file is provided at `systemd/windows_sandbox_purge.xml`:
 
 ```cmd
-schtasks /Create /SC HOURLY /TN SandboxPurge /TR "C:\\Python311\\python.exe -m sandbox_runner.cli --purge-stale" /F
+schtasks /Create /TN SandboxPurge /XML systemd\windows_sandbox_purge.xml /F
 ```
 
-Use the Task Scheduler GUI to adjust the Python path or run conditions if
-needed.
+This imports the hourly job.  Use the Task Scheduler GUI to adjust the Python
+path or run conditions if needed.
 
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
