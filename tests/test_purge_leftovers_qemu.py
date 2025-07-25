@@ -20,3 +20,24 @@ def test_purge_leftovers_kills_qemu(monkeypatch, tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def test_purge_leftovers_kills_qemu_subprocess(monkeypatch, tmp_path):
+    script = tmp_path / "qemu-system-x86_64"
+    script.write_text("#!/bin/sh\nsleep \"$1\"\n")
+    script.chmod(0o755)
+    overlay_dir = tmp_path / "left2"
+    overlay_dir.mkdir()
+    overlay = overlay_dir / "overlay.qcow2"
+    overlay.touch()
+    proc = subprocess.Popen([str(script), "60", f"file={overlay}"])
+    monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(env, "psutil", None)
+    try:
+        env.purge_leftovers()
+        assert proc.poll() is not None
+        assert not overlay_dir.exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()

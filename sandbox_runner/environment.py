@@ -425,6 +425,40 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                     logger.exception("temporary directory removal failed for %s", d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
+    else:  # pragma: no cover - fallback path
+        try:
+            tmp_dirs: set[str] = set()
+            proc = subprocess.run(
+                ["pgrep", "-fa", "qemu-system"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            for line in proc.stdout.splitlines():
+                parts = line.strip().split(maxsplit=1)
+                if not parts:
+                    continue
+                pid = parts[0]
+                cmdline = parts[1] if len(parts) > 1 else ""
+                try:
+                    logger.info("terminating stale qemu process %s", pid)
+                except Exception:
+                    pass
+                for arg in cmdline.split():
+                    if "overlay.qcow2" in arg:
+                        if arg.startswith("file="):
+                            arg = arg.split("=", 1)[1]
+                        tmp_dirs.add(str(Path(arg).parent))
+                subprocess.run(["kill", "-9", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                removed_vms += 1
+            for d in tmp_dirs:
+                try:
+                    shutil.rmtree(d, ignore_errors=True)
+                except Exception:
+                    logger.exception("temporary directory removal failed for %s", d)
+        except Exception as exc:
+            logger.debug("qemu process cleanup failed: %s", exc)
 
     tmp_root = Path(tempfile.gettempdir())
     try:
