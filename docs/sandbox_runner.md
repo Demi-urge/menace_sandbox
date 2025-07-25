@@ -739,6 +739,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now sandbox_purge.timer
 ```
 
+These units assume the repository lives at `%h/menace_sandbox`. Once enabled
+the timer will invoke `python -m sandbox_runner.cli --purge-stale` every hour.
+
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
 of cleanup events may indicate resource leaks or overly strict timeouts.  When

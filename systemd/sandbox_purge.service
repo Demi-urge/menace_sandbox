@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/menace
+WorkingDirectory=%h/menace_sandbox
 ExecStart=/usr/bin/python -m sandbox_runner.cli --purge-stale
 
 [Install]
