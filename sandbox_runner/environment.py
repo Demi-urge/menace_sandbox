@@ -381,6 +381,16 @@ _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
 
+# Optional cleanup of sandbox Docker volumes and networks
+_PRUNE_VOLUMES = (
+    str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower()
+    not in {"0", "false", "no", ""}
+)
+_PRUNE_NETWORKS = (
+    str(os.getenv("SANDBOX_PRUNE_NETWORKS", "0")).lower()
+    not in {"0", "false", "no", ""}
+)
+
 _ACTIVE_CONTAINERS_FILE = Path(
     os.getenv(
         "SANDBOX_ACTIVE_CONTAINERS",
@@ -903,6 +913,65 @@ def purge_leftovers() -> None:
         logger.debug("leftover container cleanup failed: %s", exc)
 
     removed_vms = _purge_stale_vms()
+
+    if _PRUNE_VOLUMES:
+        try:
+            proc = subprocess.run(
+                ["docker", "volume", "ls", "-q", "--filter", f"label={_POOL_LABEL}=1"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                for vol in proc.stdout.splitlines():
+                    vol = vol.strip()
+                    if vol:
+                        try:
+                            logger.info("removing stale sandbox volume %s", vol)
+                        except Exception:
+                            pass
+                        subprocess.run(
+                            ["docker", "volume", "rm", "-f", vol],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+        except Exception as exc:
+            logger.debug("leftover volume cleanup failed: %s", exc)
+
+    if _PRUNE_NETWORKS:
+        try:
+            proc = subprocess.run(
+                [
+                    "docker",
+                    "network",
+                    "ls",
+                    "-q",
+                    "--filter",
+                    f"label={_POOL_LABEL}=1",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                for net in proc.stdout.splitlines():
+                    net = net.strip()
+                    if net:
+                        try:
+                            logger.info("removing stale sandbox network %s", net)
+                        except Exception:
+                            pass
+                        subprocess.run(
+                            ["docker", "network", "rm", "-f", net],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+        except Exception as exc:
+            logger.debug("leftover network cleanup failed: %s", exc)
 
     _STALE_CONTAINERS_REMOVED += removed_containers
 
