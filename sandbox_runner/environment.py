@@ -380,6 +380,7 @@ _CLEANUP_FAILURES = 0
 _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
+_WATCHDOG_METRICS: Counter[str] = Counter()
 
 # Optional cleanup of sandbox Docker volumes and networks
 _PRUNE_VOLUMES = (
@@ -1273,6 +1274,7 @@ def collect_metrics(
     )
     result["container_backoff_base"] = float(_CREATE_BACKOFF_BASE)
     result.update({f"cleanup_{k}": float(v) for k, v in _CLEANUP_METRICS.items()})
+    result.update({f"watchdog_{k}": float(v) for k, v in _WATCHDOG_METRICS.items()})
     result["stale_containers_removed"] = float(_STALE_CONTAINERS_REMOVED)
     result["stale_vms_removed"] = float(_STALE_VMS_REMOVED)
     result["cleanup_failures"] = float(_CLEANUP_FAILURES)
@@ -1895,6 +1897,29 @@ def ensure_cleanup_worker() -> None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
 
 
+def watchdog_check() -> None:
+    """Verify background workers are alive and restart if needed."""
+
+    if _DOCKER_CLIENT is None:
+        return
+
+    prev_cleanup = _CLEANUP_TASK
+    prev_reaper = _REAPER_TASK
+    prev_event = _EVENT_THREAD
+
+    ensure_cleanup_worker()
+
+    if prev_cleanup is not _CLEANUP_TASK:
+        logger.warning("cleanup worker restarted by watchdog")
+        _WATCHDOG_METRICS["cleanup"] += 1
+    if prev_reaper is not _REAPER_TASK:
+        logger.warning("reaper worker restarted by watchdog")
+        _WATCHDOG_METRICS["reaper"] += 1
+    if prev_event is not _EVENT_THREAD:
+        logger.warning("event listener restarted by watchdog")
+        _WATCHDOG_METRICS["event"] += 1
+
+
 def schedule_cleanup_check(interval: float = _WORKER_CHECK_INTERVAL) -> None:
     """Periodically call :func:`ensure_cleanup_worker`."""
 
@@ -1902,7 +1927,7 @@ def schedule_cleanup_check(interval: float = _WORKER_CHECK_INTERVAL) -> None:
 
     def _loop() -> None:
         global _WORKER_CHECK_TIMER
-        ensure_cleanup_worker()
+        watchdog_check()
         timer = threading.Timer(interval, _loop)
         timer.daemon = True
         _WORKER_CHECK_TIMER = timer
