@@ -48,3 +48,42 @@ def test_windows_locked_overlay_retry(monkeypatch, tmp_path):
     assert removed >= 1
     assert not overlay_dir.exists()
     assert calls and calls[0] == str(overlay_dir)
+
+
+def test_windows_wmic_process_detection(monkeypatch, tmp_path):
+    overlay_dir = tmp_path / "vm"
+    overlay_dir.mkdir()
+    overlay = overlay_dir / "overlay.qcow2"
+    overlay.touch()
+
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", tmp_path / "overlays.json")
+    monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(env, "psutil", None)
+    monkeypatch.setattr(env, "os", types.SimpleNamespace(name="nt"), raising=False)
+    monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
+
+    wmic_output = (
+        "Node,CommandLine,ProcessId\n"
+        f"PC,qemu-system-x86_64.exe -drive file={overlay},1234\n"
+    )
+
+    calls = []
+
+    def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
+        if "wmic" in cmd:
+            calls.append("wmic")
+            return types.SimpleNamespace(returncode=0, stdout=wmic_output, stderr="")
+        if cmd and cmd[0] == "taskkill" and "/PID" in cmd:
+            calls.append("taskkill")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        if cmd[:2] == ["pgrep", "-fa"]:
+            raise AssertionError("pgrep should not be called")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    removed = env._purge_stale_vms()
+
+    assert removed >= 1
+    assert not overlay_dir.exists()
+    assert "wmic" in calls

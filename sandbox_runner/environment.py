@@ -716,33 +716,80 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
                         _record_failed_overlay(d)
         except Exception as exc:
             logger.debug("qemu process cleanup failed: %s", exc)
-    else:  # pragma: no cover - fallback path
+    else:  # fallback path when psutil is unavailable
         try:
             tmp_dirs: set[str] = set()
-            proc = subprocess.run(
-                ["pgrep", "-fa", "qemu-system"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=False,
-            )
-            for line in proc.stdout.splitlines():
-                parts = line.strip().split(maxsplit=1)
-                if not parts:
-                    continue
-                pid = parts[0]
-                cmdline = parts[1] if len(parts) > 1 else ""
-                try:
-                    logger.info("terminating stale qemu process %s", pid)
-                except Exception:
-                    pass
-                for arg in cmdline.split():
-                    if "overlay.qcow2" in arg:
-                        if arg.startswith("file="):
-                            arg = arg.split("=", 1)[1]
-                        tmp_dirs.add(str(Path(arg).parent))
-                subprocess.run(["kill", "-9", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-                removed_vms += 1
+            if os.name == "nt":
+                import csv
+
+                proc = subprocess.run(
+                    [
+                        "wmic",
+                        "process",
+                        "where",
+                        "name like '%qemu-system%'",
+                        "get",
+                        "ProcessId,CommandLine",
+                        "/FORMAT:csv",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                for row in csv.reader(proc.stdout.splitlines()):
+                    if not row or row[0].lower() == "node" or len(row) < 3:
+                        continue
+                    cmdline = row[1]
+                    pid = row[2]
+                    try:
+                        logger.info("terminating stale qemu process %s", pid)
+                    except Exception:
+                        pass
+                    for arg in cmdline.split():
+                        if "overlay.qcow2" in arg:
+                            arg = arg.strip('"')
+                            if arg.startswith("file="):
+                                arg = arg.split("=", 1)[1]
+                            tmp_dirs.add(str(Path(arg).parent))
+                    subprocess.run(
+                        ["taskkill", "/PID", pid, "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    removed_vms += 1
+            else:
+                proc = subprocess.run(
+                    ["pgrep", "-fa", "qemu-system"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                for line in proc.stdout.splitlines():
+                    parts = line.strip().split(maxsplit=1)
+                    if not parts:
+                        continue
+                    pid = parts[0]
+                    cmdline = parts[1] if len(parts) > 1 else ""
+                    try:
+                        logger.info("terminating stale qemu process %s", pid)
+                    except Exception:
+                        pass
+                    for arg in cmdline.split():
+                        if "overlay.qcow2" in arg:
+                            if arg.startswith("file="):
+                                arg = arg.split("=", 1)[1]
+                            tmp_dirs.add(str(Path(arg).parent))
+                    subprocess.run(
+                        ["kill", "-9", pid],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    removed_vms += 1
+
             for d in tmp_dirs:
                 try:
                     shutil.rmtree(d)
