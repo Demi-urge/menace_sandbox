@@ -357,6 +357,13 @@ _ACTIVE_CONTAINERS_FILE = Path(
     )
 )
 
+_ACTIVE_OVERLAYS_FILE = Path(
+    os.getenv(
+        "SANDBOX_ACTIVE_OVERLAYS",
+        str(ROOT / "sandbox_data" / "active_overlays.json"),
+    )
+)
+
 
 def _read_active_containers() -> List[str]:
     """Return list of active container IDs from file."""
@@ -395,10 +402,60 @@ def _remove_active_container(cid: str) -> None:
         _write_active_containers(ids)
 
 
+def _read_active_overlays() -> List[str]:
+    """Return list of active overlay directories from file."""
+    try:
+        if _ACTIVE_OVERLAYS_FILE.exists():
+            data = json.loads(_ACTIVE_OVERLAYS_FILE.read_text())
+            if isinstance(data, list):
+                return [str(x) for x in data]
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc)
+    return []
+
+
+def _write_active_overlays(paths: List[str]) -> None:
+    """Persist ``paths`` to the active overlays file."""
+    try:
+        _ACTIVE_OVERLAYS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ACTIVE_OVERLAYS_FILE.write_text(json.dumps(paths))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing active overlays %s: %s", _ACTIVE_OVERLAYS_FILE, exc)
+
+
+def _record_active_overlay(path: str) -> None:
+    """Add overlay directory ``path`` to the active overlays file."""
+    paths = _read_active_overlays()
+    if path not in paths:
+        paths.append(path)
+        _write_active_overlays(paths)
+
+
+def _remove_active_overlay(path: str) -> None:
+    """Remove overlay directory ``path`` from the active overlays file."""
+    paths = _read_active_overlays()
+    if path in paths:
+        paths.remove(path)
+        _write_active_overlays(paths)
+
+
 def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     """Terminate leftover QEMU processes and remove overlay files."""
     global _STALE_VMS_REMOVED, _RUNTIME_VMS_REMOVED
     removed_vms = 0
+    recorded = _read_active_overlays()
+    if recorded:
+        for d in recorded:
+            try:
+                logger.info("removing recorded overlay dir %s", d)
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_vms += 1
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", d)
+        _write_active_overlays([])
     if psutil is not None:
         try:
             tmp_dirs: set[str] = set()
@@ -509,6 +566,23 @@ def purge_leftovers() -> None:
             _write_active_containers([])
     except Exception as exc:
         logger.debug("active container cleanup failed: %s", exc)
+
+    # remove any recorded overlay directories first
+    try:
+        overlays = _read_active_overlays()
+        for d in overlays:
+            try:
+                logger.info("removing recorded overlay dir %s", d)
+            except Exception:
+                pass
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except Exception:
+                logger.exception("temporary directory removal failed for %s", d)
+        if overlays:
+            _write_active_overlays([])
+    except Exception as exc:
+        logger.debug("overlay cleanup failed: %s", exc)
 
     try:
         proc = subprocess.run(
@@ -3133,6 +3207,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                 env["SANDBOX_DATA_DIR"] = f"{sandbox_tmp}/data"
 
                 overlay = Path(tmp_dir) / "overlay.qcow2"
+                _record_active_overlay(str(overlay.parent))
                 try:
                     attempt = 0
                     delay = _CREATE_BACKOFF_BASE
@@ -3205,6 +3280,7 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
                         overlay.unlink()
                     except Exception:
                         pass
+                    _remove_active_overlay(str(overlay.parent))
             else:
                 logger.warning("qemu binary or VM image missing, running locally")
                 if not vm:
