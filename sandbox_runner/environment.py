@@ -1046,6 +1046,49 @@ def purge_leftovers() -> None:
         except Exception as exc:
             logger.debug("leftover container cleanup failed: %s", exc)
 
+        try:
+            threshold = time.time() - _CONTAINER_MAX_LIFETIME
+            proc = subprocess.run(
+                [
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--no-trunc",
+                    "--format",
+                    "{{.ID}}\t{{.CreatedAt}}\t{{.Command}}",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                for line in proc.stdout.splitlines():
+                    parts = line.split("\t", 2)
+                    if len(parts) < 3:
+                        continue
+                    cid, created_at, cmd = parts
+                    ts_str = " ".join(created_at.split()[:3])
+                    try:
+                        created_ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S %z").timestamp()
+                    except Exception:
+                        continue
+                    if created_ts <= threshold and "sandbox_runner.py" in cmd:
+                        try:
+                            logger.info("removing stale sandbox container %s", cid)
+                        except Exception:
+                            pass
+                        subprocess.run(
+                            ["docker", "rm", "-f", cid],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                        _remove_failed_cleanup(cid)
+                        removed_containers += 1
+        except Exception as exc:
+            logger.debug("unlabeled container cleanup failed: %s", exc)
+
         removed_vms = _purge_stale_vms()
 
         if _PRUNE_VOLUMES:
