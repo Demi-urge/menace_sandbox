@@ -469,6 +469,19 @@ by ``retry_failed_cleanup()``. Schedule it as a cron job or systemd timer so
 stale containers and VM overlays are removed even if the regular cleanup worker
 isn't active.
 
+To automate this run on a systemd-based distribution copy the supplied service
+and timer files into `/etc/systemd/system/` then enable the timer:
+
+```bash
+sudo cp systemd/cleanup.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cleanup.timer
+```
+
+`cleanup.timer` invokes `python -m sandbox_runner.cli cleanup` once at boot and
+daily thereafter. Adjust `WorkingDirectory` in `cleanup.service` if the project
+resides outside `~/menace_sandbox`.
+
 For a completely autonomous optimisation loop run:
 
 ```

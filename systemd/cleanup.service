@@ -1,0 +1,11 @@
+[Unit]
+Description=Sandbox Runner leftover cleanup
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/menace_sandbox
+ExecStart=/usr/bin/python -m sandbox_runner.cli cleanup
+
+[Install]
+WantedBy=multi-user.target
