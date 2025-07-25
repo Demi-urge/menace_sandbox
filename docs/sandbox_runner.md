@@ -103,6 +103,14 @@ Network behaviour can be tuned with:
 - `SANDBOX_POOL_LOCK` – optional lock file guarding container pool operations.
 - `SANDBOX_OVERLAY_MAX_AGE` – duration after which stray VM overlays are purged
   (default `7d`).
+- `SANDBOX_ACTIVE_CONTAINERS` – file that records running container IDs so stray instances can be purged on startup.
+- `SANDBOX_ACTIVE_OVERLAYS` – JSON file tracking overlay directories currently in use.
+- `SANDBOX_FAILED_OVERLAYS` – stores overlays that failed to delete for later cleanup.
+- `SANDBOX_POOL_CLEANUP_INTERVAL` – seconds between cleanup sweeps (default `60`).
+- `SANDBOX_WORKER_CHECK_INTERVAL` – frequency for verifying cleanup workers (default `30`).
+- `SANDBOX_CONTAINER_IDLE_TIMEOUT` – idle duration before pooled containers are removed (default `300`).
+- `SANDBOX_CONTAINER_MAX_LIFETIME` – maximum age of a pooled container in seconds (default `3600`).
+- `SANDBOX_CONTAINER_DISK_LIMIT` – size limit for container directories; `0` disables the check.
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
@@ -699,6 +707,8 @@ their actions and the counts accumulate in a set of metrics exposed through
 - `runtime_vms_removed` – VM overlays deleted while the sandbox is running.
 - `cleanup_failures` – failed attempts to stop or remove a container.
 - `force_kills` – containers killed via the fallback CLI removal path.
+
+Administrators can tune `SANDBOX_OVERLAY_MAX_AGE` to control when leftover overlay directories are deleted. Lower values free disk space sooner at the expense of longer boot times for VMs. Combine this with `SANDBOX_POOL_CLEANUP_INTERVAL` to run cleanup sweeps more often if overlays accumulate. Reducing `SANDBOX_CONTAINER_IDLE_TIMEOUT` or `SANDBOX_CONTAINER_MAX_LIFETIME` further shortens the lifespan of containers and their overlays.
 
 Additional metrics include `container_failures_<image>` and
 `consecutive_failures_<image>` for each image the pool attempted to create.
