@@ -814,6 +814,20 @@ def run_complete(args: argparse.Namespace) -> None:
         generate_presets = original
 
 
+def cleanup_command() -> None:
+    """Purge stale resources and retry previous cleanup failures."""
+
+    from sandbox_runner.environment import (
+        purge_leftovers,
+        retry_failed_cleanup,
+        _PURGE_FILE_LOCK,
+    )
+
+    purge_leftovers()
+    with _PURGE_FILE_LOCK:
+        retry_failed_cleanup()
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
@@ -903,6 +917,11 @@ def main(argv: List[str] | None = None) -> None:
         help="EMA window for moving average",
     )
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
+
+    sub.add_parser(
+        "cleanup",
+        help="purge leftovers and retry previously failed cleanup",
+    )
 
     p_autorun = sub.add_parser(
         "full-autonomous-run",
@@ -1112,6 +1131,10 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "synergy-metrics":
         synergy_metrics(args.file, window=args.window, plot=getattr(args, "plot", False))
+        return
+
+    if getattr(args, "cmd", None) == "cleanup":
+        cleanup_command()
         return
 
     if getattr(args, "cmd", None) == "full-autonomous-run":
