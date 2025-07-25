@@ -437,6 +437,24 @@ Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry poin
 ``sandbox_runner.environment`` directly, call ``register_signal_handlers()`` to
 clean up pooled containers on ``Ctrl+C`` or ``SIGTERM``.
 
+The environment runs ``purge_leftovers()`` on import which removes any Docker
+containers or QEMU overlay directories left behind by previous crashes. Active
+container IDs and overlay paths are tracked in ``sandbox_data/active_containers.json``
+and ``sandbox_data/active_overlays.json`` and are guarded by file locks
+(``SANDBOX_POOL_LOCK`` and ``*.lock`` files) so concurrent runs do not corrupt
+the records. Two background workers then monitor the pool: a cleanup worker
+that removes idle or unhealthy containers and deletes stale overlays, and a
+reaper worker that collects orphaned containers. ``schedule_cleanup_check()``
+acts as a watchdog, restarting the workers if they exit unexpectedly.
+
+Cleanup events are logged and aggregated metrics are written to
+``sandbox_data/cleanup_stats.json``. Failed container launches are recorded in
+``sandbox_data/pool_failures.json`` while paths that could not be removed are
+stored in ``sandbox_data/failed_cleanup.json`` and ``sandbox_data/failed_overlays.json``.
+Inspect these files or call ``collect_metrics()`` to review the cleanup
+history; the metrics dashboard exposes the same information for long term
+monitoring.
+
 For a completely autonomous optimisation loop run:
 
 ```
