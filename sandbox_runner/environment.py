@@ -761,9 +761,22 @@ def _rmtree_windows(path: str, attempts: int = 5, base: float = 0.2) -> bool:
             text=True,
             check=False,
         )
-        return proc.returncode == 0
+        if proc.returncode == 0:
+            return True
     except Exception as exc:
         logger.debug("rmtree helper failed: %s", exc)
+
+    try:
+        proc = subprocess.run(
+            ["cmd", "/c", "rmdir", "/s", "/q", path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception as exc:  # pragma: no cover - fallback errors rare
+        logger.debug("rmdir fallback failed: %s", exc)
         return False
 
 
