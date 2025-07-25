@@ -299,6 +299,9 @@ _CLEANUP_TASK: Any | None = None
 _REAPER_TASK: Any | None = None
 _WORKER_CHECK_TIMER: threading.Timer | None = None
 
+_EVENT_THREAD: threading.Thread | None = None
+_EVENT_STOP: threading.Event | None = None
+
 _BACKGROUND_LOOP: asyncio.AbstractEventLoop | None = None
 _BACKGROUND_THREAD: threading.Thread | None = None
 
@@ -375,7 +378,8 @@ _FAILED_OVERLAYS_FILE = Path(
 )
 
 # duration after which stray overlay directories are purged
-_OVERLAY_MAX_AGE = _parse_timespan(os.getenv("SANDBOX_OVERLAY_MAX_AGE", "7d"))
+# defined later once _parse_timespan is available
+_OVERLAY_MAX_AGE = 0.0
 
 _POOL_FILE_LOCK = FileLock(str(POOL_LOCK_FILE))
 
@@ -1302,6 +1306,7 @@ def _cleanup_pools() -> None:
     global _CLEANUP_TASK, _REAPER_TASK
     _POOL_FILE_LOCK.acquire()
     try:
+        stop_container_event_listener()
         if _CLEANUP_TASK:
             _await_cleanup_task()
         if _REAPER_TASK:
@@ -1402,11 +1407,101 @@ def _await_reaper_task() -> None:
     _REAPER_TASK = None
 
 
+def start_container_event_listener() -> None:
+    """Start background thread listening for container exit events."""
+    global _EVENT_THREAD, _EVENT_STOP
+    if _DOCKER_CLIENT is None or _EVENT_THREAD is not None:
+        return
+
+    stop_event = threading.Event()
+    _EVENT_STOP = stop_event
+
+    def _worker() -> None:
+        api = None
+        try:
+            api = docker.APIClient() if docker is not None else None
+        except Exception as exc:  # pragma: no cover - docker missing
+            logger.warning("API client init failed: %s", exc)
+            return
+
+        filters = {"label": f"{_POOL_LABEL}=1"}
+        while not stop_event.is_set():
+            try:
+                for ev in api.events(decode=True, filters=filters):
+                    if stop_event.is_set():
+                        break
+                    if not isinstance(ev, dict):
+                        continue
+                    if ev.get("Type") != "container":
+                        continue
+                    action = ev.get("Action") or ev.get("status")
+                    if action not in {"die", "stop", "exit", "died"}:
+                        continue
+                    cid = str(ev.get("id") or ev.get("Actor", {}).get("ID", ""))
+                    if not cid:
+                        continue
+                    try:
+                        container = _DOCKER_CLIENT.containers.get(cid)
+                    except Exception:
+                        container = None
+                    if container is None:
+                        continue
+                    try:
+                        _stop_and_remove(container)
+                    except Exception:
+                        logger.exception("event cleanup failed for %s", cid)
+                    with _POOL_LOCK:
+                        for pool in _CONTAINER_POOLS.values():
+                            if container in pool:
+                                pool.remove(container)
+                        td = _CONTAINER_DIRS.pop(container.id, None)
+                        _CONTAINER_LAST_USED.pop(container.id, None)
+                        _CONTAINER_CREATED.pop(container.id, None)
+                    if td:
+                        try:
+                            shutil.rmtree(td)
+                        except Exception:
+                            logger.exception(
+                                "temporary directory removal failed for %s", td
+                            )
+                    _CLEANUP_METRICS["event"] += 1
+            except Exception as exc:
+                logger.exception("container event listener failed: %s", exc)
+                time.sleep(1.0)
+        if api is not None:
+            try:
+                api.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(
+        target=_worker, daemon=True, name="sandbox-event-listener"
+    )
+    _EVENT_THREAD = thread
+    thread.start()
+
+
+def stop_container_event_listener() -> None:
+    """Stop the background container event listener if running."""
+    global _EVENT_THREAD, _EVENT_STOP
+    if _EVENT_THREAD is None:
+        return
+    if _EVENT_STOP is not None:
+        _EVENT_STOP.set()
+    try:
+        _EVENT_THREAD.join(timeout=1.0)
+    except Exception:
+        pass
+    _EVENT_THREAD = None
+    _EVENT_STOP = None
+
+
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
     global _CLEANUP_TASK, _REAPER_TASK
     if _DOCKER_CLIENT is None:
         return
+    start_container_event_listener()
     task = _CLEANUP_TASK
     if task is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
@@ -1492,6 +1587,7 @@ if _DOCKER_CLIENT is not None:
     atexit.register(_await_cleanup_task)
     atexit.register(_await_reaper_task)
     atexit.register(cancel_cleanup_check)
+    atexit.register(stop_container_event_listener)
 
 atexit.register(_release_pool_lock)
 atexit.register(_cleanup_pools)
@@ -2090,6 +2186,9 @@ def validate_preset(preset: Dict[str, Any]) -> bool:
 
 
 _CONTAINER_DISK_LIMIT = _parse_size(_CONTAINER_DISK_LIMIT_STR)
+
+# finalise overlay age setting now that helper is defined
+_OVERLAY_MAX_AGE = _parse_timespan(os.getenv("SANDBOX_OVERLAY_MAX_AGE", "7d"))
 
 
 def _rlimits_supported() -> bool:
