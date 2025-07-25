@@ -688,6 +688,12 @@ their actions and the counts accumulate in a set of metrics exposed through
   `SANDBOX_CONTAINER_MAX_LIFETIME` seconds.
 - `cleanup_disk` – containers removed because their temporary directory grew
   beyond `SANDBOX_CONTAINER_DISK_LIMIT`.
+- `stale_containers_removed` – stale containers deleted during startup or by the
+  background cleanup worker.
+- `stale_vms_removed` – orphaned VM overlay directories removed.
+- `runtime_vms_removed` – VM overlays deleted while the sandbox is running.
+- `cleanup_failures` – failed attempts to stop or remove a container.
+- `force_kills` – containers killed via the fallback CLI removal path.
 
 Additional metrics include `container_failures_<image>` and
 `consecutive_failures_<image>` for each image the pool attempted to create.

@@ -324,6 +324,35 @@ sandbox_last_failure_ts = Gauge(
     "sandbox_last_failure_ts", "Timestamp of last sandbox failure"
 )
 
+# Gauges for sandbox cleanup statistics
+cleanup_idle = Gauge(
+    "cleanup_idle", "Containers removed after exceeding the idle timeout"
+)
+cleanup_unhealthy = Gauge(
+    "cleanup_unhealthy", "Containers removed due to failed health checks"
+)
+cleanup_lifetime = Gauge(
+    "cleanup_lifetime", "Containers purged for exceeding the maximum lifetime"
+)
+cleanup_disk = Gauge(
+    "cleanup_disk", "Containers removed for exceeding disk usage limits"
+)
+stale_containers_removed = Gauge(
+    "stale_containers_removed", "Containers removed by purge_leftovers or cleanup"
+)
+stale_vms_removed = Gauge(
+    "stale_vms_removed", "VM overlay directories removed during cleanup"
+)
+cleanup_failures = Gauge(
+    "cleanup_failures", "Failed attempts to stop or remove containers"
+)
+force_kills = Gauge(
+    "force_kills", "Containers forcefully terminated via CLI fallback"
+)
+runtime_vms_removed = Gauge(
+    "runtime_vms_removed", "VM overlays deleted while the sandbox is running"
+)
+
 
 _METRICS_SERVER: "HTTPServer" | None = None
 
@@ -380,6 +409,15 @@ __all__ = [
     "visual_agent_queue_depth",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
+    "cleanup_idle",
+    "cleanup_unhealthy",
+    "cleanup_lifetime",
+    "cleanup_disk",
+    "stale_containers_removed",
+    "stale_vms_removed",
+    "cleanup_failures",
+    "force_kills",
+    "runtime_vms_removed",
     "workflow_duration_gauge",
     "workflow_cpu_percent_gauge",
     "workflow_memory_gauge",
