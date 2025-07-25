@@ -1,4 +1,11 @@
 import sandbox_runner.environment as env
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_event_listener(monkeypatch):
+    monkeypatch.setattr(env, "start_container_event_listener", lambda: None)
+    monkeypatch.setattr(env, "stop_container_event_listener", lambda: None)
 
 class DummyTask:
     def __init__(self, done=True, exc=None, cancelled=False):
