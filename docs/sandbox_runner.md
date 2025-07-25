@@ -694,6 +694,12 @@ Additional metrics include `container_failures_<image>` and
 `container_backoff_base` reports the current exponential backoff base used when
 creation repeatedly fails.
 
+`schedule_cleanup_check()` periodically calls `ensure_cleanup_worker` to verify
+that the cleanup and reaper tasks are still running.  The interval is
+controlled by `SANDBOX_WORKER_CHECK_INTERVAL` (default `30` seconds).  If either
+task stopped due to an error or manual cancellation this check automatically
+restarts it so stale resources continue to be collected.
+
 If you embed the sandbox into another application call
 `register_signal_handlers()` after importing the environment.  The installed
 handlers shut down the cleanup workers and remove pooled containers on
@@ -724,8 +730,9 @@ cancelled`; if this appears unexpectedly check for unhandled exceptions.
 
 ### Known Limitations
 
-- The VM cleanup relies on `psutil`; if it is missing only overlay files are
-  removed.
+ - When `psutil` is unavailable the cleanup falls back to using `pgrep` and
+   `kill` to terminate stray QEMU processes. Overlay directories are still
+   removed.
 - Docker must be available for container cleanup to succeed and containers
   started outside the sandbox will not be touched.
 - On platforms that lock open files (e.g. Windows) stale overlay directories may
