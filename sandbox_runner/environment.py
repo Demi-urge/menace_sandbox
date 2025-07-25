@@ -972,6 +972,199 @@ def _purge_stale_vms(*, record_runtime: bool = False) -> int:
     return removed_vms
 
 
+def _prune_volumes() -> int:
+    """Remove Docker volumes created by the sandbox."""
+    if not _PRUNE_VOLUMES:
+        return 0
+    removed = 0
+    labeled: set[str] = set()
+    try:
+        proc = subprocess.run(
+            [
+                "docker",
+                "volume",
+                "ls",
+                "-q",
+                "--filter",
+                f"label={_POOL_LABEL}=1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for vol in proc.stdout.splitlines():
+                vol = vol.strip()
+                if not vol:
+                    continue
+                try:
+                    logger.info("removing stale sandbox volume %s", vol)
+                except Exception:
+                    pass
+                subprocess.run(
+                    ["docker", "volume", "rm", "-f", vol],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                removed += 1
+                labeled.add(vol)
+                _CLEANUP_METRICS["volume"] += 1
+    except Exception as exc:
+        logger.debug("leftover volume cleanup failed: %s", exc)
+
+    threshold = time.time() - _CONTAINER_MAX_LIFETIME
+    try:
+        proc = subprocess.run(
+            ["docker", "volume", "ls", "-q"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for vol in proc.stdout.splitlines():
+                vol = vol.strip()
+                if not vol or vol in labeled:
+                    continue
+                info = subprocess.run(
+                    ["docker", "volume", "inspect", vol],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if info.returncode != 0:
+                    continue
+                try:
+                    data = json.loads(info.stdout)[0]
+                    created = data.get("CreatedAt") or data.get("Created")
+                    labels = data.get("Labels") or {}
+                    if labels.get(_POOL_LABEL) == "1":
+                        continue
+                    created_ts = datetime.fromisoformat(
+                        str(created).replace("Z", "+00:00")
+                    ).timestamp()
+                except Exception:
+                    continue
+                if created_ts <= threshold:
+                    try:
+                        logger.info("removing stale sandbox volume %s", vol)
+                    except Exception:
+                        pass
+                    subprocess.run(
+                        ["docker", "volume", "rm", "-f", vol],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    removed += 1
+                    _CLEANUP_METRICS["volume"] += 1
+    except Exception as exc:
+        logger.debug("unlabeled volume cleanup failed: %s", exc)
+
+    return removed
+
+
+def _prune_networks() -> int:
+    """Remove Docker networks created by the sandbox."""
+    if not _PRUNE_NETWORKS:
+        return 0
+    removed = 0
+    labeled: set[str] = set()
+    try:
+        proc = subprocess.run(
+            [
+                "docker",
+                "network",
+                "ls",
+                "-q",
+                "--filter",
+                f"label={_POOL_LABEL}=1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for net in proc.stdout.splitlines():
+                net = net.strip()
+                if not net:
+                    continue
+                try:
+                    logger.info("removing stale sandbox network %s", net)
+                except Exception:
+                    pass
+                subprocess.run(
+                    ["docker", "network", "rm", "-f", net],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+                removed += 1
+                labeled.add(net)
+                _CLEANUP_METRICS["network"] += 1
+    except Exception as exc:
+        logger.debug("leftover network cleanup failed: %s", exc)
+
+    threshold = time.time() - _CONTAINER_MAX_LIFETIME
+    try:
+        proc = subprocess.run(
+            ["docker", "network", "ls", "-q"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            for net in proc.stdout.splitlines():
+                net = net.strip()
+                if not net or net in labeled:
+                    continue
+                info = subprocess.run(
+                    ["docker", "network", "inspect", net],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    check=False,
+                )
+                if info.returncode != 0:
+                    continue
+                try:
+                    data = json.loads(info.stdout)[0]
+                    created = data.get("Created") or data.get("CreatedAt")
+                    labels = data.get("Labels") or {}
+                    name = data.get("Name")
+                    if name in {"bridge", "host", "none"}:
+                        continue
+                    if labels.get(_POOL_LABEL) == "1":
+                        continue
+                    created_ts = datetime.fromisoformat(
+                        str(created).replace("Z", "+00:00")
+                    ).timestamp()
+                except Exception:
+                    continue
+                if created_ts <= threshold:
+                    try:
+                        logger.info("removing stale sandbox network %s", net)
+                    except Exception:
+                        pass
+                    subprocess.run(
+                        ["docker", "network", "rm", "-f", net],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+                    removed += 1
+                    _CLEANUP_METRICS["network"] += 1
+    except Exception as exc:
+        logger.debug("unlabeled network cleanup failed: %s", exc)
+
+    return removed
+
+
 def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
     global _STALE_CONTAINERS_REMOVED
@@ -1093,71 +1286,8 @@ def purge_leftovers() -> None:
 
         removed_vms = _purge_stale_vms()
 
-        if _PRUNE_VOLUMES:
-            try:
-                proc = subprocess.run(
-                    [
-                        "docker",
-                        "volume",
-                        "ls",
-                        "-q",
-                        "--filter",
-                        f"label={_POOL_LABEL}=1",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
-                if proc.returncode == 0:
-                    for vol in proc.stdout.splitlines():
-                        vol = vol.strip()
-                        if vol:
-                            try:
-                                logger.info("removing stale sandbox volume %s", vol)
-                            except Exception:
-                                pass
-                            subprocess.run(
-                                ["docker", "volume", "rm", "-f", vol],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                            )
-            except Exception as exc:
-                logger.debug("leftover volume cleanup failed: %s", exc)
-
-        if _PRUNE_NETWORKS:
-            try:
-                proc = subprocess.run(
-                    [
-                        "docker",
-                        "network",
-                        "ls",
-                        "-q",
-                        "--filter",
-                        f"label={_POOL_LABEL}=1",
-                    ],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    check=False,
-                )
-                if proc.returncode == 0:
-                    for net in proc.stdout.splitlines():
-                        net = net.strip()
-                        if net:
-                            try:
-                                logger.info("removing stale sandbox network %s", net)
-                            except Exception:
-                                pass
-                            subprocess.run(
-                                ["docker", "network", "rm", "-f", net],
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                check=False,
-                            )
-            except Exception as exc:
-                logger.debug("leftover network cleanup failed: %s", exc)
+        _prune_volumes()
+        _prune_networks()
 
         _STALE_CONTAINERS_REMOVED += removed_containers
 
@@ -1831,6 +1961,8 @@ async def _cleanup_worker() -> None:
                 total_cleaned += cleaned
                 total_replaced += replaced
                 vm_removed = _purge_stale_vms(record_runtime=True)
+                _prune_volumes()
+                _prune_networks()
                 report_failed_cleanup(alert=True)
                 if cleaned:
                     logger.info(
