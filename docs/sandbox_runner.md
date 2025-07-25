@@ -719,8 +719,14 @@ For additional safety you can schedule periodic cleanup with the
 0 * * * * /usr/bin/python -m sandbox_runner.cli --purge-stale
 ```
 
-Or create a `systemd` timer that executes the same command at your preferred
-interval.
+Or use the provided systemd unit files to run the same command on boot
+and then every hour:
+
+```bash
+sudo cp systemd/sandbox_purge.* /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now sandbox_purge.timer
+```
 
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
