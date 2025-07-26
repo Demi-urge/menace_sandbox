@@ -531,12 +531,11 @@ def test_visual_agent_auto_recover(tmp_path):
         proc.kill()
         proc.wait(timeout=5)
 
-    queue_path = tmp_path / "visual_agent_queue.jsonl"
-    state_path = tmp_path / "visual_agent_state.json"
-    before_queue = queue_path.read_text().splitlines()
-    state_before = json.loads(state_path.read_text())
-    assert any(task_id in line for line in before_queue)
-    assert task_id in state_before.get("status", {})
+    db_path = tmp_path / "visual_agent_queue.db"
+    import sqlite3
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+    assert row is not None
 
     env.pop("DISABLE_WORKER")
     env["VISUAL_AGENT_AUTO_RECOVER"] = "1"
@@ -559,7 +558,6 @@ def test_visual_agent_auto_recover(tmp_path):
                     f"http://127.0.0.1:{port}/status/{task_id}", timeout=0.1
                 )
                 if r.status_code == 200:
-                    recovered_status = r.json()["status"]
                     break
             except Exception:
                 pass
@@ -567,9 +565,9 @@ def test_visual_agent_auto_recover(tmp_path):
         else:
             raise RuntimeError("task not recovered")
 
-        after_queue = queue_path.read_text().splitlines()
-        assert before_queue == after_queue
-        assert recovered_status in {"queued", "running", "completed"}
+        with sqlite3.connect(db_path) as conn:
+            status_after = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()[0]
+        assert status_after in {"queued", "running", "completed"}
     finally:
         proc2.terminate()
         proc2.wait(timeout=5)

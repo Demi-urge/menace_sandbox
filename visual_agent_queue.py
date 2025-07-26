@@ -33,10 +33,20 @@ class VisualAgentQueue:
                 )
                 """
             )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS metadata(last_completed REAL)"
+            )
+            if conn.execute("SELECT COUNT(*) FROM metadata").fetchone()[0] == 0:
+                conn.execute("INSERT INTO metadata(last_completed) VALUES(0)")
+
             cols = [row[1] for row in conn.execute("PRAGMA table_info(tasks)")]
             if "qorder" not in cols:
                 conn.execute("ALTER TABLE tasks ADD COLUMN qorder INTEGER")
                 conn.execute("UPDATE tasks SET qorder = rowid WHERE qorder IS NULL")
+            if "status" not in cols:
+                conn.execute("ALTER TABLE tasks ADD COLUMN status TEXT")
+            if "error" not in cols:
+                conn.execute("ALTER TABLE tasks ADD COLUMN error TEXT")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
             )
@@ -54,11 +64,15 @@ class VisualAgentQueue:
             return
 
         job_status: Dict[str, Dict[str, object]] = {}
+        last_completed = 0.0
         if state_path and state_path.exists():
             try:
                 data = json.loads(state_path.read_text())
                 if isinstance(data, dict) and isinstance(data.get("status"), dict):
                     job_status = dict(data["status"])
+                    lc = data.get("last_completed")
+                    if isinstance(lc, (int, float)):
+                        last_completed = float(lc)
             except Exception:
                 pass
 
@@ -113,6 +127,9 @@ class VisualAgentQueue:
                     ),
                 )
                 order += 1
+            conn.execute(
+                "UPDATE metadata SET last_completed=?", (last_completed,)
+            )
             conn.commit()
 
         try:
@@ -210,6 +227,18 @@ class VisualAgentQueue:
         """Mark any ``running`` tasks as ``queued``."""
         with self._lock, sqlite3.connect(self.path) as conn:
             conn.execute("UPDATE tasks SET status='queued' WHERE status='running'")
+            conn.commit()
+
+    def get_last_completed(self) -> float:
+        with self._lock, sqlite3.connect(self.path) as conn:
+            row = conn.execute("SELECT last_completed FROM metadata").fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+            return 0.0
+
+    def set_last_completed(self, ts: float) -> None:
+        with self._lock, sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE metadata SET last_completed=?", (ts,))
             conn.commit()
 
     # ------------------------------------------------------------------

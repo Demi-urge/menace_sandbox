@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+
 import platform
 import hashlib
 import shutil
@@ -20,11 +21,13 @@ import threading
 import uvicorn
 import secrets
 import tempfile
-from lock_utils import _ContextFileLock, LOCK_TIMEOUT, is_lock_stale
+from contextlib import suppress
+from lock_utils import _ContextFileLock, is_lock_stale, Timeout
 import json
 from pathlib import Path
 import atexit
 import psutil
+from visual_agent_queue import VisualAgentQueue
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 _token = os.getenv("VISUAL_AGENT_TOKEN")
@@ -104,7 +107,7 @@ GLOBAL_LOCK_PATH = os.getenv(
 try:
     if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
         os.remove(GLOBAL_LOCK_PATH)
-except Exception as exc:  # pragma: no cover - fs errors
+except Exception:  # pragma: no cover - fs errors
     logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
 
 _global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
@@ -168,41 +171,14 @@ def _cleanup_stale_files() -> None:
         logger.exception("failed to remove pid file %s", path)
 
 # Queue management
-import hashlib
 
+# Database paths
 DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
 QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
-STATE_FILE = DATA_DIR / "visual_agent_state.json"
-HASH_FILE = STATE_FILE.with_suffix(STATE_FILE.suffix + ".sha256")
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
-BACKUP_COUNT = 3
 # When true, queued tasks will be restored from disk on startup.
 AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1"
-
-
-def _rotate_backups(path: Path) -> None:
-    """Rotate backup files for ``path``."""
-    backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
-    for i in range(BACKUP_COUNT - 1, 0, -1):
-        if backups[i - 1].exists():
-            if backups[i].exists():
-                backups[i].unlink()
-            os.replace(backups[i - 1], backups[i])
-    if path.exists():
-        os.replace(path, backups[0])
-
-
-def _atomic_write(path: Path, data: str) -> None:
-    """Atomically write ``data`` to ``path`` with backup rotation."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-        tmp = Path(fh.name)
-    _rotate_backups(path)
-    os.replace(tmp, path)
 
 
 def _log_recovery_metrics(count: int) -> None:
@@ -223,9 +199,7 @@ def _log_recovery_metrics(count: int) -> None:
         logger.warning("failed writing metrics %s: %s", RECOVERY_METRICS_FILE, exc)
 
 
-from visual_agent_queue import VisualAgentQueue
-
-VisualAgentQueue.migrate_from_jsonl(QUEUE_DB, QUEUE_FILE, STATE_FILE)
+VisualAgentQueue.migrate_from_jsonl(QUEUE_DB, QUEUE_FILE)
 task_queue = VisualAgentQueue(QUEUE_DB)
 job_status = {}
 last_completed_ts = 0.0
@@ -234,90 +208,17 @@ _exit_event = threading.Event()
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _save_state_locked() -> None:
-    """Persist queue and status atomically."""
-    global last_completed_ts
-    for tid, info in job_status.items():
-        task_queue.update_status(tid, info.get("status", "queued"), info.get("error"))
-    data = {
-        "last_completed": last_completed_ts,
-    }
-    payload = json.dumps(data)
-    _atomic_write(STATE_FILE, payload)
-    _atomic_write(HASH_FILE, hashlib.sha256(payload.encode("utf-8")).hexdigest())
-
-
-def _recover_queue_file_locked() -> None:
-    """Reset the queue database and state files."""
-    global last_completed_ts
-    for p in (QUEUE_DB, STATE_FILE, HASH_FILE):
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception:
-                pass
-    task_queue.clear()
-    job_status.clear()
-    last_completed_ts = 0.0
-
-
 def _load_state_locked() -> None:
-    if not STATE_FILE.exists():
-        if AUTO_RECOVER_ON_STARTUP:
-            task_queue.reset_running_tasks()
-        job_status.clear()
-        job_status.update(task_queue.get_status())
-        return
-    if not HASH_FILE.exists():
-        try:
-            data_bytes = STATE_FILE.read_bytes()
-            data = json.loads(data_bytes.decode("utf-8"))
-            HASH_FILE.write_text(hashlib.sha256(data_bytes).hexdigest())
-        except Exception:
-            _recover_queue_file_locked()
-            return
-    else:
-        try:
-            expected = HASH_FILE.read_text().strip()
-            data_bytes = STATE_FILE.read_bytes()
-            if hashlib.sha256(data_bytes).hexdigest() != expected:
-                raise ValueError("checksum mismatch")
-            data = json.loads(data_bytes.decode("utf-8"))
-        except Exception:
-            _recover_queue_file_locked()
-            return
-
-    if not isinstance(data, dict):
-        _recover_queue_file_locked()
-        return
-
-    global last_completed_ts
-
-    last_completed = data.get("last_completed")
-    if isinstance(last_completed, (int, float)):
-        last_completed_ts = float(last_completed)
-    else:
-        last_completed_ts = 0.0
     if AUTO_RECOVER_ON_STARTUP:
         task_queue.reset_running_tasks()
+    global last_completed_ts
     job_status.clear()
     job_status.update(task_queue.get_status())
-    _save_state_locked()
+    last_completed_ts = task_queue.get_last_completed()
 
 
 def _persist_state() -> None:
-    try:
-        _global_lock.acquire(timeout=0)
-    except Timeout:
-        return
-    try:
-        with _queue_lock:
-            _save_state_locked()
-    finally:
-        try:
-            _global_lock.release()
-        except Exception as exc:
-            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+    pass
 
 
 def _queue_worker():
@@ -344,7 +245,6 @@ def _queue_worker():
         with _queue_lock:
             job_status[tid]["status"] = "running"
             task_queue.update_status(tid, "running")
-            _save_state_locked()
         try:
             _global_lock.release()
         except Exception as exc:
@@ -368,42 +268,16 @@ def _queue_worker():
             if success:
                 global last_completed_ts
                 last_completed_ts = time.time()
+                task_queue.set_last_completed(last_completed_ts)
 
-        acquired = False
-        while not acquired and not _exit_event.is_set():
-            try:
-                _global_lock.acquire(timeout=0)
-                acquired = True
-            except Timeout:
-                time.sleep(0.01)
-        if acquired:
-            try:
-                with _queue_lock:
-                    if success:
-                        job_status[tid]["status"] = "completed"
-                        job_status[tid].pop("error", None)
-                        task_queue.update_status(tid, "completed")
-                    _save_state_locked()
-            finally:
-                try:
-                    _global_lock.release()
-                except Exception as exc:
-                    logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
-
-        _persist_state()
+        with _queue_lock:
+            if success:
+                job_status[tid]["status"] = "completed"
+                job_status[tid].pop("error", None)
+                task_queue.update_status(tid, "completed")
 
         if _exit_event.is_set():
             break
-
-
-def _autosave_worker() -> None:
-    while not _exit_event.wait(5):
-        if _current_job.get("active") and _current_job.get("id"):
-            tid = _current_job["id"]
-            info = job_status.get(tid)
-            if info:
-                task_queue.update_status(tid, info.get("status", "running"))
-        _persist_state()
 
 
 def _initialize_state() -> None:
@@ -426,16 +300,13 @@ def _initialize_state() -> None:
 
 
 _worker_thread = None
-_autosave_thread = None
 
 def _start_background_threads() -> None:
-    global _worker_thread, _autosave_thread
+    global _worker_thread
     if _worker_thread is not None:
         return
     _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
     _worker_thread.start()
-    _autosave_thread = threading.Thread(target=_autosave_worker, daemon=True)
-    _autosave_thread.start()
 
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
@@ -457,7 +328,7 @@ async def run_task(
             response = {"id": task_id, "status": "queued"}
         else:
             try:
-                _save_state_locked()
+                pass
             finally:
                 try:
                     _global_lock.release()
@@ -819,7 +690,6 @@ async def cancel_task(
                 raise HTTPException(status_code=409, detail="Task already running")
             task_queue.update_status(task_id, "cancelled")
             job_status[task_id]["status"] = "cancelled"
-            _save_state_locked()
             return {"id": task_id, "status": "cancelled"}
         finally:
             try:
@@ -868,7 +738,7 @@ async def flush_queue(
     try:
         task_queue.clear()
         job_status.clear()
-        for p in (QUEUE_DB, QUEUE_FILE, STATE_FILE, HASH_FILE):
+        for p in (QUEUE_DB, QUEUE_FILE):
             if p.exists():
                 try:
                     p.unlink()
@@ -939,7 +809,7 @@ if __name__ == "__main__":
         try:
             task_queue.clear()
             job_status.clear()
-            for p in (QUEUE_DB, QUEUE_FILE, STATE_FILE, HASH_FILE):
+            for p in (QUEUE_DB, QUEUE_FILE):
                 if p.exists():
                     try:
                         p.unlink()
@@ -962,7 +832,13 @@ if __name__ == "__main__":
         try:
             task_queue.clear()
             job_status.clear()
-            _load_state_locked()
+            if QUEUE_DB.exists():
+                QUEUE_DB.unlink()
+            VisualAgentQueue.migrate_from_jsonl(QUEUE_DB, QUEUE_FILE)
+            task_queue._init_db()
+            job_status.update(task_queue.get_status())
+            global last_completed_ts
+            last_completed_ts = task_queue.get_last_completed()
         finally:
             try:
                 _global_lock.release()
@@ -982,7 +858,6 @@ if __name__ == "__main__":
                 task_queue.reset_running_tasks()
                 job_status.clear()
                 job_status.update(task_queue.get_status())
-                _save_state_locked()
         finally:
             try:
                 _global_lock.release()
@@ -1005,8 +880,6 @@ if __name__ == "__main__":
         _exit_event.set()
         if _worker_thread:
             _worker_thread.join()
-        if _autosave_thread:
-            _autosave_thread.join()
         sys.exit(0)
 
     if args.auto_recover:
@@ -1042,5 +915,3 @@ if __name__ == "__main__":
     _exit_event.set()
     if _worker_thread:
         _worker_thread.join()
-    if _autosave_thread:
-        _autosave_thread.join()
