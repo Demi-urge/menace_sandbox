@@ -131,3 +131,23 @@ dispatcher writes to the configured audit trail or Kafka topic in addition to
 standard output. When running `run_autonomous.py` or `synergy_tools.py` the
 variable defaults to `1`, so disable it explicitly with `SANDBOX_CENTRAL_LOGGING=0`
 if forwarding is not desired.
+
+## Metrics Dashboard
+
+`metrics_dashboard.MetricsDashboard` exposes a simple JSON API with the latest
+gauge values. The endpoint `/metrics` now includes container creation and
+synergy training gauges alongside ROI metrics:
+
+* `container_creation_success_total`
+* `container_creation_failures_total`
+* `container_creation_alerts_total`
+* `synergy_trainer_iterations`
+* `synergy_trainer_failures_total`
+* `synergy_weight_update_failures_total`
+
+Start the dashboard and query the metrics:
+
+```bash
+python -m menace.metrics_dashboard --port 8002
+curl http://localhost:8002/metrics
+```

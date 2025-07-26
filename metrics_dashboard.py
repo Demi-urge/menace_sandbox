@@ -35,20 +35,47 @@ class MetricsDashboard:
     # ------------------------------------------------------------------
     def metrics(self) -> tuple[str, int]:
         metrics = {}
-        for name in (
+
+        def _get_value(gauge: object) -> float:
+            try:
+                return gauge._value.get()  # type: ignore[attr-defined]
+            except Exception:
+                try:
+                    wrappers = getattr(gauge, "_values", {})
+                    return float(sum(w.get() for w in wrappers.values()))
+                except Exception:
+                    return 0.0
+
+        names = (
             "learning_cv_score",
             "learning_holdout_score",
             "evolution_cycle_count",
             "experiment_best_roi",
             "visual_agent_wait_time",
             "visual_agent_queue_depth",
-        ):
+            "container_creation_success_total",
+            "container_creation_failures_total",
+            "container_creation_alerts_total",
+            "synergy_weight_update_failures_total",
+        )
+        for name in names:
             gauge = getattr(metrics_exporter, name, None)
             if gauge is not None:
-                try:
-                    metrics[name] = gauge._value.get()  # type: ignore[attr-defined]
-                except Exception:
-                    metrics[name] = 0.0
+                metrics[name] = _get_value(gauge)
+
+        try:
+            from . import synergy_auto_trainer as sat
+
+            for name in (
+                "synergy_trainer_iterations",
+                "synergy_trainer_failures_total",
+            ):
+                gauge = getattr(sat, name, None)
+                if gauge is not None:
+                    metrics[name] = _get_value(gauge)
+        except Exception:
+            pass
+
         return jsonify(metrics), 200
 
     # ------------------------------------------------------------------
