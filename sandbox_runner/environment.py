@@ -2379,6 +2379,17 @@ def _cleanup_pools() -> None:
             with _POOL_LOCK:
                 _CONTAINER_POOLS.clear()
 
+            vm_removed = _purge_stale_vms(record_runtime=True)
+            if vm_removed:
+                try:
+                    logger.info(
+                        "removed %d stale VM files (total %d)",
+                        vm_removed,
+                        _RUNTIME_VMS_REMOVED,
+                    )
+                except Exception:
+                    pass
+
         try:
             proc = subprocess.run(
                 ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],

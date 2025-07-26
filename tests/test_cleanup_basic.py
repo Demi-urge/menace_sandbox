@@ -40,6 +40,7 @@ def test_sigterm_triggers_cleanup(monkeypatch, tmp_path):
         orig()
     monkeypatch.setattr(env, "_cleanup_pools", cleanup_wrapper)
     monkeypatch.setattr(env.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=""))
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     monkeypatch.setattr(sys, "exit", lambda code=0: (_ for _ in ()).throw(SystemExit(code)))
 
     def handler(signum, frame):
@@ -78,5 +79,6 @@ def test_stale_containers_removed(monkeypatch):
             return types.SimpleNamespace(returncode=0, stdout="")
         return types.SimpleNamespace(returncode=0, stdout="")
     monkeypatch.setattr(env.subprocess, "run", fake_run)
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     env._cleanup_pools()
     assert removed == ["abc"]

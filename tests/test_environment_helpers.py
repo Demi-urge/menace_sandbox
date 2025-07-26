@@ -331,6 +331,13 @@ def _stub_docker_logs(holder):
     dummy = types.ModuleType("docker")
     dummy.from_env = lambda: DummyClient()
     dummy.types = types
+    err_mod = types.ModuleType("docker.errors")
+    class DummyErr(Exception):
+        pass
+    err_mod.DockerException = DummyErr
+    err_mod.APIError = DummyErr
+    dummy.errors = err_mod
+    sys.modules["docker.errors"] = err_mod
     sys.modules["docker"] = dummy
 
 
@@ -338,6 +345,7 @@ def test_execute_in_container_logs_created(monkeypatch):
     calls = []
     _stub_docker_logs(calls)
     monkeypatch.setattr(env, "_DOCKER_CLIENT", None)
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     env._CONTAINER_POOLS.clear()
     env._CONTAINER_DIRS.clear()
     env._CONTAINER_LAST_USED.clear()

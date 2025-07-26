@@ -220,6 +220,7 @@ def test_rmtree_failure_in_pool_cleanup(monkeypatch, tmp_path, caplog):
         orig_rmtree(path)
         raise RuntimeError("boom")
     monkeypatch.setattr(env.shutil, "rmtree", failing)
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     caplog.set_level("ERROR")
     env._cleanup_pools()
     assert not td.exists()
