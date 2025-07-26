@@ -3,11 +3,14 @@ from __future__ import annotations
 """Periodic self-improvement engine for the Menace system."""
 
 import logging
-from .logging_utils import log_record
+from .logging_utils import log_record, get_logger, setup_logging
 import time
 import threading
 import asyncio
 import os
+
+if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+    setup_logging()
 from sandbox_settings import SandboxSettings
 from .metrics_exporter import (
     synergy_weight_updates_total,
@@ -24,7 +27,7 @@ import numpy as np
 import socket
 import contextlib
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
 
@@ -583,7 +586,7 @@ class SelfImprovementEngine:
 
         self.module_index = module_index or ModuleIndexDB()
         logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("SelfImprovementEngine")
+        self.logger = get_logger("SelfImprovementEngine")
         self._score_backend: PatchScoreBackend | None = None
         if score_backend is not None:
             self._score_backend = score_backend
@@ -1870,7 +1873,7 @@ class SynergyDashboard:
     ) -> None:
         from flask import Flask, jsonify  # type: ignore
 
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = get_logger(self.__class__.__name__)
         self.history_file = Path(history_file)
         self.ma_window = ma_window
         self.exporter_host = exporter_host

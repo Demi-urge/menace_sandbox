@@ -5,6 +5,13 @@ import asyncio
 import json
 import os
 import sys
+
+if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+    from logging_utils import setup_logging
+
+    setup_logging()
+
+from logging_utils import get_logger
 import re
 
 try:
@@ -40,7 +47,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 try:  # pragma: no cover - optional dependency
     from pyroute2 import IPRoute, NSPopen, netns
