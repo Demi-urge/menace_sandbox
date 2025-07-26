@@ -674,3 +674,48 @@ def test_cli_failure_updates_metric(monkeypatch, tmp_path: Path) -> None:
 
     assert rc == 2
     assert sat.synergy_trainer_failures_total._value.get() == 1.0
+
+
+def test_alert_on_single_failure(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "hf.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 1.0}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    alerts: list[tuple] = []
+
+    def bad_train(_hist, _path):
+        raise RuntimeError("boom")
+
+    def fake_alert(*a, **k):
+        alerts.append((a, k))
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", bad_train)
+    monkeypatch.setattr(sat, "dispatch_alert", fake_alert)
+    sat.synergy_weight_update_failures_total.set(0.0)
+    sat.synergy_weight_update_alerts_total.set(0.0)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=tmp_path / "progress.json",
+    )
+
+    trainer._train_once()
+
+    assert len(alerts) == 1
+    assert sat.synergy_weight_update_failures_total._value.get() == 1.0
+    assert sat.synergy_weight_update_alerts_total._value.get() == 1.0
