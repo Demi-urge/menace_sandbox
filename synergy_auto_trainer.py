@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import tempfile
 import threading
 from pathlib import Path
 import time
@@ -110,51 +109,28 @@ class SynergyAutoTrainer:
             synergy_trainer_iterations.inc()
         except Exception:
             pass
-        tmp = tempfile.NamedTemporaryFile("w", delete=False)
+        lock = FileLock(str(self.weights_file) + ".lock")
+        success = False
         try:
-            json.dump([h[1] for h in hist], tmp)
-            tmp.close()
-            rc = 0
-            lock = FileLock(str(self.weights_file) + ".lock")
-            try:
-                with lock:
-                    rc = synergy_weight_cli.cli([
-                        "--path",
-                        str(self.weights_file),
-                        "train",
-                        tmp.name,
-                    ])
-            except SystemExit as exc:
-                rc = int(getattr(exc, "code", 1) or 0)
-                self.logger.info("synergy_weight_cli requested exit (%s)", rc)
-            except Exception as exc:  # pragma: no cover - runtime issues
-                rc = 1
-                self.logger.warning("synergy_weight_cli failed: %s", exc)
-            else:
-                if rc != 0:
-                    self.logger.error(
-                        "synergy_weight_cli returned non-zero exit code %s", rc
-                    )
-                    raise SynergyWeightCliError(rc)
-            finally:
+            with lock:
+                synergy_weight_cli.train_from_history(
+                    [h[1] for h in hist], self.weights_file
+                )
+            success = True
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.warning("synergy_weight_cli failed: %s", exc)
+        finally:
+            if success:
                 self._last_id = hist[-1][0]
                 try:
                     synergy_trainer_last_id.set(float(self._last_id))
                 except Exception:
                     pass
-        except Exception as exc:  # pragma: no cover - runtime issues
-            self.logger.exception("training failed: %s", exc)
-            raise
-        finally:
             try:
                 self.progress_file.parent.mkdir(parents=True, exist_ok=True)
                 self.progress_file.write_text(json.dumps({"last_id": self._last_id}))
             except Exception as exc:
                 self.logger.exception("failed to update progress: %s", exc)
-            try:
-                os.unlink(tmp.name)
-            except Exception as exc:
-                self.logger.warning("failed to remove temp file %s: %s", tmp.name, exc)
 
     # --------------------------------------------------------------
     def _loop(self) -> None:

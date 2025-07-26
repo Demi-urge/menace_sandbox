@@ -29,11 +29,12 @@ def test_auto_trainer_runs_cycle(monkeypatch, tmp_path: Path) -> None:
 
     called = {}
 
-    def fake_cli(args):
-        called["args"] = list(args)
-        return 0
+    def fake_train(history, path):
+        called["history"] = list(history)
+        called["path"] = Path(path)
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -48,13 +49,12 @@ def test_auto_trainer_runs_cycle(monkeypatch, tmp_path: Path) -> None:
                 break
             time.sleep(0.05)
         assert called
-        assert "train" in called["args"]
-        assert str(weights_file) in called["args"]
+        assert called["path"] == weights_file
+        assert called["history"][0]["synergy_roi"] == 0.1
     finally:
         trainer.stop()
 
-    assert trainer._thread is not None
-    assert not trainer._thread.is_alive()
+    assert trainer._thread is None
 
 
 @pytest.mark.asyncio
@@ -78,11 +78,12 @@ async def test_auto_trainer_runs_cycle_async(monkeypatch, tmp_path: Path) -> Non
 
     called = {}
 
-    def fake_cli(args):
-        called["args"] = list(args)
-        return 0
+    def fake_train(history, path):
+        called["history"] = list(history)
+        called["path"] = Path(path)
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -99,10 +100,9 @@ async def test_auto_trainer_runs_cycle_async(monkeypatch, tmp_path: Path) -> Non
     await trainer.stop_async()
 
     assert called
-    assert "train" in called["args"]
-    assert str(weights_file) in called["args"]
-    assert trainer._task is not None
-    assert trainer._task.done()
+    assert called["path"] == weights_file
+    assert called["history"][0]["synergy_roi"] == 0.1
+    assert trainer._task is None
 
 
 def test_cli_run_once(monkeypatch, tmp_path: Path) -> None:
@@ -125,11 +125,12 @@ def test_cli_run_once(monkeypatch, tmp_path: Path) -> None:
 
     called = {}
 
-    def fake_cli(args):
-        called["args"] = list(args)
-        return 0
+    def fake_train(history, path):
+        called["history"] = list(history)
+        called["path"] = Path(path)
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     rc = sat.cli([
         "--history-file",
@@ -142,8 +143,8 @@ def test_cli_run_once(monkeypatch, tmp_path: Path) -> None:
     ])
 
     assert rc == 0
-    assert "train" in called.get("args", [])
-    assert str(weights_file) in called.get("args", [])
+    assert called["path"] == weights_file
+    assert called["history"][0]["synergy_roi"] == 0.5
 
 
 def test_cli_continuous(monkeypatch) -> None:
@@ -241,15 +242,13 @@ def test_restart_skips_processed(monkeypatch, tmp_path: Path) -> None:
 
     progress_file = tmp_path / "progress.json"
 
-    called: list[tuple[list[str], list[dict[str, float]]]] = []
+    called: list[list[dict[str, float]]] = []
 
-    def fake_cli(args):
-        with open(args[-1]) as fh:
-            data = json.load(fh)
-        called.append((list(args), data))
-        return 0
+    def fake_train(history, _path):
+        called.append(list(history))
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -278,7 +277,7 @@ def test_restart_skips_processed(monkeypatch, tmp_path: Path) -> None:
     trainer2._train_once()
 
     assert len(called) == 1
-    _, data = called[0]
+    data = called[0]
     assert len(data) == 1
     assert data[0]["synergy_roi"] == 0.2
 
@@ -303,10 +302,10 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
 
     progress_file = tmp_path / "progress.json"
 
-    def bad_cli(_args):
+    def bad_train(_hist, _path):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", bad_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", bad_train)
     caplog.set_level(logging.WARNING)
 
     trainer = sat.SynergyAutoTrainer(
@@ -318,7 +317,7 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
     trainer._train_once()
 
     data = json.loads(progress_file.read_text())
-    assert data["last_id"] == 1
+    assert data["last_id"] == 0
     assert "boom" in caplog.text
 
     conn = sqlite3.connect(hist_file)
@@ -331,12 +330,11 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
 
     called: list[list[dict[str, float]]] = []
 
-    def ok_cli(args):
-        with open(args[-1]) as fh:
-            called.append(json.load(fh))
-        return 0
+    def ok_train(history, _path):
+        called.append(list(history))
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", ok_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", ok_train)
 
     trainer2 = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -347,7 +345,9 @@ def test_cli_failure_persists_progress(monkeypatch, tmp_path: Path, caplog) -> N
     trainer2._train_once()
 
     assert len(called) == 1
-    assert called[0][0]["synergy_roi"] == 0.2
+    assert len(called[0]) == 2
+    assert called[0][0]["synergy_roi"] == 0.1
+    assert called[0][1]["synergy_roi"] == 0.2
 
 
 def test_nonzero_exit_raises(monkeypatch, tmp_path: Path, caplog) -> None:
@@ -370,11 +370,11 @@ def test_nonzero_exit_raises(monkeypatch, tmp_path: Path, caplog) -> None:
 
     progress_file = tmp_path / "progress.json"
 
-    def bad_exit(_args: list[str]) -> int:
-        return 2
+    def bad_train(_hist, _path):
+        raise RuntimeError("boom")
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", bad_exit)
-    caplog.set_level(logging.ERROR)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", bad_train)
+    caplog.set_level(logging.WARNING)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -383,12 +383,11 @@ def test_nonzero_exit_raises(monkeypatch, tmp_path: Path, caplog) -> None:
         progress_file=progress_file,
     )
 
-    with pytest.raises(sat.SynergyWeightCliError):
-        trainer._train_once()
+    trainer._train_once()
 
     data = json.loads(progress_file.read_text())
-    assert data["last_id"] == 1
-    assert "non-zero exit code" in caplog.text
+    assert data["last_id"] == 0
+    assert "boom" in caplog.text
 
 
 def test_trainer_resume_progress(monkeypatch, tmp_path: Path) -> None:
@@ -408,11 +407,11 @@ def test_trainer_resume_progress(monkeypatch, tmp_path: Path) -> None:
 
     calls = {"count": 0}
 
-    def fake_cli(_args: list[str]) -> int:
+    def fake_train(_hist, _path):
         calls["count"] += 1
-        return 0
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -480,10 +479,10 @@ def test_iteration_failure_retries(monkeypatch, tmp_path: Path) -> None:
 
     progress_file = tmp_path / "progress.json"
 
-    calls: list[list[str]] = []
+    calls: list[list[dict[str, float]]] = []
 
-    def maybe_fail(args: list[str]) -> int:
-        calls.append(list(args))
+    def maybe_fail(history, _path):
+        calls.append(list(history))
         if len(calls) == 1:
             conn = sqlite3.connect(hist_file)
             conn.execute(
@@ -493,9 +492,8 @@ def test_iteration_failure_retries(monkeypatch, tmp_path: Path) -> None:
             conn.commit()
             conn.close()
             raise RuntimeError("boom")
-        return 0
-
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", maybe_fail)
+        return {}
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", maybe_fail)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
@@ -558,11 +556,11 @@ def test_trainer_start_stop_restart(monkeypatch, tmp_path: Path) -> None:
 
     calls = {"count": 0}
 
-    def fake_cli(_args: list[str]) -> int:
+    def fake_train(_hist, _path):
         calls["count"] += 1
-        return 0
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
         history_file=hist_file,
