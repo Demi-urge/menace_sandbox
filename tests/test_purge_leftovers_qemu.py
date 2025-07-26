@@ -9,7 +9,8 @@ def test_purge_leftovers_kills_qemu(monkeypatch, tmp_path):
     os.symlink(shutil.which("sleep"), qemu)
     proc = subprocess.Popen([str(qemu), "60"])  # long running dummy
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
-    (tmp_path / "left" ).mkdir()
+    monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
+    (tmp_path / "left").mkdir()
     (tmp_path / "left" / "overlay.qcow2").touch()
     try:
         assert psutil.pid_exists(proc.pid)
@@ -33,6 +34,7 @@ def test_purge_leftovers_kills_qemu_subprocess(monkeypatch, tmp_path):
     proc = subprocess.Popen([str(script), "60", f"file={overlay}"])
     monkeypatch.setattr(env.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(env, "psutil", None)
+    monkeypatch.setattr(env, "_OVERLAY_MAX_AGE", 0.0)
     try:
         env.purge_leftovers()
         assert proc.poll() is not None
