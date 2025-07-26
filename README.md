@@ -585,6 +585,16 @@ openssl genpkey -algorithm Ed25519 | \
   openssl pkey -outform DER | base64 -w 0
 ```
 
+Enable central logging by forwarding records to an audit log:
+
+```bash
+export SANDBOX_CENTRAL_LOGGING=1
+export AUDIT_LOG_PATH=/var/log/menace/audit.log
+```
+
+`setup_logging()` attaches an `AuditTrailHandler` so all services write to the
+configured path. Set `SANDBOX_CENTRAL_LOGGING=0` to disable forwarding.
+
 ### Mandatory environment variables
 
 Generate the initial environment file by calling ``auto_env_setup.ensure_env()``.

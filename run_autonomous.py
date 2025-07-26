@@ -23,6 +23,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, List
 
+if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
+    os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
+
 AGENT_MONITOR_INTERVAL = float(os.getenv("VISUAL_AGENT_MONITOR_INTERVAL", "30"))
 
 

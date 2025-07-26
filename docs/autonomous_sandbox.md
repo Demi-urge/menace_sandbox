@@ -280,8 +280,10 @@ variable enables JSON formatted logs for the sandbox runner as well.
 
 Set `SANDBOX_CENTRAL_LOGGING=1` to forward logs from `self_test_service`,
 `synergy_auto_trainer` and `synergy_monitor` to the audit trail defined by
-`AUDIT_LOG_PATH`. If `KAFKA_HOSTS` is set, logs are published to Kafka instead
-via `KafkaMetaLogger`.
+`AUDIT_LOG_PATH`. When launching with `run_autonomous.py` or `synergy_tools.py`
+the variable defaults to `1`, so set `SANDBOX_CENTRAL_LOGGING=0` to disable the
+forwarding. If `KAFKA_HOSTS` is set, logs are published to Kafka instead via
+`KafkaMetaLogger`.
 
 Long running services rotate their own log files such as
 `service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or

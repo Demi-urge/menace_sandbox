@@ -128,4 +128,6 @@ Set `SANDBOX_CENTRAL_LOGGING=1` to forward alerts emitted by
 `self_test_service`, `synergy_auto_trainer` and `environment.py` through
 `alert_dispatcher`. The environment variable enables central logging so the
 dispatcher writes to the configured audit trail or Kafka topic in addition to
-standard output.
+standard output. When running `run_autonomous.py` or `synergy_tools.py` the
+variable defaults to `1`, so disable it explicitly with `SANDBOX_CENTRAL_LOGGING=0`
+if forwarding is not desired.
