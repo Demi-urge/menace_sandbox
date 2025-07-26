@@ -12,7 +12,8 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
     setup_logging()
 
-from .metrics_exporter import Gauge
+from .metrics_exporter import Gauge, synergy_weight_update_alerts_total
+from alert_dispatcher import dispatch_alert
 
 # Prometheus gauges tracking trainer state
 synergy_trainer_iterations = Gauge(
@@ -27,6 +28,8 @@ synergy_trainer_failures_total = Gauge(
     "synergy_trainer_failures_total",
     "Total number of failed synergy training attempts",
 )
+
+ALERT_THRESHOLD = int(os.getenv("SYNERGY_WEIGHT_ALERT_THRESHOLD", "5"))
 
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
@@ -56,6 +59,7 @@ class SynergyAutoTrainer:
         self.interval = float(interval)
         self.progress_file = Path(progress_file)
         self._last_id = 0
+        self._failure_count = 0
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 
         if not self.history_file.exists():
@@ -139,6 +143,21 @@ class SynergyAutoTrainer:
                     synergy_trainer_last_id.set(float(self._last_id))
                 except Exception:
                     pass
+                self._failure_count = 0
+            else:
+                self._failure_count += 1
+                if self._failure_count > ALERT_THRESHOLD:
+                    try:
+                        dispatch_alert(
+                            "synergy_weight_update_failure",
+                            2,
+                            "Weight update failed",
+                            {"path": str(self.weights_file)},
+                        )
+                        synergy_weight_update_alerts_total.inc()
+                    except Exception:
+                        self.logger.exception("failed to dispatch weight alert")
+                    self._failure_count = 0
             try:
                 self.progress_file.parent.mkdir(parents=True, exist_ok=True)
                 self.progress_file.write_text(json.dumps({"last_id": self._last_id}))

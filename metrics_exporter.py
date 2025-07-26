@@ -323,6 +323,10 @@ synergy_weight_updates_total = Gauge(
 synergy_weight_update_failures_total = Gauge(
     "synergy_weight_update_failures_total", "Total number of failed synergy weight update attempts"
 )
+synergy_weight_update_alerts_total = Gauge(
+    "synergy_weight_update_alerts_total",
+    "Total number of synergy weight update failure alerts dispatched",
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )
@@ -467,6 +471,7 @@ __all__ = [
     "learning_engine_exceptions",
     "synergy_weight_updates_total",
     "synergy_weight_update_failures_total",
+    "synergy_weight_update_alerts_total",
     "security_score_gauge",
     "safety_rating_gauge",
     "adaptability_gauge",
