@@ -187,13 +187,7 @@ def cli(argv: list[str] | None = None) -> int:
     if args.cmd == "train":
         with open(args.history, encoding="utf-8") as fh:
             hist = json.load(fh)
-        for entry in hist:
-            if not isinstance(entry, dict):
-                continue
-            roi_delta = float(entry.get("synergy_roi", 0.0))
-            learner.update(roi_delta, entry)
-        learner.save()
-        _log_weights(LOG_PATH, learner.weights)
+        train_from_history(hist, args.path)
         return 0
 
     if args.cmd == "reset":
