@@ -347,7 +347,12 @@ def test_dqn_synergy_learner_multi_cycle_sync(tmp_path):
 
 @pytest.mark.parametrize(
     "cls_name",
-    ["DQNSynergyLearner", "SACSynergyLearner", "TD3SynergyLearner"],
+    [
+        "DQNSynergyLearner",
+        "DoubleDQNSynergyLearner",
+        "SACSynergyLearner",
+        "TD3SynergyLearner",
+    ],
 )
 def test_sb3_learners_positive_convergence(tmp_path, cls_name):
     torch = pytest.importorskip("torch")
