@@ -92,6 +92,7 @@ def _startup_load_state() -> None:
     _start_background_threads()
 
 _running_lock = threading.Lock()      # ensures only one job at a time
+_queue_lock   = threading.Lock()      # protects task queue and job_status
 _current_job  = {"active": False, "id": None}
 GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
@@ -307,7 +308,8 @@ def _persist_state() -> None:
     except Timeout:
         return
     try:
-        _save_state_locked()
+        with _queue_lock:
+            _save_state_locked()
     finally:
         try:
             _global_lock.release()
@@ -320,9 +322,11 @@ def _queue_worker():
         if not task_queue:
             _exit_event.wait(0.1)
             continue
-        task = task_queue.popleft()
+        with _queue_lock:
+            task = task_queue.popleft()
         if _exit_event.is_set():
-            task_queue.update_status(task["id"], "queued")
+            with _queue_lock:
+                task_queue.update_status(task["id"], "queued")
             break
         tid = task["id"]
         _running_lock.acquire()
@@ -330,41 +334,58 @@ def _queue_worker():
             _global_lock.acquire(timeout=0)
         except Timeout:
             _running_lock.release()
-            job_status[tid]["status"] = "failed"
-            task_queue.update_status(tid, "failed")
+            with _queue_lock:
+                job_status[tid]["status"] = "failed"
+                task_queue.update_status(tid, "failed")
             continue
-        job_status[tid]["status"] = "running"
-        task_queue.update_status(tid, "running")
-        _save_state_locked()
+        with _queue_lock:
+            job_status[tid]["status"] = "running"
+            task_queue.update_status(tid, "running")
+            _save_state_locked()
+        try:
+            _global_lock.release()
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         success = False
         try:
             _current_job["active"] = True
-            _current_job["id"] = "revert"
             _current_job["id"] = tid
             run_menace_pipeline(task["prompt"], task["branch"])
-            job_status[tid]["status"] = "completed"
-            job_status[tid].pop("error", None)
-            task_queue.update_status(tid, "completed")
             success = True
         except Exception as exc:
             logger.exception("run_menace_pipeline failed for task %s", tid)
-            job_status[tid]["status"] = "failed"
-            job_status[tid]["error"] = str(exc)
-            task_queue.update_status(tid, "failed", str(exc))
-            _save_state_locked()
+            with _queue_lock:
+                job_status[tid]["status"] = "failed"
+                job_status[tid]["error"] = str(exc)
+                task_queue.update_status(tid, "failed", str(exc))
         finally:
             _current_job["active"] = False
-            _current_job["id"] = None
             _current_job["id"] = None
             _running_lock.release()
             if success:
                 global last_completed_ts
                 last_completed_ts = time.time()
-            _save_state_locked()
+
+        acquired = False
+        while not acquired and not _exit_event.is_set():
             try:
-                _global_lock.release()
-            except Exception as exc:
-                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+                _global_lock.acquire(timeout=0)
+                acquired = True
+            except Timeout:
+                time.sleep(0.01)
+        if acquired:
+            try:
+                with _queue_lock:
+                    if success:
+                        job_status[tid]["status"] = "completed"
+                        job_status[tid].pop("error", None)
+                        task_queue.update_status(tid, "completed")
+                    _save_state_locked()
+            finally:
+                try:
+                    _global_lock.release()
+                except Exception as exc:
+                    logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
         _persist_state()
 
@@ -423,22 +444,23 @@ async def run_task(
 ):
     _verify_token(x_token, authorization)
 
-    try:
-        _global_lock.acquire(timeout=0)
-    except Timeout:
-        raise HTTPException(status_code=409, detail="Agent busy")
-
-    try:
-        task_id = secrets.token_hex(8)
+    task_id = secrets.token_hex(8)
+    with _queue_lock:
         job_status[task_id] = {"status": "queued", "prompt": task.prompt, "branch": task.branch}
         task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
-        _save_state_locked()
-        response = {"id": task_id, "status": "queued"}
-    finally:
         try:
-            _global_lock.release()
-        except Exception as exc:
-            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            response = {"id": task_id, "status": "queued"}
+        else:
+            try:
+                _save_state_locked()
+            finally:
+                try:
+                    _global_lock.release()
+                except Exception as exc:
+                    logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+            response = {"id": task_id, "status": "queued"}
 
     return response
 
