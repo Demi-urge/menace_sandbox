@@ -1005,7 +1005,7 @@ def main(argv: List[str] | None = None) -> None:
 
     sub.add_parser(
         "install-autopurge",
-        help="install scheduled cleanup service",
+        help="install scheduled cleanup service (bootstrap runs this automatically)",
     )
 
     p_autorun = sub.add_parser(
