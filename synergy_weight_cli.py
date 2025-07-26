@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Sequence
 
+from menace.metrics_exporter import synergy_weight_update_failures_total
+
 
 
 LOG_PATH = Path("sandbox_data/synergy_weights.log")
@@ -79,12 +81,19 @@ def train_from_history(
     )
     learner = cls(weights_path, lr=settings.synergy_weights_lr)
 
-    for entry in history:
-        if not isinstance(entry, dict):
-            continue
-        roi_delta = float(entry.get("synergy_roi", 0.0))
-        learner.update(roi_delta, entry)
-    learner.save()
+    try:
+        for entry in history:
+            if not isinstance(entry, dict):
+                continue
+            roi_delta = float(entry.get("synergy_roi", 0.0))
+            learner.update(roi_delta, entry)
+        learner.save()
+    except Exception:
+        try:
+            synergy_weight_update_failures_total.inc()
+        except Exception:
+            pass
+        raise
     _log_weights(LOG_PATH, learner.weights)
     return learner.weights
 
