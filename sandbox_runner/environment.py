@@ -2312,13 +2312,21 @@ async def _reaper_worker() -> None:
             start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
-                total_removed += removed
-                if removed:
+                vm_removed = _purge_stale_vms(record_runtime=True)
+                vol_removed = _prune_volumes()
+                net_removed = _prune_networks()
+                total_removed += removed + vm_removed
+                if removed or vm_removed or vol_removed or net_removed:
                     logger.info(
-                        "reaped %d orphan containers (total %d)", removed, total_removed
+                        "reaped %d orphan containers, %d stale VMs, %d volumes, %d networks (totals containers=%d)",
+                        removed,
+                        vm_removed,
+                        vol_removed,
+                        net_removed,
+                        total_removed,
                     )
             except Exception:
-                logger.exception("orphan container cleanup failed")
+                logger.exception("reaper cleanup failed")
             finally:
                 duration = time.monotonic() - start
                 _CLEANUP_DURATIONS["reaper"] = duration
@@ -2416,6 +2424,11 @@ def _cleanup_pools() -> None:
                 pass
         except Exception:
             pass
+
+        # also prune any leftover volumes and networks so runtime
+        # resources are fully released when the sandbox exits
+        _prune_volumes()
+        _prune_networks()
     finally:
         _release_pool_lock()
 
