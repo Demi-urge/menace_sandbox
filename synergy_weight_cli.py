@@ -14,7 +14,11 @@ import time
 from pathlib import Path
 from typing import Sequence
 
-from menace.metrics_exporter import synergy_weight_update_failures_total
+from menace.metrics_exporter import (
+    synergy_weight_update_failures_total,
+    synergy_weight_update_alerts_total,
+)
+from alert_dispatcher import dispatch_alert
 
 
 
@@ -91,6 +95,16 @@ def train_from_history(
     except Exception:
         try:
             synergy_weight_update_failures_total.inc()
+        except Exception:
+            pass
+        try:
+            dispatch_alert(
+                "synergy_weight_update_failure",
+                2,
+                "Weight update failed",
+                {"path": str(weights_path)},
+            )
+            synergy_weight_update_alerts_total.inc()
         except Exception:
             pass
         raise
