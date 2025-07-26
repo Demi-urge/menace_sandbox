@@ -68,6 +68,9 @@ app = FastAPI(title="Menace-Visual-Agent")
 def _startup_load_state() -> None:
     _cleanup_stale_files()
     _setup_pid_file()
+    if os.path.exists(GLOBAL_LOCK_PATH) and _global_lock.is_lock_stale():
+        with suppress(Exception):
+            os.remove(GLOBAL_LOCK_PATH)
     if AUTO_RECOVER_ON_STARTUP:
         try:
             _global_lock.acquire(timeout=0)
