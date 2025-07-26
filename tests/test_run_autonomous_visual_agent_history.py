@@ -222,7 +222,7 @@ def test_run_autonomous_histories_queue(monkeypatch, tmp_path):
             headers = {"x-token": TOKEN}
             res1 = requests.post(f"{url}/run", headers=headers, json={"prompt": "a"})
             assert res1.status_code == 202
-            res2 = requests.post(f"{url}/run", headers=headers, json={"prompt": "b"})
+            _ = requests.post(f"{url}/run", headers=headers, json={"prompt": "b"})
             time.sleep(0.3)
             res3 = requests.post(f"{url}/run", headers=headers, json={"prompt": "b"})
             assert res3.status_code == 202
@@ -260,9 +260,11 @@ def test_run_autonomous_histories_queue(monkeypatch, tmp_path):
         assert roi_data.get("roi_history") == [0.1]
         assert syn_data == [{"synergy_roi": 0.05}]
 
-        state = json.loads((tmp_path / "visual_agent_state.json").read_text())
-        assert len(state["status"]) == 2
-        assert all(v["status"] == "completed" for v in state["status"].values())
+        import sqlite3
+        with sqlite3.connect(tmp_path / "visual_agent_queue.db") as conn:
+            rows = conn.execute("SELECT status FROM tasks").fetchall()
+        assert len(rows) == 2
+        assert all(r[0] == "completed" for r in rows)
     finally:
         proc.terminate()
         proc.wait(timeout=5)
