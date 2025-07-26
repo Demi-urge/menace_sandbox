@@ -382,6 +382,12 @@ cleanup_duration_gauge = Gauge(
     labelnames=["worker"],
 )
 
+# Gauge tracking age of last automatic purge
+hours_since_autopurge = Gauge(
+    "hours_since_autopurge",
+    "Hours since purge_leftovers last ran automatically",
+)
+
 
 _METRICS_SERVER: "HTTPServer" | None = None
 
@@ -451,6 +457,7 @@ __all__ = [
     "active_container_limit_reached",
     "cleanup_retry_successes",
     "cleanup_retry_failures",
+    "hours_since_autopurge",
     "cleanup_duration_gauge",
     "workflow_duration_gauge",
     "workflow_cpu_percent_gauge",

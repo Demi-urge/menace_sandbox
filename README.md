@@ -437,8 +437,11 @@ Sandbox execution helpers live in ``sandbox_runner.py`` with the main entry poin
 ``sandbox_runner.environment`` directly, call ``register_signal_handlers()`` to
 clean up pooled containers on ``Ctrl+C`` or ``SIGTERM``.
 
-The environment runs ``purge_leftovers()`` on import which removes any Docker
-containers or QEMU overlay directories left behind by previous crashes. Active
+The environment records ``sandbox_data/last_autopurge`` and runs
+``purge_leftovers()`` automatically on import when the previous purge is older
+than ``SANDBOX_AUTOPURGE_THRESHOLD`` (24h by default). ``purge_leftovers()``
+removes any Docker containers or QEMU overlay directories left behind by
+previous crashes. Active
 container IDs and overlay paths are tracked in ``sandbox_data/active_containers.json``
 and ``sandbox_data/active_overlays.json`` and are guarded by file locks
 (``SANDBOX_POOL_LOCK`` and ``*.lock`` files) so concurrent runs do not corrupt
@@ -459,8 +462,9 @@ durations are exposed through the ``cleanup_duration_seconds`` gauge. Override
 the failed cleanup file with ``SANDBOX_FAILED_CLEANUP`` and adjust the alert
 threshold for ``report_failed_cleanup`` using ``SANDBOX_FAILED_CLEANUP_AGE``.
 Inspect these files or call ``collect_metrics()`` to review the cleanup
-history; the metrics dashboard exposes the same information for long term
-monitoring.
+history. The metrics dashboard exposes the same information for long term
+monitoring and includes ``hours_since_autopurge`` which tracks how long it has
+been since the last automatic purge.
 
 When the sandbox isn't running you can still purge leftovers with
 ``sandbox-runner cleanup`` (``python -m sandbox_runner.cli cleanup``). The
