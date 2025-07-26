@@ -12,6 +12,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import Sequence
 
 
 
@@ -43,6 +44,49 @@ def _load_engine(path: str | None):
     return SelfImprovementEngine(
         interval=0, synergy_weights_path=path, synergy_learner_cls=cls
     )
+
+
+def train_from_history(
+    history: Sequence[dict[str, float]], path: str | Path | None
+) -> dict[str, float]:
+    """Train synergy weights using ``history`` and save them to ``path``."""
+
+    from menace.self_improvement_engine import (
+        SynergyWeightLearner,
+        DQNSynergyLearner,
+        DoubleDQNSynergyLearner,
+        SACSynergyLearner,
+        TD3SynergyLearner,
+    )
+    from sandbox_settings import SandboxSettings
+
+    mapping = {
+        "dqn": DQNSynergyLearner,
+        "double": DoubleDQNSynergyLearner,
+        "double_dqn": DoubleDQNSynergyLearner,
+        "ddqn": DoubleDQNSynergyLearner,
+        "sac": SACSynergyLearner,
+        "td3": TD3SynergyLearner,
+    }
+    env_name = os.getenv("SYNERGY_LEARNER", "").lower()
+    cls = mapping.get(env_name, SynergyWeightLearner)
+
+    settings = SandboxSettings()
+    weights_path = (
+        Path(path)
+        if path is not None
+        else Path(settings.sandbox_data_dir) / "synergy_weights.json"
+    )
+    learner = cls(weights_path, lr=settings.synergy_weights_lr)
+
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        roi_delta = float(entry.get("synergy_roi", 0.0))
+        learner.update(roi_delta, entry)
+    learner.save()
+    _log_weights(LOG_PATH, learner.weights)
+    return learner.weights
 
 
 def _log_weights(path: Path, weights: dict[str, float]) -> None:
@@ -174,6 +218,9 @@ def cli(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> None:
     sys.exit(cli(argv))
+
+
+__all__ = ["train_from_history", "cli", "main"]
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
