@@ -719,3 +719,59 @@ def test_alert_on_single_failure(monkeypatch, tmp_path: Path) -> None:
     assert len(alerts) == 1
     assert sat.synergy_weight_update_failures_total._value.get() == 1.0
     assert sat.synergy_weight_update_alerts_total._value.get() == 1.0
+
+def test_metrics_server_started(monkeypatch, tmp_path: Path) -> None:
+    me = importlib.import_module("menace.metrics_exporter")
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    calls: list[int] = []
+
+    def fake_start(port: int) -> None:
+        calls.append(port)
+
+    monkeypatch.setattr(me, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat.SynergyAutoTrainer, "_train_once", lambda self: None)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=tmp_path / "hf.db",
+        weights_file=tmp_path / "weights.json",
+        progress_file=tmp_path / "progress.json",
+        interval=0.05,
+        metrics_port=9999,
+    )
+
+    trainer.start()
+    try:
+        assert calls == [9999]
+    finally:
+        trainer.stop()
+
+
+@pytest.mark.asyncio
+async def test_metrics_server_started_async(monkeypatch, tmp_path: Path) -> None:
+    me = importlib.import_module("menace.metrics_exporter")
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    calls: list[int] = []
+
+    def fake_start(port: int) -> None:
+        calls.append(port)
+
+    monkeypatch.setattr(me, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat.SynergyAutoTrainer, "_train_once", lambda self: None)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=tmp_path / "hf.db",
+        weights_file=tmp_path / "weights.json",
+        progress_file=tmp_path / "progress.json",
+        interval=0.05,
+        metrics_port=8888,
+    )
+
+    trainer.start_async()
+    await asyncio.sleep(0)
+    await trainer.stop_async()
+
+    assert calls == [8888]
