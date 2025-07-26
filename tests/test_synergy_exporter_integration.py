@@ -61,16 +61,19 @@ def test_exporter_updates_after_training(monkeypatch, tmp_path: Path) -> None:
     weights_file = tmp_path / "weights.json"
     weights_file.write_text("{}")
 
-    called = {"count": 0}
+    calls: list[tuple[list[dict[str, float]], Path]] = []
 
-    def fake_cli(args: list[str]) -> int:
-        called["count"] += 1
-        return 0
+    def fake_train(history, path):
+        calls.append((list(history), Path(path)))
+        return {}
 
-    monkeypatch.setattr(sat.synergy_weight_cli, "cli", fake_cli)
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
 
     trainer = sat.SynergyAutoTrainer(
-        history_file=hist_file, weights_file=weights_file, interval=0.05
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=tmp_path / "progress.json",
     )
     trainer.start()
 
@@ -104,17 +107,17 @@ mod2.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '
                 pass
             time.sleep(0.05)
         assert metrics.get("synergy_roi") == 0.1
-        assert called["count"] >= 1
+        assert len(calls) >= 1
 
         conn = db_mod.connect(hist_file)
         db_mod.insert_entry(conn, {"synergy_roi": 0.2})
         conn.close()
 
         for _ in range(50):
-            if called["count"] >= 2:
+            if len(calls) >= 2:
                 break
             time.sleep(0.05)
-        assert called["count"] >= 2
+        assert len(calls) >= 2
 
         metrics = {}
         for _ in range(50):
@@ -133,8 +136,12 @@ mod2.main(['--history-file', r'{hist_file}', '--port', '{port}', '--interval', '
         trainer.stop()
 
     assert proc.returncode == 0
-    assert trainer._thread is not None
-    assert not trainer._thread.is_alive()
+    assert trainer._thread is None
+
+    assert calls
+    first_hist, first_path = calls[0]
+    assert first_path == weights_file
+    assert first_hist[0]["synergy_roi"] == 0.1
 
 
 def test_synergy_tools_command(tmp_path: Path) -> None:
@@ -182,11 +189,11 @@ sys.modules['menace.audit_trail'] = a_mod
 spec3 = importlib.util.spec_from_file_location('synergy_tools', os.path.join(root, 'synergy_tools.py'))
 tools = importlib.util.module_from_spec(spec3); spec3.loader.exec_module(tools)
 log_file = os.path.join(r'{tmp_path}', 'called.json')
-def fake_cli(args):
+def fake_train(history, path):
     with open(log_file, 'w') as fh:
-        json.dump(list(args), fh)
-    return 0
-sat.synergy_weight_cli.cli = fake_cli
+        json.dump(dict(history=list(history), path=str(path)), fh)
+    return dict()
+sat.synergy_weight_cli.train_from_history = fake_train
 tools.main(['--sandbox-data-dir', r'{tmp_path}'])
 """
 
@@ -210,8 +217,9 @@ tools.main(['--sandbox-data-dir', r'{tmp_path}'])
     assert proc.returncode == 0
     call_path = tmp_path / "called.json"
     assert call_path.exists()
-    args = json.loads(call_path.read_text())
-    assert "train" in args
+    data = json.loads(call_path.read_text())
+    assert Path(data["path"]) == tmp_path / "synergy_weights.json"
+    assert data["history"][0]["synergy_roi"] == 0.3
 
 
 def test_exporter_and_trainer_restart(monkeypatch, tmp_path: Path) -> None:

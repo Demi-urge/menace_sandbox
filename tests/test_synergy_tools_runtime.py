@@ -36,6 +36,8 @@ def _worker(data_dir: str, port: int, call_log: str) -> None:
     os.environ["SYNERGY_METRICS_PORT"] = str(port)
     os.environ.setdefault("PYTHONPATH", os.getcwd())
 
+    os.chdir(data_dir)
+
     import synergy_tools as tools
     import menace.synergy_auto_trainer as sat
     import menace.synergy_exporter as se
@@ -51,11 +53,15 @@ def _worker(data_dir: str, port: int, call_log: str) -> None:
     at_mod.AuditTrail = DummyTrail
     sys.modules["menace.audit_trail"] = at_mod
 
-    def fake_cli(args: list[str]) -> int:
+    import json
+
+    def fake_train(history, path):
         with open(call_log, "a") as fh:
-            fh.write("called\n")
-        return 0
-    sat.synergy_weight_cli.cli = fake_cli
+            json.dump({"history": list(history), "path": str(path)}, fh)
+            fh.write("\n")
+        return {}
+
+    sat.synergy_weight_cli.train_from_history = fake_train
 
     class FastExporter(se.SynergyExporter):
         def __init__(self, history_file, port):
@@ -103,3 +109,6 @@ def test_synergy_tools_services(tmp_path: Path) -> None:
 
     assert proc.exitcode == 0
     assert call_log.exists()
+    data = json.loads(call_log.read_text().splitlines()[0])
+    assert Path(data["path"]) == tmp_path / "synergy_weights.json"
+    assert data["history"][0]["synergy_roi"] == 0.5
