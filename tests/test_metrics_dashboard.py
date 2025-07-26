@@ -123,6 +123,22 @@ def test_roi_and_metric_routes(tmp_path):
 
     metrics_exporter.visual_agent_queue_depth.set(1)
     metrics_exporter.visual_agent_wait_time.set(0.2)
+    metrics_exporter.container_creation_success_total.set(3)
+    metrics_exporter.container_creation_failures_total.set(1)
+    metrics_exporter.container_creation_alerts_total.set(2)
+    metrics_exporter.synergy_weight_update_failures_total.set(4)
+
+    from menace import synergy_auto_trainer as sat
+
+    sat.synergy_trainer_iterations.set(5)
+    sat.synergy_trainer_failures_total.set(2)
+
     all_metrics = client.get("/metrics").get_json()
     assert all_metrics["visual_agent_queue_depth"] == 1
     assert all_metrics["visual_agent_wait_time"] == 0.2
+    assert all_metrics["container_creation_success_total"] == 3
+    assert all_metrics["container_creation_failures_total"] == 1
+    assert all_metrics["container_creation_alerts_total"] == 2
+    assert all_metrics["synergy_weight_update_failures_total"] == 4
+    assert all_metrics["synergy_trainer_iterations"] == 5
+    assert all_metrics["synergy_trainer_failures_total"] == 2
