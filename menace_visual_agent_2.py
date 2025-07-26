@@ -250,6 +250,56 @@ def _load_state_locked() -> None:
         except Exception as exc:  # pragma: no cover - fs errors
             logger.warning("failed loading state %s: %s", STATE_FILE, exc)
 
+    _validate_job_status()
+
+
+def _validate_job_status() -> None:
+    """Ensure ``job_status`` entries match the persistent queue."""
+    db_status = task_queue.get_status()
+    changed = False
+    for tid, info in list(job_status.items()):
+        db_info = db_status.get(tid)
+        if db_info is None:
+            if info.get("status") in {"queued", "running"}:
+                task_queue.append(
+                    {
+                        "id": tid,
+                        "prompt": info.get("prompt", ""),
+                        "branch": info.get("branch"),
+                    }
+                )
+                job_status[tid]["status"] = "queued"
+                changed = True
+            else:
+                job_status.pop(tid, None)
+                changed = True
+        else:
+            if db_info.get("status") != info.get("status"):
+                job_status[tid] = dict(db_info)
+                changed = True
+
+    if changed:
+        _write_legacy_queue()
+
+
+def _write_legacy_queue() -> None:
+    """Persist queued tasks to the legacy JSONL file."""
+    try:
+        with open(QUEUE_FILE, "w", encoding="utf-8") as fh:
+            for item in task_queue.load_all():
+                fh.write(
+                    json.dumps(
+                        {
+                            "id": item["id"],
+                            "prompt": item.get("prompt", ""),
+                            "branch": item.get("branch"),
+                        }
+                    )
+                    + "\n"
+                )
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed updating legacy queue %s: %s", QUEUE_FILE, exc)
+
 
 def _persist_state() -> None:
     """Persist queue status and last completed timestamp to ``STATE_FILE``."""
