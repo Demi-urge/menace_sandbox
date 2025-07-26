@@ -168,12 +168,11 @@ The `/status` response also includes the length of the internal queue so you can
 monitor progress. This behaviour avoids race conditions in the underlying visual
 pipeline.
 
-Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent_queue.jsonl`. Each
-entry is written as a JSON object on its own line and the file is updated every
-time the queue changes. Up to three backups of the queue and state files are
-kept with `.bakN` extensions. If the current files are corrupted the agent
-automatically restores the most recent valid backup without losing queued
-jobs.
+Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent.db` and are restored
+on startup. Use `menace_visual_agent_2.py --resume` to process any pending
+entries without launching the HTTP service. Stale lock and PID files are cleaned
+automatically; run `menace_visual_agent_2.py --cleanup` if the service did not
+shut down cleanly.
 
 ## Local run essentials
 
@@ -403,10 +402,10 @@ respected as when running `run_autonomous.py`.
 
 #### Visual agent concurrency
 
-Only one visual agent request can run at any time. Additional tasks are queued
-until the current job completes. Poll the `/status` endpoint and wait for
-`{"active": false}` before submitting the next job, whether using
-`synergy_tools.py` or the sandbox itself.
+Only one visual agent request runs at a time. You may submit multiple tasks
+concurrently; they are appended to `visual_agent.db` and executed sequentially.
+Poll the `/status` endpoint and wait for `{"active": false}` to determine when
+the agent is free for new work.
 
 ### Troubleshooting synergy services
 
@@ -457,8 +456,10 @@ local installation.
 - **Missing dependencies** – run `./setup_env.sh` again to ensure all Python
   packages are installed. On bare metal verify that `ffmpeg` and `tesseract`
   are present in your `$PATH`.
-- **Visual agent returns 409** – the service only accepts one request at a time.
-  Wait until `/status` shows `{"active": false}` or queue the job for later.
+- **Visual agent returns 409** – the service only accepts one request at a time
+  but automatically queues additional jobs in ``visual_agent.db``. Wait until
+  `/status` shows `{"active": false}` or submit tasks concurrently and let the
+  queue drain.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
   firewall blocks the connection. The dashboard starts automatically once the
   sandbox loop begins.

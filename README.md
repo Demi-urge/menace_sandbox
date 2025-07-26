@@ -545,11 +545,11 @@ written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
   manual ``--roi-threshold`` and ``--synergy-threshold`` values are optional.
   Fine‑tune synergy convergence with ``--synergy-threshold-window`` and
   ``--synergy-threshold-weight``.
-- ``menace_visual_agent_2.py --recover-queue`` reloads tasks from the persisted
-  queue after a restart. Use ``--flush-queue`` to drop stalled entries.
-- ``menace_visual_agent_2.py --auto-recover`` also restores queued tasks on
-  startup and records metrics in ``sandbox_data/visual_agent_recovery.json``.
-- ``menace_visual_agent_2.py --cleanup`` removes stale lock and PID files then exits.
+- ``menace_visual_agent_2.py --resume`` processes any queued tasks stored in
+  ``visual_agent.db`` without starting the server. Use ``--flush-queue`` to drop
+  stalled entries.
+- ``menace_visual_agent_2.py --cleanup`` removes stale lock and PID files then
+  exits. Stale locks are also cleared automatically on startup.
 - Inspect sandbox restart metrics via ``sandbox_recovery_manager.py --file
   sandbox_data/recovery.json``.
 
@@ -668,9 +668,10 @@ uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 ```
 Only one connection is processed at a time. The orchestrator submits requests
 directly to ``/run`` and, when the endpoint returns a task id, polls
-``/status/<id>`` until the job completes. The server enforces the
-single-connection policy via a global lock but maintains its own queue so
-multiple workflows can safely share the agent without an in-memory queue.
+``/status/<id>`` until the job completes. Multiple clients may submit tasks
+concurrently; the server appends them to ``visual_agent.db`` and processes each
+job sequentially. The global lock avoids race conditions while the persistent
+queue ensures workflows can share the agent safely.
 
 Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
 
