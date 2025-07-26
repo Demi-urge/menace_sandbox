@@ -291,3 +291,47 @@ def test_client_enqueue_on_failure(monkeypatch, tmp_path):
     assert queue_path.exists()
     data = [json.loads(line) for line in queue_path.read_text().splitlines()]
     assert data and data[0]["action"] == "run"
+
+
+def test_local_queue_flush(monkeypatch, tmp_path):
+    pkg_path = ROOT
+    pkg_spec = importlib.util.spec_from_file_location(
+        "menace",
+        pkg_path / "__init__.py",
+        submodule_search_locations=[str(pkg_path)],
+    )
+    menace_pkg = importlib.util.module_from_spec(pkg_spec)
+    sys.modules["menace"] = menace_pkg
+    pkg_spec.loader.exec_module(menace_pkg)
+    vac_mod = importlib.reload(importlib.import_module("menace.visual_agent_client"))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    calls = {"fail": True, "sent": 0}
+
+    def post(url, headers=None, json=None, timeout=10):
+        if calls["fail"]:
+            raise RuntimeError("boom")
+        calls["sent"] += 1
+        return types.SimpleNamespace(status_code=202, json=lambda: {}, text="")
+
+    def get(url, timeout=10):
+        return types.SimpleNamespace(status_code=200, json=lambda: {"active": False, "status": "done"})
+
+    monkeypatch.setattr(vac_mod, "requests", types.SimpleNamespace(post=post, get=get))
+    monkeypatch.setattr(vac_mod, "log_event", lambda *a, **k: "id")
+    monkeypatch.setattr(vac_mod.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(vac_mod.VisualAgentClient, "_poll", lambda self, base: (True, "ok"))
+
+    client = vac_mod.VisualAgentClient(urls=["http://x"], poll_interval=0.01, flush_interval=0.05)
+
+    client.ask([{"content": "hi"}])
+
+    queue_path = tmp_path / "visual_agent_client_queue.jsonl"
+    assert queue_path.exists() and queue_path.read_text().strip()
+
+    calls["fail"] = False
+
+    client.flush_local_queue()
+
+    assert not queue_path.read_text().strip()
+    assert calls["sent"] >= 1

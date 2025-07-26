@@ -85,6 +85,7 @@ class VisualAgentClient:
         queue_warning_threshold: int | None = None,
         metrics_interval: float | None = None,
         status_interval: float | None = None,
+        flush_interval: float | None = None,
     ) -> None:
         default_urls = (
             os.getenv("VISUAL_AGENT_URLS")
@@ -108,6 +109,9 @@ class VisualAgentClient:
         )
         self.status_interval = status_interval if status_interval is not None else float(
             os.getenv("VISUAL_AGENT_STATUS_INTERVAL", "0")
+        )
+        self.flush_interval = flush_interval or float(
+            os.getenv("VISUAL_AGENT_FLUSH_INTERVAL", "60")
         )
         self.open_run_id: str | None = None
         self.active = False
@@ -135,6 +139,9 @@ class VisualAgentClient:
             self._status_thread.start()
         else:
             self._status_thread = None
+
+        self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
+        self._flush_thread.start()
 
     # ------------------------------------------------------------------
     def _enqueue(self, func: Callable[[], Any]) -> Future:
@@ -212,6 +219,58 @@ class VisualAgentClient:
                         break
                 except Exception:
                     continue
+
+    def _flush_loop(self) -> None:
+        self.flush_local_queue()
+        while not self._stop_event.wait(self.flush_interval):
+            self.flush_local_queue()
+
+    def flush_local_queue(self) -> None:
+        path = self._local_queue.path
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        with self._local_queue._lock:
+            if not path.exists():
+                return
+            try:
+                path.rename(tmp_path)
+            except Exception:
+                return
+            # ensure new file for further queueing
+            open(path, "a", encoding="utf-8").close()
+
+        try:
+            with open(tmp_path, "r", encoding="utf-8") as fh:
+                items = [json.loads(l) for l in fh if l.strip()]
+        except Exception as exc:  # pragma: no cover - read errors
+            logger.warning("failed to load local queue: %s", exc)
+            items = []
+
+        remaining: list[dict] = []
+        for item in items:
+            action = item.get("action")
+            success = False
+            if action == "run":
+                for url in self.urls:
+                    ok, _ = self._send(url, item.get("prompt", ""))
+                    if ok:
+                        success = True
+                        break
+            elif action == "revert":
+                for url in self.urls:
+                    ok, _ = self._send_revert(url)
+                    if ok:
+                        success = True
+                        break
+            if not success:
+                remaining.append(item)
+
+        for item in remaining:
+            _queue_local_task(self._local_queue, item)
+
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
 
     def _poll(self, base: str) -> tuple[bool, str]:
         if not requests:
