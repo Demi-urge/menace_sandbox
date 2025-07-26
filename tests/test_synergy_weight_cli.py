@@ -1,6 +1,8 @@
 import json
 import types
 import io
+import sys
+import pytest
 
 import synergy_weight_cli as cli
 
@@ -103,3 +105,54 @@ def test_history_plot(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "_plot_history", lambda p: called.setdefault("p", p))
     cli.cli(["history", "--log", str(hist_file), "--plot"])
     assert called["p"] == hist_file
+
+
+@pytest.mark.parametrize(
+    "env,cls_name",
+    [
+        ("dqn", "DQNSynergyLearner"),
+        ("td3", "TD3SynergyLearner"),
+    ],
+)
+def test_load_engine_env(monkeypatch, tmp_path, env, cls_name):
+    mod = types.ModuleType("menace.self_improvement_engine")
+
+    class BaseLearner:
+        def __init__(self, *a, **k):
+            pass
+
+    class DQN(BaseLearner):
+        pass
+
+    class Double(BaseLearner):
+        pass
+
+    class SAC(BaseLearner):
+        pass
+
+    class TD3(BaseLearner):
+        pass
+
+    class Engine:
+        def __init__(self, *, interval=0, synergy_weights_path=None, synergy_learner_cls=BaseLearner):
+            self.synergy_learner = synergy_learner_cls()
+
+    mod.SelfImprovementEngine = Engine
+    mod.SynergyWeightLearner = BaseLearner
+    mod.DQNSynergyLearner = DQN
+    mod.DoubleDQNSynergyLearner = Double
+    mod.SACSynergyLearner = SAC
+    mod.TD3SynergyLearner = TD3
+
+    monkeypatch.setitem(sys.modules, "menace.self_improvement_engine", mod)
+    if "menace" in sys.modules:
+        monkeypatch.setattr(sys.modules["menace"], "self_improvement_engine", mod, raising=False)
+
+    monkeypatch.setenv("SYNERGY_LEARNER", env)
+
+    engine = cli._load_engine(str(tmp_path / "w.json"))
+
+    expected = getattr(mod, cls_name)
+    assert isinstance(engine.synergy_learner, expected)
+
+    monkeypatch.delenv("SYNERGY_LEARNER", raising=False)
