@@ -1623,6 +1623,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 )
                 await asyncio.sleep(wait)
         td = tempfile.mkdtemp(prefix="pool_")
+        start_time = time.monotonic()
         try:
             run_kwargs = {
                 "detach": True,
@@ -1663,6 +1664,16 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 except Exception:  # pragma: no cover - metrics failures
                     logger.exception(
                         "failed to increment container_creation_success_total"
+                    )
+            gauge_dur = (
+                getattr(_me, "container_creation_seconds", None) if _me else None
+            )
+            if gauge_dur is not None:
+                try:
+                    gauge_dur.labels(image=image).set(time.monotonic() - start_time)
+                except Exception:  # pragma: no cover - metrics failures
+                    logger.exception(
+                        "failed to update container_creation_seconds"
                     )
             with _POOL_LOCK:
                 _CONTAINER_DIRS[container.id] = td
@@ -1708,30 +1719,37 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                     logger.exception(
                         "failed to increment container_creation_failures_total"
                     )
-            if fails > _FAILURE_WARNING_THRESHOLD:
+            gauge_dur = (
+                getattr(_me, "container_creation_seconds", None) if _me else None
+            )
+            if gauge_dur is not None:
                 try:
-                    dispatch_alert(
-                        "container_creation_failures",
-                        2,
-                        "repeated container creation failures",
-                        {"image": image, "failures": fails},
-                    )
-                    gauge_alerts = (
-                        getattr(_me, "container_creation_alerts_total", None)
-                        if _me
-                        else None
-                    )
-                    if gauge_alerts is not None:
-                        try:
-                            gauge_alerts.labels(image=image).inc()
-                        except Exception:
-                            logger.exception(
-                                "failed to increment container_creation_alerts_total"
-                            )
-                except Exception:
+                    gauge_dur.labels(image=image).set(time.monotonic() - start_time)
+                except Exception:  # pragma: no cover - metrics failures
                     logger.exception(
-                        "failed to dispatch container creation alert"
+                        "failed to update container_creation_seconds"
                     )
+            try:
+                dispatch_alert(
+                    "container_creation_failures",
+                    2,
+                    "repeated container creation failures",
+                    {"image": image, "failures": fails},
+                )
+                gauge_alerts = (
+                    getattr(_me, "container_creation_alerts_total", None) if _me else None
+                )
+                if gauge_alerts is not None:
+                    try:
+                        gauge_alerts.labels(image=image).inc()
+                    except Exception:
+                        logger.exception(
+                            "failed to increment container_creation_alerts_total"
+                        )
+            except Exception:
+                logger.exception(
+                    "failed to dispatch container creation alert"
+                )
             attempt += 1
         assert last_exc is not None
         raise last_exc
