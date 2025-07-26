@@ -101,10 +101,21 @@ if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
 elif "menace" not in sys.modules:
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
-    menace_pkg = importlib.util.module_from_spec(spec)
-    sys.modules["menace"] = menace_pkg
-    spec.loader.exec_module(menace_pkg)
+def _visual_agent_running(urls: str) -> bool:
+    """Return ``True`` if the visual agent responds to ``/status``."""
+    try:
+        import requests  # type: ignore
+
+        base = urls.split(";")[0]
+        resp = requests.get(f"{base}/status", timeout=3)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
+menace_pkg = importlib.util.module_from_spec(spec)
+sys.modules["menace"] = menace_pkg
+spec.loader.exec_module(menace_pkg)
 
 import menace.environment_generator as environment_generator
 import sandbox_runner
@@ -133,18 +144,6 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
 logger = get_logger(__name__)
 
 
-def _visual_agent_running(urls: str) -> bool:
-    """Return ``True`` if the visual agent responds to ``/status``."""
-    try:
-        import requests  # type: ignore
-
-        base = urls.split(";")[0]
-        resp = requests.get(f"{base}/status", timeout=3)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
 def _port_available(port: int, host: str = "0.0.0.0") -> bool:
     """Return True if the TCP ``port`` is free on ``host``."""
     with contextlib.closing(socket.socket()) as sock:
@@ -164,39 +163,91 @@ def _free_port() -> int:
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 class VisualAgentMonitor:
     """Background monitor that restarts the visual agent if it stops responding."""
-
     def __init__(self, manager, urls: str, *, interval: float = AGENT_MONITOR_INTERVAL) -> None:
-        self.manager = manager
-        self.urls = urls
-        self.interval = float(interval)
-        self._stop = threading.Event()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-
+        self.manager = manager; self.urls = urls; self.interval = float(interval); self._stop = threading.Event(); self._thread = threading.Thread(target=self._loop, daemon=True)
     def start(self) -> None:
         self._thread.start()
-
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+        self._stop.set(); self._thread.is_alive() and self._thread.join(timeout=1.0)
         try:
             self.manager.shutdown()
         except Exception:
             logger.exception("failed to shutdown visual agent")
-
     def _loop(self) -> None:
         while not self._stop.is_set():
             if not _visual_agent_running(self.urls):
                 try:
-                    tok = os.getenv("VISUAL_AGENT_TOKEN", "")
-                    self.manager.restart_with_token(tok)
+                    tok = os.getenv("VISUAL_AGENT_TOKEN", ""); self.manager.restart_with_token(tok)
+                    base = self.urls.split(";")[0]
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        if _visual_agent_running(self.urls): break
+                    try:
+                        import requests  # type: ignore
+                        requests.post(f"{base}/recover", headers={"Authorization": f"Bearer {tok}"}, timeout=5)
+                    except Exception:
+                        logger.exception("failed to trigger agent recovery")
                 except Exception:
                     logger.exception("failed to restart visual agent")
             self._stop.wait(self.interval)
-
-
 class PresetModel(BaseModel):
     """Schema for environment presets."""
 

@@ -370,21 +370,31 @@ def _queue_worker():
 
 def _autosave_worker() -> None:
     while not _exit_event.wait(5):
+        if _current_job.get("active") and _current_job.get("id"):
+            tid = _current_job["id"]
+            info = job_status.get(tid)
+            if info:
+                task_queue.update_status(tid, info.get("status", "running"))
         _persist_state()
 
 
 def _initialize_state() -> None:
+    acquired = False
     try:
         _global_lock.acquire(timeout=0)
+        acquired = True
     except Timeout:
+        job_status.clear()
+        job_status.update(task_queue.get_status())
         return
     try:
         _load_state_locked()
     finally:
-        try:
-            _global_lock.release()
-        except Exception as exc:
-            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+        if acquired:
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
 
 
 _worker_thread = None
@@ -878,6 +888,7 @@ if __name__ == "__main__":
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
     parser.add_argument("--cleanup", action="store_true", help="Remove stale lock and PID files then exit")
+    parser.add_argument("--resume", action="store_true", help="Reload queue and process without starting server")
     parser.add_argument(
         "--auto-recover",
         action="store_true",
@@ -928,6 +939,24 @@ if __name__ == "__main__":
             except Exception as exc:
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         logger.info("recovered %s tasks", len(task_queue))
+        sys.exit(0)
+
+    if args.resume:
+        AUTO_RECOVER_ON_STARTUP = True
+        _cleanup_stale_files()
+        _setup_pid_file()
+        _initialize_state()
+        _start_background_threads()
+        try:
+            while task_queue or _current_job.get("active"):
+                time.sleep(0.5)
+        except KeyboardInterrupt:
+            pass
+        _exit_event.set()
+        if _worker_thread:
+            _worker_thread.join()
+        if _autosave_thread:
+            _autosave_thread.join()
         sys.exit(0)
 
     if args.auto_recover:
