@@ -211,6 +211,11 @@ The monitor exposes two additional gauges reflecting automatic restarts:
 `SANDBOX_CENTRAL_LOGGING=1` to forward exporter and trainer logs to the audit
 trail specified by `AUDIT_LOG_PATH` (or Kafka when `KAFKA_HOSTS` is defined).
 
+Every successful weight save increments the `synergy_weight_updates_total`
+gauge. If an update fails inside `_update_synergy_weights` or when running
+`synergy_weight_cli.train_from_history`, the
+`synergy_weight_update_failures_total` gauge increases.
+
 ## Standalone auto trainer
 
 Run `synergy_auto_trainer.py` directly to update weights from the history

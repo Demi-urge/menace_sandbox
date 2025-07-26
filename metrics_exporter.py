@@ -317,6 +317,12 @@ learning_engine_exceptions = Gauge(
     "learning_engine_exceptions_total",
     "Exceptions encountered in UnifiedLearningEngine"
 )
+synergy_weight_updates_total = Gauge(
+    "synergy_weight_updates_total", "Total number of successful synergy weight updates"
+)
+synergy_weight_update_failures_total = Gauge(
+    "synergy_weight_update_failures_total", "Total number of failed synergy weight update attempts"
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )
@@ -454,6 +460,8 @@ __all__ = [
     "experiment_best_roi",
     "error_bot_exceptions",
     "learning_engine_exceptions",
+    "synergy_weight_updates_total",
+    "synergy_weight_update_failures_total",
     "security_score_gauge",
     "safety_rating_gauge",
     "adaptability_gauge",

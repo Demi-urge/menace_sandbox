@@ -9,6 +9,10 @@ import threading
 import asyncio
 import os
 from sandbox_settings import SandboxSettings
+from .metrics_exporter import (
+    synergy_weight_updates_total,
+    synergy_weight_update_failures_total,
+)
 import json
 import sqlite3
 import pickle
@@ -161,6 +165,10 @@ class SynergyWeightLearner:
             _atomic_write(pkl, pickle.dumps(self.strategy), binary=True)
         except Exception as exc:
             logger.exception("failed to save strategy pickle: %s", exc)
+        try:
+            synergy_weight_updates_total.inc()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
@@ -869,7 +877,15 @@ class SelfImprovementEngine:
             "synergy_throughput",
         ]
         deltas = {n: self._metric_delta(n) for n in names}
-        self.synergy_learner.update(roi_delta, deltas)
+        try:
+            self.synergy_learner.update(roi_delta, deltas)
+        except Exception as exc:  # pragma: no cover - runtime issues
+            try:
+                synergy_weight_update_failures_total.inc()
+            except Exception:
+                pass
+            self.logger.exception("synergy weight update failed: %s", exc)
+            return
         self.synergy_weight_roi = self.synergy_learner.weights["roi"]
         self.synergy_weight_efficiency = self.synergy_learner.weights["efficiency"]
         self.synergy_weight_resilience = self.synergy_learner.weights["resilience"]
