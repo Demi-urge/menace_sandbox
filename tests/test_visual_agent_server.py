@@ -585,6 +585,19 @@ def test_stale_lock_removed_on_startup(monkeypatch, tmp_path):
     assert not lock_path.exists()
 
 
+def test_dead_pid_lock_removed_on_startup(monkeypatch, tmp_path):
+    lock_path = tmp_path / "va.lock"
+    lock_path.write_text("12345,0")
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setattr("lock_utils._pid_running", lambda pid: False)
+    psutil_mod = types.ModuleType("psutil")
+    psutil_mod.pid_exists = lambda *_a, **_k: False
+    monkeypatch.setitem(sys.modules, "psutil", psutil_mod)
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
+    va = _setup_va(monkeypatch, tmp_path)
+    assert not lock_path.exists()
+
+
 def test_running_tasks_requeued_on_restart(monkeypatch, tmp_path):
     monkeypatch.setenv("VISUAL_AGENT_AUTO_RECOVER", "1")
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")

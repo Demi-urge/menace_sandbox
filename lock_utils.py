@@ -61,9 +61,16 @@ class _ContextFileLock(FileLock):
                 except Exception as exc:
                     logger.exception("failed to release file lock: %s", exc)
 
+    def is_lock_stale(self, *, timeout: float | None = None) -> bool:
+        """Return ``True`` if the lock file was created by a dead process."""
+        lock_path = getattr(self, "lock_file", None)
+        if not lock_path or not os.path.exists(lock_path):
+            return False
+        return is_lock_stale(lock_path, timeout=timeout)
+
     def acquire(self, timeout: float | None = None, poll_interval: float = 0.05):  # type: ignore[override]
         lock_path = getattr(self, "lock_file", None)
-        if lock_path and os.path.exists(lock_path) and is_lock_stale(lock_path, timeout=timeout or LOCK_TIMEOUT):
+        if lock_path and os.path.exists(lock_path) and self.is_lock_stale(timeout=timeout or LOCK_TIMEOUT):
             with suppress(Exception):
                 os.remove(lock_path)
 
