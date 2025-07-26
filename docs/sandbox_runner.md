@@ -687,10 +687,12 @@ Each time a pooled container fails to start the counters `failures` and
 `consecutive` are written to `sandbox_data/pool_failures.json`. A warning is
 logged when the consecutive count reaches `SANDBOX_POOL_FAIL_THRESHOLD`
 (default `5`). Review this file and the warnings to identify images that are
-consistently failing to launch. When the count exceeds this threshold
-`alert_dispatcher.dispatch_alert` is called with the image name and failure
-count. Each alert increments the `container_creation_alerts_total` Prometheus
-gauge.
+consistently failing to launch. A call to
+`alert_dispatcher.dispatch_alert` is now issued **for every failed attempt**,
+providing the image name and failure count. Each alert increments the
+`container_creation_alerts_total` Prometheus gauge. The duration of each
+attempt is exposed via the `container_creation_seconds` gauge labelled by
+image.
 
 ## Automatic Cleanup
 
@@ -732,8 +734,10 @@ Additional metrics include `container_failures_<image>` and
 `consecutive_failures_<image>` for each image the pool attempted to create.
 The Prometheus gauges `container_creation_failures_total`,
 `container_creation_success_total` and `container_creation_alerts_total`
-expose these counts using the `image` label. `container_backoff_base` reports
-the current exponential backoff base used when creation repeatedly fails.
+expose these counts using the `image` label. `container_creation_seconds`
+records the duration of the last creation attempt for each image.
+`container_backoff_base` reports the current exponential backoff base used when
+creation repeatedly fails.
 
 `schedule_cleanup_check()` periodically calls `ensure_cleanup_worker` to verify
 that the cleanup and reaper tasks are still running.  The interval is
