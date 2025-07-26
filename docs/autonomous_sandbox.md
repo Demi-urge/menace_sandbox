@@ -174,6 +174,29 @@ entries without launching the HTTP service. Stale lock and PID files are cleaned
 automatically; run `menace_visual_agent_2.py --cleanup` if the service did not
 shut down cleanly.
 
+### Crash recovery
+
+Starting the agent with `--auto-recover` (or `VISUAL_AGENT_AUTO_RECOVER=1`)
+requeues any tasks that were marked as `running`. The client also writes failed
+requests to `visual_agent_client_queue.jsonl` and retries them periodically.
+Additional CLI helpers simplify manual repairs:
+
+```bash
+python menace_visual_agent_2.py --flush-queue       # drop all queued tasks
+python menace_visual_agent_2.py --recover-queue     # reload queue from disk
+python menace_visual_agent_2.py --repair-running    # mark running tasks queued
+python menace_visual_agent_2.py --resume            # process queue headlessly
+python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
+```
+
+To recover after an unexpected shutdown:
+
+```bash
+python menace_visual_agent_2.py --repair-running --recover-queue
+python menace_visual_agent_2.py --resume
+python run_autonomous.py --recover
+```
+
 ## Local run essentials
 
 The sandbox reads several paths and authentication tokens from environment variables. These defaults are suitable for personal deployments and can be overridden in your `.env`:
