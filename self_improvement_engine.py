@@ -15,7 +15,9 @@ from sandbox_settings import SandboxSettings
 from .metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
+    synergy_weight_update_alerts_total,
 )
+from alert_dispatcher import dispatch_alert
 import json
 import sqlite3
 import pickle
@@ -885,6 +887,16 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - runtime issues
             try:
                 synergy_weight_update_failures_total.inc()
+            except Exception:
+                pass
+            try:
+                dispatch_alert(
+                    "synergy_weight_update_failure",
+                    2,
+                    "Weight update failed",
+                    {"roi_delta": roi_delta},
+                )
+                synergy_weight_update_alerts_total.inc()
             except Exception:
                 pass
             self.logger.exception("synergy weight update failed: %s", exc)
