@@ -441,7 +441,9 @@ The environment records ``sandbox_data/last_autopurge`` and runs
 ``purge_leftovers()`` automatically on import when the previous purge is older
 than ``SANDBOX_AUTOPURGE_THRESHOLD`` (24h by default). ``purge_leftovers()``
 removes any Docker containers or QEMU overlay directories left behind by
-previous crashes. Active
+previous crashes. Bootstrapping the environment enables the
+``sandbox_autopurge.timer`` systemd unit so ``python -m sandbox_runner.cli
+--purge-stale`` runs every hour and cleans up leftovers automatically. Active
 container IDs and overlay paths are tracked in ``sandbox_data/active_containers.json``
 and ``sandbox_data/active_overlays.json`` and are guarded by file locks
 (``SANDBOX_POOL_LOCK`` and ``*.lock`` files) so concurrent runs do not corrupt
