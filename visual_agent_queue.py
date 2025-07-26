@@ -206,6 +206,12 @@ class VisualAgentQueue:
                 result[r[0]] = entry
             return result
 
+    def reset_running_tasks(self) -> None:
+        """Mark any ``running`` tasks as ``queued``."""
+        with self._lock, sqlite3.connect(self.path) as conn:
+            conn.execute("UPDATE tasks SET status='queued' WHERE status='running'")
+            conn.commit()
+
     # ------------------------------------------------------------------
     def clear(self) -> None:
         with self._lock, sqlite3.connect(self.path) as conn:
