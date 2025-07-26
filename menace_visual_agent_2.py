@@ -916,6 +916,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Menace Visual Agent")
     parser.add_argument("--flush-queue", action="store_true", help="Clear persistent queue and exit")
     parser.add_argument("--recover-queue", action="store_true", help="Reload queue from disk and exit")
+    parser.add_argument("--repair-running", action="store_true", help="Reset tasks marked as running to queued and exit")
     parser.add_argument("--cleanup", action="store_true", help="Remove stale lock and PID files then exit")
     parser.add_argument("--resume", action="store_true", help="Reload queue and process without starting server")
     parser.add_argument(
@@ -968,6 +969,26 @@ if __name__ == "__main__":
             except Exception as exc:
                 logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
         logger.info("recovered %s tasks", len(task_queue))
+        sys.exit(0)
+
+    if args.repair_running:
+        try:
+            _global_lock.acquire(timeout=0)
+        except Timeout:
+            logger.error("agent busy while repairing queue")
+            sys.exit(1)
+        try:
+            with _queue_lock:
+                task_queue.reset_running_tasks()
+                job_status.clear()
+                job_status.update(task_queue.get_status())
+                _save_state_locked()
+        finally:
+            try:
+                _global_lock.release()
+            except Exception as exc:
+                logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+        logger.info("repaired running tasks")
         sys.exit(0)
 
     if args.resume:

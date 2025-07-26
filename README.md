@@ -546,8 +546,10 @@ written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
   Fine‑tune synergy convergence with ``--synergy-threshold-window`` and
   ``--synergy-threshold-weight``.
 - ``menace_visual_agent_2.py --resume`` processes any queued tasks stored in
-  ``visual_agent.db`` without starting the server. Use ``--flush-queue`` to drop
+  ``visual_agent_queue.db`` without starting the server. Use ``--flush-queue`` to drop
   stalled entries.
+- ``menace_visual_agent_2.py --repair-running`` requeues any tasks marked as
+  ``running`` then exits.
 - ``menace_visual_agent_2.py --cleanup`` removes stale lock and PID files then
   exits. Stale locks are also cleared automatically on startup.
 - Inspect sandbox restart metrics via ``sandbox_recovery_manager.py --file
@@ -669,7 +671,7 @@ uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 Only one connection is processed at a time. The orchestrator submits requests
 directly to ``/run`` and, when the endpoint returns a task id, polls
 ``/status/<id>`` until the job completes. Multiple clients may submit tasks
-concurrently; the server appends them to ``visual_agent.db`` and processes each
+concurrently; the server appends them to ``visual_agent_queue.db`` and processes each
 job sequentially. The global lock avoids race conditions while the persistent
 queue ensures workflows can share the agent safely.
 
