@@ -25,7 +25,7 @@ import signal
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
 
 try:
@@ -379,11 +379,21 @@ def _schedule_coroutine(coro: asyncio.coroutines.Coroutine[Any, Any, Any]) -> An
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
-        if loop is running:
-            return loop.create_task(coro)
+        try:
+            if loop is running:
+                return loop.create_task(coro)
+            return asyncio.run_coroutine_threadsafe(coro, loop)
+        except Exception:
+            logger.debug("failed to schedule coroutine on existing loop", exc_info=True)
+            coro.close()
+            return None
+    try:
+        loop = _ensure_background_loop()
         return asyncio.run_coroutine_threadsafe(coro, loop)
-    loop = _ensure_background_loop()
-    return asyncio.run_coroutine_threadsafe(coro, loop)
+    except Exception:
+        logger.debug("failed to schedule coroutine on background loop", exc_info=True)
+        coro.close()
+        return None
 
 
 _CREATE_FAILURES: Counter[str] = Counter()
@@ -2206,6 +2216,34 @@ def _await_reaper_task() -> None:
     _REAPER_TASK = None
 
 
+def _run_cleanup_sync() -> None:
+    """Run cleanup and reaper workers once in a temporary event loop."""
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        interval = _POOL_CLEANUP_INTERVAL
+        try:
+            globals()["_POOL_CLEANUP_INTERVAL"] = 0.0
+
+            async def runner() -> None:
+                t1 = asyncio.create_task(_cleanup_worker())
+                t2 = asyncio.create_task(_reaper_worker())
+                await asyncio.sleep(0.05)
+                t1.cancel()
+                t2.cancel()
+                with suppress(asyncio.CancelledError):
+                    await t1
+                with suppress(asyncio.CancelledError):
+                    await t2
+
+            loop.run_until_complete(runner())
+        finally:
+            globals()["_POOL_CLEANUP_INTERVAL"] = interval
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
 def start_container_event_listener() -> None:
     """Start background thread listening for container exit events."""
     global _EVENT_THREAD, _EVENT_STOP
@@ -2312,9 +2350,15 @@ def ensure_cleanup_worker() -> None:
     task = _CLEANUP_TASK
     if task is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        if _CLEANUP_TASK is None:
+            _run_cleanup_sync()
+            return
         _LAST_CLEANUP_TS = time.monotonic()
         if _REAPER_TASK is None:
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+            if _REAPER_TASK is None:
+                _run_cleanup_sync()
+                return
             _LAST_REAPER_TS = time.monotonic()
         return
     try:
@@ -2334,10 +2378,16 @@ def ensure_cleanup_worker() -> None:
         pass
     if cancelled or exc is not None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        if _CLEANUP_TASK is None:
+            _run_cleanup_sync()
+            return
         _LAST_CLEANUP_TS = time.monotonic()
     task = _REAPER_TASK
     if task is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        if _REAPER_TASK is None:
+            _run_cleanup_sync()
+            return
         _LAST_REAPER_TS = time.monotonic()
         return
     try:
@@ -2355,6 +2405,9 @@ def ensure_cleanup_worker() -> None:
         pass
     if done or cancelled or exc is not None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        if _REAPER_TASK is None:
+            _run_cleanup_sync()
+            return
         _LAST_REAPER_TS = time.monotonic()
 
 
@@ -2381,7 +2434,10 @@ def watchdog_check() -> None:
                 _CLEANUP_TASK.cancel()
         finally:
             _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
-            _LAST_CLEANUP_TS = time.monotonic()
+            if _CLEANUP_TASK is None:
+                _run_cleanup_sync()
+            else:
+                _LAST_CLEANUP_TS = time.monotonic()
     if now - _LAST_REAPER_TS > limit:
         logger.warning("reaper worker stalled; restarting")
         try:
@@ -2389,7 +2445,10 @@ def watchdog_check() -> None:
                 _REAPER_TASK.cancel()
         finally:
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
-            _LAST_REAPER_TS = time.monotonic()
+            if _REAPER_TASK is None:
+                _run_cleanup_sync()
+            else:
+                _LAST_REAPER_TS = time.monotonic()
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")
@@ -2438,8 +2497,12 @@ if _DOCKER_CLIENT is not None:
     _ensure_pool_size_async(default_img)
     if _CLEANUP_TASK is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        if _CLEANUP_TASK is None:
+            _run_cleanup_sync()
     if _REAPER_TASK is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        if _REAPER_TASK is None:
+            _run_cleanup_sync()
     schedule_cleanup_check(_WORKER_CHECK_INTERVAL)
     atexit.register(_await_cleanup_task)
     atexit.register(_await_reaper_task)
