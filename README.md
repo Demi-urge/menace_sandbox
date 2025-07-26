@@ -668,20 +668,19 @@ development. The service must always run with a single worker:
 ```python
 uvicorn.run(app, host="0.0.0.0", port=HTTP_PORT, workers=1)
 ```
-Only one connection is processed at a time. The orchestrator submits requests
-directly to ``/run`` and, when the endpoint returns a task id, polls
-``/status/<id>`` until the job completes. Multiple clients may submit tasks
-concurrently; the server appends them to ``visual_agent_queue.db`` and processes each
-job sequentially. The global lock avoids race conditions while the persistent
-queue ensures workflows can share the agent safely.
+The orchestrator submits requests directly to ``/run`` which always responds with
+HTTP ``202`` and a task id. Submitted tasks are appended to
+``visual_agent_queue.db`` and executed sequentially. Poll ``/status/<id>`` until
+the job completes. This persistent queue allows multiple clients to share the
+agent safely and ensures tasks survive restarts.
 
 Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command returning a fresh token. ``VisualAgentClient`` runs the command automatically when authentication fails.
 
 ``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
 
-The service automatically recovers queued tasks on startup.
-Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to disable
-this behaviour.
+The service automatically recovers queued tasks and clears stale locks on
+startup. Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to
+disable this behaviour.
 
 Running tasks are automatically requeued when the service starts.
 ``VisualAgentClient`` keeps a local

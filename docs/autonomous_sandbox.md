@@ -161,15 +161,13 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
 ## Visual agent queueing
 
-`menace_visual_agent_2.py` only processes **one connection at a time**. When the
-`/run` endpoint returns HTTP `409` the agent is busy with another task. Keep a
-local queue of requests and retry them once `/status` reports `{"active": false}`.
-The `/status` response also includes the length of the internal queue so you can
-monitor progress. This behaviour avoids race conditions in the underlying visual
-pipeline.
+`menace_visual_agent_2.py` accepts concurrent requests but `/run` always
+responds with HTTP `202` and a task id. Submitted tasks are appended to
+`SANDBOX_DATA_DIR/visual_agent_queue.db` and processed sequentially. Poll
+`/status/<id>` to monitor progress. The persistent queue avoids race conditions
+and survives restarts.
 
-Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent_queue.db` and are restored
-on startup. Use `menace_visual_agent_2.py --resume` to process any pending
+Use `menace_visual_agent_2.py --resume` to process any pending
 entries without launching the HTTP service. Stale lock and PID files are cleaned
 automatically; run `menace_visual_agent_2.py --cleanup` if the service did not
 shut down cleanly.
@@ -426,10 +424,9 @@ respected as when running `run_autonomous.py`.
 
 #### Visual agent concurrency
 
-Only one visual agent request runs at a time. You may submit multiple tasks
-concurrently; they are appended to `visual_agent_queue.db` and executed sequentially.
-Poll the `/status` endpoint and wait for `{"active": false}` to determine when
-the agent is free for new work.
+Requests to `/run` always return HTTP `202` with a task id. The agent processes
+one job at a time from `visual_agent_queue.db`, so you can submit tasks
+concurrently and poll `/status/<id>` until each job completes.
 
 ### Troubleshooting synergy services
 
@@ -480,10 +477,10 @@ local installation.
 - **Missing dependencies** – run `./setup_env.sh` again to ensure all Python
   packages are installed. On bare metal verify that `ffmpeg` and `tesseract`
   are present in your `$PATH`.
-- **Visual agent returns 409** – the service only accepts one request at a time
-  but automatically queues additional jobs in ``visual_agent_queue.db``. Wait until
-  `/status` shows `{"active": false}` or submit tasks concurrently and let the
-  queue drain.
+- **Visual agent queue stalled** – tasks are appended to ``visual_agent_queue.db``
+  and processed sequentially. The service automatically cleans stale locks and
+  requeues running tasks on startup. Run ``menace_visual_agent_2.py --cleanup``
+  or ``--repair-running`` if the queue appears stuck.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
   firewall blocks the connection. The dashboard starts automatically once the
   sandbox loop begins.

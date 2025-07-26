@@ -150,12 +150,11 @@ visual agent is contacted. The most relevant are:
 
 The standalone service `menace_visual_agent_2.py` exposes HTTP endpoints on the
 port specified by `MENACE_AGENT_PORT` (default 8001). Requests must include
-`VISUAL_AGENT_TOKEN` for authentication. **Only a single connection is processed
-at any time.** When `/run` returns `409` the agent is busy. Queue additional
-tasks on your side and resend them once `/status` shows the agent is idle.
-
-Because the underlying pipeline is not reentrant, the service rejects any
-concurrent `/run` requests with HTTP 409 until the active job completes.
+`VISUAL_AGENT_TOKEN` for authentication. The `/run` endpoint always returns
+HTTP `202` together with a task id. Submitted jobs are appended to
+`visual_agent_queue.db` and executed sequentially. Poll `/status/<id>` to check
+progress. Crash recovery and stale lock handling are automatic as detailed
+above.
 
 The `/status` endpoint returns a JSON object with two fields:
 
