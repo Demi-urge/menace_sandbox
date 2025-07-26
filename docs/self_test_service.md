@@ -32,7 +32,7 @@ container issues:
 Run the tests manually via the CLI:
 
 ```bash
-python -m menace.self_test_service run --workers 4 tests/unit
+python -m menace.self_test_service run --workers 4 --metrics-port 8004 tests/unit
 ```
 
 Options include:
@@ -42,6 +42,7 @@ Options include:
 - `--use-container` – execute tests inside a container when available
 - `--container-runtime` – container runtime executable (e.g. `docker` or `podman`)
 - `--docker-host` – Docker/Podman host or URL for remote engines
+- `--metrics-port` – expose Prometheus gauges on this port
 
 Remove stale containers left over from interrupted runs with:
 
@@ -65,7 +66,8 @@ python -m menace.self_test_service run \
 Run tests continuously on a schedule using Docker or Podman:
 
 ```bash
-python -m menace.self_test_service run-scheduled --interval 3600 --history test_history.json
+python -m menace.self_test_service run-scheduled --interval 3600 --history test_history.json \
+    --metrics-port 8004
 ```
 
 The `run-scheduled` command shares the same options as `run` and writes each

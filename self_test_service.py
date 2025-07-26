@@ -88,6 +88,7 @@ class SelfTestService:
         container_timeout: float = 300.0,
         history_path: str | Path | None = None,
         state_path: str | Path | None = None,
+        metrics_port: int | None = None,
     ) -> None:
         """Create a new service instance.
 
@@ -98,6 +99,8 @@ class SelfTestService:
         docker_host:
             Remote host or URL for the container engine. Passed to the runtime
             using ``-H`` for Docker or ``--url`` for Podman.
+        metrics_port:
+            Port for the Prometheus metrics server. Overrides ``SELF_TEST_METRICS_PORT``.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -121,6 +124,15 @@ class SelfTestService:
         self.image_tar_path = os.getenv("MENACE_SELF_TEST_IMAGE_TAR")
         state_env = os.getenv("SELF_TEST_STATE")
         self.state_path = Path(state_path or state_env) if (state_path or state_env) else None
+        env_port = os.getenv("SELF_TEST_METRICS_PORT") if metrics_port is None else None
+        if metrics_port is None and env_port is not None:
+            try:
+                self.metrics_port = int(env_port)
+            except ValueError:
+                self.metrics_port = None
+        else:
+            self.metrics_port = metrics_port
+        self._metrics_started = False
         self._state: dict[str, Any] | None = None
         if self.state_path and self.state_path.exists():
             try:
@@ -831,6 +843,12 @@ class SelfTestService:
                 self._start_health_server(int(health_port))
             except Exception:
                 self.logger.exception("failed to start health server")
+        if self.metrics_port is not None and not self._metrics_started:
+            try:
+                _me.start_metrics_server(int(self.metrics_port))
+                self._metrics_started = True
+            except Exception:
+                self.logger.exception("failed to start metrics server")
         self._task = self._loop.create_task(self._schedule_loop(interval))
         return self._task
 
@@ -843,6 +861,12 @@ class SelfTestService:
     ) -> None:
         """Run :meth:`_run_once` repeatedly with a delay between runs."""
 
+        if self.metrics_port is not None and not self._metrics_started:
+            try:
+                _me.start_metrics_server(int(self.metrics_port))
+                self._metrics_started = True
+            except Exception:
+                self.logger.exception("failed to start metrics server")
         count = 0
         while True:
             try:
@@ -853,6 +877,9 @@ class SelfTestService:
             if runs is not None and count >= runs:
                 break
             time.sleep(interval)
+        if self._metrics_started:
+            _me.stop_metrics_server()
+            self._metrics_started = False
 
     # ------------------------------------------------------------------
     async def stop(self) -> None:
@@ -870,6 +897,9 @@ class SelfTestService:
         finally:
             self._task = None
             self._stop_health_server()
+            if self._metrics_started:
+                _me.stop_metrics_server()
+                self._metrics_started = False
 
 
 __all__ = [
@@ -939,6 +969,11 @@ def cli(argv: list[str] | None = None) -> int:
         default=300.0,
         help="Container timeout in seconds",
     )
+    run.add_argument(
+        "--metrics-port",
+        type=int,
+        help="Port to expose Prometheus gauges",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -984,6 +1019,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Container timeout in seconds",
     )
     sched.add_argument(
+        "--metrics-port",
+        type=int,
+        help="Port to expose Prometheus gauges",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1027,6 +1067,7 @@ def cli(argv: list[str] | None = None) -> int:
             state_path=args.state,
             container_retries=args.retries,
             container_timeout=args.timeout,
+            metrics_port=args.metrics_port,
         )
         try:
             asyncio.run(service._run_once())
@@ -1059,6 +1100,7 @@ def cli(argv: list[str] | None = None) -> int:
             state_path=args.state,
             container_retries=args.retries,
             container_timeout=args.timeout,
+            metrics_port=args.metrics_port,
         )
         try:
             service.run_scheduled(interval=args.interval)
