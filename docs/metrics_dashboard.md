@@ -79,3 +79,13 @@ listens on `SYNERGY_METRICS_PORT` (default 8003).
 EXPORT_SYNERGY_METRICS=1 SYNERGY_METRICS_PORT=8003 python run_autonomous.py
 ```
 
+### Self‑test Prometheus Export
+
+`SelfTestService` can expose its gauges directly for scraping. Set
+`SELF_TEST_METRICS_PORT` or pass `--metrics-port` to the service to start a
+metrics server:
+
+```bash
+python -m menace.self_test_service run --metrics-port 8004 tests/unit
+```
+

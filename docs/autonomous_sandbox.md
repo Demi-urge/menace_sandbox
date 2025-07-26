@@ -127,6 +127,7 @@ After the system tools are in place install the Python requirements via
 - `AUTO_DASHBOARD_PORT=8001` – start the metrics dashboard
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
+- `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=0` – disable automatic queue recovery
