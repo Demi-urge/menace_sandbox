@@ -443,3 +443,48 @@ def test_reaper_worker_records_duration(monkeypatch):
     assert env._CLEANUP_DURATIONS["reaper"] > 0
     metrics = env.collect_metrics(0.0, 0.0, None)
     assert metrics["cleanup_duration_seconds_reaper"] > 0
+
+
+def test_watchdog_restarts_failed_workers(monkeypatch, caplog):
+    """Ensure watchdog restarts workers that exited with an error."""
+
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+
+    class DummyTask:
+        def __init__(self, exc=None):
+            self._exc = exc
+
+        def cancel(self):
+            pass
+
+        def done(self):
+            return True
+
+        def cancelled(self):
+            return False
+
+        def exception(self):
+            return self._exc
+
+    created = []
+
+    def fake_schedule(coro):
+        coro.close()
+        t = DummyTask()
+        created.append(t)
+        return t
+
+    monkeypatch.setattr(env, "_schedule_coroutine", fake_schedule)
+
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._CLEANUP_TASK = DummyTask(RuntimeError("boom"))
+    env._REAPER_TASK = DummyTask(RuntimeError("boom"))
+    env._WATCHDOG_METRICS.clear()
+    caplog.set_level("WARNING")
+
+    env.watchdog_check()
+
+    assert env._CLEANUP_TASK in created
+    assert env._REAPER_TASK in created
+    assert "cleanup worker restarted by watchdog" in caplog.text
+    assert "reaper worker restarted by watchdog" in caplog.text
