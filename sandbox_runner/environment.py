@@ -2723,7 +2723,11 @@ def cancel_cleanup_check() -> None:
 
 import atexit
 
-if time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD:
+if (
+    time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD
+    or _read_active_containers()
+    or _read_active_overlays()
+):
     purge_leftovers()
     retry_failed_cleanup()
 
