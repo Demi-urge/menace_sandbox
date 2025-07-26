@@ -115,6 +115,7 @@ Network behaviour can be tuned with:
 - `SANDBOX_CONTAINER_DISK_LIMIT` – size limit for container directories; `0` disables the check.
 - `SANDBOX_CONTAINER_USER` – user specification passed to Docker containers when set.
 - `SANDBOX_CLEANUP_ALERT_THRESHOLD` – consecutive failed cleanup retries before an error is logged (default `3`).
+- `SANDBOX_MAX_CONTAINER_COUNT` – maximum number of active containers across all pools (default `10`).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface
@@ -715,6 +716,7 @@ their actions and the counts accumulate in a set of metrics exposed through
 - `runtime_vms_removed` – VM overlays deleted while the sandbox is running.
 - `cleanup_failures` – failed attempts to stop or remove a container.
 - `force_kills` – containers killed via the fallback CLI removal path.
+- `active_container_limit_reached` – container creations skipped when the active limit was hit.
 - `cleanup_duration_seconds_cleanup` and `cleanup_duration_seconds_reaper` –
   time spent in each cleanup sweep. Monitor these durations with the
   `cleanup_duration_seconds` Prometheus gauge. Unusually long sweeps may

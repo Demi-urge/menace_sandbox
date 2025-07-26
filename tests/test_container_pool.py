@@ -122,3 +122,32 @@ def test_backoff_and_consecutive_failures(monkeypatch, tmp_path):
     assert isinstance(c, DummyContainer)
     assert env._CONSECUTIVE_CREATE_FAILURES["img"] == 0
     assert delays and delays[0] == 8.0
+
+
+def test_create_pool_container_respects_limit(monkeypatch):
+    _reset(monkeypatch)
+    monkeypatch.setattr(env, "_MAX_CONTAINER_COUNT", 1)
+    monkeypatch.setattr(env, "_read_active_containers", lambda: ["x"])
+    env._ACTIVE_CONTAINER_LIMIT_REACHED = 0
+
+    with pytest.raises(RuntimeError):
+        asyncio.run(env._create_pool_container("img"))
+
+    assert env._ACTIVE_CONTAINER_LIMIT_REACHED == 1
+
+
+def test_warmup_respects_container_limit(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+    env._CONTAINER_POOLS.clear()
+    env._WARMUP_TASKS.clear()
+    monkeypatch.setattr(env, "_cleanup_idle_containers", lambda: None)
+    monkeypatch.setattr(env, "_MAX_CONTAINER_COUNT", 1)
+    monkeypatch.setattr(env, "_read_active_containers", lambda: ["x"])
+    env._ACTIVE_CONTAINER_LIMIT_REACHED = 0
+    called = []
+    monkeypatch.setattr(env, "_schedule_coroutine", lambda c: called.append(True))
+
+    env._ensure_pool_size_async("img")
+
+    assert not called
+    assert env._ACTIVE_CONTAINER_LIMIT_REACHED == 1

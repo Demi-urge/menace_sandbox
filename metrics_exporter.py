@@ -353,6 +353,12 @@ runtime_vms_removed = Gauge(
     "runtime_vms_removed", "VM overlays deleted while the sandbox is running"
 )
 
+# Gauge tracking container creation skips due to the active limit
+active_container_limit_reached = Gauge(
+    "active_container_limit_reached",
+    "Container creations skipped because the active limit was reached",
+)
+
 # Gauge tracking overlay cleanup failures
 overlay_cleanup_failures = Gauge(
     "overlay_cleanup_failures",
@@ -442,6 +448,7 @@ __all__ = [
     "force_kills",
     "runtime_vms_removed",
     "overlay_cleanup_failures",
+    "active_container_limit_reached",
     "cleanup_retry_successes",
     "cleanup_retry_failures",
     "cleanup_duration_gauge",
