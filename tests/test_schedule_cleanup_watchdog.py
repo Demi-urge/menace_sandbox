@@ -64,3 +64,39 @@ def test_watchdog_restarts_cancelled_tasks(monkeypatch):
         env._CLEANUP_TASK = None
         env._REAPER_TASK = None
         env.stop_container_event_listener()
+
+
+def test_watchdog_restarts_stalled_workers(monkeypatch):
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+
+    created = []
+
+    def fake_schedule(coro):
+        coro.close()
+        t = DummyTask()
+        created.append(t)
+        return t
+
+    monkeypatch.setattr(env, "_schedule_coroutine", fake_schedule)
+    monkeypatch.setattr(
+        env,
+        "start_container_event_listener",
+        lambda: setattr(env, "_EVENT_THREAD", types.SimpleNamespace(is_alive=lambda: True)),
+    )
+
+    env._EVENT_THREAD = types.SimpleNamespace(is_alive=lambda: True)
+    env._CLEANUP_TASK = DummyTask()
+    env._REAPER_TASK = DummyTask()
+    env._LAST_CLEANUP_TS = time.monotonic() - 3 * env._POOL_CLEANUP_INTERVAL
+    env._LAST_REAPER_TS = env._LAST_CLEANUP_TS
+    env._WATCHDOG_METRICS.clear()
+
+    env.watchdog_check()
+
+    assert env._CLEANUP_TASK in created
+    assert env._REAPER_TASK in created
+    assert env._WATCHDOG_METRICS["cleanup"] >= 1
+    assert env._WATCHDOG_METRICS["reaper"] >= 1
+    env._CLEANUP_TASK = None
+    env._REAPER_TASK = None
+    env.stop_container_event_listener()
