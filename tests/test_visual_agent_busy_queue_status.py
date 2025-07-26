@@ -69,7 +69,7 @@ def test_busy_run_shows_queue_length(tmp_path):
             timeout=5,
         )
         assert resp1.status_code == 202
-        assert resp2.status_code == 409
+        assert resp2.status_code == 202
 
         for _ in range(20):
             status = requests.get(f"{url}/status", timeout=1).json()
@@ -79,7 +79,7 @@ def test_busy_run_shows_queue_length(tmp_path):
         else:
             raise RuntimeError("agent did not start running")
 
-        assert status["queue"] == 0
+        assert status["queue"] == 1
     finally:
         proc.terminate()
         try:

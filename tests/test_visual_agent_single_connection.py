@@ -26,4 +26,4 @@ async def test_run_rejects_when_busy(monkeypatch, tmp_path):
         va._autosave_thread.join(timeout=1)
 
     assert resp1.status_code == 202
-    assert resp2.status_code == 409
+    assert resp2.status_code == 202

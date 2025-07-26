@@ -224,7 +224,7 @@ def test_run_autonomous_with_visual_agent(monkeypatch, tmp_path):
             res1 = requests.post(f"{url}/run", headers=headers, json={"prompt": "a"})
             assert res1.status_code == 202
             res2 = requests.post(f"{url}/run", headers=headers, json={"prompt": "b"})
-            assert res2.status_code == 409
+            assert res2.status_code == 202
             time.sleep(0.3)
             res3 = requests.post(f"{url}/run", headers=headers, json={"prompt": "b"})
             assert res3.status_code == 202

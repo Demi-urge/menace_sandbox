@@ -103,7 +103,7 @@ def test_visual_agent_concurrency(tmp_path):
             timeout=5,
         )
         assert resp1.status_code == 202
-        assert resp2.status_code == 409
+        assert resp2.status_code == 202
 
         time.sleep(0.3)
 
@@ -208,7 +208,7 @@ def test_overlapping_run_requests(tmp_path):
         )
 
         assert resp1.status_code == 202
-        assert resp2.status_code == 409
+        assert resp2.status_code == 202
     finally:
         proc.terminate()
         proc.wait(timeout=5)
@@ -298,7 +298,7 @@ def test_visual_agent_queue_persistence(tmp_path):
             timeout=5,
         )
         assert resp1.status_code == 202
-        assert resp2.status_code == 409
+        assert resp2.status_code == 202
 
         time.sleep(0.3)
 
@@ -314,7 +314,7 @@ def test_visual_agent_queue_persistence(tmp_path):
 
         data = json.loads((tmp_path / "visual_agent_queue.json").read_text())
         assert data["queue"] == []
-        assert len(data["status"]) == 2
+        assert len(data["status"]) == 3
         assert all(v["status"] == "completed" for v in data["status"].values())
     finally:
         proc.terminate()

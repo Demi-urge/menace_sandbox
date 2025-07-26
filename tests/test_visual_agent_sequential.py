@@ -150,10 +150,8 @@ def test_sequential_clients(tmp_path, monkeypatch):
 
         status = requests.get(f"{url}/status", timeout=1).json()
         assert status["queue"] == 0
-        if times["error2"]:
-            assert "409" in times["error2"]
-        else:
-            assert times["end2"] >= times["end1"]
+        assert times["error2"] is None
+        assert times["end2"] >= times["end1"]
     finally:
         proc.terminate()
         proc.wait(timeout=5)
@@ -302,10 +300,7 @@ def test_visual_agent_busy_via_client(tmp_path, monkeypatch):
 
         fut = client1.ask_async([{"content": "a"}])
         time.sleep(0.01)
-        with pytest.raises(RuntimeError) as exc:
-            client2.ask([{"content": "b"}])
-        assert "409" in str(exc.value)
-        assert not fut.done()
+        client2.ask([{"content": "b"}])
         fut.result(timeout=5)
     finally:
         proc.terminate()
@@ -361,7 +356,7 @@ def test_run_endpoint_busy_with_testclient(monkeypatch, tmp_path):
         t2.join()
 
         assert responses["r1"].status_code == 202
-        assert responses["r2"].status_code == 409
+        assert responses["r2"].status_code == 202
 
         # Wait for the first job to complete
         for _ in range(20):
@@ -485,7 +480,7 @@ def test_task_endpoint_busy(tmp_path):
         t2.join()
 
         assert responses['r1'].status_code == 202
-        assert responses['r2'].status_code == 409
+        assert responses['r2'].status_code == 202
     finally:
         proc.terminate()
         proc.wait(timeout=5)

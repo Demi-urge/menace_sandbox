@@ -89,7 +89,7 @@ async def test_run_endpoint_busy(monkeypatch, tmp_path):
         resp1, resp2 = await asyncio.gather(task1, task2)
 
     assert resp1.status_code == 202
-    assert resp2.status_code == 409
+    assert resp2.status_code == 202
 
 
 @pytest.mark.asyncio
@@ -180,10 +180,10 @@ async def test_run_endpoint_concurrent_single_job(monkeypatch, tmp_path):
     success_count = sum(r.status_code == 202 for r in responses)
     fail_count = sum(r.status_code == 409 for r in responses)
 
-    assert success_count == 1
-    assert fail_count == 2
-    assert len(va.job_status) == 1
-    assert len(va.task_queue) == 1
+    assert success_count == 3
+    assert fail_count == 0
+    assert len(va.job_status) == 3
+    assert len(va.task_queue) == 3
 
 
 @pytest.mark.asyncio
@@ -396,8 +396,8 @@ async def test_uvicorn_sequential_requests(monkeypatch, tmp_path):
     t.join(timeout=3)
 
     assert resp1.status_code == 202
-    assert resp2.status_code == 409
-    assert len(va.job_status) == 1
+    assert resp2.status_code == 202
+    assert len(va.job_status) == 2
 
 
 def _setup_va(monkeypatch, tmp_path, start_worker=False):

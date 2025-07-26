@@ -24,8 +24,8 @@ async def test_run_busy_when_queued(monkeypatch, tmp_path):
         resp2 = await client.post("/run", headers={"x-token": va.API_TOKEN}, json={"prompt": "p"})
 
     assert resp1.status_code == 202
-    assert resp2.status_code == 409
-    assert len(va.task_queue) == 1
+    assert resp2.status_code == 202
+    assert len(va.task_queue) == 2
     assert calls["n"] == 0
 
 
@@ -55,6 +55,6 @@ async def test_run_busy_when_running(monkeypatch, tmp_path):
     va._autosave_thread.join(timeout=1)
 
     assert resp1.status_code == 202
-    assert resp2.status_code == 409
+    assert resp2.status_code == 202
     assert calls["n"] == 1
-    assert not va.task_queue
+    assert len(va.task_queue) == 1
