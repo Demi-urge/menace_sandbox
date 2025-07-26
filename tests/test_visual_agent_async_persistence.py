@@ -54,13 +54,13 @@ async def test_parallel_run_requests_persistence(monkeypatch, tmp_path):
     assert len(success) == 3
     assert len(failures) == 0
 
-    data = json.loads((tmp_path / "visual_agent_queue.json").read_text())
-    assert len(data["queue"]) == 3
-    task_ids = [item["id"] for item in data["queue"]]
-    for tid in task_ids:
-        assert tid in data["status"]
-        assert data["status"][tid]["status"] == "queued"
+    va._persist_state()
+
+    data = json.loads((tmp_path / "visual_agent_state.json").read_text())
+    assert len(data["status"]) == 3
+    for info in data["status"].values():
+        assert info["status"] == "queued"
 
     va2 = _setup_va(monkeypatch, tmp_path)
-    assert list(va2.task_queue) == data["queue"]
+    va2._initialize_state()
     assert va2.job_status == data["status"]

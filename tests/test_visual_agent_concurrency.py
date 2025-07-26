@@ -431,8 +431,7 @@ def test_visual_agent_queue_persistence(tmp_path):
 
         time.sleep(0.3)
 
-        data = json.loads((tmp_path / "visual_agent_queue.json").read_text())
-        assert data["queue"] == []
+        data = json.loads((tmp_path / "visual_agent_state.json").read_text())
         assert len(data["status"]) == 3
         assert all(v["status"] == "completed" for v in data["status"].values())
     finally:

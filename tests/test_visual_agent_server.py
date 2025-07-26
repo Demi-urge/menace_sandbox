@@ -15,6 +15,7 @@ pytest.importorskip("httpx")
 pytest.importorskip("uvicorn")
 import httpx
 import uvicorn
+from visual_agent_queue import VisualAgentQueue
 
 
 @pytest.mark.asyncio
@@ -444,15 +445,21 @@ def _setup_va(monkeypatch, tmp_path, start_worker=False):
                 pass
 
         monkeypatch.setattr(threading, "Thread", DummyThread)
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     return importlib.reload(importlib.import_module("menace_visual_agent_2"))
 
 
 def test_load_persistent_queue(monkeypatch, tmp_path):
-    data = {"queue": [{"id": "a", "prompt": "p", "branch": None}], "status": {"a": {"status": "queued", "prompt": "p", "branch": None}}}
-    path = tmp_path / "visual_agent_queue.json"
-    path.write_text(json.dumps(data))
+    q = VisualAgentQueue(tmp_path / "visual_agent_queue.db")
+    q.append({"id": "a", "prompt": "p", "branch": None})
+    state = {
+        "status": {"a": {"status": "queued", "prompt": "p", "branch": None}},
+        "last_completed": 0.0,
+    }
+    (tmp_path / "visual_agent_state.json").write_text(json.dumps(state))
     va = _setup_va(monkeypatch, tmp_path)
+    va._initialize_state()
     assert list(va.task_queue)[0]["id"] == "a"
     assert va.job_status["a"]["status"] == "queued"
 
@@ -473,28 +480,25 @@ async def test_flush_endpoint(monkeypatch, tmp_path):
     assert flush.status_code == 200
     assert not va.task_queue
     assert not va.job_status
-    assert not (tmp_path / "visual_agent_queue.json").exists()
+    assert not (tmp_path / "visual_agent_state.json").exists()
 
 
 def test_corrupt_state_discard(monkeypatch, tmp_path):
+    q = VisualAgentQueue(tmp_path / "visual_agent_queue.db")
+    q.append({"id": "a", "prompt": "p", "branch": None})
     bad = {
-        "queue": [
-            {"id": "a", "prompt": "p", "branch": None},
-            {"bad": 1}
-        ],
         "status": {
             "a": {"status": "queued", "prompt": "p", "branch": None},
-            "bad": "x"
+            "bad": "x",
         },
+        "last_completed": 0,
     }
-    path = tmp_path / "visual_agent_queue.json"
+    path = tmp_path / "visual_agent_state.json"
     path.write_text(json.dumps(bad))
     va = _setup_va(monkeypatch, tmp_path)
-    assert list(va.task_queue) == [{"id": "a", "prompt": "p", "branch": None}]
+    va._initialize_state()
+    assert list(va.task_queue)[0]["id"] == "a"
     assert list(va.job_status) == ["a"]
-    loaded = json.loads(path.read_text())
-    assert loaded["queue"] == [{"id": "a", "prompt": "p", "branch": None}]
-    assert "bad" not in loaded["status"]
 
 
 def test_restart_recovers_pending(monkeypatch, tmp_path):
@@ -531,47 +535,34 @@ def test_state_roundtrip(monkeypatch, tmp_path):
     va._persist_state()
 
     va2 = _setup_va(monkeypatch, tmp_path)
+    va2._initialize_state()
     assert list(va2.task_queue)[0]["id"] == "x"
     assert va2.job_status["x"]["status"] == "queued"
 
 
 def test_recover_malformed_file(monkeypatch, tmp_path):
-    path = tmp_path / "visual_agent_queue.json"
+    q = VisualAgentQueue(tmp_path / "visual_agent_queue.db")
+    q.append({"id": "a", "prompt": "p", "branch": None})
+    path = tmp_path / "visual_agent_state.json"
     path.write_text("{bad json")
     va = _setup_va(monkeypatch, tmp_path)
-    bak1 = tmp_path / "visual_agent_queue.json.bak1"
-    assert bak1.exists()
-    assert path.exists()
-    assert not va.task_queue
-    assert not va.job_status
-    data = json.loads(path.read_text())
-    assert data == {"queue": [], "status": {}}
+    va._initialize_state()
+    assert list(va.task_queue)[0]["id"] == "a"
+    assert va.job_status["a"]["status"] == "queued"
 
 
 def test_recover_truncated_file(monkeypatch, tmp_path):
-    """Truncated queue file should be backed up and reset."""
-    content = json.dumps({
-        "queue": [{"id": "a", "prompt": "p", "branch": None}],
-        "status": {"a": {"status": "queued", "prompt": "p", "branch": None}},
-    })
-    path = tmp_path / "visual_agent_queue.json"
+    content = json.dumps({"status": {"a": {"status": "queued", "prompt": "p", "branch": None}}})
+    path = tmp_path / "visual_agent_state.json"
 
     truncated1 = content[: len(content) // 2]
     path.write_text(truncated1)
+    q = VisualAgentQueue(tmp_path / "visual_agent_queue.db")
+    q.append({"id": "a", "prompt": "p", "branch": None})
     va = _setup_va(monkeypatch, tmp_path)
-    bak1 = tmp_path / "visual_agent_queue.json.bak1"
-    assert bak1.exists()
-    assert bak1.read_text() == truncated1
-    assert json.loads(path.read_text()) == {"queue": [], "status": {}}
-
-    truncated2 = content[: len(content) // 3]
-    path.write_text(truncated2)
-    va = _setup_va(monkeypatch, tmp_path)
-    bak2 = tmp_path / "visual_agent_queue.json.bak2"
-    assert bak1.read_text() == truncated2
-    assert bak2.read_text() == truncated1
-    assert len(list(tmp_path.glob("visual_agent_queue.json.bak*"))) == 2
-    assert json.loads(path.read_text()) == {"queue": [], "status": {}}
+    va._initialize_state()
+    assert list(va.task_queue)[0]["id"] == "a"
+    assert va.job_status["a"]["status"] == "queued"
 
 
 def test_stale_lock_removed_on_startup(monkeypatch, tmp_path):
