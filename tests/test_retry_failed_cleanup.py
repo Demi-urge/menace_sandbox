@@ -116,3 +116,28 @@ def test_retry_failed_cleanup_consecutive_alert(monkeypatch, tmp_path, caplog):
     assert env._CONSECUTIVE_CLEANUP_FAILURES == 2
     assert ("persistent_cleanup_failure", False) in logs
     assert "cleanup retries failing 2 times consecutively" in caplog.text
+
+
+def test_retry_failed_cleanup_triggers_prune(monkeypatch, tmp_path, caplog):
+    cid = "c1"
+    file = tmp_path / "failed.json"
+    stats_file = tmp_path / "stats.json"
+    file.write_text(json.dumps({cid: 0.0}))
+    monkeypatch.setattr(env, "FAILED_CLEANUP_FILE", file)
+    monkeypatch.setattr(env, "_CLEANUP_STATS_FILE", stats_file)
+    monkeypatch.setattr(env.shutil, "rmtree", lambda p: (_ for _ in ()).throw(OSError("boom")))
+    prune_calls = []
+
+    def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
+        if cmd[:3] == ["docker", "system", "prune"]:
+            prune_calls.append(cmd)
+            return types.SimpleNamespace(returncode=0, stdout="")
+        return types.SimpleNamespace(returncode=1, stdout="x", stderr="err")
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+    monkeypatch.setattr(env, "_rmtree_windows", lambda p, attempts=5, base=0.2: False)
+    monkeypatch.setattr(env, "_MAX_FAILURE_ATTEMPTS", 0)
+    caplog.set_level("WARNING")
+    env.retry_failed_cleanup()
+    assert prune_calls
+    assert "failsafe prune" in caplog.text.lower()

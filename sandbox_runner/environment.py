@@ -419,6 +419,7 @@ _CLEANUP_RETRY_SUCCESSES = 0
 _CLEANUP_RETRY_FAILURES = 0
 _CONSECUTIVE_CLEANUP_FAILURES = 0
 _CLEANUP_ALERT_THRESHOLD = int(os.getenv("SANDBOX_CLEANUP_ALERT_THRESHOLD", "3"))
+_MAX_FAILURE_ATTEMPTS = int(os.getenv("SANDBOX_PRUNE_THRESHOLD", "5"))
 _WATCHDOG_METRICS: Counter[str] = Counter()
 _CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
 _LAST_CLEANUP_TS = time.monotonic()
@@ -2141,6 +2142,22 @@ def retry_failed_cleanup() -> tuple[int, int]:
     if failures:
         _CLEANUP_RETRY_FAILURES += failures
         _increment_cleanup_stat("cleanup_retry_failures", failures)
+        if failures > _MAX_FAILURE_ATTEMPTS:
+            try:
+                logger.warning(
+                    "failsafe prune triggered after %s failures", failures
+                )
+            except Exception:
+                pass
+            try:
+                subprocess.run(
+                    ["docker", "system", "prune", "-f", "--volumes"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+            except Exception:
+                logger.exception("failsafe docker prune failed")
 
     try:
         from . import metrics_exporter as _me
