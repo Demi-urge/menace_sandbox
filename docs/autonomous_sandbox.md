@@ -168,7 +168,7 @@ The `/status` response also includes the length of the internal queue so you can
 monitor progress. This behaviour avoids race conditions in the underlying visual
 pipeline.
 
-Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent.db` and are restored
+Queued tasks are stored in `SANDBOX_DATA_DIR/visual_agent_queue.db` and are restored
 on startup. Use `menace_visual_agent_2.py --resume` to process any pending
 entries without launching the HTTP service. Stale lock and PID files are cleaned
 automatically; run `menace_visual_agent_2.py --cleanup` if the service did not
@@ -426,7 +426,7 @@ respected as when running `run_autonomous.py`.
 #### Visual agent concurrency
 
 Only one visual agent request runs at a time. You may submit multiple tasks
-concurrently; they are appended to `visual_agent.db` and executed sequentially.
+concurrently; they are appended to `visual_agent_queue.db` and executed sequentially.
 Poll the `/status` endpoint and wait for `{"active": false}` to determine when
 the agent is free for new work.
 
@@ -480,7 +480,7 @@ local installation.
   packages are installed. On bare metal verify that `ffmpeg` and `tesseract`
   are present in your `$PATH`.
 - **Visual agent returns 409** – the service only accepts one request at a time
-  but automatically queues additional jobs in ``visual_agent.db``. Wait until
+  but automatically queues additional jobs in ``visual_agent_queue.db``. Wait until
   `/status` shows `{"active": false}` or submit tasks concurrently and let the
   queue drain.
 - **Dashboard not loading** – confirm that `AUTO_DASHBOARD_PORT` is free and no
