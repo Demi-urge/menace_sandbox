@@ -78,7 +78,13 @@ def _startup_load_state() -> None:
         try:
             _global_lock.acquire(timeout=0)
         except Timeout:
-            raise SystemExit("Agent busy")
+            if _global_lock.is_lock_stale():
+                logger.info("recovered stale global lock")
+                with suppress(Exception):
+                    os.remove(GLOBAL_LOCK_PATH)
+                _global_lock.acquire(timeout=0)
+            else:
+                raise SystemExit("Agent busy")
         try:
             task_queue.clear()
             job_status.clear()
@@ -129,6 +135,11 @@ def _remove_pid_file() -> None:
 
 
 def _setup_pid_file() -> None:
+    if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
+        try:
+            os.remove(GLOBAL_LOCK_PATH)
+        except Exception:
+            logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
     path = Path(PID_FILE_PATH)
     if path.exists():
         existing = None
@@ -154,7 +165,9 @@ def _setup_pid_file() -> None:
 def _cleanup_stale_files() -> None:
     """Remove leftover lock and PID files."""
     try:
-        if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
+        if os.path.exists(GLOBAL_LOCK_PATH) and (
+            is_lock_stale(GLOBAL_LOCK_PATH) or _global_lock.is_lock_stale()
+        ):
             os.remove(GLOBAL_LOCK_PATH)
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove lock %s", GLOBAL_LOCK_PATH)
@@ -291,9 +304,16 @@ def _initialize_state() -> None:
         _global_lock.acquire(timeout=0)
         acquired = True
     except Timeout:
-        job_status.clear()
-        job_status.update(task_queue.get_status())
-        return
+        if _global_lock.is_lock_stale():
+            logger.info("recovered stale global lock")
+            with suppress(Exception):
+                os.remove(GLOBAL_LOCK_PATH)
+            _global_lock.acquire(timeout=0)
+            acquired = True
+        else:
+            job_status.clear()
+            job_status.update(task_queue.get_status())
+            return
     try:
         _load_state_locked()
     finally:
@@ -848,7 +868,6 @@ if __name__ == "__main__":
             VisualAgentQueue.migrate_from_jsonl(QUEUE_DB, QUEUE_FILE)
             task_queue._init_db()
             job_status.update(task_queue.get_status())
-            global last_completed_ts
             last_completed_ts = task_queue.get_last_completed()
         finally:
             try:
