@@ -727,6 +727,8 @@ Administrators can tune `SANDBOX_OVERLAY_MAX_AGE` to control when leftover overl
 
 Additional metrics include `container_failures_<image>` and
 `consecutive_failures_<image>` for each image the pool attempted to create.
+The Prometheus gauges `container_creation_failures_total` and
+`container_creation_success_total` expose these counts using the `image` label.
 `container_backoff_base` reports the current exponential backoff base used when
 creation repeatedly fails.
 
