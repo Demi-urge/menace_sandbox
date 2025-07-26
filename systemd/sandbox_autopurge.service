@@ -1,0 +1,11 @@
+[Unit]
+Description=Sandbox Runner stale resource autopurge
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/menace_sandbox
+ExecStart=/usr/bin/python -m sandbox_runner.cli --purge-stale
+
+[Install]
+WantedBy=multi-user.target

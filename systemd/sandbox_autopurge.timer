@@ -1,0 +1,11 @@
+[Unit]
+Description=Run sandbox autopurge on boot and hourly
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+Unit=sandbox_autopurge.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
