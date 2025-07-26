@@ -112,3 +112,49 @@ def test_remove_stale_containers_retries_and_logs(monkeypatch, caplog):
     assert len(ps_calls) == 2
     assert removed == ["abc"]
     assert "failed to list stale containers" in caplog.text
+
+
+def _get(gauge):
+    if hasattr(gauge, "_value"):
+        return gauge._value.get()
+    return gauge.labels().get()
+
+
+def test_force_remove_failure_metric(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    sts.self_test_container_failures_total.set(0)
+    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    asyncio.run(svc._force_remove_container("cid"))
+    assert _get(sts.self_test_container_failures_total) == 1
+
+
+def test_remove_stale_containers_failure_metric(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 1
+
+            async def communicate(self):
+                return b"", b"err"
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    sts.self_test_container_failures_total.set(0)
+    svc = sts.SelfTestService(use_container=True, container_retries=1)
+    asyncio.run(svc._remove_stale_containers())
+    assert _get(sts.self_test_container_failures_total) == 1
