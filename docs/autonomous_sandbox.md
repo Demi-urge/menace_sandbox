@@ -125,6 +125,7 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_ROI_TOLERANCE=0.01` – ROI delta required to stop early
 - `RUN_CYCLES=0` – unlimited run cycles for the orchestrator
 - `AUTO_DASHBOARD_PORT=8001` – start the metrics dashboard
+- `METRICS_PORT=8001` – start the internal metrics exporter (same as `--metrics-port`)
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
@@ -156,6 +157,8 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
    Alternatively run `scripts/launch_personal.py` to start the visual agent and
    autonomous loop sequentially.
+
+   Use `--metrics-port` or `METRICS_PORT` to expose Prometheus metrics from the sandbox.
 
    The script verifies system dependencies, creates default presets using `environment_generator` and invokes the sandbox runner. The metrics dashboard is available at `http://localhost:${AUTO_DASHBOARD_PORT}` once started.
    If the previous run terminated unexpectedly you can append `--recover` to reload the last recorded ROI and synergy histories.

@@ -127,6 +127,7 @@ from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db
+from metrics_exporter import start_metrics_server
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 from sandbox_recovery_manager import SandboxRecoveryManager
@@ -482,6 +483,11 @@ def main(argv: List[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
+        "--metrics-port",
+        type=int,
+        help="start Prometheus metrics server on this port",
+    )
+    parser.add_argument(
         "--roi-cycles",
         type=int,
         default=3,
@@ -592,6 +598,20 @@ def main(argv: List[str] | None = None) -> None:
     ensure_env(str(env_file))
     if created_env:
         logger.info("created env file at %s", env_file)
+
+    port = args.metrics_port
+    if port is None:
+        env_val = os.getenv("METRICS_PORT")
+        if env_val:
+            try:
+                port = int(env_val)
+            except Exception:
+                logger.warning("Invalid METRICS_PORT value: %s", env_val)
+    if port is not None:
+        try:
+            start_metrics_server(int(port))
+        except Exception:
+            logger.exception("failed to start metrics server")
 
     check_env()
 

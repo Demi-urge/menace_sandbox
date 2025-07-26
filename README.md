@@ -351,7 +351,7 @@ The deployment helpers use the following variables:
 - `PROMPT_TEMPLATES_PATH` – path to `prompt_templates.v1.json` when running
 
   outside the repository.
-- `METRICS_PORT` – start the internal metrics exporter on this port.
+- `METRICS_PORT` – start the internal metrics exporter on this port (same as `--metrics-port`).
 - `AUTO_DASHBOARD_PORT` – start the metrics dashboard automatically on this port.
 - `SANDBOX_RESOURCE_DB` – path to a `ROIHistoryDB` for resource-aware forecasts.
 - `SANDBOX_BRAINSTORM_INTERVAL` – request GPT-4 brainstorming ideas every N cycles.
@@ -385,7 +385,7 @@ missing. Notable defaults include:
 - `SANDBOX_DATA_DIR=sandbox_data`
 - `RUN_CYCLES=0`
 - `RUN_UNTIL=`
-- `METRICS_PORT=8001`
+ - `METRICS_PORT=8001`  # same as `--metrics-port`
 - `AUTO_DASHBOARD_PORT=`
 - `SANDBOX_BRAINSTORM_INTERVAL=0`
 - `SANDBOX_BRAINSTORM_RETRIES=3`
@@ -524,6 +524,8 @@ python run_autonomous.py --runs 2 --preset-count 2 --dashboard-port 8002
 
 # or simply set AUTO_DASHBOARD_PORT=8002
 ```
+
+Use `--metrics-port` or `METRICS_PORT` to expose Prometheus gauges from the sandbox.
 
 To optimise across distinct scenarios supply preset files explicitly. The
 runner cycles through them when ``--preset-file`` is repeated:
