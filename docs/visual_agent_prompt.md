@@ -130,8 +130,7 @@ visual agent is contacted. The most relevant are:
   headless mode.
 - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
   launching a local visual agent when none is reachable.
-- `VISUAL_AGENT_AUTO_RECOVER` – when set to `1` the agent starts with
-  `--auto-recover` enabled.
+- `VISUAL_AGENT_AUTO_RECOVER` – set to `0` to disable automatic queue recovery.
 - `VA_PROMPT_TEMPLATE` – path to a template (or inline template string) used to
   build the visual agent prompt. The template receives `{path}`,
   `{description}`, `{context}` and `{func}` placeholders.
