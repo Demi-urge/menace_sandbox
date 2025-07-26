@@ -166,6 +166,7 @@ responds with HTTP `202` and a task id. Submitted tasks are appended to
 `SANDBOX_DATA_DIR/visual_agent_queue.db` and processed sequentially. Poll
 `/status/<id>` to monitor progress. The persistent queue avoids race conditions
 and survives restarts.
+The queue is stored in a SQLite database so tasks persist across restarts. A matching `visual_agent_state.json` file records the status of each job and when the last task completed. Both are loaded on startup so unfinished work continues automatically.
 
 Use `menace_visual_agent_2.py --resume` to process any pending
 entries without launching the HTTP service. Stale lock and PID files are cleaned
@@ -179,6 +180,7 @@ By default the agent requeues tasks marked as `running` on startup. Use
 behaviour. The client also writes failed
 requests to `visual_agent_client_queue.jsonl` and retries them periodically.
 Additional CLI helpers simplify manual repairs:
+If the service refuses to start because of a stale lock or PID file use `python menace_visual_agent_2.py --cleanup` first.
 
 ```bash
 python menace_visual_agent_2.py --flush-queue       # drop all queued tasks
@@ -189,10 +191,10 @@ python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
 ```
 
 To recover after an unexpected shutdown:
-
 ```bash
-python menace_visual_agent_2.py --repair-running --recover-queue
+python menace_visual_agent_2.py --cleanup
 python menace_visual_agent_2.py --resume
+python menace_visual_agent_2.py --repair-running --recover-queue
 python run_autonomous.py --recover
 ```
 
