@@ -170,6 +170,11 @@ def _cleanup_stale_files() -> None:
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove pid file %s", path)
 
+    try:
+        task_queue.reset_running_tasks()
+    except Exception:  # pragma: no cover - fs errors
+        logger.exception("failed to reset running tasks")
+
 # Queue management
 
 # Database paths
@@ -178,7 +183,7 @@ QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
 QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
 # When true, queued tasks will be restored from disk on startup.
-AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1"
+AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "1") != "0"
 
 
 def _log_recovery_metrics(count: int) -> None:
@@ -792,7 +797,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--auto-recover",
         action="store_true",
+        default=None,
         help="Automatically recover queued tasks on startup",
+    )
+    parser.add_argument(
+        "--no-auto-recover",
+        action="store_true",
+        help="Disable automatic queue recovery on startup",
     )
     args = parser.parse_args()
 
@@ -882,8 +893,10 @@ if __name__ == "__main__":
             _worker_thread.join()
         sys.exit(0)
 
-    if args.auto_recover:
+    if args.auto_recover is True:
         AUTO_RECOVER_ON_STARTUP = True
+    elif args.no_auto_recover:
+        AUTO_RECOVER_ON_STARTUP = False
 
     _cleanup_stale_files()
     _setup_pid_file()

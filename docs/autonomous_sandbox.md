@@ -128,8 +128,8 @@ After the system tools are in place install the Python requirements via
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
-- `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
-- `VISUAL_AGENT_AUTO_RECOVER=1` – start the agent with `--auto-recover` enabled
+ - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
+ - `VISUAL_AGENT_AUTO_RECOVER=0` – disable automatic queue recovery
 - `VISUAL_AGENT_TOKEN_ROTATE` – new token value used to restart the
   visual agent between sandbox runs
 - `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
@@ -176,8 +176,9 @@ shut down cleanly.
 
 ### Crash recovery
 
-Starting the agent with `--auto-recover` (or `VISUAL_AGENT_AUTO_RECOVER=1`)
-requeues any tasks that were marked as `running`. The client also writes failed
+By default the agent requeues tasks marked as `running` on startup. Use
+`--no-auto-recover` or set `VISUAL_AGENT_AUTO_RECOVER=0` to disable this
+behaviour. The client also writes failed
 requests to `visual_agent_client_queue.jsonl` and retries them periodically.
 Additional CLI helpers simplify manual repairs:
 

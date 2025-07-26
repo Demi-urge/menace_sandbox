@@ -679,11 +679,12 @@ Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command ret
 
 ``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
 
-Set ``VISUAL_AGENT_AUTO_RECOVER=1`` to launch the service with
-``--auto-recover`` so queued tasks persist across restarts.
+The service automatically recovers queued tasks on startup.
+Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to disable
+this behaviour.
 
-Running tasks are automatically requeued when the service starts with
-``--auto-recover``. ``VisualAgentClient`` keeps a local
+Running tasks are automatically requeued when the service starts.
+``VisualAgentClient`` keeps a local
 ``visual_agent_client_queue.jsonl`` file and retries any entries until they
 complete successfully.  The agent provides several CLI utilities for manual
 recovery:

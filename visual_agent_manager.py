@@ -9,6 +9,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from visual_agent_queue import VisualAgentQueue
+
 
 def _pid_alive(pid: int) -> bool:
     try:
@@ -71,8 +73,18 @@ class VisualAgentManager:
         """Start the visual agent using ``token``."""
         env = os.environ.copy()
         env["VISUAL_AGENT_TOKEN"] = token
+        data_dir = Path(env.get("SANDBOX_DATA_DIR", "sandbox_data"))
+        queue_db = data_dir / "visual_agent_queue.db"
+        try:
+            VisualAgentQueue(queue_db).reset_running_tasks()
+        except Exception:
+            pass
+
         cmd = [sys.executable, self.agent_script]
-        if os.getenv("VISUAL_AGENT_AUTO_RECOVER", "0") == "1":
+        auto = env.get("VISUAL_AGENT_AUTO_RECOVER", "1")
+        if auto == "0":
+            cmd.append("--no-auto-recover")
+        elif auto == "1":
             cmd.append("--auto-recover")
         self.process = subprocess.Popen(cmd, env=env)
         return self.process
