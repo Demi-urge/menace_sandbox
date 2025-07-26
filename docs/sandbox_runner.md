@@ -116,6 +116,7 @@ Network behaviour can be tuned with:
 - `SANDBOX_CONTAINER_USER` – user specification passed to Docker containers when set.
 - `SANDBOX_CLEANUP_ALERT_THRESHOLD` – consecutive failed cleanup retries before an error is logged (default `3`).
 - `SANDBOX_MAX_CONTAINER_COUNT` – maximum number of active containers across all pools (default `10`).
+- `SANDBOX_MAX_OVERLAY_COUNT` – maximum number of active VM overlays before oldest entries are purged (default `0` for unlimited).
 
 When any network variables are set and the `tc` binary is available the sandbox
 temporarily applies a `netem` queueing discipline to the loopback interface

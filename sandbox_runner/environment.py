@@ -299,6 +299,7 @@ _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
 _CONTAINER_USER = os.getenv("SANDBOX_CONTAINER_USER")
 _MAX_CONTAINER_COUNT = int(os.getenv("SANDBOX_MAX_CONTAINER_COUNT", "10"))
+_MAX_OVERLAY_COUNT = int(os.getenv("SANDBOX_MAX_OVERLAY_COUNT", "0"))
 
 # label applied to pooled containers; overridable via SANDBOX_POOL_LABEL
 _POOL_LABEL = os.getenv("SANDBOX_POOL_LABEL", "menace_sandbox_pool")
@@ -415,6 +416,7 @@ _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
 _ACTIVE_CONTAINER_LIMIT_REACHED = 0
+_ACTIVE_OVERLAY_LIMIT_REACHED = 0
 _CLEANUP_RETRY_SUCCESSES = 0
 _CLEANUP_RETRY_FAILURES = 0
 _CONSECUTIVE_CLEANUP_FAILURES = 0
@@ -638,11 +640,35 @@ def _write_active_overlays_unlocked(paths: List[str]) -> None:
 
 def _record_active_overlay(path: str) -> None:
     """Add overlay directory ``path`` to the active overlays file."""
+    purge_paths: List[str] = []
+    keep_paths: List[str]
     with _ACTIVE_OVERLAYS_LOCK:
         paths = _read_active_overlays_unlocked()
         if path not in paths:
             paths.append(path)
-            _write_active_overlays_unlocked(paths)
+        if _MAX_OVERLAY_COUNT > 0 and len(paths) > _MAX_OVERLAY_COUNT:
+            excess = len(paths) - _MAX_OVERLAY_COUNT
+            purge_paths = paths[:excess]
+            keep_paths = paths[excess:]
+            _write_active_overlays_unlocked(purge_paths)
+        else:
+            keep_paths = paths
+            _write_active_overlays_unlocked(keep_paths)
+
+    if purge_paths:
+        removed = _purge_stale_vms()
+        try:
+            logger.warning(
+                "active overlay limit reached (%s), removed %d overlay(s)",
+                _MAX_OVERLAY_COUNT,
+                removed,
+            )
+        except Exception:
+            pass
+        global _ACTIVE_OVERLAY_LIMIT_REACHED
+        _ACTIVE_OVERLAY_LIMIT_REACHED += 1
+        with _ACTIVE_OVERLAYS_LOCK:
+            _write_active_overlays_unlocked(keep_paths)
 
 
 def _remove_active_overlay(path: str) -> None:
@@ -1470,6 +1496,18 @@ def _ensure_pool_size_async(image: str) -> None:
         global _ACTIVE_CONTAINER_LIMIT_REACHED
         _ACTIVE_CONTAINER_LIMIT_REACHED += 1
         return
+    if _MAX_OVERLAY_COUNT > 0 and len(_read_active_overlays()) >= _MAX_OVERLAY_COUNT:
+        removed = _purge_stale_vms()
+        try:
+            logger.warning(
+                "active overlay limit reached (%s), removed %d overlay(s)",
+                _MAX_OVERLAY_COUNT,
+                removed,
+            )
+        except Exception:
+            pass
+        global _ACTIVE_OVERLAY_LIMIT_REACHED
+        _ACTIVE_OVERLAY_LIMIT_REACHED += 1
     t = _WARMUP_TASKS.get(image)
     if t and not t.done():
         return
@@ -1692,6 +1730,7 @@ def collect_metrics(
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
     result["active_container_limit_reached"] = float(_ACTIVE_CONTAINER_LIMIT_REACHED)
+    result["active_overlay_limit_reached"] = float(_ACTIVE_OVERLAY_LIMIT_REACHED)
     result["active_containers"] = float(len(_read_active_containers()))
     result["active_overlays"] = float(len(_read_active_overlays()))
     result["cleanup_retry_successes"] = float(_CLEANUP_RETRY_SUCCESSES)
