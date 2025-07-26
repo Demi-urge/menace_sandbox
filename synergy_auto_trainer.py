@@ -14,6 +14,7 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
 from .metrics_exporter import (
     Gauge,
+    start_metrics_server,
     synergy_weight_update_alerts_total,
     synergy_weight_update_failures_total,
 )
@@ -57,6 +58,7 @@ class SynergyAutoTrainer:
         weights_file: str | Path = "synergy_weights.json",
         interval: float = 600.0,
         progress_file: str | Path = "last_ts.json",
+        metrics_port: int | None = None,
     ) -> None:
         self.history_file = Path(history_file)
         self.weights_file = Path(weights_file)
@@ -98,6 +100,8 @@ class SynergyAutoTrainer:
             except Exception:
                 self._last_id = 0
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.metrics_port = metrics_port
+        self._metrics_started = False
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._task: asyncio.Task | None = None
@@ -180,6 +184,12 @@ class SynergyAutoTrainer:
     def start(self) -> None:
         if self._thread:
             return
+        if self.metrics_port is not None and not self._metrics_started:
+            try:
+                start_metrics_server(int(self.metrics_port))
+                self._metrics_started = True
+            except Exception:
+                self.logger.exception("failed to start metrics server")
         try:
             synergy_trainer_iterations.set(0.0)
             synergy_trainer_last_id.set(float(self._last_id))
@@ -217,6 +227,12 @@ class SynergyAutoTrainer:
     def start_async(self) -> None:
         if self._task:
             return
+        if self.metrics_port is not None and not self._metrics_started:
+            try:
+                start_metrics_server(int(self.metrics_port))
+                self._metrics_started = True
+            except Exception:
+                self.logger.exception("failed to start metrics server")
         try:
             synergy_trainer_iterations.set(0.0)
             synergy_trainer_last_id.set(float(self._last_id))
@@ -259,6 +275,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="file tracking the last processed history id",
     )
     parser.add_argument(
+        "--metrics-port",
+        type=int,
+        help="Port to expose Prometheus gauges",
+    )
+    parser.add_argument(
         "--run-once",
         action="store_true",
         help="perform a single training cycle and exit",
@@ -271,14 +292,28 @@ def cli(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.metrics_port is None:
+        env_port = os.getenv("SYNERGY_METRICS_PORT") or os.getenv("METRICS_PORT")
+        if env_port:
+            try:
+                args.metrics_port = int(env_port)
+            except Exception:
+                print(f"Invalid SYNERGY_METRICS_PORT value: {env_port}", file=sys.stderr)
+
     trainer = SynergyAutoTrainer(
         history_file=args.history_file,
         weights_file=args.weights_file,
         interval=args.interval,
         progress_file=args.progress_file,
+        metrics_port=args.metrics_port,
     )
 
     if args.run_once:
+        if args.metrics_port is not None:
+            try:
+                start_metrics_server(int(args.metrics_port))
+            except Exception:
+                print("failed to start metrics server", file=sys.stderr)
         try:
             synergy_trainer_iterations.set(0.0)
             synergy_trainer_last_id.set(float(trainer._last_id))

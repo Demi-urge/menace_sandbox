@@ -5,8 +5,9 @@ Menace exposes metrics, logs and errors so you can keep track of every bot.
 ## Prometheus Metrics
 
 `DataBot` and `metrics_exporter.start_metrics_server()` publish CPU, memory and
-ROI gauges. Point Prometheus at the metrics server and visualise them with
-Grafana.
+ROI gauges. Set `METRICS_PORT` before launching `run_autonomous.py` or
+`synergy_tools.py` to start the exporter automatically. Point Prometheus at the
+metrics server and visualise the gauges with Grafana.
 
 ## Log Aggregation
 
@@ -23,6 +24,8 @@ monitor = OperationalMonitoringBot(es=ESIndex(), splunk=SplunkHEC(token="token")
 ```
 
 Dashboards in Kibana or Splunk can then search recent events and trends.
+Set `SANDBOX_CENTRAL_LOGGING=1` to forward logs from sandbox components to the
+configured audit trail while running `run_autonomous.py` or `synergy_tools.py`.
 
 ## Sentry Alerts
 
