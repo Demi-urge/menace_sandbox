@@ -705,26 +705,10 @@ class SelfImprovementEngine:
             return
         if not hist:
             return
-        tmp = tempfile.NamedTemporaryFile("w", delete=False)
         try:
-            json.dump(hist, tmp)
-            tmp.close()
-            try:
-                synergy_weight_cli.cli([
-                    "--path",
-                    str(self.synergy_weights_path),
-                    "train",
-                    tmp.name,
-                ])
-            except SystemExit:
-                pass
-            except Exception as exc:  # pragma: no cover - runtime issues
-                self.logger.exception("training failed: %s", exc)
-        finally:
-            try:
-                os.unlink(tmp.name)
-            except Exception:
-                pass
+            synergy_weight_cli.train_from_history(hist, self.synergy_weights_path)
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.exception("training failed: %s", exc)
 
     def _synergy_trainer_loop(self, history_file: Path, interval: float) -> None:
         assert self._trainer_stop is not None
