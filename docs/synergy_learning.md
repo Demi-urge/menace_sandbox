@@ -210,6 +210,9 @@ The monitor exposes two additional gauges reflecting automatic restarts:
 `synergy_exporter_restarts_total` and `synergy_trainer_restarts_total`. Set
 `SANDBOX_CENTRAL_LOGGING=1` to forward exporter and trainer logs to the audit
 trail specified by `AUDIT_LOG_PATH` (or Kafka when `KAFKA_HOSTS` is defined).
+If either restart counter grows beyond `SYNERGY_ALERT_THRESHOLD` (default 5) the
+monitor calls `alert_dispatcher.dispatch_alert` so repeated failures trigger an
+operator notification.
 
 Every successful weight save increments the `synergy_weight_updates_total`
 gauge. If an update fails inside `_update_synergy_weights` or when running

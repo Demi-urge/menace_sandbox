@@ -74,6 +74,15 @@ seen in recent telemetry. These dependencies are stored under a new
 Combining Prometheus metrics, centralised logs, Sentry alerts and Watchdog
 runbooks provides a complete picture of Menace health.
 
+## Synergy Restart Alerts
+
+`ExporterMonitor` and `AutoTrainerMonitor` keep the synergy exporter and auto
+trainer running in the background. Each restart increments
+`synergy_exporter_restarts_total` or `synergy_trainer_restarts_total`. When a
+service exceeds `SYNERGY_ALERT_THRESHOLD` (default 5) the monitor invokes
+`alert_dispatcher.dispatch_alert` with the restart count so operators can
+investigate persistent crashes.
+
 ## Cascading Error Forecasts
 
 `ErrorBot.predict_errors()` now calls `KnowledgeGraph.cascading_effects()` for

@@ -17,8 +17,10 @@ from menace.audit_trail import AuditTrail
 from menace.synergy_exporter import SynergyExporter
 from menace.metrics_exporter import Gauge
 from logging_utils import get_logger
+from alert_dispatcher import dispatch_alert
 
 EXPORTER_CHECK_INTERVAL = float(os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10"))
+ALERT_THRESHOLD = int(os.getenv("SYNERGY_ALERT_THRESHOLD", "5"))
 
 logger = get_logger(__name__)
 
@@ -108,6 +110,19 @@ class ExporterMonitor:
                     "restart_count": self.restart_count,
                 }
             )
+            if self.restart_count > ALERT_THRESHOLD:
+                try:
+                    dispatch_alert(
+                        "synergy_exporter_restart_threshold",
+                        2,
+                        "SynergyExporter restarted repeatedly",
+                        {
+                            "component": "exporter",
+                            "restarts": self.restart_count,
+                        },
+                    )
+                except Exception:
+                    logger.exception("failed to dispatch exporter alert")
         except Exception as exc:
             logger.warning("failed to restart synergy exporter: %s", exc)
             self.log.record(
@@ -186,6 +201,19 @@ class AutoTrainerMonitor:
                     "restart_count": self.restart_count,
                 }
             )
+            if self.restart_count > ALERT_THRESHOLD:
+                try:
+                    dispatch_alert(
+                        "synergy_trainer_restart_threshold",
+                        2,
+                        "SynergyAutoTrainer restarted repeatedly",
+                        {
+                            "component": "auto_trainer",
+                            "restarts": self.restart_count,
+                        },
+                    )
+                except Exception:
+                    logger.exception("failed to dispatch trainer alert")
         except Exception as exc:
             logger.warning("failed to restart synergy auto trainer: %s", exc)
             self.log.record(
