@@ -184,8 +184,8 @@ class VisualAgentQueue:
     def update_status(self, task_id: str, status: str, error: Optional[str] = None) -> None:
         with self._lock, sqlite3.connect(self.path) as conn:
             conn.execute(
-                "UPDATE tasks SET status=?, error=? WHERE id=?",
-                (status, error, task_id),
+                "UPDATE tasks SET status=?, error=?, ts=? WHERE id=?",
+                (status, error, time.time(), task_id),
             )
             conn.commit()
 
