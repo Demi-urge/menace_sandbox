@@ -247,4 +247,100 @@ def test_collect_metrics_active_counts(monkeypatch, tmp_path):
     assert metrics["active_overlays"] == 1.0
 
 
+def test_vm_missing_falls_back_to_local(monkeypatch, tmp_path):
+    tmp_clone = tmp_path / "clone"
+    calls = []
+
+    monkeypatch.setenv("SANDBOX_DOCKER", "0")
+    tmp_clone.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
+    monkeypatch.setattr(env.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(env.shutil, "which", lambda name: None)
+    monkeypatch.setattr(env, "_docker_available", lambda: False)
+    monkeypatch.setattr(env, "_CREATE_RETRY_LIMIT", 1)
+
+    overlays = tmp_path / "overlays.json"
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", overlays)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(overlays) + ".lock"))
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "python":
+            (tmp_clone / "data").mkdir(exist_ok=True)
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    class DummyTracker:
+        def __init__(self):
+            self.loaded = None
+            self.diagnostics = {}
+
+        def load_history(self, path):
+            self.loaded = path
+
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
+
+    tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2"}})
+
+    assert calls and calls[-1][0] == "python"
+    assert not (tmp_clone / "overlay.qcow2").exists()
+    assert env._read_active_overlays() == []
+    assert tracker.diagnostics.get("vm_error") == "qemu missing"
+    assert tracker.diagnostics.get("local_execution") == "vm"
+    assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
+
+
+def test_vm_command_error_fallback(monkeypatch, tmp_path):
+    tmp_clone = tmp_path / "clone"
+    calls = []
+
+    monkeypatch.setenv("SANDBOX_DOCKER", "0")
+    tmp_clone.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
+    monkeypatch.setattr(env.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(env.shutil, "which", lambda name: "/usr/bin/qemu-system-x86_64")
+    monkeypatch.setattr(env, "_docker_available", lambda: False)
+    monkeypatch.setattr(env, "_CREATE_RETRY_LIMIT", 1)
+
+    overlays = tmp_path / "overlays.json"
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", overlays)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(overlays) + ".lock"))
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[0] == "qemu-img":
+            Path(cmd[-1]).touch()
+            return types.SimpleNamespace()
+        if "qemu-system" in cmd[0]:
+            raise OSError("fail")
+        if cmd[0] == "python":
+            (tmp_clone / "data").mkdir(exist_ok=True)
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    class DummyTracker:
+        def __init__(self):
+            self.loaded = None
+            self.diagnostics = {}
+
+        def load_history(self, path):
+            self.loaded = path
+
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
+
+    tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2"}})
+
+    assert any("qemu-img" in c[0] or "qemu-system" in c[0] for c in calls)
+    assert calls[-1][0] == "python"
+    assert not (tmp_clone / "overlay.qcow2").exists()
+    assert env._read_active_overlays() == []
+    assert tracker.diagnostics.get("local_execution") == "vm"
+    assert tracker.diagnostics.get("vm_error")
+    assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
+
+
 
