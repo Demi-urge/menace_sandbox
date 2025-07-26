@@ -143,3 +143,45 @@ def test_stale_lock_cleanup(tmp_path: Path, lock_type: str) -> None:
     assert lock_path.exists()
     assert mtime_after > mtime_before
 
+
+import importlib
+import types
+
+
+def _setup_va_real(monkeypatch, tmp_path):
+    heavy = ["cv2", "numpy", "mss", "pyautogui"]
+    for name in heavy:
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    pt_mod = types.ModuleType("pytesseract")
+    pt_mod.pytesseract = types.SimpleNamespace(tesseract_cmd="")
+    pt_mod.image_to_string = lambda *a, **k: ""
+    pt_mod.image_to_data = lambda *a, **k: {}
+    pt_mod.Output = types.SimpleNamespace(DICT=0)
+    monkeypatch.setitem(sys.modules, "pytesseract", pt_mod)
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    return importlib.reload(importlib.import_module("menace_visual_agent_2"))
+
+
+def test_visual_agent_stale_lock_recovery(monkeypatch, tmp_path):
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+    lock_path = tmp_path / "agent.lock"
+    pid_path = tmp_path / "agent.pid"
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+
+    va = _setup_va_real(monkeypatch, tmp_path)
+    va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
+    va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
+    va._persist_state()
+    va.job_status.clear()
+
+    old = time.time() - 2
+    lock_path.write_text(f"{os.getpid()+100000},{old}")
+
+    va2 = _setup_va_real(monkeypatch, tmp_path)
+    monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
+    va2._startup_load_state()
+
+    assert not lock_path.exists()
+    assert list(va2.task_queue)[0]["id"] == "a"
