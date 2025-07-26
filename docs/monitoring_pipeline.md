@@ -115,7 +115,7 @@ scrape_configs:
 
 ## Synergy Weight Update Alerts
 
-`synergy_weight_cli` and `SynergyAutoTrainer` dispatch a
+`synergy_weight_cli`, `SelfImprovementEngine` and `SynergyAutoTrainer` dispatch a
 `synergy_weight_update_failure` alert whenever weight training fails.
 `synergy_weight_update_alerts_total` increments with every alert and
 `SYNERGY_WEIGHT_ALERT_THRESHOLD` (default `5`) determines when consecutive

@@ -204,3 +204,28 @@ def test_sac_engine_weights_update(tmp_path):
     assert engine.synergy_weight_roi != start
     engine2 = _reload_engine(path, sie.SACSynergyLearner)
     assert engine2.synergy_weight_roi == pytest.approx(engine.synergy_weight_roi)
+
+
+def test_update_failure_dispatches_alert(monkeypatch, tmp_path):
+    import importlib
+    sie = importlib.reload(sys.modules["menace.self_improvement_engine"])
+
+    path = tmp_path / "w.json"
+    engine = _make_engine(path, sie.SynergyWeightLearner)
+
+    alerts: list[tuple] = []
+
+    def fake_alert(*a, **k):
+        alerts.append((a, k))
+
+    monkeypatch.setattr(sie, "dispatch_alert", fake_alert)
+    monkeypatch.setattr(engine.synergy_learner, "update", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    sie.synergy_weight_update_failures_total.set(0.0)
+    sie.synergy_weight_update_alerts_total.set(0.0)
+
+    engine._update_synergy_weights(1.0)
+
+    assert len(alerts) == 1
+    assert sie.synergy_weight_update_failures_total._value.get() == 1.0
+    assert sie.synergy_weight_update_alerts_total._value.get() == 1.0
