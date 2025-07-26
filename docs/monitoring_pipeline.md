@@ -90,3 +90,42 @@ any bot flagged by the `ErrorForecaster`. The resulting node chains are stored
 in `ErrorBot.last_forecast_chains` and returned as strings in the prediction
 list. Operators can review cascades such as `bot:A -> model:1 -> code:foo` to
 understand likely downstream failures and pre-empt remediation steps.
+
+## Container Creation Alerts
+
+`environment.py` dispatches an alert via `alert_dispatcher` whenever repeated
+container launches fail. Each dispatched alert increments the
+`container_creation_alerts_total{image="<name>"}` gauge so the affected image
+can be monitored. Start exporting the gauge with
+`metrics_exporter.start_metrics_server` and add the port to your Prometheus
+configuration:
+
+```python
+from menace.metrics_exporter import start_metrics_server
+
+start_metrics_server(8001)  # exposes http://localhost:8001/metrics
+```
+
+```yaml
+scrape_configs:
+  - job_name: 'menace'
+    static_configs:
+      - targets: ['localhost:8001']
+```
+
+## Synergy Weight Update Alerts
+
+`synergy_weight_cli` and `SynergyAutoTrainer` dispatch a
+`synergy_weight_update_failure` alert whenever weight training fails.
+`synergy_weight_update_alerts_total` increments with every alert and
+`SYNERGY_WEIGHT_ALERT_THRESHOLD` (default `5`) determines when consecutive
+failures trigger the alert from the auto trainer. Export the gauge using the
+same metrics server so Prometheus can scrape the failure count.
+
+## Central Alert Forwarding
+
+Set `SANDBOX_CENTRAL_LOGGING=1` to forward alerts emitted by
+`self_test_service`, `synergy_auto_trainer` and `environment.py` through
+`alert_dispatcher`. The environment variable enables central logging so the
+dispatcher writes to the configured audit trail or Kafka topic in addition to
+standard output.
