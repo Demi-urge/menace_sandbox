@@ -1255,6 +1255,7 @@ def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
     global _STALE_CONTAINERS_REMOVED
     with _PURGE_FILE_LOCK:
+        reconcile_active_containers()
         removed_containers = 0
         try:
             ids = _read_active_containers()
@@ -2015,6 +2016,60 @@ def _reap_orphan_containers() -> int:
     return removed
 
 
+def reconcile_active_containers() -> None:
+    """Remove untracked containers labeled with :data:`_POOL_LABEL`."""
+    try:
+        proc = subprocess.run(
+            ["docker", "ps", "-aq", "--filter", f"label={_POOL_LABEL}=1"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return
+        ids = [cid.strip() for cid in proc.stdout.splitlines() if cid.strip()]
+    except Exception as exc:  # pragma: no cover - docker may be unavailable
+        logger.debug("active container reconciliation failed: %s", exc)
+        return
+
+    if not ids:
+        return
+
+    recorded = set(_read_active_containers())
+    with _POOL_LOCK:
+        pooled = {c.id for pool in _CONTAINER_POOLS.values() for c in pool}
+
+    for cid in ids:
+        if cid in pooled or cid in recorded:
+            continue
+        try:
+            logger.info("removing untracked sandbox container %s", cid)
+        except Exception:
+            pass
+        subprocess.run(
+            ["docker", "rm", "-f", cid],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        _remove_active_container(cid)
+        with _POOL_LOCK:
+            td = _CONTAINER_DIRS.pop(cid, None)
+            _CONTAINER_LAST_USED.pop(cid, None)
+            _CONTAINER_CREATED.pop(cid, None)
+        if td:
+            try:
+                shutil.rmtree(td)
+            except Exception:
+                if os.name == "nt" and _rmtree_windows(td):
+                    pass
+                else:
+                    logger.exception(
+                        "temporary directory removal failed for %s", td
+                    )
+
+
 def retry_failed_cleanup() -> tuple[int, int]:
     """Attempt to delete items recorded in :data:`FAILED_CLEANUP_FILE`."""
     data = _read_failed_cleanup()
@@ -2117,6 +2172,7 @@ async def _cleanup_worker() -> None:
     try:
         while True:
             ensure_docker_client()
+            reconcile_active_containers()
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             start = time.monotonic()
             try:
