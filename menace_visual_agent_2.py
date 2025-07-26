@@ -21,7 +21,6 @@ import uvicorn
 import secrets
 import tempfile
 from filelock import FileLock, Timeout
-from collections import deque
 import json
 from pathlib import Path
 import atexit
@@ -77,6 +76,8 @@ def _startup_load_state() -> None:
         try:
             task_queue.clear()
             job_status.clear()
+            if QUEUE_DB.exists():
+                QUEUE_DB.unlink()
             _load_state_locked()
         finally:
             try:
@@ -170,7 +171,8 @@ def _cleanup_stale_files() -> None:
 import hashlib
 
 DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"
+QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
+QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
 STATE_FILE = DATA_DIR / "visual_agent_state.json"
 HASH_FILE = STATE_FILE.with_suffix(STATE_FILE.suffix + ".sha256")
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
@@ -221,84 +223,10 @@ def _log_recovery_metrics(count: int) -> None:
         logger.warning("failed writing metrics %s: %s", RECOVERY_METRICS_FILE, exc)
 
 
-class PersistentQueue:
-    """Persistent queue stored as JSONL."""
+from visual_agent_queue import VisualAgentQueue
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
-        self._queue: deque[dict] = deque()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.load()
-
-    def load(self) -> None:
-        with self._lock:
-            self._queue.clear()
-            if not self.path.exists():
-                return
-            try:
-                with open(self.path, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            item = json.loads(line)
-                        except Exception:
-                            continue
-                        if isinstance(item, dict):
-                            self._queue.append(item)
-            except Exception:
-                self._queue.clear()
-
-    def save(self) -> None:
-        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as fh:
-            for item in self._queue:
-                fh.write(json.dumps(item) + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        _rotate_backups(self.path)
-        os.replace(tmp, self.path)
-
-    def append(self, item: dict) -> None:
-        with self._lock:
-            self._queue.append(item)
-            self.save()
-
-    def appendleft(self, item: dict) -> None:
-        with self._lock:
-            self._queue.appendleft(item)
-            self.save()
-
-    def popleft(self) -> dict:
-        with self._lock:
-            item = self._queue.popleft()
-            self.save()
-            return item
-
-    def clear(self) -> None:
-        with self._lock:
-            self._queue.clear()
-            if self.path.exists():
-                try:
-                    os.remove(self.path)
-                except Exception:
-                    pass
-
-    def __len__(self) -> int:
-        with self._lock:
-            return len(self._queue)
-
-    def __bool__(self) -> bool:  # pragma: no cover - trivial
-        return len(self) > 0
-
-    def __iter__(self):
-        with self._lock:
-            return iter(list(self._queue))
-
-
-task_queue = PersistentQueue(QUEUE_FILE)
+VisualAgentQueue.migrate_from_jsonl(QUEUE_DB, QUEUE_FILE, STATE_FILE)
+task_queue = VisualAgentQueue(QUEUE_DB)
 job_status = {}
 last_completed_ts = 0.0
 _exit_event = threading.Event()
@@ -309,9 +237,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 def _save_state_locked() -> None:
     """Persist queue and status atomically."""
     global last_completed_ts
-    task_queue.save()
+    for tid, info in job_status.items():
+        task_queue.update_status(tid, info.get("status", "queued"), info.get("error"))
     data = {
-        "status": job_status,
         "last_completed": last_completed_ts,
     }
     payload = json.dumps(data)
@@ -320,79 +248,23 @@ def _save_state_locked() -> None:
 
 
 def _recover_queue_file_locked() -> None:
-    """Attempt to restore queue/state from backups or reset."""
-    if not STATE_FILE.exists() and not QUEUE_FILE.exists():
-        return
-
+    """Reset the queue database and state files."""
     global last_completed_ts
-
-    def _validate_backup(state_b: Path, hash_b: Path, queue_b: Path) -> bool:
-        try:
-            if state_b.exists():
-                data_bytes = state_b.read_bytes()
-                if hash_b.exists():
-                    expected = hash_b.read_text().strip()
-                    if hashlib.sha256(data_bytes).hexdigest() != expected:
-                        return False
-                data = json.loads(data_bytes.decode("utf-8"))
-                if not isinstance(data, dict):
-                    return False
-            if queue_b.exists():
-                with open(queue_b, "r", encoding="utf-8") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        item = json.loads(line)
-                        if not isinstance(item, dict):
-                            return False
-            return True
-        except Exception:
-            return False
-
-    for i in range(1, BACKUP_COUNT + 1):
-        state_b = STATE_FILE.with_suffix(STATE_FILE.suffix + f".bak{i}")
-        hash_b = HASH_FILE.with_suffix(HASH_FILE.suffix + f".bak{i}")
-        queue_b = QUEUE_FILE.with_suffix(QUEUE_FILE.suffix + f".bak{i}")
-        if _validate_backup(state_b, hash_b, queue_b):
-            try:
-                if state_b.exists():
-                    os.replace(state_b, STATE_FILE)
-                if hash_b.exists():
-                    os.replace(hash_b, HASH_FILE)
-                if queue_b.exists():
-                    os.replace(queue_b, QUEUE_FILE)
-                task_queue.clear()
-                job_status.clear()
-                last_completed_ts = 0.0
-                _load_state_locked()
-                _log_recovery_metrics(len(task_queue))
-                return
-            except Exception:
-                pass
-
-    for p in (STATE_FILE, QUEUE_FILE, HASH_FILE):
-        try:
-            _rotate_backups(p)
-        except OSError:
+    for p in (QUEUE_DB, STATE_FILE, HASH_FILE):
+        if p.exists():
             try:
                 p.unlink()
-            except OSError:
+            except Exception:
                 pass
     task_queue.clear()
     job_status.clear()
     last_completed_ts = 0.0
-    _save_state_locked()
 
 
 def _load_state_locked() -> None:
-    task_queue.load()
-    for item in task_queue:
-        if not isinstance(item, dict) or not all(k in item for k in ("id", "prompt", "branch")):
-            logger.warning("invalid queue entry detected, attempting recovery")
-            _recover_queue_file_locked()
-            return
     if not STATE_FILE.exists():
+        job_status.clear()
+        job_status.update(task_queue.get_status())
         return
     if not HASH_FILE.exists():
         try:
@@ -419,39 +291,13 @@ def _load_state_locked() -> None:
 
     global last_completed_ts
 
-    raw_status = data.get("status")
-    if not isinstance(raw_status, dict):
-        raw_status = {}
-
     last_completed = data.get("last_completed")
     if isinstance(last_completed, (int, float)):
         last_completed_ts = float(last_completed)
     else:
         last_completed_ts = 0.0
-
-    valid_status = {}
-    for tid, info in raw_status.items():
-        if not isinstance(tid, str) or not isinstance(info, dict):
-            continue
-        status = info.get("status", "queued")
-        if status not in {"queued", "running", "completed", "cancelled", "failed"}:
-            status = "queued"
-        prompt = info.get("prompt", "") if isinstance(info.get("prompt", ""), str) else ""
-        branch = info.get("branch") if isinstance(info.get("branch"), str) or info.get("branch") is None else None
-        error_msg = info.get("error") if isinstance(info.get("error"), str) else None
-        entry = {"status": status, "prompt": prompt, "branch": branch}
-        if error_msg:
-            entry["error"] = error_msg
-        valid_status[tid] = entry
-
     job_status.clear()
-    job_status.update(valid_status)
-    for tid, info in job_status.items():
-        if info.get("status") not in {"completed", "cancelled", "failed"}:
-            info["status"] = "queued"
-            if not any(t.get("id") == tid for t in task_queue):
-                task_queue.append({"id": tid, "prompt": info.get("prompt", ""), "branch": info.get("branch")})
-
+    job_status.update(task_queue.get_status())
     _save_state_locked()
 
 
@@ -476,7 +322,7 @@ def _queue_worker():
             continue
         task = task_queue.popleft()
         if _exit_event.is_set():
-            task_queue.appendleft(task)
+            task_queue.update_status(task["id"], "queued")
             break
         tid = task["id"]
         _running_lock.acquire()
@@ -485,8 +331,10 @@ def _queue_worker():
         except Timeout:
             _running_lock.release()
             job_status[tid]["status"] = "failed"
+            task_queue.update_status(tid, "failed")
             continue
         job_status[tid]["status"] = "running"
+        task_queue.update_status(tid, "running")
         _save_state_locked()
         success = False
         try:
@@ -494,11 +342,13 @@ def _queue_worker():
             run_menace_pipeline(task["prompt"], task["branch"])
             job_status[tid]["status"] = "completed"
             job_status[tid].pop("error", None)
+            task_queue.update_status(tid, "completed")
             success = True
         except Exception as exc:
             logger.exception("run_menace_pipeline failed for task %s", tid)
             job_status[tid]["status"] = "failed"
             job_status[tid]["error"] = str(exc)
+            task_queue.update_status(tid, "failed", str(exc))
             _save_state_locked()
         finally:
             _current_job["active"] = False
@@ -929,12 +779,7 @@ async def cancel_task(
         try:
             if job_status[task_id]["status"] != "queued":
                 raise HTTPException(status_code=409, detail="Task already running")
-
-            for i, t in enumerate(list(task_queue)):
-                if t["id"] == task_id:
-                    del task_queue[i]
-                    break
-
+            task_queue.update_status(task_id, "cancelled")
             job_status[task_id]["status"] = "cancelled"
             _save_state_locked()
             return {"id": task_id, "status": "cancelled"}
@@ -981,7 +826,7 @@ async def flush_queue(
     try:
         task_queue.clear()
         job_status.clear()
-        for p in (QUEUE_FILE, STATE_FILE, HASH_FILE):
+        for p in (QUEUE_DB, QUEUE_FILE, STATE_FILE, HASH_FILE):
             if p.exists():
                 try:
                     p.unlink()
@@ -1008,6 +853,8 @@ async def recover_queue(
     try:
         task_queue.clear()
         job_status.clear()
+        if QUEUE_DB.exists():
+            QUEUE_DB.unlink()
         _load_state_locked()
     finally:
         try:
@@ -1048,7 +895,7 @@ if __name__ == "__main__":
         try:
             task_queue.clear()
             job_status.clear()
-            for p in (QUEUE_FILE, STATE_FILE, HASH_FILE):
+            for p in (QUEUE_DB, QUEUE_FILE, STATE_FILE, HASH_FILE):
                 if p.exists():
                     try:
                         p.unlink()
