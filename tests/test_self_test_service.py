@@ -694,3 +694,43 @@ def test_gauge_updates(monkeypatch):
     assert _get(mod.self_test_failed_total) == 1
     assert _get(mod.self_test_average_runtime_seconds) == 2.0
     assert _get(mod.self_test_average_coverage) == 90.0
+
+
+def test_timeout_metric(monkeypatch):
+    async def fake_exec(*cmd, **kwargs):
+        class P:
+            returncode = 0
+
+            def kill(self):
+                pass
+
+            async def communicate(self):
+                await asyncio.sleep(0.05)
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async def avail(self):
+        return True
+
+    async def dummy(self, *a, **k):
+        return None
+
+    monkeypatch.setattr(mod.SelfTestService, "_docker_available", avail)
+    monkeypatch.setattr(mod.SelfTestService, "_force_remove_container", dummy)
+
+    mod.self_test_container_timeouts_total.set(0)
+    svc = mod.SelfTestService(use_container=True, container_timeout=0.01, container_retries=0)
+    asyncio.run(svc._run_once())
+
+    def _get(gauge):
+        if hasattr(gauge, "_value"):
+            return gauge._value.get()
+        return gauge.labels().get()
+
+    assert _get(mod.self_test_container_timeouts_total) == 1

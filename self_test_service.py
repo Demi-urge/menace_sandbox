@@ -41,6 +41,19 @@ self_test_average_coverage = _me.Gauge(
     "self_test_average_coverage", "Average coverage percentage of the last self test run"
 )
 
+# Track container-related issues
+self_test_container_failures_total = _me.Gauge(
+    "self_test_container_failures_total",
+    "Total container cleanup/listing failures during self tests",
+)
+self_test_container_timeouts_total = _me.Gauge(
+    "self_test_container_timeouts_total",
+    "Total container execution timeouts during self tests",
+)
+
+setattr(_me, "self_test_container_failures_total", self_test_container_failures_total)
+setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_total)
+
 _container_lock = Lock()
 _file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
 
@@ -325,6 +338,10 @@ class SelfTestService:
             name,
             attempts,
         )
+        try:
+            self_test_container_failures_total.inc()
+        except Exception:
+            self.logger.exception("failed to update container failure metric")
 
     async def _remove_stale_containers(self) -> None:
         docker_cmd = [self.container_runtime]
@@ -364,6 +381,10 @@ class SelfTestService:
             self.logger.error(
                 "could not list stale containers after %s attempts", attempts
             )
+            try:
+                self_test_container_failures_total.inc()
+            except Exception:
+                self.logger.exception("failed to update container failure metric")
             return
 
         for cid in out.decode().splitlines():
@@ -541,6 +562,10 @@ class SelfTestService:
                         await proc.wait()
                         if is_container and name:
                             await self._force_remove_container(name)
+                        try:
+                            self_test_container_timeouts_total.inc()
+                        except Exception:
+                            self.logger.exception("failed to update container timeout metric")
                         if attempt == attempts - 1:
                             self.logger.error("self test container timed out")
                             break
@@ -848,6 +873,8 @@ __all__ = [
     "self_test_failed_total",
     "self_test_average_runtime_seconds",
     "self_test_average_coverage",
+    "self_test_container_failures_total",
+    "self_test_container_timeouts_total",
     "cli",
     "main",
 ]
