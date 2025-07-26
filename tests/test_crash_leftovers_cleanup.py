@@ -40,7 +40,9 @@ def test_crash_leftovers_cleanup(monkeypatch, tmp_path):
 
     def fake_run(cmd, stdout=None, stderr=None, text=None, check=False):
         cmds.append(cmd)
-        if cmd[:4] == ["docker", "ps", "-aq", f"--filter"]:
+        if cmd[:4] == ["docker", "ps", "-aq", "--filter"]:
+            if cmd[4].startswith("id="):
+                return types.SimpleNamespace(returncode=0, stdout="")
             return types.SimpleNamespace(returncode=0, stdout="c3\n")
         if cmd[:3] == ["docker", "volume", "ls"]:
             return types.SimpleNamespace(returncode=0, stdout="vol1\n")

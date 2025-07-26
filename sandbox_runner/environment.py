@@ -1259,6 +1259,7 @@ def purge_leftovers() -> None:
         removed_containers = 0
         try:
             ids = _read_active_containers()
+            remaining_ids = []
             for cid in ids:
                 try:
                     logger.info("removing recorded sandbox container %s", cid)
@@ -1270,10 +1271,31 @@ def purge_leftovers() -> None:
                     stderr=subprocess.DEVNULL,
                     check=False,
                 )
-                _remove_failed_cleanup(cid)
-                removed_containers += 1
+                exists = False
+                try:
+                    proc = subprocess.run(
+                        ["docker", "ps", "-aq", "--filter", f"id={cid}"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        check=False,
+                    )
+                    if proc.returncode == 0 and proc.stdout.strip():
+                        exists = True
+                except Exception as exc:
+                    logger.debug(
+                        "container existence check failed for %s: %s", cid, exc
+                    )
+                    exists = True
+
+                if exists:
+                    _record_failed_cleanup(cid)
+                    remaining_ids.append(cid)
+                else:
+                    _remove_failed_cleanup(cid)
+                    removed_containers += 1
             if ids:
-                _write_active_containers([])
+                _write_active_containers(remaining_ids)
         except Exception as exc:
             logger.debug("active container cleanup failed: %s", exc)
 
