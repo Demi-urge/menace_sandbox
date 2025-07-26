@@ -22,6 +22,7 @@ import inspect
 import random
 import threading
 import signal
+import weakref
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Callable, get_origin, get_args
@@ -308,6 +309,7 @@ _CONTAINER_POOLS: Dict[str, List[Any]] = {}
 _CONTAINER_DIRS: Dict[str, str] = {}
 _CONTAINER_LAST_USED: Dict[str, float] = {}
 _CONTAINER_CREATED: Dict[str, float] = {}
+_CONTAINER_FINALIZERS: Dict[str, weakref.finalize] = {}
 _POOL_LOCK = threading.Lock()
 _WARMUP_TASKS: Dict[str, Any] = {}
 _CLEANUP_TASK: Any | None = None
@@ -593,6 +595,7 @@ def _record_active_container(cid: str) -> None:
             _write_active_containers_unlocked(ids)
 
 
+
 def _remove_active_container(cid: str) -> None:
     """Remove ``cid`` from the active containers file."""
     with _ACTIVE_CONTAINERS_LOCK:
@@ -600,6 +603,42 @@ def _remove_active_container(cid: str) -> None:
         if cid in ids:
             ids.remove(cid)
             _write_active_containers_unlocked(ids)
+    with _POOL_LOCK:
+        fin = _CONTAINER_FINALIZERS.pop(cid, None)
+    if fin is not None:
+        fin.detach()
+
+
+def _finalize_orphan(cid: str, dir_path: str | None) -> None:
+    """Attempt to remove a leaked container and associated directory."""
+    try:
+        subprocess.run(
+            ["docker", "rm", "-f", cid],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except Exception:
+        logger.exception("orphan container remove failed for %s", cid)
+    _remove_active_container(cid)
+    if dir_path:
+        try:
+            shutil.rmtree(dir_path)
+        except Exception:
+            logger.exception("orphan directory removal failed for %s", dir_path)
+
+
+def _register_container_finalizer(container: Any) -> None:
+    """Register a finalizer to clean up ``container`` if leaked."""
+    cid = getattr(container, "id", None)
+    if not cid:
+        return
+    with _POOL_LOCK:
+        if cid in _CONTAINER_FINALIZERS:
+            return
+        dir_path = _CONTAINER_DIRS.get(cid)
+        fin = weakref.finalize(container, _finalize_orphan, cid, dir_path)
+        _CONTAINER_FINALIZERS[cid] = fin
 
 
 def _read_active_overlays() -> List[str]:
@@ -1594,6 +1633,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 ["sleep", "infinity"],
                 **run_kwargs,
             )
+            _register_container_finalizer(container)
             _record_active_container(container.id)
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
             _log_pool_metrics(image)
@@ -1699,6 +1739,7 @@ def _release_container(image: str, container: Any) -> None:
         with _POOL_LOCK:
             _CONTAINER_POOLS.setdefault(image, []).append(container)
             _CONTAINER_LAST_USED[container.id] = time.time()
+        _register_container_finalizer(container)
     except Exception:
         try:
             container.remove(force=True)
@@ -3064,6 +3105,7 @@ async def _execute_in_container(
                         ["python", "/code/snippet.py"],
                         **kwargs,
                     )
+                    _register_container_finalizer(container)
                     _record_active_container(container.id)
 
                     timeout = int(env.get("TIMEOUT", 300))
