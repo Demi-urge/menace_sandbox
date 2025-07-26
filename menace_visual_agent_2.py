@@ -195,6 +195,7 @@ DATA_DIR = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
 QUEUE_FILE = DATA_DIR / "visual_agent_queue.jsonl"  # legacy path
 QUEUE_DB = DATA_DIR / "visual_agent_queue.db"
 RECOVERY_METRICS_FILE = DATA_DIR / "visual_agent_recovery.json"
+STATE_FILE = DATA_DIR / "visual_agent_state.json"
 # When true, queued tasks will be restored from disk on startup.
 AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "1") != "0"
 
@@ -233,10 +234,39 @@ def _load_state_locked() -> None:
     job_status.clear()
     job_status.update(task_queue.get_status())
     last_completed_ts = task_queue.get_last_completed()
+    if STATE_FILE.exists():
+        try:
+            data = json.loads(STATE_FILE.read_text())
+            if isinstance(data, dict):
+                status = data.get("status")
+                if isinstance(status, dict):
+                    for tid, info in status.items():
+                        if isinstance(info, dict) and "status" in info:
+                            job_status[tid] = dict(info)
+                lc = data.get("last_completed")
+                if isinstance(lc, (int, float)):
+                    last_completed_ts = float(lc)
+        except Exception as exc:  # pragma: no cover - fs errors
+            logger.warning("failed loading state %s: %s", STATE_FILE, exc)
 
 
 def _persist_state() -> None:
-    pass
+    """Persist queue status and last completed timestamp to ``STATE_FILE``."""
+    state = {
+        "status": task_queue.get_status(),
+        "last_completed": last_completed_ts,
+    }
+    tmp = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(state, fh)
+        os.replace(tmp, STATE_FILE)
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed persisting state %s: %s", STATE_FILE, exc)
+        with suppress(Exception):
+            if tmp.exists():
+                tmp.unlink()
 
 
 def _queue_worker():

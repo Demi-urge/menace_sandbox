@@ -253,8 +253,7 @@ def test_run_autonomous_with_visual_agent(monkeypatch, tmp_path):
             "--sandbox-data-dir", str(tmp_path),
         ])
 
-        data = json.loads((tmp_path / "visual_agent_queue.json").read_text())
-        assert data["queue"] == []
+        data = json.loads((tmp_path / "visual_agent_state.json").read_text())
         assert len(data["status"]) == 2
         assert all(v["status"] == "completed" for v in data["status"].values())
         assert (tmp_path / "results.json").exists()
