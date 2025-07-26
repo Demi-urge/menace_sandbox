@@ -217,12 +217,9 @@ operator notification.
 Every successful weight save increments the `synergy_weight_updates_total`
 gauge. If an update fails inside `_update_synergy_weights` or when running
 `synergy_weight_cli.train_from_history`, the
-`synergy_weight_update_failures_total` gauge increases. The CLI dispatches an
-alert for each failure which also increments the
-`synergy_weight_update_alerts_total` gauge. `SynergyAutoTrainer` tracks
-consecutive failures and when the count exceeds the value of
-`SYNERGY_WEIGHT_ALERT_THRESHOLD` (default 5) it dispatches the same alert and
-resets the counter.
+`synergy_weight_update_failures_total` gauge increases. Both the CLI and
+`SynergyAutoTrainer` dispatch an alert for every failed update which also
+increments the `synergy_weight_update_alerts_total` gauge.
 
 ## Standalone auto trainer
 
