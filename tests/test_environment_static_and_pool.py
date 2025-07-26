@@ -62,6 +62,7 @@ def test_pooled_container_reuse_and_cleanup(monkeypatch, tmp_path):
     env._WARMUP_TASKS.clear()
     env._CLEANUP_TASK = None
     monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+    monkeypatch.setattr(env, "_purge_stale_vms", lambda record_runtime=True: 0)
     monkeypatch.setattr(env, "_ensure_pool_size_async", lambda img: None)
     created = []
 
