@@ -583,3 +583,23 @@ def test_stale_lock_removed_on_startup(monkeypatch, tmp_path):
     monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
     va = _setup_va(monkeypatch, tmp_path)
     assert not lock_path.exists()
+
+
+def test_running_tasks_requeued_on_restart(monkeypatch, tmp_path):
+    monkeypatch.setenv("VISUAL_AGENT_AUTO_RECOVER", "1")
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tombalolosvisualagent123")
+    psutil_mod = types.ModuleType("psutil")
+    psutil_mod.pid_exists = lambda *_a, **_k: False
+    monkeypatch.setitem(sys.modules, "psutil", psutil_mod)
+    va = _setup_va(monkeypatch, tmp_path)
+    va._initialize_state()
+    va.job_status.clear()
+    va.task_queue.clear()
+    va.task_queue.append({"id": "a", "prompt": "p", "branch": None, "status": "running"})
+    va.job_status["a"] = {"status": "running", "prompt": "p", "branch": None}
+    va._persist_state()
+
+    va2 = _setup_va(monkeypatch, tmp_path)
+    va2._initialize_state()
+    assert list(va2.task_queue)[0]["id"] == "a"
+    assert va2.job_status["a"]["status"] == "queued"

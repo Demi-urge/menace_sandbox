@@ -259,6 +259,8 @@ def _recover_queue_file_locked() -> None:
 
 def _load_state_locked() -> None:
     if not STATE_FILE.exists():
+        if AUTO_RECOVER_ON_STARTUP:
+            task_queue.reset_running_tasks()
         job_status.clear()
         job_status.update(task_queue.get_status())
         return
@@ -292,6 +294,8 @@ def _load_state_locked() -> None:
         last_completed_ts = float(last_completed)
     else:
         last_completed_ts = 0.0
+    if AUTO_RECOVER_ON_STARTUP:
+        task_queue.reset_running_tasks()
     job_status.clear()
     job_status.update(task_queue.get_status())
     _save_state_locked()
