@@ -409,6 +409,8 @@ _CONSECUTIVE_CLEANUP_FAILURES = 0
 _CLEANUP_ALERT_THRESHOLD = int(os.getenv("SANDBOX_CLEANUP_ALERT_THRESHOLD", "3"))
 _WATCHDOG_METRICS: Counter[str] = Counter()
 _CLEANUP_DURATIONS = {"cleanup": 0.0, "reaper": 0.0}
+_LAST_CLEANUP_TS = time.monotonic()
+_LAST_REAPER_TS = time.monotonic()
 
 # Optional cleanup of sandbox Docker volumes and networks
 _PRUNE_VOLUMES = str(os.getenv("SANDBOX_PRUNE_VOLUMES", "0")).lower() not in {
@@ -2051,6 +2053,8 @@ async def _cleanup_worker() -> None:
                         gauge.labels(worker="cleanup").set(duration)
                     except Exception:  # pragma: no cover - metrics failures
                         logger.exception("failed to update cleanup duration")
+                global _LAST_CLEANUP_TS
+                _LAST_CLEANUP_TS = time.monotonic()
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("cleanup worker cancelled")
         raise
@@ -2088,6 +2092,8 @@ async def _reaper_worker() -> None:
                         gauge.labels(worker="reaper").set(duration)
                     except Exception:  # pragma: no cover - metrics failures
                         logger.exception("failed to update cleanup duration")
+                global _LAST_REAPER_TS
+                _LAST_REAPER_TS = time.monotonic()
     except asyncio.CancelledError:  # pragma: no cover - cancellation path
         logger.debug("reaper worker cancelled")
         raise
@@ -2298,7 +2304,7 @@ def stop_container_event_listener() -> None:
 
 def ensure_cleanup_worker() -> None:
     """Ensure background cleanup worker task is active."""
-    global _CLEANUP_TASK, _REAPER_TASK
+    global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
     if _DOCKER_CLIENT is None:
         return
     if _EVENT_THREAD is None or not _EVENT_THREAD.is_alive():
@@ -2306,8 +2312,10 @@ def ensure_cleanup_worker() -> None:
     task = _CLEANUP_TASK
     if task is None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        _LAST_CLEANUP_TS = time.monotonic()
         if _REAPER_TASK is None:
             _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+            _LAST_REAPER_TS = time.monotonic()
         return
     try:
         done = task.done()
@@ -2326,9 +2334,11 @@ def ensure_cleanup_worker() -> None:
         pass
     if cancelled or exc is not None:
         _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+        _LAST_CLEANUP_TS = time.monotonic()
     task = _REAPER_TASK
     if task is None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        _LAST_REAPER_TS = time.monotonic()
         return
     try:
         done = task.done()
@@ -2345,10 +2355,13 @@ def ensure_cleanup_worker() -> None:
         pass
     if done or cancelled or exc is not None:
         _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+        _LAST_REAPER_TS = time.monotonic()
 
 
 def watchdog_check() -> None:
     """Verify background workers are alive and restart if needed."""
+
+    global _CLEANUP_TASK, _REAPER_TASK, _LAST_CLEANUP_TS, _LAST_REAPER_TS
 
     if _DOCKER_CLIENT is None:
         return
@@ -2358,6 +2371,25 @@ def watchdog_check() -> None:
     prev_event = _EVENT_THREAD
 
     ensure_cleanup_worker()
+
+    now = time.monotonic()
+    limit = 2 * _POOL_CLEANUP_INTERVAL
+    if now - _LAST_CLEANUP_TS > limit:
+        logger.warning("cleanup worker stalled; restarting")
+        try:
+            if _CLEANUP_TASK is not None:
+                _CLEANUP_TASK.cancel()
+        finally:
+            _CLEANUP_TASK = _schedule_coroutine(_cleanup_worker())
+            _LAST_CLEANUP_TS = time.monotonic()
+    if now - _LAST_REAPER_TS > limit:
+        logger.warning("reaper worker stalled; restarting")
+        try:
+            if _REAPER_TASK is not None:
+                _REAPER_TASK.cancel()
+        finally:
+            _REAPER_TASK = _schedule_coroutine(_reaper_worker())
+            _LAST_REAPER_TS = time.monotonic()
 
     if prev_cleanup is not _CLEANUP_TASK:
         logger.warning("cleanup worker restarted by watchdog")
