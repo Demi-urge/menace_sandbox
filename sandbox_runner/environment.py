@@ -298,6 +298,7 @@ _CONTAINER_MAX_LIFETIME = float(os.getenv("SANDBOX_CONTAINER_MAX_LIFETIME", "360
 _CONTAINER_DISK_LIMIT_STR = os.getenv("SANDBOX_CONTAINER_DISK_LIMIT", "0")
 _CONTAINER_DISK_LIMIT = 0
 _CONTAINER_USER = os.getenv("SANDBOX_CONTAINER_USER")
+_MAX_CONTAINER_COUNT = int(os.getenv("SANDBOX_MAX_CONTAINER_COUNT", "10"))
 
 # label applied to pooled containers; overridable via SANDBOX_POOL_LABEL
 _POOL_LABEL = os.getenv("SANDBOX_POOL_LABEL", "menace_sandbox_pool")
@@ -413,6 +414,7 @@ _CLEANUP_FAILURES = 0
 _FORCE_KILLS = 0
 _RUNTIME_VMS_REMOVED = 0
 _OVERLAY_CLEANUP_FAILURES = 0
+_ACTIVE_CONTAINER_LIMIT_REACHED = 0
 _CLEANUP_RETRY_SUCCESSES = 0
 _CLEANUP_RETRY_FAILURES = 0
 _CONSECUTIVE_CLEANUP_FAILURES = 0
@@ -1373,6 +1375,13 @@ def _ensure_pool_size_async(image: str) -> None:
     _cleanup_idle_containers()
     if len(pool) >= _CONTAINER_POOL_SIZE:
         return
+    if _MAX_CONTAINER_COUNT > 0 and len(_read_active_containers()) >= _MAX_CONTAINER_COUNT:
+        logger.warning(
+            "active container limit reached (%s)", _MAX_CONTAINER_COUNT
+        )
+        global _ACTIVE_CONTAINER_LIMIT_REACHED
+        _ACTIVE_CONTAINER_LIMIT_REACHED += 1
+        return
     t = _WARMUP_TASKS.get(image)
     if t and not t.done():
         return
@@ -1381,7 +1390,12 @@ def _ensure_pool_size_async(image: str) -> None:
         try:
             needed = _CONTAINER_POOL_SIZE - len(pool)
             for _ in range(needed):
-                c, _ = await _create_pool_container(image)
+                try:
+                    c, _ = await _create_pool_container(image)
+                except RuntimeError as exc:
+                    if "active container limit" in str(exc).lower():
+                        break
+                    raise
                 with _POOL_LOCK:
                     pool.append(c)
                     _CONTAINER_LAST_USED[c.id] = time.time()
@@ -1398,6 +1412,13 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity`` with retries."""
     assert _DOCKER_CLIENT is not None
     async with pool_lock():
+        if _MAX_CONTAINER_COUNT > 0 and len(_read_active_containers()) >= _MAX_CONTAINER_COUNT:
+            logger.warning(
+                "active container limit reached (%s)", _MAX_CONTAINER_COUNT
+            )
+            global _ACTIVE_CONTAINER_LIMIT_REACHED
+            _ACTIVE_CONTAINER_LIMIT_REACHED += 1
+            raise RuntimeError("active container limit reached")
         attempt = 0
         delay = _CREATE_BACKOFF_BASE
         last_exc: Exception | None = None
@@ -1580,6 +1601,7 @@ def collect_metrics(
     result["force_kills"] = float(_FORCE_KILLS)
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
+    result["active_container_limit_reached"] = float(_ACTIVE_CONTAINER_LIMIT_REACHED)
     result["cleanup_retry_successes"] = float(_CLEANUP_RETRY_SUCCESSES)
     result["cleanup_retry_failures"] = float(_CLEANUP_RETRY_FAILURES)
     result["consecutive_cleanup_failures"] = float(_CONSECUTIVE_CLEANUP_FAILURES)
@@ -1608,6 +1630,7 @@ def collect_metrics(
             "force_kills",
             "runtime_vms_removed",
             "overlay_cleanup_failures",
+            "active_container_limit_reached",
             "cleanup_retry_successes",
             "cleanup_retry_failures",
         ]
