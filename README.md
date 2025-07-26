@@ -680,6 +680,28 @@ Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command ret
 Set ``VISUAL_AGENT_AUTO_RECOVER=1`` to launch the service with
 ``--auto-recover`` so queued tasks persist across restarts.
 
+Running tasks are automatically requeued when the service starts with
+``--auto-recover``. ``VisualAgentClient`` keeps a local
+``visual_agent_client_queue.jsonl`` file and retries any entries until they
+complete successfully.  The agent provides several CLI utilities for manual
+recovery:
+
+```bash
+python menace_visual_agent_2.py --flush-queue       # drop all queued tasks
+python menace_visual_agent_2.py --recover-queue     # reload queue from disk
+python menace_visual_agent_2.py --repair-running    # mark running tasks queued
+python menace_visual_agent_2.py --resume            # process queue headlessly
+python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
+```
+
+For example, after an unexpected shutdown you can repair the queue and resume
+processing with:
+
+```bash
+python menace_visual_agent_2.py --repair-running --recover-queue
+python menace_visual_agent_2.py --resume
+```
+
 ``menace_visual_agent_2.py`` automatically sets ``pytesseract.tesseract_cmd``
 based on the host OS. Override the path with ``TESSERACT_CMD`` if needed.
 
