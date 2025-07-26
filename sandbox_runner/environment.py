@@ -1634,6 +1634,8 @@ def collect_metrics(
     result["runtime_vms_removed"] = float(_RUNTIME_VMS_REMOVED)
     result["overlay_cleanup_failures"] = float(_OVERLAY_CLEANUP_FAILURES)
     result["active_container_limit_reached"] = float(_ACTIVE_CONTAINER_LIMIT_REACHED)
+    result["active_containers"] = float(len(_read_active_containers()))
+    result["active_overlays"] = float(len(_read_active_overlays()))
     result["cleanup_retry_successes"] = float(_CLEANUP_RETRY_SUCCESSES)
     result["cleanup_retry_failures"] = float(_CLEANUP_RETRY_FAILURES)
     result["consecutive_cleanup_failures"] = float(_CONSECUTIVE_CLEANUP_FAILURES)
@@ -1667,6 +1669,8 @@ def collect_metrics(
             "runtime_vms_removed",
             "overlay_cleanup_failures",
             "active_container_limit_reached",
+            "active_containers",
+            "active_overlays",
             "cleanup_retry_successes",
             "cleanup_retry_failures",
             "hours_since_autopurge",
