@@ -6,8 +6,10 @@ import json
 import logging
 import logging.config
 import os
+import base64
 from pathlib import Path
 from typing import Any, Dict
+from datetime import datetime
 import contextvars
 
 
@@ -46,6 +48,75 @@ class JSONFormatter(logging.Formatter):
         if record.exc_info:
             data["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(data)
+
+
+class _ModuleFilter(logging.Filter):
+    """Filter records by logger name."""
+
+    def __init__(self, modules: list[str]) -> None:
+        super().__init__()
+        self._mods = tuple(modules)
+
+    def filter(self, record: logging.LogRecord) -> bool:  # pragma: no cover - simple
+        return record.name in self._mods or record.name.split(".")[0] in self._mods
+
+
+class AuditTrailHandler(logging.Handler):
+    """Log records to an :class:`AuditTrail`."""
+
+    def __init__(self, trail: "AuditTrail") -> None:  # pragma: no cover - tiny
+        super().__init__()
+        self.trail = trail
+        self.setFormatter(JSONFormatter())
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - tiny
+        try:
+            msg = self.format(record)
+            self.trail.record(msg)
+        except Exception:
+            pass
+
+
+class KafkaLogHandler(logging.Handler):
+    """Publish log records via :class:`KafkaMetaLogger`."""
+
+    def __init__(self, logger: "KafkaMetaLogger") -> None:  # pragma: no cover - tiny
+        super().__init__()
+        self.logger = logger
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - tiny
+        try:
+            payload = {
+                "time": datetime.utcnow().isoformat(),
+                "level": record.levelname,
+                "name": record.name,
+                "message": record.getMessage(),
+            }
+            self.logger.log(LogEvent("record", payload))
+        except Exception:
+            pass
+
+
+def _central_handler() -> logging.Handler | None:
+    """Return handler for SANDBOX_CENTRAL_LOGGING if configured."""
+    if os.getenv("SANDBOX_CENTRAL_LOGGING") != "1":
+        return None
+    if os.getenv("KAFKA_HOSTS"):
+        try:
+            from meta_logging import KafkaMetaLogger, LogEvent
+        except Exception:  # pragma: no cover - optional dependency
+            return None
+        km = KafkaMetaLogger(brokers=os.getenv("KAFKA_HOSTS"), topic_prefix="menace.logs")
+        return KafkaLogHandler(km)
+    try:
+        from audit_trail import AuditTrail
+    except Exception:  # pragma: no cover - optional dependency
+        return None
+    key_b64 = os.getenv("AUDIT_PRIVKEY")
+    priv = base64.b64decode(key_b64) if key_b64 else None
+    path = os.getenv("AUDIT_LOG_PATH", "audit.log")
+    trail = AuditTrail(path, priv)
+    return AuditTrailHandler(trail)
 
 
 _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
@@ -89,6 +160,12 @@ def setup_logging(config_path: str | None = None) -> None:
                 handler["formatter"] = "json"
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
+    handler = _central_handler()
+    if handler:
+        handler.addFilter(
+            _ModuleFilter(["SelfTestService", "SynergyAutoTrainer", "synergy_monitor"])
+        )
+        logging.getLogger().addHandler(handler)
 
 
 _def_configured = False
@@ -115,4 +192,6 @@ __all__ = [
     "JSONFormatter",
     "set_correlation_id",
     "CorrelationIDFilter",
+    "AuditTrailHandler",
+    "KafkaLogHandler",
 ]

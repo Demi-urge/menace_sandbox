@@ -7,6 +7,11 @@ import time
 import asyncio
 from filelock import FileLock
 
+if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+    from logging_utils import setup_logging
+
+    setup_logging()
+
 from .metrics_exporter import Gauge
 
 # Prometheus gauges tracking trainer state

@@ -8,6 +8,11 @@ import threading
 import time
 import urllib.request
 
+if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+    from logging_utils import setup_logging
+
+    setup_logging()
+
 from menace.audit_trail import AuditTrail
 from menace.synergy_exporter import SynergyExporter
 from menace.metrics_exporter import Gauge

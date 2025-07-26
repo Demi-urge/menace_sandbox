@@ -19,6 +19,11 @@ from pathlib import Path
 from typing import Any, Callable
 import threading
 
+if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
+    from logging_utils import setup_logging
+
+    setup_logging()
+
 from .data_bot import DataBot
 from .error_bot import ErrorDB
 from .error_logger import ErrorLogger
