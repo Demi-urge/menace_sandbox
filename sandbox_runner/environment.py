@@ -1486,6 +1486,7 @@ def _ensure_pool_size_async(image: str) -> None:
         return
     with _POOL_LOCK:
         pool = _CONTAINER_POOLS.setdefault(image, [])
+        t = _WARMUP_TASKS.get(image)
     _cleanup_idle_containers()
     if len(pool) >= _CONTAINER_POOL_SIZE:
         return
@@ -1508,7 +1509,6 @@ def _ensure_pool_size_async(image: str) -> None:
             pass
         global _ACTIVE_OVERLAY_LIMIT_REACHED
         _ACTIVE_OVERLAY_LIMIT_REACHED += 1
-    t = _WARMUP_TASKS.get(image)
     if t and not t.done():
         return
 
@@ -1528,10 +1528,12 @@ def _ensure_pool_size_async(image: str) -> None:
         except Exception as exc:
             logger.warning("container warm up failed: %s", exc)
         finally:
-            _WARMUP_TASKS.pop(image, None)
+            with _POOL_LOCK:
+                _WARMUP_TASKS.pop(image, None)
 
     task = _schedule_coroutine(_worker())
-    _WARMUP_TASKS[image] = task
+    with _POOL_LOCK:
+        _WARMUP_TASKS[image] = task
 
 
 async def _create_pool_container(image: str) -> tuple[Any, str]:
