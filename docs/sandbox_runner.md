@@ -758,25 +758,17 @@ For additional safety you can schedule periodic cleanup with the
 0 * * * * /usr/bin/python -m sandbox_runner.cli --purge-stale
 ```
 
-Or use the provided systemd unit files to run the same command on boot
-and then every hour. On a systemd-based distribution:
+Or let the CLI set up an hourly purge automatically:
 
-1. Copy the service and timer files into `/etc/systemd/system/`:
-   ```bash
-   sudo cp systemd/sandbox_autopurge.* /etc/systemd/system/
-   ```
-2. Reload the unit definitions so systemd sees them:
-   ```bash
-   sudo systemctl daemon-reload
-   ```
-3. Enable and start the timer:
-   ```bash
-   sudo systemctl enable --now sandbox_autopurge.timer
-   ```
-4. Verify the timer is active:
-   ```bash
-   systemctl status sandbox_autopurge.timer
-   ```
+```bash
+python -m sandbox_runner.cli install-autopurge
+```
+
+On Linux or macOS with systemd this copies the unit files and enables the timer
+for the current user (run the command as root to install system-wide). On
+Windows the same command imports the task from
+`systemd/windows_sandbox_purge.xml`. If automatic installation fails copy
+`systemd/sandbox_autopurge.*` manually and enable the timer with `systemctl`.
 
 These units assume the repository lives at `%h/menace_sandbox`. Adjust
 `WorkingDirectory` in `sandbox_autopurge.service` if you cloned the repository
@@ -785,16 +777,6 @@ elsewhere. Once enabled the timer will invoke
 
 Enabling this timer purges leftover containers or VM overlay directories even
 when the main sandbox is never started.
-
-On Windows you can achieve the same result with Task Scheduler.  A predefined
-task file is provided at `systemd/windows_sandbox_purge.xml`:
-
-```cmd
-schtasks /Create /TN SandboxPurge /XML systemd\windows_sandbox_purge.xml /F
-```
-
-This imports the hourly job.  Use the Task Scheduler GUI to adjust the Python
-path or run conditions if needed.
 
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream

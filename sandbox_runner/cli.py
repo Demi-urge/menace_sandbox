@@ -9,6 +9,8 @@ from typing import Any, List
 import tempfile
 import shutil
 import math
+import platform
+import subprocess
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -844,6 +846,63 @@ def check_resources_command() -> None:
     print(f"Removed {removed_containers} containers and {removed_overlays} overlays")
 
 
+def install_autopurge_command() -> None:
+    """Install scheduled cleanup using systemd or Windows Task Scheduler."""
+
+    base = Path(__file__).resolve().parent.parent
+    system = platform.system().lower()
+
+    if system == "windows":
+        xml = base / "systemd" / "windows_sandbox_purge.xml"
+        try:
+            subprocess.run(
+                [
+                    "schtasks",
+                    "/Create",
+                    "/TN",
+                    "SandboxPurge",
+                    "/XML",
+                    str(xml),
+                    "/F",
+                ],
+                check=True,
+            )
+            print("Scheduled task installed. Adjust via Task Scheduler if needed.")
+        except Exception:
+            print("Failed to import scheduled task. Run the following manually:")
+            print(f"schtasks /Create /TN SandboxPurge /XML {xml} /F")
+        return
+
+    if system in {"linux", "darwin"} and shutil.which("systemctl"):
+        service = base / "systemd" / "sandbox_autopurge.service"
+        timer = base / "systemd" / "sandbox_autopurge.timer"
+        try:
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                unit_dir = Path("/etc/systemd/system")
+                user_flag: list[str] = []
+            else:
+                unit_dir = Path.home() / ".config" / "systemd" / "user"
+                unit_dir.mkdir(parents=True, exist_ok=True)
+                user_flag = ["--user"]
+            shutil.copy(service, unit_dir / service.name)
+            shutil.copy(timer, unit_dir / timer.name)
+            subprocess.run(["systemctl", *user_flag, "daemon-reload"], check=True)
+            subprocess.run(
+                ["systemctl", *user_flag, "enable", "--now", "sandbox_autopurge.timer"],
+                check=True,
+            )
+            print("sandbox_autopurge timer installed and enabled")
+        except Exception:
+            print("Failed to install systemd units automatically.")
+            print(
+                f"Copy {service} and {timer} to {unit_dir} and enable with systemctl"
+            )
+        return
+
+    print("Automatic installation not supported on this platform.")
+    print("See systemd/sandbox_autopurge.service for manual instructions.")
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
@@ -942,6 +1001,11 @@ def main(argv: List[str] | None = None) -> None:
     sub.add_parser(
         "check-resources",
         help="purge leftovers, retry cleanup and report removed resources",
+    )
+
+    sub.add_parser(
+        "install-autopurge",
+        help="install scheduled cleanup service",
     )
 
     p_autorun = sub.add_parser(
@@ -1160,6 +1224,10 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "check-resources":
         check_resources_command()
+        return
+
+    if getattr(args, "cmd", None) == "install-autopurge":
+        install_autopurge_command()
         return
 
     if getattr(args, "cmd", None) == "full-autonomous-run":
