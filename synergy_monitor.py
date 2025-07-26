@@ -10,11 +10,21 @@ import urllib.request
 
 from menace.audit_trail import AuditTrail
 from menace.synergy_exporter import SynergyExporter
+from menace.metrics_exporter import Gauge
 from logging_utils import get_logger
 
 EXPORTER_CHECK_INTERVAL = float(os.getenv("SYNERGY_EXPORTER_CHECK_INTERVAL", "10"))
 
 logger = get_logger(__name__)
+
+synergy_exporter_restarts_total = Gauge(
+    "synergy_exporter_restarts_total",
+    "Total number of SynergyExporter restarts",
+)
+synergy_trainer_restarts_total = Gauge(
+    "synergy_trainer_restarts_total",
+    "Total number of SynergyAutoTrainer restarts",
+)
 
 
 def _exporter_health_ok(exp: SynergyExporter, *, max_age: float = 30.0) -> bool:
@@ -82,6 +92,10 @@ class ExporterMonitor:
             )
             self.exporter.start()
             self.restart_count += 1
+            try:
+                synergy_exporter_restarts_total.inc()
+            except Exception:
+                pass
             self.log.record(
                 {
                     "timestamp": int(time.time()),
@@ -156,6 +170,10 @@ class AutoTrainerMonitor:
             )
             self.trainer.start()
             self.restart_count += 1
+            try:
+                synergy_trainer_restarts_total.inc()
+            except Exception:
+                pass
             self.log.record(
                 {
                     "timestamp": int(time.time()),
