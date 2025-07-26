@@ -595,6 +595,22 @@ export AUDIT_LOG_PATH=/var/log/menace/audit.log
 `setup_logging()` attaches an `AuditTrailHandler` so all services write to the
 configured path. Set `SANDBOX_CENTRAL_LOGGING=0` to disable forwarding.
 
+Enable Prometheus metrics by starting the exporter on a port of your choice:
+
+```bash
+export METRICS_PORT=8001
+python run_autonomous.py  # or synergy_tools.py
+```
+
+Add the port to your Prometheus configuration:
+
+```yaml
+scrape_configs:
+  - job_name: 'menace'
+    static_configs:
+      - targets: ['localhost:8001']
+```
+
 ### Mandatory environment variables
 
 Generate the initial environment file by calling ``auto_env_setup.ensure_env()``.
