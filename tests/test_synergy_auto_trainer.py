@@ -600,3 +600,77 @@ def test_trainer_start_stop_restart(monkeypatch, tmp_path: Path) -> None:
 
     assert trainer._thread is None
     assert calls["count"] >= 2
+
+
+def test_train_failure_increments_metric(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 1.0}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    def bad_train(_hist, _path):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", bad_train)
+    sat.synergy_trainer_failures_total.set(0.0)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+
+    trainer._train_once()
+
+    assert sat.synergy_trainer_failures_total._value.get() == 1.0
+
+
+def test_cli_failure_updates_metric(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "hf.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    def fail_once(self) -> None:
+        raise sat.SynergyWeightCliError(2)
+
+    monkeypatch.setattr(sat.SynergyAutoTrainer, "_train_once", fail_once)
+    sat.synergy_trainer_failures_total.set(0.0)
+
+    rc = sat.cli([
+        "--history-file",
+        str(hist_file),
+        "--weights-file",
+        str(weights_file),
+        "--progress-file",
+        str(progress_file),
+        "--run-once",
+    ])
+
+    assert rc == 2
+    assert sat.synergy_trainer_failures_total._value.get() == 1.0

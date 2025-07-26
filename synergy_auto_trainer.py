@@ -18,6 +18,10 @@ synergy_trainer_last_id = Gauge(
     "synergy_trainer_last_id",
     "ID of the last processed synergy history entry",
 )
+synergy_trainer_failures_total = Gauge(
+    "synergy_trainer_failures_total",
+    "Total number of failed synergy training attempts",
+)
 
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
@@ -119,6 +123,10 @@ class SynergyAutoTrainer:
             success = True
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.warning("synergy_weight_cli failed: %s", exc)
+            try:
+                synergy_trainer_failures_total.inc()
+            except Exception:
+                pass
         finally:
             if success:
                 self._last_id = hist[-1][0]
@@ -250,9 +258,22 @@ def cli(argv: list[str] | None = None) -> int:
             synergy_trainer_last_id.set(float(trainer._last_id))
         except Exception:
             pass
-        trainer._train_once()
-        return 0
+        rc = 0
+        try:
+            trainer._train_once()
+        except SynergyWeightCliError as exc:
+            rc = exc.code or 1
+        except Exception:
+            rc = 1
+        finally:
+            if rc:
+                try:
+                    synergy_trainer_failures_total.inc()
+                except Exception:
+                    pass
+        return rc
 
+    rc = 0
     if args.async_mode:
         async def runner() -> int:
             trainer.start_async()
@@ -265,17 +286,24 @@ def cli(argv: list[str] | None = None) -> int:
                 await trainer.stop_async()
             return 0
 
-        return asyncio.run(runner())
+        rc = asyncio.run(runner())
+    else:
+        trainer.start()
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            trainer.stop()
+        rc = 0
 
-    trainer.start()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        trainer.stop()
-    return 0
+    if rc:
+        try:
+            synergy_trainer_failures_total.inc()
+        except Exception:
+            pass
+    return rc
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -290,5 +318,6 @@ __all__ = [
     "main",
     "synergy_trainer_iterations",
     "synergy_trainer_last_id",
+    "synergy_trainer_failures_total",
     "SynergyWeightCliError",
 ]
