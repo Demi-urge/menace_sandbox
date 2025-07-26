@@ -55,18 +55,19 @@ def test_import(monkeypatch, tmp_path):
 
 
 def test_train(monkeypatch, tmp_path):
-    engine = DummyEngine()
-    monkeypatch.setattr(cli, "_load_engine", lambda p=None: engine)
+    monkeypatch.setattr(cli, "_load_engine", lambda p=None: DummyEngine())
     hist = _make_history(tmp_path)
-    updates = []
+    called = {}
 
-    def record(*a, **k):
-        updates.append(a)
+    def fake_train(history, path):
+        called["history"] = history
+        called["path"] = path
 
-    engine.synergy_learner.update = record
+    monkeypatch.setattr(cli, "train_from_history", fake_train)
     cli.cli(["train", str(hist)])
-    assert len(updates) == 2
-    assert engine.synergy_learner.saved
+    assert isinstance(called.get("history"), list)
+    assert len(called["history"]) == 2
+    assert called["path"] is None
 
 
 def test_reset(monkeypatch):
