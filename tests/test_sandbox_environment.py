@@ -229,4 +229,22 @@ def test_metrics_exporter_updates(monkeypatch):
     assert stub.cleanup_duration_gauge.values["reaper"] == 2.5
 
 
+def test_collect_metrics_active_counts(monkeypatch, tmp_path):
+    _setup(monkeypatch)
+
+    containers = tmp_path / "containers.json"
+    overlays = tmp_path / "overlays.json"
+    containers.write_text(json.dumps(["c1", "c2"]))
+    overlays.write_text(json.dumps(["ov"]))
+
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_FILE", containers)
+    monkeypatch.setattr(env, "_ACTIVE_CONTAINERS_LOCK", env.FileLock(str(containers) + ".lock"))
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", overlays)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(overlays) + ".lock"))
+
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["active_containers"] == 2.0
+    assert metrics["active_overlays"] == 1.0
+
+
 

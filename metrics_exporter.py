@@ -359,6 +359,16 @@ active_container_limit_reached = Gauge(
     "Container creations skipped because the active limit was reached",
 )
 
+# Gauges tracking current resource usage
+active_containers = Gauge(
+    "active_containers",
+    "Number of active sandbox containers",
+)
+active_overlays = Gauge(
+    "active_overlays",
+    "Number of active overlay directories",
+)
+
 # Gauge tracking overlay cleanup failures
 overlay_cleanup_failures = Gauge(
     "overlay_cleanup_failures",
@@ -455,6 +465,8 @@ __all__ = [
     "runtime_vms_removed",
     "overlay_cleanup_failures",
     "active_container_limit_reached",
+    "active_containers",
+    "active_overlays",
     "cleanup_retry_successes",
     "cleanup_retry_failures",
     "hours_since_autopurge",
