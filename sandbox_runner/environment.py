@@ -2366,6 +2366,7 @@ async def _reaper_worker() -> None:
         while True:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             autopurge_if_needed()
+            reconcile_active_containers()
             start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
@@ -2831,6 +2832,7 @@ if _DOCKER_CLIENT is not None:
 
 atexit.register(_release_pool_lock)
 atexit.register(_cleanup_pools)
+atexit.register(purge_leftovers)
 atexit.register(stop_background_loop)
 
 
