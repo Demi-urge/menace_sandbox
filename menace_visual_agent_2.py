@@ -75,15 +75,16 @@ def _startup_load_state() -> None:
         with suppress(Exception):
             os.remove(GLOBAL_LOCK_PATH)
     if AUTO_RECOVER_ON_STARTUP:
-        try:
-            _global_lock.acquire(timeout=0)
-        except Timeout:
-            if _global_lock.is_lock_stale():
-                logger.info("recovered stale global lock")
-                with suppress(Exception):
-                    os.remove(GLOBAL_LOCK_PATH)
+        while True:
+            try:
                 _global_lock.acquire(timeout=0)
-            else:
+                break
+            except Timeout:
+                if _global_lock.is_lock_stale():
+                    logger.info("recovered stale global lock")
+                    with suppress(Exception):
+                        os.remove(GLOBAL_LOCK_PATH)
+                    continue
                 raise SystemExit("Agent busy")
         try:
             task_queue.clear()
