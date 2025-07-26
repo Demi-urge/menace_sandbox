@@ -466,6 +466,15 @@ FAILED_CLEANUP_FILE = Path(
     )
 )
 
+# timestamp of last automatic purge
+_LAST_AUTOPURGE_FILE = Path(
+    os.getenv("SANDBOX_LAST_AUTOPURGE", str(ROOT / "sandbox_data" / "last_autopurge"))
+)
+
+# age threshold for automatic purge invocation
+_SANDBOX_AUTOPURGE_THRESHOLD = 0.0
+_LAST_AUTOPURGE_TS = 0.0
+
 # file tracking persistent cleanup statistics
 _CLEANUP_STATS_FILE = Path(
     os.getenv(
@@ -738,6 +747,25 @@ def _increment_cleanup_stat(name: str, amount: int = 1) -> None:
     data = _read_cleanup_stats()
     data[name] = int(data.get(name, 0)) + amount
     _write_cleanup_stats(data)
+
+
+def _read_last_autopurge() -> float:
+    """Return timestamp of last automatic purge."""
+    try:
+        if _LAST_AUTOPURGE_FILE.exists():
+            return float(_LAST_AUTOPURGE_FILE.read_text())
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed reading last autopurge %s: %s", _LAST_AUTOPURGE_FILE, exc)
+    return 0.0
+
+
+def _write_last_autopurge(ts: float) -> None:
+    """Persist ``ts`` as the last automatic purge time."""
+    try:
+        _LAST_AUTOPURGE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LAST_AUTOPURGE_FILE.write_text(str(ts))
+    except Exception as exc:  # pragma: no cover - fs errors
+        logger.warning("failed writing last autopurge %s: %s", _LAST_AUTOPURGE_FILE, exc)
 
 
 def _record_failed_cleanup(item: str) -> None:
@@ -1351,6 +1379,10 @@ def purge_leftovers() -> None:
 
         _STALE_CONTAINERS_REMOVED += removed_containers
 
+    global _LAST_AUTOPURGE_TS
+    _LAST_AUTOPURGE_TS = time.time()
+    _write_last_autopurge(_LAST_AUTOPURGE_TS)
+
     report_failed_cleanup(alert=True)
 
 
@@ -1607,6 +1639,10 @@ def collect_metrics(
     result["consecutive_cleanup_failures"] = float(_CONSECUTIVE_CLEANUP_FAILURES)
     result["cleanup_duration_seconds_cleanup"] = float(_CLEANUP_DURATIONS["cleanup"])
     result["cleanup_duration_seconds_reaper"] = float(_CLEANUP_DURATIONS["reaper"])
+    if _LAST_AUTOPURGE_TS:
+        result["hours_since_autopurge"] = float((time.time() - _LAST_AUTOPURGE_TS) / 3600.0)
+    else:
+        result["hours_since_autopurge"] = float("inf")
     stats = _read_cleanup_stats()
     for k, v in stats.items():
         result[f"{k}_total"] = float(v)
@@ -1633,6 +1669,7 @@ def collect_metrics(
             "active_container_limit_reached",
             "cleanup_retry_successes",
             "cleanup_retry_failures",
+            "hours_since_autopurge",
         ]
         keys.extend(f"{k}_total" for k in stats)
         for key in keys:
@@ -2513,7 +2550,8 @@ def cancel_cleanup_check() -> None:
 
 import atexit
 
-purge_leftovers()
+if time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD:
+    purge_leftovers()
 
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
@@ -3170,6 +3208,12 @@ _OVERLAY_MAX_AGE = _parse_timespan(os.getenv("SANDBOX_OVERLAY_MAX_AGE", "7d"))
 _FAILED_CLEANUP_ALERT_AGE = _parse_timespan(
     os.getenv("SANDBOX_FAILED_CLEANUP_AGE", "1d")
 )
+
+_SANDBOX_AUTOPURGE_THRESHOLD = _parse_timespan(
+    os.getenv("SANDBOX_AUTOPURGE_THRESHOLD", "24h")
+)
+
+_LAST_AUTOPURGE_TS = _read_last_autopurge()
 
 
 def _rlimits_supported() -> bool:
