@@ -205,6 +205,12 @@ When `EXPORT_SYNERGY_METRICS=1` is enabled the exporter is monitored and
 automatically restarted if its health check fails. Control how frequently the
 monitor checks the exporter with `SYNERGY_EXPORTER_CHECK_INTERVAL`.
 
+Failed training attempts increment the `synergy_trainer_failures_total` gauge.
+The monitor exposes two additional gauges reflecting automatic restarts:
+`synergy_exporter_restarts_total` and `synergy_trainer_restarts_total`. Set
+`SANDBOX_CENTRAL_LOGGING=1` to forward exporter and trainer logs to the audit
+trail specified by `AUDIT_LOG_PATH` (or Kafka when `KAFKA_HOSTS` is defined).
+
 ## Standalone auto trainer
 
 Run `synergy_auto_trainer.py` directly to update weights from the history

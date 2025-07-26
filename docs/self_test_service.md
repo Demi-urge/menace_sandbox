@@ -19,7 +19,13 @@ summary.
 After each run the gauges `self_test_passed_total`, `self_test_failed_total`,
 `self_test_average_runtime_seconds` and `self_test_average_coverage` expose the
 number of passed and failed tests plus the average runtime and coverage for
-Prometheus scraping.
+Prometheus scraping. When containers are used two additional gauges record
+container issues:
+
+- `self_test_container_failures_total` counts cleanup or listing failures
+  (for example when a container cannot be removed).
+- `self_test_container_timeouts_total` increments whenever a test container
+  exceeds the configured timeout and is terminated.
 
 ## Command Line Interface
 
