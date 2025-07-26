@@ -2669,6 +2669,7 @@ import atexit
 
 if time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD:
     purge_leftovers()
+    retry_failed_cleanup()
 
 if _DOCKER_CLIENT is not None:
     default_img = os.getenv("SANDBOX_CONTAINER_IMAGE", "python:3.11-slim")
