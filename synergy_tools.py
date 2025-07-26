@@ -20,6 +20,7 @@ from menace.synergy_auto_trainer import SynergyAutoTrainer
 from menace.audit_trail import AuditTrail
 from logging_utils import get_logger, setup_logging
 from synergy_monitor import ExporterMonitor
+from menace.metrics_exporter import start_metrics_server
 
 
 logger = get_logger(__name__)
@@ -74,8 +75,9 @@ def main(argv: list[str] | None = None) -> None:
 
     exporter: SynergyExporter | None = None
     monitor: ExporterMonitor | None = None
+    metrics_port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
     if os.getenv("EXPORT_SYNERGY_METRICS") == "1":
-        port = int(os.getenv("SYNERGY_METRICS_PORT", "8003"))
+        port = metrics_port
         if not _port_available(port):
             logger.error("synergy exporter port %d in use", port)
             port = _free_port()
@@ -92,6 +94,13 @@ def main(argv: list[str] | None = None) -> None:
 
     trainer: SynergyAutoTrainer | None = None
     if os.getenv("AUTO_TRAIN_SYNERGY") == "1":
+        if exporter is None:
+            port = metrics_port
+            if not _port_available(port):
+                logger.error("synergy metrics port %d in use", port)
+                port = _free_port()
+                logger.info("using port %d for synergy metrics server", port)
+            start_metrics_server(port)
         try:
             interval = float(os.getenv("AUTO_TRAIN_INTERVAL", "600"))
         except Exception:
