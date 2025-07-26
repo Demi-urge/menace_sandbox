@@ -376,6 +376,11 @@ container_creation_success_total = Gauge(
     "Total successful container creations by image",
     labelnames=["image"],
 )
+container_creation_alerts_total = Gauge(
+    "container_creation_alerts_total",
+    "Total container creation alerts dispatched by image",
+    labelnames=["image"],
+)
 
 # Gauges tracking current resource usage
 active_containers = Gauge(
@@ -489,6 +494,7 @@ __all__ = [
     "active_overlays",
     "container_creation_failures_total",
     "container_creation_success_total",
+    "container_creation_alerts_total",
     "cleanup_retry_successes",
     "cleanup_retry_failures",
     "hours_since_autopurge",
