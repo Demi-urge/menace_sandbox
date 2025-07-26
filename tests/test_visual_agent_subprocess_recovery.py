@@ -137,7 +137,7 @@ def test_busy_run_returns_409(tmp_path):
             timeout=5,
         )
         assert resp1.status_code == 202
-        assert resp2.status_code == 409
+        assert resp2.status_code == 202
     finally:
         proc.terminate()
         proc.wait(timeout=5)

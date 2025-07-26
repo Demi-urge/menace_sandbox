@@ -92,7 +92,7 @@ def _startup_load_state() -> None:
     _start_background_threads()
 
 _running_lock = threading.Lock()      # ensures only one job at a time
-_current_job  = {"active": False}
+_current_job  = {"active": False, "id": None}
 GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
@@ -339,6 +339,8 @@ def _queue_worker():
         success = False
         try:
             _current_job["active"] = True
+            _current_job["id"] = "revert"
+            _current_job["id"] = tid
             run_menace_pipeline(task["prompt"], task["branch"])
             job_status[tid]["status"] = "completed"
             job_status[tid].pop("error", None)
@@ -352,6 +354,8 @@ def _queue_worker():
             _save_state_locked()
         finally:
             _current_job["active"] = False
+            _current_job["id"] = None
+            _current_job["id"] = None
             _running_lock.release()
             if success:
                 global last_completed_ts
@@ -415,9 +419,6 @@ async def run_task(
         raise HTTPException(status_code=409, detail="Agent busy")
 
     try:
-        if _running_lock.locked() or task_queue:
-            raise HTTPException(status_code=409, detail="Agent busy")
-
         task_id = secrets.token_hex(8)
         job_status[task_id] = {"status": "queued", "prompt": task.prompt, "branch": task.branch}
         task_queue.append({"id": task_id, "prompt": task.prompt, "branch": task.branch})
@@ -699,6 +700,7 @@ async def revert_patch(
     def _revert_worker():
         try:
             _current_job["active"] = True
+            _current_job["id"] = "clone"
             pyautogui.hotkey('win', '5')  # switch to terminal window
             time.sleep(2)
             pyautogui.write("git reset --hard HEAD~1")
@@ -710,6 +712,7 @@ async def revert_patch(
             pyautogui.hotkey('win', '1')  # return to browser
         finally:
             _current_job["active"] = False
+            _current_job["id"] = None
             _running_lock.release()
             try:
                 _global_lock.release()
@@ -796,7 +799,11 @@ async def cancel_task(
 
 @app.get("/status")
 async def status():
-    return {"active": _current_job["active"], "queue": len(task_queue)}
+    return {
+        "active": _current_job["active"],
+        "queue": len(task_queue),
+        "running": _current_job.get("id"),
+    }
 
 
 @app.get("/metrics")

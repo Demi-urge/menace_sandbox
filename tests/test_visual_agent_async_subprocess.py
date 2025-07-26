@@ -98,7 +98,7 @@ async def test_visual_agent_async_subprocess(tmp_path):
             resp1, resp2 = await asyncio.gather(task1, task2)
 
         codes = {resp1.status_code, resp2.status_code}
-        assert codes == {202, 409}
+        assert codes == {202}
     finally:
         proc.terminate()
         proc.wait(timeout=5)

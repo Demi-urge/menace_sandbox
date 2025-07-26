@@ -85,7 +85,7 @@ def test_busy_client_waits(monkeypatch, tmp_path):
         t1.join()
         t2.join()
 
-        assert any(code == 409 for code in codes)
+        assert all(code == 202 for code in codes)
         assert times["end2"] >= times["end1"]
         status = real_requests.get(f"{url}/status", timeout=1).json()
         assert status["queue"] == 0

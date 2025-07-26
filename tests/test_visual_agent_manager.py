@@ -66,7 +66,7 @@ def test_manager_rotates_token(tmp_path, monkeypatch):
         f"http://127.0.0.1:{port}/run", json={"prompt": "p"}, headers=h, timeout=5
     )
     assert r1.status_code == 202
-    assert r2.status_code == 409
+    assert r2.status_code == 202
 
     mgr.restart_with_token(TOKEN2)
     _wait_status(port)
@@ -82,6 +82,6 @@ def test_manager_rotates_token(tmp_path, monkeypatch):
         f"http://127.0.0.1:{port}/run", json={"prompt": "p"}, headers={"x-token": TOKEN2}, timeout=5
     )
     assert r3.status_code == 202
-    assert r4.status_code == 409
+    assert r4.status_code == 202
 
     mgr.shutdown()

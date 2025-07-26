@@ -97,10 +97,9 @@ def test_queue_status_during_concurrent_runs(monkeypatch, tmp_path):
 
         final_status = real_requests.get(f"{url}/status", timeout=1).json()
 
-        assert any(code == 409 for code in codes[1:])
-        assert 202 in codes
+        assert all(code == 202 for code in codes)
         assert times["end2"] >= times["end1"]
-        assert mid_status["queue"] == 0
+        assert mid_status["queue"] == 1
         assert final_status["queue"] == 0
     finally:
         proc.terminate()

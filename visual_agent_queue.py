@@ -28,12 +28,17 @@ class VisualAgentQueue:
                     branch TEXT,
                     status TEXT,
                     error TEXT,
-                    ts REAL
+                    ts REAL,
+                    qorder INTEGER
                 )
                 """
             )
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(tasks)")]
+            if "qorder" not in cols:
+                conn.execute("ALTER TABLE tasks ADD COLUMN qorder INTEGER")
+                conn.execute("UPDATE tasks SET qorder = rowid WHERE qorder IS NULL")
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_tasks_status_ts ON tasks(status, ts)"
+                "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
             )
             conn.commit()
 
@@ -73,13 +78,14 @@ class VisualAgentQueue:
         q = VisualAgentQueue(db_path)
         with sqlite3.connect(q.path) as conn:
             now = time.time()
+            order = 1
             for itm in items:
                 tid = str(itm.get("id"))
                 if not tid:
                     continue
                 info = job_status.get(tid, {})
                 conn.execute(
-                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts) VALUES(?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
                     (
                         tid,
                         itm.get("prompt", info.get("prompt", "")),
@@ -87,13 +93,15 @@ class VisualAgentQueue:
                         info.get("status", "queued"),
                         info.get("error"),
                         now,
+                        order,
                     ),
                 )
+                order += 1
             for tid, info in job_status.items():
                 if any(i.get("id") == tid for i in items):
                     continue
                 conn.execute(
-                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts) VALUES(?,?,?,?,?,?)",
+                    "INSERT OR IGNORE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
                     (
                         tid,
                         info.get("prompt", ""),
@@ -101,8 +109,10 @@ class VisualAgentQueue:
                         info.get("status", "queued"),
                         info.get("error"),
                         now,
+                        order,
                     ),
                 )
+                order += 1
             conn.commit()
 
         try:
@@ -124,8 +134,9 @@ class VisualAgentQueue:
     # ------------------------------------------------------------------
     def append(self, item: Dict[str, object]) -> None:
         with self._lock, sqlite3.connect(self.path) as conn:
+            qorder = conn.execute("SELECT COALESCE(MAX(qorder),0)+1 FROM tasks").fetchone()[0]
             conn.execute(
-                "INSERT OR REPLACE INTO tasks(id,prompt,branch,status,error,ts) VALUES(?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO tasks(id,prompt,branch,status,error,ts,qorder) VALUES(?,?,?,?,?,?,?)",
                 (
                     item.get("id"),
                     item.get("prompt", ""),
@@ -133,6 +144,7 @@ class VisualAgentQueue:
                     item.get("status", "queued"),
                     item.get("error"),
                     time.time(),
+                    qorder,
                 ),
             )
             conn.commit()
@@ -140,7 +152,7 @@ class VisualAgentQueue:
     def popleft(self) -> Dict[str, object]:
         with self._lock, sqlite3.connect(self.path) as conn:
             row = conn.execute(
-                "SELECT id,prompt,branch FROM tasks WHERE status='queued' ORDER BY ts LIMIT 1"
+                "SELECT id,prompt,branch FROM tasks WHERE status='queued' ORDER BY qorder LIMIT 1"
             ).fetchone()
             if row is None:
                 raise IndexError("pop from empty queue")
@@ -154,7 +166,7 @@ class VisualAgentQueue:
     def peek(self) -> Optional[Dict[str, object]]:
         with self._lock, sqlite3.connect(self.path) as conn:
             row = conn.execute(
-                "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY ts LIMIT 1"
+                "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY qorder LIMIT 1"
             ).fetchone()
             if row:
                 return {"id": row[0], "prompt": row[1], "branch": row[2], "status": row[3]}
@@ -163,7 +175,7 @@ class VisualAgentQueue:
     def load_all(self) -> List[Dict[str, object]]:
         with self._lock, sqlite3.connect(self.path) as conn:
             rows = conn.execute(
-                "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY ts"
+                "SELECT id,prompt,branch,status FROM tasks WHERE status='queued' ORDER BY qorder"
             ).fetchall()
             return [
                 {"id": r[0], "prompt": r[1], "branch": r[2], "status": r[3]} for r in rows
