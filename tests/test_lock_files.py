@@ -146,6 +146,7 @@ def test_stale_lock_cleanup(tmp_path: Path, lock_type: str) -> None:
 
 import importlib
 import types
+from tests.test_visual_agent_auto_recover import _setup_va
 
 
 def _setup_va_real(monkeypatch, tmp_path):
@@ -170,7 +171,22 @@ def test_visual_agent_stale_lock_recovery(monkeypatch, tmp_path):
     monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
     monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
 
-    va = _setup_va_real(monkeypatch, tmp_path)
+    va = _setup_va(monkeypatch, tmp_path)
+    class DummyQueue(list):
+        def append(self, item):
+            super().append(item)
+        def reset_running_tasks(self):
+            pass
+        def update_status(self, *a, **k):
+            pass
+        def set_last_completed(self, *a, **k):
+            pass
+        def get_status(self):
+            return {i["id"]: {"status": "queued", "prompt": i["prompt"], "branch": i["branch"]} for i in self}
+        def get_last_completed(self):
+            return 0.0
+    va.task_queue = DummyQueue()
+    va.job_status = {}
     va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
     va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
     va._persist_state()
@@ -179,9 +195,59 @@ def test_visual_agent_stale_lock_recovery(monkeypatch, tmp_path):
     old = time.time() - 2
     lock_path.write_text(f"{os.getpid()+100000},{old}")
 
-    va2 = _setup_va_real(monkeypatch, tmp_path)
+    va2 = _setup_va(monkeypatch, tmp_path)
+    va2.task_queue = va.task_queue
+    va2.job_status = va.job_status
+    va2.task_queue = va.task_queue
+    va2.job_status = va.job_status
     monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
     va2._startup_load_state()
 
+    assert not lock_path.exists()
+    assert list(va2.task_queue)[0]["id"] == "a"
+
+
+def test_visual_agent_stale_lock_retry(monkeypatch, tmp_path):
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+    lock_path = tmp_path / "agent.lock"
+    pid_path = tmp_path / "agent.pid"
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_FILE", str(lock_path))
+    monkeypatch.setenv("VISUAL_AGENT_PID_FILE", str(pid_path))
+    monkeypatch.setenv("VISUAL_AGENT_LOCK_TIMEOUT", "1")
+
+    va = _setup_va(monkeypatch, tmp_path)
+    va.job_status["a"] = {"status": "queued", "prompt": "p", "branch": None}
+    va.task_queue.append({"id": "a", "prompt": "p", "branch": None})
+    va._persist_state()
+    va.job_status.clear()
+
+    old = time.time() - 2
+    lock_path.write_text(f"{os.getpid()+100000},{old}")
+
+    va2 = _setup_va(monkeypatch, tmp_path)
+
+    class DummyLock:
+        def __init__(self):
+            self.calls = 0
+
+        def acquire(self, timeout=0):
+            self.calls += 1
+            if self.calls == 1:
+                raise va2.Timeout(str(lock_path))
+
+        def release(self):
+            pass
+
+        def is_lock_stale(self, *a, **k):
+            return True
+
+    dummy = DummyLock()
+    monkeypatch.setattr(va2, "_global_lock", dummy)
+    monkeypatch.setattr(va2, "_start_background_threads", lambda: None)
+    monkeypatch.setattr(va2.task_queue, "reset_running_tasks", lambda: None)
+
+    va2._startup_load_state()
+
+    assert dummy.calls >= 2
     assert not lock_path.exists()
     assert list(va2.task_queue)[0]["id"] == "a"
