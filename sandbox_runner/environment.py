@@ -1436,6 +1436,18 @@ def purge_leftovers() -> None:
     report_failed_cleanup(alert=True)
 
 
+def autopurge_if_needed() -> None:
+    """Run :func:`purge_leftovers` when the configured threshold has elapsed."""
+    if _SANDBOX_AUTOPURGE_THRESHOLD <= 0:
+        return
+    try:
+        if time.time() - _LAST_AUTOPURGE_TS >= _SANDBOX_AUTOPURGE_THRESHOLD:
+            purge_leftovers()
+            retry_failed_cleanup()
+    except Exception as exc:  # pragma: no cover - unexpected runtime issues
+        logger.exception("automatic purge failed: %s", exc)
+
+
 def _docker_available() -> bool:
     """Return ``True`` when Docker client is usable."""
     try:
@@ -2251,6 +2263,7 @@ async def _cleanup_worker() -> None:
     total_replaced = 0
     try:
         while True:
+            autopurge_if_needed()
             ensure_docker_client()
             reconcile_active_containers()
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
@@ -2311,6 +2324,7 @@ async def _reaper_worker() -> None:
     try:
         while True:
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
+            autopurge_if_needed()
             start = time.monotonic()
             try:
                 removed = _reap_orphan_containers()
