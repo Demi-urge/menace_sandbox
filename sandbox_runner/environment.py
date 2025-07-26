@@ -1637,6 +1637,25 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             _record_active_container(container.id)
             _CONSECUTIVE_CREATE_FAILURES[image] = 0
             _log_pool_metrics(image)
+            try:
+                from . import metrics_exporter as _me
+            except Exception:
+                try:  # pragma: no cover - package may not be available
+                    import metrics_exporter as _me  # type: ignore
+                except Exception:
+                    _me = None  # type: ignore
+            gauge = (
+                getattr(_me, "container_creation_success_total", None)
+                if _me
+                else None
+            )
+            if gauge is not None:
+                try:
+                    gauge.labels(image=image).inc()
+                except Exception:  # pragma: no cover - metrics failures
+                    logger.exception(
+                        "failed to increment container_creation_success_total"
+                    )
             with _POOL_LOCK:
                 _CONTAINER_DIRS[container.id] = td
                 _CONTAINER_LAST_USED[container.id] = time.time()
@@ -1662,6 +1681,25 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                     image,
                 )
             _log_pool_metrics(image)
+            try:
+                from . import metrics_exporter as _me
+            except Exception:
+                try:  # pragma: no cover - package may not be available
+                    import metrics_exporter as _me  # type: ignore
+                except Exception:
+                    _me = None  # type: ignore
+            gauge = (
+                getattr(_me, "container_creation_failures_total", None)
+                if _me
+                else None
+            )
+            if gauge is not None:
+                try:
+                    gauge.labels(image=image).inc()
+                except Exception:  # pragma: no cover - metrics failures
+                    logger.exception(
+                        "failed to increment container_creation_failures_total"
+                    )
             attempt += 1
         assert last_exc is not None
         raise last_exc

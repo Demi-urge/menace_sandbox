@@ -359,6 +359,18 @@ active_container_limit_reached = Gauge(
     "Container creations skipped because the active limit was reached",
 )
 
+# Gauges tracking container creation attempts
+container_creation_failures_total = Gauge(
+    "container_creation_failures_total",
+    "Total container creation failures by image",
+    labelnames=["image"],
+)
+container_creation_success_total = Gauge(
+    "container_creation_success_total",
+    "Total successful container creations by image",
+    labelnames=["image"],
+)
+
 # Gauges tracking current resource usage
 active_containers = Gauge(
     "active_containers",
@@ -467,6 +479,8 @@ __all__ = [
     "active_container_limit_reached",
     "active_containers",
     "active_overlays",
+    "container_creation_failures_total",
+    "container_creation_success_total",
     "cleanup_retry_successes",
     "cleanup_retry_failures",
     "hours_since_autopurge",
