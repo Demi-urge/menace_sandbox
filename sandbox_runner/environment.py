@@ -12,6 +12,7 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     setup_logging()
 
 from logging_utils import get_logger
+from alert_dispatcher import dispatch_alert
 import re
 
 try:
@@ -1706,6 +1707,30 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 except Exception:  # pragma: no cover - metrics failures
                     logger.exception(
                         "failed to increment container_creation_failures_total"
+                    )
+            if fails > _FAILURE_WARNING_THRESHOLD:
+                try:
+                    dispatch_alert(
+                        "container_creation_failures",
+                        2,
+                        "repeated container creation failures",
+                        {"image": image, "failures": fails},
+                    )
+                    gauge_alerts = (
+                        getattr(_me, "container_creation_alerts_total", None)
+                        if _me
+                        else None
+                    )
+                    if gauge_alerts is not None:
+                        try:
+                            gauge_alerts.labels(image=image).inc()
+                        except Exception:
+                            logger.exception(
+                                "failed to increment container_creation_alerts_total"
+                            )
+                except Exception:
+                    logger.exception(
+                        "failed to dispatch container creation alert"
                     )
             attempt += 1
         assert last_exc is not None
