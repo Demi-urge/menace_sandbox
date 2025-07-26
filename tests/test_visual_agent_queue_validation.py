@@ -22,3 +22,29 @@ def test_recover_invalid_queue(monkeypatch, tmp_path):
     assert va2.job_status['x']['status'] == 'queued'
     line = va2.QUEUE_FILE.read_text().splitlines()[0]
     assert json.loads(line)['prompt'] == 'p'
+
+
+def test_validate_job_status(monkeypatch, tmp_path):
+    _stub_deps(monkeypatch)
+    va = _setup_va(monkeypatch, tmp_path)
+    va.job_status['x'] = {'status': 'queued', 'prompt': 'p', 'branch': None}
+    va.task_queue.append({'id': 'x', 'prompt': 'p', 'branch': None})
+    va.job_status['y'] = {'status': 'completed', 'prompt': 'q', 'branch': None}
+    va.task_queue.append({'id': 'y', 'prompt': 'q', 'branch': None})
+    va._persist_state()
+
+    import sqlite3
+    with sqlite3.connect(tmp_path / 'visual_agent_queue.db') as conn:
+        conn.execute('DELETE FROM tasks WHERE id=?', ('x',))
+        conn.commit()
+
+    va.job_status.clear()
+
+    va2 = _setup_va(monkeypatch, tmp_path)
+    va2._initialize_state()
+
+    q_status = va2.task_queue.get_status()
+    assert 'x' in q_status
+    assert q_status['x']['status'] == 'queued'
+    assert va2.job_status['y']['status'] == 'queued'
+    assert va2.job_status == q_status
