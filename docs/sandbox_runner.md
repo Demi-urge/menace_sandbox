@@ -771,7 +771,13 @@ On Linux or macOS with systemd this copies the unit files and enables the timer
 for the current user (run the command as root to install system-wide). On
 Windows the same command imports the task from
 `systemd/windows_sandbox_purge.xml`. If automatic installation fails copy
-`systemd/sandbox_autopurge.*` manually and enable the timer with `systemctl`.
+`systemd/sandbox_autopurge.*` manually and enable the timer with:
+
+```bash
+systemctl --user enable --now sandbox_autopurge.timer
+```
+
+Omit `--user` for a system-wide installation.
 
 These units assume the repository lives at `%h/menace_sandbox`. Adjust
 `WorkingDirectory` in `sandbox_autopurge.service` if you cloned the repository
@@ -780,6 +786,17 @@ elsewhere. Once enabled the timer will invoke
 
 Enabling this timer purges leftover containers or VM overlay directories even
 when the main sandbox is never started.
+
+If you do not run the sandbox on a schedule, enable this timer (or the cron
+entry above) so stale containers are removed automatically. The CLI command
+`install-autopurge` installs and starts the timer for you. Verify it is active
+with:
+
+```bash
+systemctl status --user sandbox_autopurge.timer
+```
+
+Omit `--user` when installing system-wide.
 
 
 Keep an eye on the logs for messages from the cleanup workers.  A steady stream
