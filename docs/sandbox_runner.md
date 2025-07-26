@@ -745,6 +745,12 @@ overlay files by running:
 python -m sandbox_runner.cli --cleanup
 ```
 
+To verify the cleanup run and see how many resources were removed use:
+
+```bash
+python -m sandbox_runner.cli check-resources
+```
+
 For additional safety you can schedule periodic cleanup with the
 `--purge-stale` command. Run it hourly via cron:
 
