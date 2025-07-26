@@ -20,7 +20,7 @@ import threading
 import uvicorn
 import secrets
 import tempfile
-from filelock import FileLock, Timeout
+from lock_utils import _ContextFileLock, LOCK_TIMEOUT, is_lock_stale
 import json
 from pathlib import Path
 import atexit
@@ -97,16 +97,13 @@ GLOBAL_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_LOCK_FILE",
     os.path.join(tempfile.gettempdir(), "visual_agent.lock"),
 )
-LOCK_TIMEOUT = float(os.getenv("VISUAL_AGENT_LOCK_TIMEOUT", "3600"))
 try:
-    if os.path.exists(GLOBAL_LOCK_PATH):
-        if time.time() - os.path.getmtime(GLOBAL_LOCK_PATH) > LOCK_TIMEOUT:
-            os.remove(GLOBAL_LOCK_PATH)
+    if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
+        os.remove(GLOBAL_LOCK_PATH)
 except Exception as exc:  # pragma: no cover - fs errors
     logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
 
-_global_lock = FileLock(GLOBAL_LOCK_PATH)
-
+_global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
 # PID file setup
 PID_FILE_PATH = os.getenv(
     "VISUAL_AGENT_PID_FILE",
@@ -150,11 +147,10 @@ def _setup_pid_file() -> None:
 def _cleanup_stale_files() -> None:
     """Remove leftover lock and PID files."""
     try:
-        if os.path.exists(GLOBAL_LOCK_PATH):
+        if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
             os.remove(GLOBAL_LOCK_PATH)
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove lock %s", GLOBAL_LOCK_PATH)
-
     path = Path(PID_FILE_PATH)
     try:
         if path.exists():
