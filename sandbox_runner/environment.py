@@ -1398,6 +1398,38 @@ def _docker_available() -> bool:
         return False
 
 
+def ensure_docker_client() -> None:
+    """Recreate ``_DOCKER_CLIENT`` if disconnected."""
+    global _DOCKER_CLIENT
+    if docker is None:
+        return
+    reconnect = False
+    if _DOCKER_CLIENT is None:
+        reconnect = True
+    else:
+        try:
+            _DOCKER_CLIENT.ping()
+        except DockerException as exc:  # pragma: no cover - ping may fail
+            reconnect = True
+            try:
+                logger.warning("docker client ping failed: %s", exc)
+            except Exception:
+                pass
+    if not reconnect:
+        return
+    try:
+        logger.info("reconnecting docker client")
+    except Exception:
+        pass
+    try:
+        _DOCKER_CLIENT = docker.from_env()
+        _DOCKER_CLIENT.ping()
+        logger.info("docker client reconnected")
+    except DockerException as exc:  # pragma: no cover - docker may be down
+        _DOCKER_CLIENT = None
+        logger.error("docker client reconnection failed: %s", exc)
+
+
 def _ensure_pool_size_async(image: str) -> None:
     """Warm up pool for ``image`` asynchronously."""
     if _DOCKER_CLIENT is None:
@@ -1442,6 +1474,7 @@ def _ensure_pool_size_async(image: str) -> None:
 
 async def _create_pool_container(image: str) -> tuple[Any, str]:
     """Create a long-lived container running ``sleep infinity`` with retries."""
+    ensure_docker_client()
     assert _DOCKER_CLIENT is not None
     async with pool_lock():
         if _MAX_CONTAINER_COUNT > 0 and len(_read_active_containers()) >= _MAX_CONTAINER_COUNT:
@@ -1573,6 +1606,7 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
 @asynccontextmanager
 async def pooled_container(image: str) -> Any:
     """Async context manager yielding a pooled container."""
+    ensure_docker_client()
     container, td = await _get_pooled_container(image)
     try:
         yield container, td
@@ -2082,6 +2116,7 @@ async def _cleanup_worker() -> None:
     total_replaced = 0
     try:
         while True:
+            ensure_docker_client()
             await asyncio.sleep(_POOL_CLEANUP_INTERVAL)
             start = time.monotonic()
             try:
