@@ -828,6 +828,22 @@ def cleanup_command() -> None:
         retry_failed_cleanup()
 
 
+def check_resources_command() -> None:
+    """Purge leftovers and retry cleanup then print a summary."""
+
+    from sandbox_runner import environment as env
+
+    before_containers = env._STALE_CONTAINERS_REMOVED
+    before_overlays = env._STALE_VMS_REMOVED
+    env.purge_leftovers()
+    with env._PURGE_FILE_LOCK:
+        env.retry_failed_cleanup()
+
+    removed_containers = env._STALE_CONTAINERS_REMOVED - before_containers
+    removed_overlays = env._STALE_VMS_REMOVED - before_overlays
+    print(f"Removed {removed_containers} containers and {removed_overlays} overlays")
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for command line execution."""
     parser = argparse.ArgumentParser(description="Run Menace sandbox")
@@ -921,6 +937,11 @@ def main(argv: List[str] | None = None) -> None:
     sub.add_parser(
         "cleanup",
         help="purge leftovers and retry previously failed cleanup",
+    )
+
+    sub.add_parser(
+        "check-resources",
+        help="purge leftovers, retry cleanup and report removed resources",
     )
 
     p_autorun = sub.add_parser(
@@ -1135,6 +1156,10 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "cleanup":
         cleanup_command()
+        return
+
+    if getattr(args, "cmd", None) == "check-resources":
+        check_resources_command()
         return
 
     if getattr(args, "cmd", None) == "full-autonomous-run":
