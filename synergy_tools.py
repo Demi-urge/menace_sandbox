@@ -15,6 +15,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
+    os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
+
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_auto_trainer import SynergyAutoTrainer
 from menace.audit_trail import AuditTrail
