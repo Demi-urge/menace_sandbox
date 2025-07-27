@@ -603,6 +603,10 @@ def main(argv: List[str] | None = None) -> None:
         help="enable verbose preset adaptation logs",
     )
     parser.add_argument(
+        "--debug-log-file",
+        help="write verbose logs to this file when --preset-debug is enabled",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
@@ -637,6 +641,13 @@ def main(argv: List[str] | None = None) -> None:
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
+        if args.debug_log_file:
+            fh = logging.FileHandler(args.debug_log_file)
+            fh.setLevel(logging.DEBUG)
+            fh.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+            )
+            logging.getLogger().addHandler(fh)
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
     created_env = not env_file.exists()
@@ -713,6 +724,10 @@ def main(argv: List[str] | None = None) -> None:
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+            logger.info(
+                "generated presets from environment", 
+                extra=log_record(presets=presets),
+            )
         elif preset_file.exists():
             try:
                 presets_raw = json.loads(preset_file.read_text())
@@ -729,6 +744,10 @@ def main(argv: List[str] | None = None) -> None:
                 preset_file.write_text(json.dumps(presets))
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
+            logger.info(
+                "loaded presets from file", 
+                extra=log_record(presets=presets, source=str(preset_file)),
+            )
         else:
             if getattr(args, "disable_preset_evolution", False):
                 presets = validate_presets(generate_presets(args.preset_count))
@@ -742,6 +761,9 @@ def main(argv: List[str] | None = None) -> None:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
                     presets = validate_presets(gen_func(str(data_dir), args.preset_count))
+            logger.info(
+                "generated presets", extra=log_record(presets=presets)
+            )
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -1028,6 +1050,9 @@ def main(argv: List[str] | None = None) -> None:
                 presets = validate_presets(presets_raw)
             except ValidationError as exc:
                 sys.exit(f"Invalid preset file {pf}: {exc}")
+            logger.info(
+                "loaded presets from file", extra=log_record(run=run_idx, presets=presets)
+            )
         else:
             if getattr(args, "disable_preset_evolution", False):
                 presets = validate_presets(generate_presets(args.preset_count))
@@ -1045,6 +1070,9 @@ def main(argv: List[str] | None = None) -> None:
                     preset_source = "history adaptation"
                     if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
                         preset_source = "RL agent"
+            logger.info(
+                "generated presets", extra=log_record(run=run_idx, presets=presets)
+            )
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         logger.info(
             "using presets from %s",
@@ -1128,6 +1156,11 @@ def main(argv: List[str] | None = None) -> None:
         if history:
             roi_ema, _ = cli._ema(history[-args.roi_cycles :])
             roi_ma_history.append(roi_ema)
+        logger.debug(
+            "ROI forecast input history: %s",
+            history,
+            extra=log_record(run=run_idx, roi_history=history),
+        )
         try:
             pred, (lower, upper) = tracker.forecast()
             logger.debug(
@@ -1142,6 +1175,11 @@ def main(argv: List[str] | None = None) -> None:
         except Exception:
             logger.exception("ROI forecast failed")
 
+        logger.debug(
+            "calculating ROI threshold from history: %s",
+            tracker.roi_history,
+            extra=log_record(run=run_idx, roi_history=tracker.roi_history),
+        )
         if getattr(args, "auto_thresholds", False):
             roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
         elif roi_threshold is None:
@@ -1170,6 +1208,11 @@ def main(argv: List[str] | None = None) -> None:
         thr = args.synergy_threshold
         if getattr(args, "auto_thresholds", False) or thr is None:
             thr = None
+        logger.debug(
+            "calculating synergy threshold from history: %s",
+            synergy_history,
+            extra=log_record(run=run_idx, synergy_history=synergy_history),
+        )
         logger.debug(
             "Synergy threshold %s (window=%s weight=%s) EMA %s",
             thr if thr is not None else "adaptive",
