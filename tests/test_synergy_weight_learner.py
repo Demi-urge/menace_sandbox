@@ -397,3 +397,56 @@ def test_sb3_learners_positive_convergence(tmp_path, cls_name):
 
     learner2 = cls(path=path)
     assert learner2.weights["roi"] == pytest.approx(learner.weights["roi"])
+
+
+@pytest.mark.parametrize(
+    "cls_name",
+    [
+        "DQNSynergyLearner",
+        "DoubleDQNSynergyLearner",
+        "SACSynergyLearner",
+        "TD3SynergyLearner",
+    ],
+)
+def test_sb3_learners_persistence_and_files(tmp_path, cls_name):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("stable_baselines3")
+    import importlib
+
+    import menace.self_improvement_engine as sie
+    import menace.self_improvement_policy as sip
+
+    sip = importlib.reload(sip)
+    sie = importlib.reload(sie)
+
+    path = tmp_path / f"{cls_name}.json"
+    cls = getattr(sie, cls_name)
+    learner = cls(path=path, lr=0.01, target_sync=1)
+
+    deltas = {
+        "synergy_roi": 0.5,
+        "synergy_efficiency": 0.1,
+        "synergy_resilience": 0.2,
+        "synergy_antifragility": -0.1,
+        "synergy_reliability": 0.0,
+        "synergy_maintainability": 0.0,
+        "synergy_throughput": 0.0,
+    }
+
+    start = dict(learner.weights)
+
+    for roi_delta in [0.5, -0.3, 0.7]:
+        learner.update(roi_delta, deltas)
+
+    assert learner.weights != start
+
+    learner2 = cls(path=path)
+    assert learner2.weights == pytest.approx(learner.weights)
+
+    base = path.with_suffix("")
+    policy = base.with_suffix(".policy.pkl")
+    model = base.with_suffix(".pt")
+    target = base.with_suffix(".target.pt")
+
+    assert policy.exists()
+    assert model.exists() or target.exists()
