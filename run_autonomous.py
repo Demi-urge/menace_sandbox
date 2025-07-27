@@ -155,6 +155,7 @@ from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
 from threshold_logger import ThresholdLogger
+from forecast_logger import ForecastLogger
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
@@ -578,6 +579,7 @@ def update_metrics(
     synergy_threshold_weight: float,
     synergy_confidence: float | None,
     threshold_log: ThresholdLogger,
+    forecast_log: ForecastLogger | None = None,
 ) -> tuple[bool, float, float]:
     """Update histories and return convergence status and EMA."""
 
@@ -611,19 +613,25 @@ def update_metrics(
         roi_ema, _ = cli._ema(history[-args.roi_cycles :])
         roi_ma_history.append(roi_ema)
 
+    roi_pred = None
+    ci_lo = None
+    ci_hi = None
     try:
         pred, (lo, hi) = tracker.forecast()
-        roi_forecast_gauge.set(float(pred))
+        roi_pred = float(pred)
+        ci_lo = float(lo)
+        ci_hi = float(hi)
+        roi_forecast_gauge.set(roi_pred)
         logger.debug(
             "roi forecast=%.3f CI=(%.3f, %.3f)",
-            pred,
-            lo,
-            hi,
+            roi_pred,
+            ci_lo,
+            ci_hi,
             extra=log_record(
                 run=run_idx,
-                roi_prediction=pred,
-                ci_lower=lo,
-                ci_upper=hi,
+                roi_prediction=roi_pred,
+                ci_lower=ci_lo,
+                ci_upper=ci_hi,
             ),
         )
     except Exception:
@@ -714,6 +722,24 @@ def update_metrics(
             threshold=syn_thr_val,
         ),
     )
+    logger.debug(
+        "forecast %.3f CI=(%.3f, %.3f) roi_thr=%.3f(%s) syn_thr=%.3f",
+        roi_pred if roi_pred is not None else float('nan'),
+        ci_lo if ci_lo is not None else float('nan'),
+        ci_hi if ci_hi is not None else float('nan'),
+        roi_threshold,
+        thr_method,
+        syn_thr_val,
+        extra=log_record(
+            run=run_idx,
+            roi_prediction=roi_pred,
+            ci_lower=ci_lo,
+            ci_upper=ci_hi,
+            roi_threshold=roi_threshold,
+            threshold_method=thr_method,
+            synergy_threshold=syn_thr_val,
+        ),
+    )
     # log threshold calculation details for debugging
     roi_vals = tracker.roi_history[-args.roi_cycles :] if tracker.roi_history else []
     roi_ema_val, roi_std_val = cli._ema(roi_vals) if roi_vals else (0.0, 0.0)
@@ -741,6 +767,13 @@ def update_metrics(
                 "confidence": conf_m,
             }
 
+    if synergy_details:
+        logger.debug(
+            "synergy metric stats: %s",
+            synergy_details,
+            extra=log_record(run=run_idx, synergy_metric_stats=synergy_details),
+        )
+
     logger.debug(
         "metrics window sizes roi=%d synergy=%d sy_win=%d w=%.3f",
         args.roi_cycles,
@@ -758,6 +791,23 @@ def update_metrics(
             synergy_threshold_weight=synergy_threshold_weight,
         ),
     )
+    if forecast_log is not None:
+        forecast_log.log(
+            {
+                "run": run_idx,
+                "roi_forecast": roi_pred,
+                "ci_lower": ci_lo,
+                "ci_upper": ci_hi,
+                "roi_threshold": roi_threshold,
+                "threshold_method": thr_method,
+                "synergy_threshold": syn_thr_val,
+                "synergy_converged": converged,
+                "synergy_confidence": conf,
+                "synergy_metrics": synergy_details,
+                "roi_ema": roi_ema_val,
+                "roi_std": roi_std_val,
+            }
+        )
     return converged, ema_val, roi_threshold
 
 
@@ -879,6 +929,10 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--debug-log-file",
         help="write verbose logs to this file when --preset-debug is enabled",
+    )
+    parser.add_argument(
+        "--forecast-log",
+        help="write ROI forecast and threshold details to this file",
     )
     parser.add_argument(
         "--log-level",
@@ -1096,6 +1150,10 @@ def main(argv: List[str] | None = None) -> None:
     )
     threshold_log = ThresholdLogger(str(threshold_log_path))
     cleanup_funcs.append(threshold_log.close)
+    forecast_log = None
+    if args.forecast_log:
+        forecast_log = ForecastLogger(str(args.forecast_log))
+        cleanup_funcs.append(forecast_log.close)
 
     synergy_exporter: SynergyExporter | None = None
     exporter_monitor: ExporterMonitor | None = None
@@ -1420,6 +1478,7 @@ def main(argv: List[str] | None = None) -> None:
             synergy_threshold_weight,
             synergy_confidence,
             threshold_log,
+            forecast_log,
         )
 
         if module_history and set(module_history) <= flagged and converged:
