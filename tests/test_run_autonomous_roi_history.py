@@ -4,6 +4,7 @@ import types
 import json
 from pathlib import Path
 import pytest
+from tests.test_run_autonomous_env_vars import _load_module
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,11 +84,29 @@ def setup_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
 
 
+def _setup_metrics_stub(monkeypatch):
+    stub = types.ModuleType("metrics_exporter")
+
+    class DummyGauge:
+        def __init__(self):
+            self.value = None
+
+        def set(self, v):
+            self.value = v
+
+    stub.start_metrics_server = lambda *a, **k: None
+    stub.roi_threshold_gauge = DummyGauge()
+    stub.synergy_threshold_gauge = DummyGauge()
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
+    return stub
+
+
 def test_run_autonomous_writes_history(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    mod = _load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     mod.main(
@@ -103,8 +122,8 @@ def test_run_autonomous_writes_history(monkeypatch, tmp_path):
 def test_synergy_history_reused(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    mod = _load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
     synergy_file = tmp_path / "synergy_history.json"
@@ -136,7 +155,7 @@ def test_synergy_history_reused(monkeypatch, tmp_path):
 def test_adaptive_synergy_threshold_default(monkeypatch, tmp_path):
     setup_stubs(monkeypatch)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
+    mod = _load_module(monkeypatch)
     monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
@@ -344,3 +363,80 @@ def test_auto_thresholds_uses_saved_synergy(monkeypatch, tmp_path):
     assert hist_lengths[0] == 1
     assert hist_lengths[1] == 2
     assert second_thr < first_thr
+
+
+def test_threshold_gauges_updated(monkeypatch, tmp_path):
+    setup_stubs(monkeypatch)
+    metrics_stub = _setup_metrics_stub(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    mod = _load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: p)
+    mod.shd = types.SimpleNamespace(connect_locked=lambda *_a, **_k: None)
+    monkeypatch.setattr(mod, "_visual_agent_running", lambda u: True)
+    cli_stub = mod.sandbox_runner.cli
+    cli_stub._diminishing_modules = lambda *a, **k: (set(), None)
+    cli_stub._ema = lambda seq: (0.0, 0.0)
+    cli_stub._adaptive_threshold = lambda *a, **k: 0.0
+    cli_stub._adaptive_synergy_threshold = lambda *a, **k: 0.0
+    cli_stub._synergy_converged = lambda *a, **k: (True, 0.0, {})
+    cli_stub.adaptive_synergy_convergence = lambda *a, **k: (True, 0.0, {})
+    mod.ROITracker = lambda *a, **k: types.SimpleNamespace(
+        module_deltas={},
+        metrics_history={"synergy_roi": [0.05]},
+        roi_history=[0.1],
+        load_history=lambda p: None,
+        diminishing=lambda: 0.0,
+    )
+    def fake_run(args, *, synergy_history=None, synergy_ma_history=None):
+        data_dir = Path(args.sandbox_data_dir or "sandbox_data")
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with open(data_dir / "roi_history.json", "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "roi_history": [0.1],
+                    "module_deltas": {},
+                    "metrics_history": {"synergy_roi": [0.05]},
+                },
+                fh,
+            )
+
+    monkeypatch.setattr(mod.sandbox_runner.cli, "full_autonomous_run", fake_run)
+    monkeypatch.setattr(mod, "full_autonomous_run", fake_run)
+    class DummySettings:
+        def __init__(self):
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_env_presets = None
+            self.auto_dashboard_port = None
+            self.save_synergy_history = True
+            self.visual_agent_autostart = False
+            self.visual_agent_urls = ""
+            self.roi_cycles = None
+            self.synergy_cycles = None
+            self.roi_threshold = None
+            self.synergy_threshold = None
+            self.roi_confidence = None
+            self.synergy_confidence = None
+            self.synergy_threshold_window = None
+            self.synergy_threshold_weight = None
+            self.synergy_ma_window = None
+            self.synergy_stationarity_confidence = None
+            self.synergy_std_threshold = None
+            self.synergy_variance_confidence = None
+
+    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    mod.main([
+        "--max-iterations",
+        "1",
+        "--runs",
+        "1",
+        "--sandbox-data-dir",
+        str(tmp_path),
+    ])
+
+    assert metrics_stub.roi_threshold_gauge.value is not None
+    assert metrics_stub.synergy_threshold_gauge.value is not None

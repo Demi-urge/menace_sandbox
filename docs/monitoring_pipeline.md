@@ -7,7 +7,9 @@ Menace exposes metrics, logs and errors so you can keep track of every bot.
 `DataBot` and `metrics_exporter.start_metrics_server()` publish CPU, memory and
 ROI gauges. Set `METRICS_PORT` before launching `run_autonomous.py` or
 `synergy_tools.py` to start the exporter automatically. Point Prometheus at the
-metrics server and visualise the gauges with Grafana.
+metrics server and visualise the gauges with Grafana. The exporter now exposes
+`roi_threshold_gauge` and `synergy_threshold_gauge` so dashboards can track the
+current ROI and synergy convergence thresholds.
 
 ## Log Aggregation
 
@@ -147,6 +149,8 @@ synergy training gauges alongside ROI metrics:
 * `synergy_trainer_iterations`
 * `synergy_trainer_failures_total`
 * `synergy_weight_update_failures_total`
+* `roi_threshold_gauge`
+* `synergy_threshold_gauge`
 
 Start the dashboard and query the metrics:
 
