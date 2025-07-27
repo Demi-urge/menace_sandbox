@@ -9,10 +9,21 @@ ROI gauges. Set `METRICS_PORT` before launching `run_autonomous.py` or
 `synergy_tools.py` to start the exporter automatically. Point Prometheus at the
 metrics server and visualise the gauges with Grafana. The exporter now exposes
 `roi_threshold_gauge` and `synergy_threshold_gauge` so dashboards can track the
-current ROI and synergy convergence thresholds. A new `roi_forecast` gauge
-records the predicted ROI for the next run while
-`synergy_adaptation_actions_total{action="<name>"}` counts how often each
-preset adaptation action occurs.
+current ROI and synergy convergence thresholds. Two additional gauges help
+monitor preset adaptation:
+
+- `roi_forecast` – predicted ROI for the next sandbox cycle
+- `synergy_adaptation_actions_total{action="<name>"}` – counter of how often a
+  specific adaptation action executed
+
+Add the metrics server to your Prometheus configuration and query these gauges
+to inspect upcoming ROI and the behaviour of the preset RL agent.
+For a local run you can start the exporter with:
+
+```bash
+METRICS_PORT=8001 python run_autonomous.py
+curl http://localhost:8001/metrics | grep roi_forecast
+```
 
 ## Log Aggregation
 
@@ -162,4 +173,9 @@ Start the dashboard and query the metrics:
 ```bash
 python -m menace.metrics_dashboard --port 8002
 curl http://localhost:8002/metrics
+```
+Example output:
+```
+roi_forecast 0.82
+synergy_adaptation_actions_total{action="use_history"} 3
 ```
