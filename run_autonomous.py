@@ -490,6 +490,177 @@ def load_previous_synergy(
     return history, ma_history
 
 
+def prepare_presets(
+    run_idx: int, args: argparse.Namespace, settings: SandboxSettings
+) -> tuple[list[dict], str]:
+    """Return presets for ``run_idx`` and their source."""
+
+    preset_source = "static file"
+    if args.preset_files:
+        pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
+        try:
+            data = json.loads(pf.read_text())
+        except json.JSONDecodeError as exc:
+            logger.warning("preset file %s is corrupted: %s", pf, exc)
+            data = generate_presets(args.preset_count)
+            pf.write_text(json.dumps(data))
+        presets_raw = [data] if isinstance(data, dict) else list(data)
+        presets = validate_presets(presets_raw)
+        logger.info("loaded presets from file", extra=log_record(run=run_idx, presets=presets))
+    else:
+        if getattr(args, "disable_preset_evolution", False):
+            presets = validate_presets(generate_presets(args.preset_count))
+        else:
+            gen_func = getattr(
+                environment_generator,
+                "generate_presets_from_history",
+                generate_presets,
+            )
+            if gen_func is generate_presets:
+                presets = validate_presets(generate_presets(args.preset_count))
+            else:
+                data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
+                presets = validate_presets(gen_func(str(data_dir), args.preset_count))
+                preset_source = "history adaptation"
+                if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
+                    preset_source = "RL agent"
+        logger.info("generated presets", extra=log_record(run=run_idx, presets=presets))
+        actions = getattr(environment_generator.adapt_presets, "last_actions", [])
+        for act in actions:
+            try:
+                synergy_adaptation_actions_total.labels(action=act).inc()
+            except Exception:
+                logger.exception("failed to update adaptation actions gauge")
+    os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+    return presets, preset_source
+
+
+def execute_iteration(
+    args: argparse.Namespace,
+    settings: SandboxSettings,
+    presets: list[dict],
+    synergy_history: list[dict[str, float]],
+    synergy_ma_history: list[dict[str, float]],
+) -> ROITracker | None:
+    """Run one autonomous iteration using ``presets`` and return tracker."""
+
+    recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
+    sandbox_runner._sandbox_main = recovery.run
+    try:
+        full_autonomous_run(
+            args,
+            synergy_history=synergy_history,
+            synergy_ma_history=synergy_ma_history,
+        )
+    finally:
+        sandbox_runner._sandbox_main = recovery.sandbox_main
+
+    data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+    hist_file = data_dir / "roi_history.json"
+    tracker = ROITracker()
+    try:
+        tracker.load_history(str(hist_file))
+    except Exception:
+        logger.exception("failed to load tracker history: %s", hist_file)
+        return None
+    return tracker
+
+
+def update_metrics(
+    tracker: ROITracker,
+    args: argparse.Namespace,
+    run_idx: int,
+    module_history: dict[str, list[float]],
+    flagged: set[str],
+    synergy_history: list[dict[str, float]],
+    synergy_ma_history: list[dict[str, float]],
+    roi_ma_history: list[float],
+    history_conn: sqlite3.Connection | None,
+    roi_threshold: float | None,
+    roi_confidence: float | None,
+    synergy_threshold_window: int,
+    synergy_threshold_weight: float,
+    synergy_confidence: float | None,
+    threshold_log: ThresholdLogger,
+) -> tuple[bool, float, float]:
+    """Update histories and return convergence status and EMA."""
+
+    for mod, vals in tracker.module_deltas.items():
+        module_history.setdefault(mod, []).extend(vals)
+
+    syn_vals = {k: v[-1] for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v}
+    synergy_ema = None
+    if syn_vals:
+        synergy_history.append(syn_vals)
+        if args.save_synergy_history and history_conn is not None:
+            try:
+                insert_entry(history_conn, syn_vals)
+            except Exception:
+                logger.exception("failed to save synergy history")
+        ma_entry: dict[str, float] = {}
+        for k in syn_vals:
+            vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
+            ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
+            ma_entry[k] = ema
+        synergy_ma_history.append(ma_entry)
+        synergy_ema = ma_entry
+
+    history = getattr(tracker, "roi_history", [])
+    roi_ema = None
+    if history:
+        roi_ema, _ = cli._ema(history[-args.roi_cycles :])
+        roi_ma_history.append(roi_ema)
+
+    try:
+        pred, _ = tracker.forecast()
+        roi_forecast_gauge.set(float(pred))
+    except Exception:
+        logger.exception("ROI forecast failed")
+
+    if getattr(args, "auto_thresholds", False):
+        roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
+    elif roi_threshold is None:
+        roi_threshold = tracker.diminishing()
+    roi_threshold_gauge.set(float(roi_threshold))
+    new_flags, _ = cli._diminishing_modules(
+        module_history,
+        flagged,
+        roi_threshold,
+        consecutive=args.roi_cycles,
+        confidence=roi_confidence or 0.95,
+    )
+    flagged.update(new_flags)
+
+    thr = args.synergy_threshold
+    if getattr(args, "auto_thresholds", False) or thr is None:
+        thr = None
+    syn_thr_val = (
+        thr
+        if thr is not None
+        else cli._adaptive_synergy_threshold(
+            synergy_history, synergy_threshold_window, weight=synergy_threshold_weight
+        )
+    )
+    synergy_threshold_gauge.set(float(syn_thr_val))
+    converged, ema_val, conf = cli.adaptive_synergy_convergence(
+        synergy_history,
+        args.synergy_cycles,
+        threshold=thr,
+        threshold_window=synergy_threshold_window,
+        weight=synergy_threshold_weight,
+        confidence=synergy_confidence or 0.95,
+    )
+    threshold_log.log(run_idx, roi_threshold, syn_thr_val, converged)
+    logger.debug(
+        "synergy convergence=%s max|ema|=%.3f conf=%.3f",
+        converged,
+        ema_val,
+        conf,
+        extra=log_record(run=run_idx, converged=converged, ema_value=ema_val, confidence=conf),
+    )
+    return converged, ema_val, roi_threshold
+
+
 def main(argv: List[str] | None = None) -> None:
     """Entry point for the autonomous runner."""
     parser = argparse.ArgumentParser(
@@ -1036,58 +1207,14 @@ def main(argv: List[str] | None = None) -> None:
             run_idx,
             args.runs if args.runs is not None else "?",
         )
-        # exporter health is monitored in background
         if agent_mgr and agent_mgr.process and agent_mgr.process.poll() is not None:
             logger.error(
                 "visual agent process terminated with code %s",
                 agent_mgr.process.returncode,
             )
             sys.exit(1)
-        preset_source = "static file"
-        if args.preset_files:
-            pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
-            try:
-                with open(pf, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-            except json.JSONDecodeError as exc:
-                logger.warning("preset file %s is corrupted: %s", pf, exc)
-                data = generate_presets(args.preset_count)
-                pf.write_text(json.dumps(data))
-            presets_raw = [data] if isinstance(data, dict) else list(data)
-            try:
-                presets = validate_presets(presets_raw)
-            except ValidationError as exc:
-                sys.exit(f"Invalid preset file {pf}: {exc}")
-            logger.info(
-                "loaded presets from file", extra=log_record(run=run_idx, presets=presets)
-            )
-        else:
-            if getattr(args, "disable_preset_evolution", False):
-                presets = validate_presets(generate_presets(args.preset_count))
-            else:
-                gen_func = getattr(
-                    environment_generator,
-                    "generate_presets_from_history",
-                    generate_presets,
-                )
-                if gen_func is generate_presets:
-                    presets = validate_presets(generate_presets(args.preset_count))
-                else:
-                    data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
-                    presets = validate_presets(gen_func(str(data_dir), args.preset_count))
-                    preset_source = "history adaptation"
-                    if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
-                        preset_source = "RL agent"
-            logger.info(
-                "generated presets", extra=log_record(run=run_idx, presets=presets)
-            )
-            actions = getattr(environment_generator.adapt_presets, "last_actions", [])
-            for act in actions:
-                try:
-                    synergy_adaptation_actions_total.labels(action=act).inc()
-                except Exception:
-                    logger.exception("failed to update adaptation actions gauge")
-        os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+
+        presets, preset_source = prepare_presets(run_idx, args, settings)
         logger.info(
             "using presets from %s",
             preset_source,
@@ -1100,26 +1227,16 @@ def main(argv: List[str] | None = None) -> None:
             extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
         )
 
-        recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
-        sandbox_runner._sandbox_main = recovery.run
-        try:
-            full_autonomous_run(
-                args,
-                synergy_history=synergy_history,
-                synergy_ma_history=synergy_ma_history,
-            )
-        finally:
-            sandbox_runner._sandbox_main = recovery.sandbox_main
-
-        data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
-        hist_file = data_dir / "roi_history.json"
-        tracker = ROITracker()
-        try:
-            tracker.load_history(str(hist_file))
-            last_tracker = tracker
-        except Exception:
-            logger.exception("failed to load tracker history: %s", hist_file)
+        tracker = execute_iteration(
+            args,
+            settings,
+            presets,
+            synergy_history,
+            synergy_ma_history,
+        )
+        if tracker is None:
             continue
+        last_tracker = tracker
 
         if args.save_synergy_history and history_conn is not None:
             try:
@@ -1139,164 +1256,23 @@ def main(argv: List[str] | None = None) -> None:
                 )
                 synergy_history = []
 
-        for mod, vals in tracker.module_deltas.items():
-            module_history.setdefault(mod, []).extend(vals)
-
-        syn_vals = {
-            k: v[-1] for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v
-        }
-        synergy_ema: dict[str, float] | None = None
-        if syn_vals:
-            synergy_history.append(syn_vals)
-            if args.save_synergy_history and history_conn is not None:
-                try:
-                    insert_entry(history_conn, syn_vals)
-                except Exception:
-                    logger.exception("failed to save synergy history")
-            ma_entry: dict[str, float] = {}
-            for k in syn_vals:
-                vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
-                ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
-                ma_entry[k] = ema
-            synergy_ma_history.append(ma_entry)
-            synergy_ma_prev = synergy_ma_history
-            synergy_ema = ma_entry
-            logger.debug(
-                "synergy ema updated",
-                extra=log_record(run=run_idx, synergy_ema=synergy_ema),
-            )
-        history = getattr(tracker, "roi_history", [])
-        roi_ema = None
-        if history:
-            roi_ema, _ = cli._ema(history[-args.roi_cycles :])
-            roi_ma_history.append(roi_ema)
-        logger.debug(
-            "ROI forecast input history: %s",
-            history,
-            extra=log_record(run=run_idx, roi_history=history),
-        )
-        try:
-            pred, (lower, upper) = tracker.forecast()
-            try:
-                roi_forecast_gauge.set(float(pred))
-            except Exception:
-                logger.exception("failed to update roi forecast gauge")
-            logger.debug(
-                "ROI forecast %.3f CI [%.3f, %.3f]",
-                pred,
-                lower,
-                upper,
-                extra=log_record(
-                    run=run_idx, roi_forecast=pred, ci_lower=lower, ci_upper=upper
-                ),
-            )
-        except Exception:
-            logger.exception("ROI forecast failed")
-
-        logger.debug(
-            "calculating ROI threshold from history: %s",
-            tracker.roi_history,
-            extra=log_record(run=run_idx, roi_history=tracker.roi_history),
-        )
-        if getattr(args, "auto_thresholds", False):
-            roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
-        elif roi_threshold is None:
-            roi_threshold = tracker.diminishing()
-        logger.debug(
-            "ROI threshold %s, EMA %s",
-            roi_threshold,
-            roi_ema,
-            extra=log_record(
-                run=run_idx, roi_threshold=roi_threshold, roi_ema=roi_ema
-            ),
-        )
-        try:
-            roi_threshold_gauge.set(float(roi_threshold))
-        except Exception:
-            logger.exception("failed to update ROI threshold gauge")
-        new_flags, _ = cli._diminishing_modules(
+        converged, ema_val, roi_threshold = update_metrics(
+            tracker,
+            args,
+            run_idx,
             module_history,
             flagged,
-            roi_threshold,
-            consecutive=args.roi_cycles,
-            confidence=roi_confidence or 0.95,
-        )
-        flagged.update(new_flags)
-
-        thr = args.synergy_threshold
-        if getattr(args, "auto_thresholds", False) or thr is None:
-            thr = None
-        logger.debug(
-            "calculating synergy threshold from history: %s",
             synergy_history,
-            extra=log_record(run=run_idx, synergy_history=synergy_history),
-        )
-        logger.debug(
-            "Synergy threshold %s (window=%s weight=%s) EMA %s",
-            thr if thr is not None else "adaptive",
+            synergy_ma_history,
+            roi_ma_history,
+            history_conn,
+            roi_threshold,
+            roi_confidence,
             synergy_threshold_window,
             synergy_threshold_weight,
-            synergy_ema,
-            extra=log_record(
-                run=run_idx,
-                synergy_threshold="adaptive" if thr is None else thr,
-                window=synergy_threshold_window,
-                weight=synergy_threshold_weight,
-                synergy_ema=synergy_ema,
-            ),
+            synergy_confidence,
+            threshold_log,
         )
-        syn_thr_val = None
-        try:
-            syn_thr_val = (
-                thr
-                if thr is not None
-                else cli._adaptive_synergy_threshold(
-                    synergy_history,
-                    synergy_threshold_window,
-                    weight=synergy_threshold_weight,
-                )
-            )
-            synergy_threshold_gauge.set(float(syn_thr_val))
-            logger.debug(
-                "synergy threshold %.3f (window=%d weight=%.2f)",
-                syn_thr_val,
-                synergy_threshold_window,
-                synergy_threshold_weight,
-                extra=log_record(
-                    run=run_idx,
-                    synergy_threshold_value=syn_thr_val,
-                    window=synergy_threshold_window,
-                    weight=synergy_threshold_weight,
-                ),
-            )
-        except Exception:
-            logger.exception("failed to update synergy threshold gauge")
-        converged, ema_val, conf = cli.adaptive_synergy_convergence(
-            synergy_history,
-            args.synergy_cycles,
-            threshold=thr,
-            threshold_window=synergy_threshold_window,
-            weight=synergy_threshold_weight,
-            confidence=synergy_confidence or 0.95,
-        )
-        logger.debug(
-            "synergy convergence=%s max|ema|=%.3f conf=%.3f p=%.3f",
-            converged,
-            ema_val,
-            conf,
-            1 - conf,
-            extra=log_record(
-                run=run_idx,
-                converged=converged,
-                synergy_ema_values=synergy_ema,
-                ema_value=ema_val,
-                convergence_confidence=conf,
-            ),
-        )
-        try:
-            threshold_log.log(run_idx, roi_threshold, syn_thr_val, converged)
-        except Exception:
-            logger.exception("failed to record threshold values")
 
         if module_history and set(module_history) <= flagged and converged:
             logger.info(
