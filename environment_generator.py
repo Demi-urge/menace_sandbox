@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, List, TYPE_CHECKING
 import json
 import logging
+from .logging_utils import log_record
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -189,6 +190,14 @@ def generate_presets(
     ):
         try:
             actions = agent.decide(tracker)
+            if debug:
+                logger.debug(
+                    "RL actions %s", actions, extra=log_record(agent="rl", actions=actions)
+                )
+            if debug:
+                logger.debug(
+                    "RL actions %s", actions, extra=log_record(agent="rl", actions=actions)
+                )
 
             def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
                 lookup = [str(x) for x in seq]
@@ -239,7 +248,13 @@ def generate_presets(
                     p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
             agent.save()
         except Exception:
-            logger.exception("preset adaptation failed")
+            logger.exception(
+                "preset adaptation failed",
+                extra=log_record(
+                    presets=presets,
+                    tracker_state=getattr(tracker, "__dict__", {}),
+                ),
+            )
 
     return presets
 
@@ -470,6 +485,7 @@ def adapt_presets(
     mechanisms. Low scores decrease the intensity accordingly.
     """
 
+    debug = os.getenv("PRESET_DEBUG") == "1"
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
     if not rl_path:
@@ -525,14 +541,24 @@ def adapt_presets(
                 return lvl
         return levels[0]
 
+    sec_decision = "none"
     if avg_sec >= 80.0:
+        sec_decision = "increase"
         for p in presets:
             cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
             p["THREAT_INTENSITY"] = _next_level(cur, True)
     elif avg_sec < 50.0:
+        sec_decision = "decrease"
         for p in presets:
             cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
             p["THREAT_INTENSITY"] = _next_level(cur, False)
+    if debug:
+        logger.debug(
+            "security avg %.2f -> %s threat intensity",
+            avg_sec,
+            sec_decision,
+            extra=log_record(avg_security=avg_sec, threat_decision=sec_decision),
+        )
 
     # --------------------------------------------------------------
     # ROI-driven resource scaling
@@ -551,9 +577,12 @@ def adapt_presets(
         recent_deltas = deltas[-3:]
         avg_delta = sum(recent_deltas) / len(recent_deltas)
         tol = getattr(tracker, "diminishing", lambda: 0.01)()
+        roi_avg = sum(roi_hist[-3:]) / min(3, len(roi_hist))
+        roi_decision = "none"
 
         if abs(avg_delta) <= tol:
             # ROI stagnates -> scale up resources
+            roi_decision = "scale_up"
             for p in presets:
                 p["CPU_LIMIT"] = _next_val(
                     _CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), True
@@ -570,6 +599,7 @@ def adapt_presets(
                 )
         elif avg_delta > tol:
             # ROI improving -> slowly tighten limits
+            roi_decision = "tighten"
             for p in presets:
                 p["CPU_LIMIT"] = _next_val(
                     _CPU_LIMITS, str(p.get("CPU_LIMIT", "1")), False
@@ -584,6 +614,18 @@ def adapt_presets(
                 p["MIN_BANDWIDTH"] = _next_val(
                     _BANDWIDTHS, str(p.get("MIN_BANDWIDTH", bw)), False
                 )
+        if debug:
+            logger.debug(
+                "ROI avg %.2f delta %.3f -> %s resources",
+                roi_avg,
+                avg_delta,
+                roi_decision,
+                extra=log_record(
+                    avg_roi=roi_avg,
+                    roi_delta=avg_delta,
+                    roi_decision=roi_decision,
+                ),
+            )
 
     # --------------------------------------------------------------
     # Use reinforcement learning when sufficient history is available
@@ -646,11 +688,23 @@ def adapt_presets(
             agent.save()
             return presets
         except Exception:
-            logger.exception("preset adaptation failed")
+            logger.exception(
+                "preset adaptation failed",
+                extra=log_record(
+                    presets=presets,
+                    tracker_state=getattr(tracker, "__dict__", {}),
+                ),
+            )
 
     elif adapt_agent and len(tracker.roi_history) >= _ADAPTIVE_THRESHOLD:
         try:
             actions = adapt_agent.decide(tracker)
+            if debug:
+                logger.debug(
+                    "adaptive actions %s",
+                    actions,
+                    extra=log_record(agent="adaptive", actions=actions),
+                )
 
             def _nxt(seq: List[Any], cur: Any, up: bool) -> Any:
                 lookup = [str(x) for x in seq]
@@ -688,7 +742,13 @@ def adapt_presets(
             adapt_agent.save()
             return presets
         except Exception:
-            logger.exception("preset adaptation failed")
+            logger.exception(
+                "preset adaptation failed",
+                extra=log_record(
+                    presets=presets,
+                    tracker_state=getattr(tracker, "__dict__", {}),
+                ),
+            )
 
     # --------------------------------------------------------------
     # Synergy-driven adjustments with prediction support

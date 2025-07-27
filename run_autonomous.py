@@ -597,6 +597,11 @@ def main(argv: List[str] | None = None) -> None:
         help="disable adapting presets from previous run history",
     )
     parser.add_argument(
+        "--preset-debug",
+        action="store_true",
+        help="enable verbose preset adaptation logs",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
@@ -628,6 +633,9 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(level=args.log_level)
+
+    if args.preset_debug:
+        os.environ["PRESET_DEBUG"] = "1"
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
     created_env = not env_file.exists()
