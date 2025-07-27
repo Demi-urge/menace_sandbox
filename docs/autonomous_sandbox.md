@@ -181,6 +181,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    The script verifies system dependencies, creates default presets using `environment_generator` and invokes the sandbox runner. The metrics dashboard is available at `http://localhost:${AUTO_DASHBOARD_PORT}` once started.
    If the previous run terminated unexpectedly you can append `--recover` to reload the last recorded ROI and synergy histories.
    Use `--preset-debug` to enable verbose logging of preset adaptation. Combine it with `--debug-log-file <path>` to write these logs to a file for later inspection.
+   Use `--forecast-log <path>` to store ROI forecasts and threshold values for each run.
 
 ## Visual agent queueing
 
@@ -339,6 +340,10 @@ python run_autonomous.py --preset-debug \
 The file is appended to across runs and contains the raw debug statements from
 `environment_generator`. Without `--debug-log-file` the extra logs appear only
 on the console.
+
+Pass `--forecast-log <path>` to append ROI forecast values and the calculated
+thresholds for each run. The file is written in JSON lines format so it can be
+processed programmatically.
 
 ## Synergy metrics exporter
 
