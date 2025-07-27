@@ -144,6 +144,7 @@ from metrics_exporter import (
     roi_threshold_gauge,
     synergy_threshold_gauge,
     roi_forecast_gauge,
+    synergy_forecast_gauge,
     synergy_adaptation_actions_total,
 )
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
@@ -624,6 +625,17 @@ def update_metrics(
         )
     except Exception:
         logger.exception("ROI forecast failed")
+
+    try:
+        syn_pred = tracker.predict_synergy()
+        synergy_forecast_gauge.set(float(syn_pred))
+        logger.debug(
+            "synergy forecast=%.3f",
+            syn_pred,
+            extra=log_record(run=run_idx, synergy_prediction=syn_pred),
+        )
+    except Exception:
+        logger.exception("synergy forecast failed")
 
     if getattr(args, "auto_thresholds", False):
         roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)

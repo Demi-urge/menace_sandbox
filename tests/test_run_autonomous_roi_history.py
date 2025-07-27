@@ -97,6 +97,7 @@ def _setup_metrics_stub(monkeypatch):
     stub.start_metrics_server = lambda *a, **k: None
     stub.roi_threshold_gauge = DummyGauge()
     stub.synergy_threshold_gauge = DummyGauge()
+    stub.synergy_forecast_gauge = DummyGauge()
     monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
     return stub
@@ -439,3 +440,4 @@ def test_threshold_gauges_updated(monkeypatch, tmp_path):
 
     assert metrics_stub.roi_threshold_gauge.value is not None
     assert metrics_stub.synergy_threshold_gauge.value is not None
+    assert metrics_stub.synergy_forecast_gauge.value is not None

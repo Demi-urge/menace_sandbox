@@ -203,6 +203,12 @@ roi_forecast_gauge = Gauge(
     "Latest ROI forecast value",
 )
 
+# Gauge tracking the latest synergy ROI forecast value
+synergy_forecast_gauge = Gauge(
+    "synergy_forecast",
+    "Latest synergy ROI forecast value",
+)
+
 # Gauges tracking adaptive thresholds
 roi_threshold_gauge = Gauge(
     "roi_threshold",
@@ -504,6 +510,7 @@ __all__ = [
     "evolution_cycle_count",
     "experiment_best_roi",
     "roi_forecast_gauge",
+    "synergy_forecast_gauge",
     "roi_threshold_gauge",
     "synergy_threshold_gauge",
     "error_bot_exceptions",

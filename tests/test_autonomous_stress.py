@@ -51,6 +51,7 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
     metrics_stub.start_metrics_server = lambda *a, **k: None
     metrics_stub.roi_threshold_gauge = types.SimpleNamespace(set=lambda v: None)
     metrics_stub.synergy_threshold_gauge = types.SimpleNamespace(set=lambda v: None)
+    metrics_stub.synergy_forecast_gauge = types.SimpleNamespace(set=lambda v: None)
     monkeypatch.setitem(mod.sys.modules, "metrics_exporter", metrics_stub)
     monkeypatch.setitem(mod.sys.modules, "sandbox_runner.metrics_exporter", metrics_stub)
 
