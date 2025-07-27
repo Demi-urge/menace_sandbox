@@ -129,7 +129,7 @@ spec.loader.exec_module(menace_pkg)
 import menace.environment_generator as environment_generator
 import sandbox_runner
 import sandbox_runner.cli as cli
-from logging_utils import get_logger, setup_logging
+from logging_utils import get_logger, setup_logging, log_record
 from menace.audit_trail import AuditTrail
 from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
@@ -1034,8 +1034,17 @@ def main(argv: List[str] | None = None) -> None:
                     if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
                         preset_source = "RL agent"
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
-        logger.info("using presets from %s", preset_source)
-        logger.debug("loaded presets from %s: %s", preset_source, presets)
+        logger.info(
+            "using presets from %s",
+            preset_source,
+            extra=log_record(run=run_idx, preset_source=preset_source),
+        )
+        logger.debug(
+            "loaded presets from %s: %s",
+            preset_source,
+            presets,
+            extra=log_record(run=run_idx, preset_source=preset_source, presets=presets),
+        )
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
         sandbox_runner._sandbox_main = recovery.run
@@ -1098,6 +1107,10 @@ def main(argv: List[str] | None = None) -> None:
             synergy_ma_history.append(ma_entry)
             synergy_ma_prev = synergy_ma_history
             synergy_ema = ma_entry
+            logger.debug(
+                "synergy ema updated",
+                extra=log_record(run=run_idx, synergy_ema=synergy_ema),
+            )
         history = getattr(tracker, "roi_history", [])
         roi_ema = None
         if history:
@@ -1106,7 +1119,13 @@ def main(argv: List[str] | None = None) -> None:
         try:
             pred, (lower, upper) = tracker.forecast()
             logger.debug(
-                "ROI forecast %.3f CI [%.3f, %.3f]", pred, lower, upper
+                "ROI forecast %.3f CI [%.3f, %.3f]",
+                pred,
+                lower,
+                upper,
+                extra=log_record(
+                    run=run_idx, roi_forecast=pred, ci_lower=lower, ci_upper=upper
+                ),
             )
         except Exception:
             logger.exception("ROI forecast failed")
@@ -1116,7 +1135,12 @@ def main(argv: List[str] | None = None) -> None:
         elif roi_threshold is None:
             roi_threshold = tracker.diminishing()
         logger.debug(
-            "ROI threshold %s, EMA %s", roi_threshold, roi_ema
+            "ROI threshold %s, EMA %s",
+            roi_threshold,
+            roi_ema,
+            extra=log_record(
+                run=run_idx, roi_threshold=roi_threshold, roi_ema=roi_ema
+            ),
         )
         try:
             roi_threshold_gauge.set(float(roi_threshold))
@@ -1140,6 +1164,13 @@ def main(argv: List[str] | None = None) -> None:
             synergy_threshold_window,
             synergy_threshold_weight,
             synergy_ema,
+            extra=log_record(
+                run=run_idx,
+                synergy_threshold="adaptive" if thr is None else thr,
+                window=synergy_threshold_window,
+                weight=synergy_threshold_weight,
+                synergy_ema=synergy_ema,
+            ),
         )
         try:
             syn_thr_val = (
@@ -1157,6 +1188,12 @@ def main(argv: List[str] | None = None) -> None:
                 syn_thr_val,
                 synergy_threshold_window,
                 synergy_threshold_weight,
+                extra=log_record(
+                    run=run_idx,
+                    synergy_threshold_value=syn_thr_val,
+                    window=synergy_threshold_window,
+                    weight=synergy_threshold_weight,
+                ),
             )
         except Exception:
             logger.exception("failed to update synergy threshold gauge")
@@ -1174,10 +1211,24 @@ def main(argv: List[str] | None = None) -> None:
             ema_val,
             conf,
             1 - conf,
+            extra=log_record(
+                run=run_idx,
+                converged=converged,
+                synergy_ema_values=synergy_ema,
+                ema_value=ema_val,
+                convergence_confidence=conf,
+            ),
         )
 
         if module_history and set(module_history) <= flagged and converged:
-            logger.info("convergence reached", extra={"run": run_idx, "ema": ema_val})
+            logger.info(
+                "convergence reached",
+                extra=log_record(
+                    run=run_idx,
+                    ema_value=ema_val,
+                    flagged_modules=sorted(flagged),
+                ),
+            )
             break
 
     if agent_monitor is not None:
