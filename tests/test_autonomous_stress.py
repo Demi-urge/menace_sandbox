@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import types
 from pathlib import Path
 
@@ -9,8 +10,14 @@ from tests.test_run_autonomous_env_vars import _load_module
 
 
 @pytest.mark.stress
-@pytest.mark.skipif(not os.getenv("RUN_STRESS_TESTS"), reason="stress testing disabled")
+@pytest.mark.skipif(
+    not os.getenv("RUN_STRESS_TESTS"), reason="stress testing disabled"
+)
 def test_autonomous_long_loop(monkeypatch, tmp_path):
+    """Run a long autonomous loop using real preset generation and forecasting.
+
+    Set ``RUN_STRESS_TESTS=1`` in the environment to enable this test.
+    """
     mod = _load_module(monkeypatch)
 
     monkeypatch.setattr(mod, "validate_presets", lambda p: list(p))
@@ -49,41 +56,22 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
 
     hist_path = tmp_path / "synergy_history.db"
 
-    class _Conn:
-        def __init__(self, path: Path):
-            self.path = path
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            if not self.path.exists():
-                self.path.write_text("[]")
+    import environment_generator as eg_real
+    import roi_tracker as rt_real
+    import synergy_history_db as shd_real
 
-        def execute(self, _q):
-            data = json.loads(self.path.read_text())
-            return types.SimpleNamespace(fetchall=lambda: [(json.dumps(d),) for d in data])
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", eg_real)
+    monkeypatch.setattr(mod, "environment_generator", eg_real)
+    monkeypatch.setattr(eg_real, "adapt_presets", lambda tracker, presets: presets)
 
-        def close(self):
-            pass
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", rt_real)
+    monkeypatch.setattr(mod, "ROITracker", rt_real.ROITracker)
 
-    def connect_locked(path):
-        return _Conn(Path(path))
-
-    def insert_entry(conn, entry):
-        data = json.loads(conn.path.read_text())
-        data.append({str(k): float(v) for k, v in entry.items()})
-        conn.path.write_text(json.dumps(data))
-
-    def load_previous_synergy(data_dir):
-        path = Path(data_dir) / "synergy_history.db"
-        if not path.exists():
-            return [], []
-        data = json.loads(path.read_text())
-        hist = [{str(k): float(v) for k, v in d.items()} for d in data if isinstance(d, dict)]
-        return hist, []
-
-    mod.shd = types.SimpleNamespace(connect_locked=connect_locked)
-    monkeypatch.setattr(mod, "connect_locked", connect_locked)
-    monkeypatch.setattr(mod, "insert_entry", insert_entry)
-    monkeypatch.setattr(mod, "load_previous_synergy", load_previous_synergy)
-    monkeypatch.setattr(mod, "migrate_json_to_db", lambda *a, **k: None)
+    monkeypatch.setitem(sys.modules, "menace.synergy_history_db", shd_real)
+    monkeypatch.setattr(mod, "connect_locked", shd_real.connect)
+    monkeypatch.setattr(mod, "insert_entry", shd_real.insert_entry)
+    monkeypatch.setattr(mod, "migrate_json_to_db", shd_real.migrate_json_to_db)
+    mod.shd = shd_real
 
     call_idx = 0
 
@@ -136,9 +124,19 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
+    # create initial ROI history for preset generation
+    history_file = tmp_path / "roi_history.json"
+    history_file.write_text(
+        json.dumps({
+            "roi_history": [0.1, 0.2],
+            "metrics_history": {"security_score": [60.0, 70.0], "synergy_roi": [0.05, 0.1]},
+            "module_deltas": {},
+        })
+    )
+
     mod.main([
         "--max-iterations",
-        "50",
+        "100",
         "--runs",
         "1",
         "--preset-count",
@@ -147,7 +145,7 @@ def test_autonomous_long_loop(monkeypatch, tmp_path):
         str(tmp_path),
     ])
 
-    roi_data = json.loads((tmp_path / "roi_history.json").read_text())
-    syn_data = json.loads(hist_path.read_text())
-    assert len(roi_data.get("roi_history", [])) == 50
-    assert len(syn_data) == 50
+    roi_data = json.loads(history_file.read_text())
+    syn_data = shd_real.load_history(hist_path)
+    assert len(roi_data.get("roi_history", [])) == 102
+    assert len(syn_data) == 100
