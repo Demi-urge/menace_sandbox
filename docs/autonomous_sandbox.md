@@ -185,6 +185,8 @@ behaviour. The queue database is verified on startup; a corrupt file is moved
 aside as ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
 ``visual_agent_state.json`` when possible. The client also writes failed
 requests to `visual_agent_client_queue.jsonl` and retries them periodically.
+Database errors encountered while processing tasks now trigger this recovery
+automatically, so manual ``--recover-queue`` is rarely needed.
 Additional CLI helpers simplify manual repairs:
 If the service refuses to start because of a stale lock or PID file use `python menace_visual_agent_2.py --cleanup` first.
 

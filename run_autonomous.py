@@ -236,21 +236,32 @@ class VisualAgentMonitor:
         except Exception:
             logger.exception("failed to shutdown visual agent")
     def _loop(self) -> None:
+        base = self.urls.split(";")[0]
+        queue_path = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "visual_agent_queue.db"
         while not self._stop.is_set():
-            if not _visual_agent_running(self.urls):
-                try:
-                    tok = os.getenv("VISUAL_AGENT_TOKEN", ""); self.manager.restart_with_token(tok)
-                    base = self.urls.split(";")[0]
-                    for _ in range(10):
-                        time.sleep(0.5)
-                        if _visual_agent_running(self.urls): break
+            running = _visual_agent_running(self.urls)
+            if not running or not queue_path.exists():
+                tok = os.getenv("VISUAL_AGENT_TOKEN", "")
+                if not running:
                     try:
-                        import requests  # type: ignore
-                        requests.post(f"{base}/recover", headers={"Authorization": f"Bearer {tok}"}, timeout=5)
+                        self.manager.restart_with_token(tok)
+                        for _ in range(10):
+                            time.sleep(0.5)
+                            if _visual_agent_running(self.urls):
+                                break
                     except Exception:
-                        logger.exception("failed to trigger agent recovery")
+                        logger.exception("failed to restart visual agent")
+                        self._stop.wait(self.interval)
+                        continue
+                try:
+                    import requests  # type: ignore
+                    requests.post(
+                        f"{base}/recover",
+                        headers={"Authorization": f"Bearer {tok}"},
+                        timeout=5,
+                    )
                 except Exception:
-                    logger.exception("failed to restart visual agent")
+                    logger.exception("failed to trigger agent recovery")
             self._stop.wait(self.interval)
 class PresetModel(BaseModel):
     """Schema for environment presets."""
