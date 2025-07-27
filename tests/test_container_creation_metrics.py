@@ -51,3 +51,37 @@ def test_failed_creation_metrics_and_alert(monkeypatch):
     assert stub.container_creation_alerts_total.labels_called == ["img"]
     assert any(isinstance(v, tuple) for v in stub.container_creation_seconds.labels_called)
     assert alerts
+
+
+def test_metrics_failure_handled(monkeypatch):
+    class DummyContainers:
+        def run(self, *a, **k):
+            return types.SimpleNamespace(id="c1", status="running", attrs={"State": {"Health": {"Status": "healthy"}}})
+
+    class DummyClient:
+        def __init__(self):
+            self.containers = DummyContainers()
+
+    stub = types.ModuleType("metrics_exporter")
+
+    class BadGauge:
+        def labels(self, image=None, worker=None):
+            class Obj:
+                def inc(self, *a, **k):
+                    raise ValueError("boom")
+
+                def set(self, *a, **k):
+                    raise ValueError("boom")
+
+            return Obj()
+
+    stub.container_creation_success_total = BadGauge()
+    stub.container_creation_seconds = BadGauge()
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
+
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", DummyClient())
+    monkeypatch.setattr(env, "_ensure_pool_size_async", lambda img: None)
+
+    result = asyncio.run(env._create_pool_container("img"))
+    assert result[0].id == "c1"

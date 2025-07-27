@@ -1661,7 +1661,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             if gauge is not None:
                 try:
                     gauge.labels(image=image).inc()
-                except Exception:  # pragma: no cover - metrics failures
+                except (AttributeError, ValueError):
                     logger.exception(
                         "failed to increment container_creation_success_total"
                     )
@@ -1671,7 +1671,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             if gauge_dur is not None:
                 try:
                     gauge_dur.labels(image=image).set(time.monotonic() - start_time)
-                except Exception:  # pragma: no cover - metrics failures
+                except (AttributeError, ValueError):
                     logger.exception(
                         "failed to update container_creation_seconds"
                     )
@@ -1715,7 +1715,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             if gauge is not None:
                 try:
                     gauge.labels(image=image).inc()
-                except Exception:  # pragma: no cover - metrics failures
+                except (AttributeError, ValueError):
                     logger.exception(
                         "failed to increment container_creation_failures_total"
                     )
@@ -1725,7 +1725,7 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
             if gauge_dur is not None:
                 try:
                     gauge_dur.labels(image=image).set(time.monotonic() - start_time)
-                except Exception:  # pragma: no cover - metrics failures
+                except (AttributeError, ValueError):
                     logger.exception(
                         "failed to update container_creation_seconds"
                     )
@@ -1921,7 +1921,7 @@ def collect_metrics(
             if gauge is not None:
                 try:
                     gauge.set(result.get(key, 0.0))
-                except Exception:  # pragma: no cover - metrics failures
+                except (AttributeError, ValueError):
                     logger.exception("failed to update gauge %s", key)
         dur_gauge = getattr(_me, "cleanup_duration_gauge", None)
         if dur_gauge is not None:
@@ -1932,7 +1932,7 @@ def collect_metrics(
                 dur_gauge.labels(worker="reaper").set(
                     result.get("cleanup_duration_seconds_reaper", 0.0)
                 )
-            except Exception:  # pragma: no cover - metrics failures
+            except (AttributeError, ValueError):
                 logger.exception("failed to update gauge cleanup_duration_gauge")
     return result
 
@@ -2191,7 +2191,7 @@ def _reap_orphan_containers() -> int:
         containers = _DOCKER_CLIENT.containers.list(
             all=True, filters={"label": f"{_POOL_LABEL}=1"}
         )
-    except Exception as exc:  # pragma: no cover - docker may be unavailable
+    except DockerException as exc:
         logger.warning("orphan container listing failed: %s", exc)
         return 0
     with _POOL_LOCK:
@@ -2234,7 +2234,7 @@ def reconcile_active_containers() -> None:
         if proc.returncode != 0:
             return
         ids = [cid.strip() for cid in proc.stdout.splitlines() if cid.strip()]
-    except Exception as exc:  # pragma: no cover - docker may be unavailable
+    except DockerException as exc:
         logger.debug("active container reconciliation failed: %s", exc)
         return
 
@@ -2438,7 +2438,7 @@ async def _cleanup_worker() -> None:
                 if gauge is not None:
                     try:
                         gauge.labels(worker="cleanup").set(duration)
-                    except Exception:  # pragma: no cover - metrics failures
+                    except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
                 global _LAST_CLEANUP_TS
                 _LAST_CLEANUP_TS = time.monotonic()
@@ -2487,7 +2487,7 @@ async def _reaper_worker() -> None:
                 if gauge is not None:
                     try:
                         gauge.labels(worker="reaper").set(duration)
-                    except Exception:  # pragma: no cover - metrics failures
+                    except (AttributeError, ValueError):
                         logger.exception("failed to update cleanup duration")
                 global _LAST_REAPER_TS
                 _LAST_REAPER_TS = time.monotonic()
@@ -2664,7 +2664,7 @@ def start_container_event_listener() -> None:
         api = None
         try:
             api = docker.APIClient() if docker is not None else None
-        except Exception as exc:  # pragma: no cover - docker missing
+        except DockerException as exc:
             logger.warning("API client init failed: %s", exc)
             return
 

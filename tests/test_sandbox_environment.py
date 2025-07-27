@@ -229,6 +229,42 @@ def test_metrics_exporter_updates(monkeypatch):
     assert stub.cleanup_duration_gauge.values["reaper"] == 2.5
 
 
+def test_collect_metrics_gauge_failure(monkeypatch):
+    _setup(monkeypatch)
+
+    stub = types.ModuleType("metrics_exporter")
+
+    class BadGauge:
+        def __init__(self):
+            self.calls = 0
+        def set(self, v):
+            self.calls += 1
+            raise ValueError("bad")
+
+    class BadLabelGauge:
+        def labels(self, worker):
+            class Obj:
+                def set(self, v):
+                    raise ValueError("bad")
+            return Obj()
+
+    for name in (
+        "cleanup_idle",
+        "cleanup_unhealthy",
+    ):
+        setattr(stub, name, BadGauge())
+    stub.cleanup_duration_gauge = BadLabelGauge()
+
+    monkeypatch.setitem(sys.modules, "metrics_exporter", stub)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.metrics_exporter", stub)
+
+    env._CLEANUP_METRICS["idle"] = 1
+    metrics = env.collect_metrics(0.0, 0.0, None)
+    assert metrics["cleanup_idle"] == 1.0
+    # calls attempted but errors suppressed
+    assert stub.cleanup_idle.calls == 1
+
+
 def test_collect_metrics_active_counts(monkeypatch, tmp_path):
     _setup(monkeypatch)
 
