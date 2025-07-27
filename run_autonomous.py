@@ -22,6 +22,8 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, List
+import math
+from scipy.stats import t
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -707,6 +709,50 @@ def update_metrics(
             ema_value=ema_val,
             confidence=conf,
             threshold=syn_thr_val,
+        ),
+    )
+    # log threshold calculation details for debugging
+    roi_vals = tracker.roi_history[-args.roi_cycles :] if tracker.roi_history else []
+    roi_ema_val, roi_std_val = cli._ema(roi_vals) if roi_vals else (0.0, 0.0)
+
+    synergy_details: dict[str, dict[str, float]] = {}
+    if synergy_history:
+        metrics: dict[str, list[float]] = {}
+        for entry in synergy_history[-args.synergy_cycles :]:
+            for k, v in entry.items():
+                if k.startswith("synergy_"):
+                    metrics.setdefault(k, []).append(float(v))
+        for k, vals in metrics.items():
+            ema_m, std_m = cli._ema(vals)
+            n = len(vals)
+            if n < 2 or std_m == 0:
+                conf_m = 1.0 if abs(ema_m) <= syn_thr_val else 0.0
+            else:
+                se = std_m / math.sqrt(n)
+                t_stat = abs(ema_m) / se
+                p = 2 * (1 - t.cdf(t_stat, n - 1))
+                conf_m = 1 - p
+            synergy_details[k] = {
+                "ema": ema_m,
+                "std": std_m,
+                "confidence": conf_m,
+            }
+
+    logger.debug(
+        "metrics window sizes roi=%d synergy=%d sy_win=%d w=%.3f",
+        args.roi_cycles,
+        args.synergy_cycles,
+        synergy_threshold_window,
+        synergy_threshold_weight,
+        extra=log_record(
+            run=run_idx,
+            roi_ema=roi_ema_val,
+            roi_std=roi_std_val,
+            synergy_metrics=synergy_details,
+            roi_window=args.roi_cycles,
+            synergy_window=args.synergy_cycles,
+            synergy_threshold_window=synergy_threshold_window,
+            synergy_threshold_weight=synergy_threshold_weight,
         ),
     )
     return converged, ema_val, roi_threshold
