@@ -1034,6 +1034,7 @@ def main(argv: List[str] | None = None) -> None:
                     if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
                         preset_source = "RL agent"
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        logger.info("using presets from %s", preset_source)
         logger.debug("loaded presets from %s: %s", preset_source, presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
@@ -1102,6 +1103,13 @@ def main(argv: List[str] | None = None) -> None:
         if history:
             roi_ema, _ = cli._ema(history[-args.roi_cycles :])
             roi_ma_history.append(roi_ema)
+        try:
+            pred, (lower, upper) = tracker.forecast()
+            logger.debug(
+                "ROI forecast %.3f CI [%.3f, %.3f]", pred, lower, upper
+            )
+        except Exception:
+            logger.exception("ROI forecast failed")
 
         if getattr(args, "auto_thresholds", False):
             roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
@@ -1144,15 +1152,28 @@ def main(argv: List[str] | None = None) -> None:
                 )
             )
             synergy_threshold_gauge.set(float(syn_thr_val))
+            logger.debug(
+                "synergy threshold %.3f (window=%d weight=%.2f)",
+                syn_thr_val,
+                synergy_threshold_window,
+                synergy_threshold_weight,
+            )
         except Exception:
             logger.exception("failed to update synergy threshold gauge")
-        converged, ema_val, _ = cli.adaptive_synergy_convergence(
+        converged, ema_val, conf = cli.adaptive_synergy_convergence(
             synergy_history,
             args.synergy_cycles,
             threshold=thr,
             threshold_window=synergy_threshold_window,
             weight=synergy_threshold_weight,
             confidence=synergy_confidence or 0.95,
+        )
+        logger.debug(
+            "synergy convergence=%s max|ema|=%.3f conf=%.3f p=%.3f",
+            converged,
+            ema_val,
+            conf,
+            1 - conf,
         )
 
         if module_history and set(module_history) <= flagged and converged:

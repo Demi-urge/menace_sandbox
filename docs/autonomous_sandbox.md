@@ -136,6 +136,16 @@ After the system tools are in place install the Python requirements via
   visual agent between sandbox runs
 - `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
 - `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
+- `ROI_THRESHOLD` – override the diminishing ROI threshold
+- `ROI_CONFIDENCE` – t-test confidence when flagging modules
+- `SYNERGY_THRESHOLD` – fixed synergy convergence threshold
+- `SYNERGY_THRESHOLD_WINDOW` – samples used for adaptive synergy threshold
+- `SYNERGY_THRESHOLD_WEIGHT` – exponential weight for threshold calculation
+- `SYNERGY_CONFIDENCE` – confidence level for synergy convergence checks
+- `SANDBOX_PRESET_RL_PATH` – path to the RL policy used for preset adaptation
+- `SANDBOX_PRESET_RL_STRATEGY` – reinforcement learning algorithm
+- `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state
+- `SANDBOX_ADAPTIVE_AGENT_STRATEGY` – algorithm for the adaptive agent
 
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
@@ -301,6 +311,12 @@ forwarding. If `KAFKA_HOSTS` is set, logs are published to Kafka instead via
 Long running services rotate their own log files such as
 `service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or
 clean old logs periodically when persisting them on disk.
+
+During each sandbox iteration the runner logs where presets originated
+("static file", "history adaptation" or "RL agent"), the next ROI prediction and
+its confidence interval, and the computed synergy threshold. Synergy convergence
+checks also log the maximum absolute EMA and the t‑test confidence so the
+associated p‑values are visible when troubleshooting.
 
 ## Synergy metrics exporter
 
