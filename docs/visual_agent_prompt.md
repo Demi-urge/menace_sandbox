@@ -147,10 +147,11 @@ visual agent is contacted. The most relevant are:
     `visual_agent_wait_time` metrics.
 
 When `run_autonomous.py` is used a `VisualAgentMonitor` thread keeps the
-service running. It restarts `menace_visual_agent_2.py` if the queue database
-is missing or the process stops responding and posts to `/recover` so queued
-jobs continue automatically. Manual commands such as `--recover-queue` or
-`--repair-running` are therefore typically reserved for troubleshooting.
+service running. It polls the agent's `/health` endpoint and restarts
+`menace_visual_agent_2.py` with `/recover` if the service stops responding.
+The agent itself runs a queue watchdog that rebuilds the database and restarts
+the worker when corruption or crashes are detected. Manual commands such as
+`--recover-queue` or `--repair-running` are therefore typically unnecessary.
 
 ## Visual agent service
 

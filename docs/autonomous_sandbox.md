@@ -158,11 +158,13 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    Alternatively run `scripts/launch_personal.py` to start the visual agent and
    autonomous loop sequentially.
 
-   `run_autonomous.py` spawns a background `VisualAgentMonitor` which
-   restarts `menace_visual_agent_2.py` if the service stops or the queue
-   database is missing. On restart it calls `/recover` so unfinished tasks
-   resume automatically. This behaviour is controlled by
-   `VISUAL_AGENT_AUTO_RECOVER=1`.
+  `run_autonomous.py` spawns a background `VisualAgentMonitor` which
+  polls the visual agent's `/health` endpoint. If the service stops
+  responding the monitor restarts it and posts to `/recover` so queued
+  tasks resume automatically. A built in queue watchdog thread also
+  verifies database integrity and restarts the worker if it crashes.
+  Manual recovery is rarely required and the behaviour is controlled by
+  `VISUAL_AGENT_AUTO_RECOVER=1`.
 
    Use `--metrics-port` or `METRICS_PORT` to expose Prometheus metrics from the sandbox.
 

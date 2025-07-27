@@ -231,6 +231,14 @@ visual_agent_wait_time = Gauge(
 visual_agent_queue_depth = Gauge(
     "visual_agent_queue_depth", "Queue length reported by VisualAgentClient"
 )
+visual_agent_recoveries_total = Gauge(
+    "visual_agent_recoveries_total",
+    "Total number of visual agent queue recoveries",
+)
+visual_agent_watchdog_recoveries_total = Gauge(
+    "visual_agent_watchdog_recoveries_total",
+    "Recoveries triggered by the internal queue watchdog",
+)
 
 # Gauges for workflow benchmarking
 workflow_duration_gauge = Gauge(
@@ -487,6 +495,8 @@ __all__ = [
     "projected_lucrativity_gauge",
     "visual_agent_wait_time",
     "visual_agent_queue_depth",
+    "visual_agent_recoveries_total",
+    "visual_agent_watchdog_recoveries_total",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
     "cleanup_idle",
