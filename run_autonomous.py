@@ -986,6 +986,7 @@ def main(argv: List[str] | None = None) -> None:
                 agent_mgr.process.returncode,
             )
             sys.exit(1)
+        preset_source = "static file"
         if args.preset_files:
             pf = Path(args.preset_files[(run_idx - 1) % len(args.preset_files)])
             try:
@@ -1014,7 +1015,11 @@ def main(argv: List[str] | None = None) -> None:
                 else:
                     data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
                     presets = validate_presets(gen_func(str(data_dir), args.preset_count))
+                    preset_source = "history adaptation"
+                    if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
+                        preset_source = "RL agent"
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+        logger.debug("loaded presets from %s: %s", preset_source, presets)
 
         recovery = SandboxRecoveryManager(sandbox_runner._sandbox_main)
         sandbox_runner._sandbox_main = recovery.run
@@ -1061,6 +1066,7 @@ def main(argv: List[str] | None = None) -> None:
         syn_vals = {
             k: v[-1] for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v
         }
+        synergy_ema: dict[str, float] | None = None
         if syn_vals:
             synergy_history.append(syn_vals)
             if args.save_synergy_history and history_conn is not None:
@@ -1075,15 +1081,20 @@ def main(argv: List[str] | None = None) -> None:
                 ma_entry[k] = ema
             synergy_ma_history.append(ma_entry)
             synergy_ma_prev = synergy_ma_history
+            synergy_ema = ma_entry
         history = getattr(tracker, "roi_history", [])
+        roi_ema = None
         if history:
-            ema, _ = cli._ema(history[-args.roi_cycles :])
-            roi_ma_history.append(ema)
+            roi_ema, _ = cli._ema(history[-args.roi_cycles :])
+            roi_ma_history.append(roi_ema)
 
         if getattr(args, "auto_thresholds", False):
             roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
         elif roi_threshold is None:
             roi_threshold = tracker.diminishing()
+        logger.debug(
+            "ROI threshold %s, EMA %s", roi_threshold, roi_ema
+        )
         new_flags, _ = cli._diminishing_modules(
             module_history,
             flagged,
@@ -1096,6 +1107,13 @@ def main(argv: List[str] | None = None) -> None:
         thr = args.synergy_threshold
         if getattr(args, "auto_thresholds", False) or thr is None:
             thr = None
+        logger.debug(
+            "Synergy threshold %s (window=%s weight=%s) EMA %s",
+            thr if thr is not None else "adaptive",
+            synergy_threshold_window,
+            synergy_threshold_weight,
+            synergy_ema,
+        )
         converged, ema_val, _ = cli.adaptive_synergy_convergence(
             synergy_history,
             args.synergy_cycles,
