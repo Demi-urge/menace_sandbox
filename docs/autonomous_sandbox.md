@@ -131,7 +131,7 @@ After the system tools are in place install the Python requirements via
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
- - `VISUAL_AGENT_AUTO_RECOVER=0` – disable automatic queue recovery
+ - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
 - `VISUAL_AGENT_TOKEN_ROTATE` – new token value used to restart the
   visual agent between sandbox runs
 - `VISUAL_AGENT_SSL_CERT` – optional path to an SSL certificate for HTTPS
@@ -157,6 +157,12 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
    Alternatively run `scripts/launch_personal.py` to start the visual agent and
    autonomous loop sequentially.
+
+   `run_autonomous.py` spawns a background `VisualAgentMonitor` which
+   restarts `menace_visual_agent_2.py` if the service stops or the queue
+   database is missing. On restart it calls `/recover` so unfinished tasks
+   resume automatically. This behaviour is controlled by
+   `VISUAL_AGENT_AUTO_RECOVER=1`.
 
    Use `--metrics-port` or `METRICS_PORT` to expose Prometheus metrics from the sandbox.
 
@@ -186,7 +192,8 @@ aside as ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
 ``visual_agent_state.json`` when possible. The client also writes failed
 requests to `visual_agent_client_queue.jsonl` and retries them periodically.
 Database errors encountered while processing tasks now trigger this recovery
-automatically, so manual ``--recover-queue`` is rarely needed.
+automatically, so manual ``--recover-queue`` is rarely needed. The commands
+below are mainly useful for troubleshooting when automatic recovery fails.
 Additional CLI helpers simplify manual repairs:
 If the service refuses to start because of a stale lock or PID file use `python menace_visual_agent_2.py --cleanup` first.
 
@@ -198,7 +205,7 @@ python menace_visual_agent_2.py --resume            # process queue headlessly
 python menace_visual_agent_2.py --cleanup           # remove stale lock/PID
 ```
 
-To recover after an unexpected shutdown:
+To recover manually after an unexpected shutdown:
 ```bash
 python menace_visual_agent_2.py --cleanup
 python menace_visual_agent_2.py --resume

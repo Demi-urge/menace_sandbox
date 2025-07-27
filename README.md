@@ -706,6 +706,11 @@ Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command ret
 
 ``VISUAL_AGENT_TOKEN`` **must** be set and is hashed for comparison. Requests may provide a ``Bearer`` token via the ``Authorization`` header or the legacy ``x-token`` field.
 
+When launched via ``run_autonomous.py`` a ``VisualAgentMonitor`` thread keeps
+``menace_visual_agent_2.py`` running. If the process stops responding or the
+queue database disappears the monitor restarts the service and posts to
+``/recover`` so queued tasks resume. This relies on ``VISUAL_AGENT_AUTO_RECOVER=1``.
+
 The service automatically recovers queued tasks and clears stale locks on
 startup. Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to
 disable this behaviour. If the SQLite queue is corrupted the file is renamed
@@ -713,6 +718,8 @@ to ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
 ``visual_agent_state.json`` when available.
 Database errors encountered during normal operation now trigger the same
 recovery automatically, so ``--recover-queue`` is rarely necessary.
+
+These manual tools are mainly useful for troubleshooting when the monitor fails to restart the service.
 
 Running tasks are automatically requeued when the service starts.
 ``VisualAgentClient`` keeps a local
