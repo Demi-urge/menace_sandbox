@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import json
 from pathlib import Path
 
 from visual_agent_queue import VisualAgentQueue
@@ -75,8 +76,30 @@ class VisualAgentManager:
         env["VISUAL_AGENT_TOKEN"] = token
         data_dir = Path(env.get("SANDBOX_DATA_DIR", "sandbox_data"))
         queue_db = data_dir / "visual_agent_queue.db"
+        queue = VisualAgentQueue(queue_db)
+        recovered = False
         try:
-            VisualAgentQueue(queue_db).reset_running_tasks()
+            recovered = queue.check_integrity()
+            queue.reset_running_tasks()
+            if recovered:
+                state_path = data_dir / "visual_agent_state.json"
+                if state_path.exists():
+                    try:
+                        data = json.loads(state_path.read_text())
+                        status = data.get("status", {})
+                        if isinstance(status, dict):
+                            for tid, info in status.items():
+                                if isinstance(info, dict) and info.get("status") in {"queued", "running"}:
+                                    queue.append({
+                                        "id": tid,
+                                        "prompt": info.get("prompt", ""),
+                                        "branch": info.get("branch"),
+                                    })
+                        lc = data.get("last_completed")
+                        if isinstance(lc, (int, float)):
+                            queue.set_last_completed(float(lc))
+                    except Exception:
+                        pass
         except Exception:
             pass
 

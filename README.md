@@ -708,7 +708,9 @@ Set the environment variable ``VISUAL_TOKEN_REFRESH_CMD`` to a shell command ret
 
 The service automatically recovers queued tasks and clears stale locks on
 startup. Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to
-disable this behaviour.
+disable this behaviour. If the SQLite queue is corrupted the file is renamed
+to ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
+``visual_agent_state.json`` when available.
 
 Running tasks are automatically requeued when the service starts.
 ``VisualAgentClient`` keeps a local

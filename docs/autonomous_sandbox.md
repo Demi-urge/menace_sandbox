@@ -181,7 +181,9 @@ shut down cleanly.
 
 By default the agent requeues tasks marked as `running` on startup. Use
 `--no-auto-recover` or set `VISUAL_AGENT_AUTO_RECOVER=0` to disable this
-behaviour. The client also writes failed
+behaviour. The queue database is verified on startup; a corrupt file is moved
+aside as ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
+``visual_agent_state.json`` when possible. The client also writes failed
 requests to `visual_agent_client_queue.jsonl` and retries them periodically.
 Additional CLI helpers simplify manual repairs:
 If the service refuses to start because of a stale lock or PID file use `python menace_visual_agent_2.py --cleanup` first.

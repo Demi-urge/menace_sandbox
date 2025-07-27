@@ -71,6 +71,7 @@ app = FastAPI(title="Menace-Visual-Agent")
 def _startup_load_state() -> None:
     _cleanup_stale_files()
     _setup_pid_file()
+    recovered = task_queue.check_integrity()
     if os.path.exists(GLOBAL_LOCK_PATH) and _global_lock.is_lock_stale():
         with suppress(Exception):
             os.remove(GLOBAL_LOCK_PATH)
@@ -89,7 +90,7 @@ def _startup_load_state() -> None:
         try:
             task_queue.clear()
             job_status.clear()
-            if QUEUE_DB.exists():
+            if not recovered and QUEUE_DB.exists():
                 QUEUE_DB.unlink()
             _load_state_locked()
         finally:
@@ -869,6 +870,7 @@ async def recover_queue(
     except Timeout:
         raise HTTPException(status_code=409, detail="Agent busy")
     try:
+        task_queue.check_integrity()
         task_queue.clear()
         job_status.clear()
         if QUEUE_DB.exists():
