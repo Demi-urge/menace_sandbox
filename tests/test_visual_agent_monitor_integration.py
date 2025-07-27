@@ -14,10 +14,16 @@ TOKEN = "tok"
 def _load_monitor():
     path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
     lines = path.read_text().splitlines()
-    func_src = "\n".join(lines[110:121])
-    class_src = "\n".join(lines[229:260])
+    func_src = "\n".join(lines[106:116])
+    class_src = "\n".join(lines[229:275])
     ns = {}
-    exec("import threading, os\nAGENT_MONITOR_INTERVAL=0.2\n" + func_src + "\n" + class_src, ns)
+    exec(
+        "import threading, os\nfrom pathlib import Path\nAGENT_MONITOR_INTERVAL=0.2\n"
+        + func_src
+        + "\n"
+        + class_src,
+        ns,
+    )
     return ns["VisualAgentMonitor"]
 
 
