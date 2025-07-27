@@ -197,6 +197,12 @@ experiment_best_roi = Gauge(
     "experiment_best_roi", "ROI of current best experiment variant"
 )
 
+# Gauge tracking the latest ROI forecast value
+roi_forecast_gauge = Gauge(
+    "roi_forecast",
+    "Latest ROI forecast value",
+)
+
 # Gauges tracking adaptive thresholds
 roi_threshold_gauge = Gauge(
     "roi_threshold",
@@ -345,6 +351,13 @@ synergy_weight_update_alerts_total = Gauge(
     "synergy_weight_update_alerts_total",
     "Total number of synergy weight update failure alerts dispatched",
 )
+
+# Counter tracking preset adaptation decisions
+synergy_adaptation_actions_total = Gauge(
+    "synergy_adaptation_actions_total",
+    "Total preset adaptation decisions",
+    labelnames=["action"],
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )
@@ -490,6 +503,7 @@ __all__ = [
     "learning_holdout_score",
     "evolution_cycle_count",
     "experiment_best_roi",
+    "roi_forecast_gauge",
     "roi_threshold_gauge",
     "synergy_threshold_gauge",
     "error_bot_exceptions",
@@ -497,6 +511,7 @@ __all__ = [
     "synergy_weight_updates_total",
     "synergy_weight_update_failures_total",
     "synergy_weight_update_alerts_total",
+    "synergy_adaptation_actions_total",
     "security_score_gauge",
     "safety_rating_gauge",
     "adaptability_gauge",

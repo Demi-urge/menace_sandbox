@@ -141,6 +141,8 @@ from metrics_exporter import (
     start_metrics_server,
     roi_threshold_gauge,
     synergy_threshold_gauge,
+    roi_forecast_gauge,
+    synergy_adaptation_actions_total,
 )
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from sandbox_recovery_manager import SandboxRecoveryManager
@@ -761,6 +763,12 @@ def main(argv: List[str] | None = None) -> None:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
                     presets = validate_presets(gen_func(str(data_dir), args.preset_count))
+                    actions = getattr(environment_generator.adapt_presets, "last_actions", [])
+                    for act in actions:
+                        try:
+                            synergy_adaptation_actions_total.labels(action=act).inc()
+                        except Exception:
+                            logger.exception("failed to update adaptation actions gauge")
             logger.info(
                 "generated presets", extra=log_record(presets=presets)
             )
@@ -1073,6 +1081,12 @@ def main(argv: List[str] | None = None) -> None:
             logger.info(
                 "generated presets", extra=log_record(run=run_idx, presets=presets)
             )
+            actions = getattr(environment_generator.adapt_presets, "last_actions", [])
+            for act in actions:
+                try:
+                    synergy_adaptation_actions_total.labels(action=act).inc()
+                except Exception:
+                    logger.exception("failed to update adaptation actions gauge")
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         logger.info(
             "using presets from %s",
@@ -1163,6 +1177,10 @@ def main(argv: List[str] | None = None) -> None:
         )
         try:
             pred, (lower, upper) = tracker.forecast()
+            try:
+                roi_forecast_gauge.set(float(pred))
+            except Exception:
+                logger.exception("failed to update roi forecast gauge")
             logger.debug(
                 "ROI forecast %.3f CI [%.3f, %.3f]",
                 pred,
