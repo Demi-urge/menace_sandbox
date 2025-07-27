@@ -323,6 +323,23 @@ After each iteration the thresholds are appended to
 `sandbox_data/threshold_log.jsonl`. Each line contains a JSON object with the
 keys `timestamp`, `run`, `roi_threshold`, `synergy_threshold` and `converged`.
 
+### Preset adaptation debug logs
+
+Use `--preset-debug` when launching `run_autonomous.py` to log every preset
+adjustment decision. The flag sets the `PRESET_DEBUG` environment variable so
+`environment_generator` emits detailed messages each time a parameter changes.
+Combine it with `--debug-log-file` to write these messages to a separate file
+for later inspection:
+
+```bash
+python run_autonomous.py --preset-debug \
+    --debug-log-file sandbox_data/preset_debug.log
+```
+
+The file is appended to across runs and contains the raw debug statements from
+`environment_generator`. Without `--debug-log-file` the extra logs appear only
+on the console.
+
 ## Synergy metrics exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when launching `run_autonomous.py` to start the
