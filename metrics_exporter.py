@@ -358,6 +358,16 @@ synergy_weight_update_alerts_total = Gauge(
     "Total number of synergy weight update failure alerts dispatched",
 )
 
+# Counters tracking forecast failures
+roi_forecast_failures_total = Gauge(
+    "roi_forecast_failures_total",
+    "Total ROI forecast exceptions encountered",
+)
+synergy_forecast_failures_total = Gauge(
+    "synergy_forecast_failures_total",
+    "Total synergy forecast exceptions encountered",
+)
+
 # Counter tracking preset adaptation decisions
 synergy_adaptation_actions_total = Gauge(
     "synergy_adaptation_actions_total",
@@ -518,6 +528,8 @@ __all__ = [
     "synergy_weight_updates_total",
     "synergy_weight_update_failures_total",
     "synergy_weight_update_alerts_total",
+    "roi_forecast_failures_total",
+    "synergy_forecast_failures_total",
     "synergy_adaptation_actions_total",
     "security_score_gauge",
     "safety_rating_gauge",
