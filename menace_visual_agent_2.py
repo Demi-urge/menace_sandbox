@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+import sqlite3
 
 import platform
 import hashlib
@@ -321,16 +322,64 @@ def _persist_state() -> None:
                 tmp.unlink()
 
 
+def _recover_queue() -> None:
+    """Attempt to rebuild the queue database after a failure."""
+    logger.warning("recovering task queue")
+    try:
+        _global_lock.acquire(timeout=0)
+    except Timeout:
+        if _global_lock.is_lock_stale():
+            logger.info("recovered stale global lock")
+            with suppress(Exception):
+                os.remove(GLOBAL_LOCK_PATH)
+            _global_lock.acquire(timeout=0)
+        else:
+            logger.error("unable to acquire global lock for recovery")
+            return
+    try:
+        with _queue_lock:
+            rebuilt = task_queue.check_integrity()
+            if rebuilt:
+                _load_state_locked()
+            task_queue.reset_running_tasks()
+            job_status.clear()
+            job_status.update(task_queue.get_status())
+            global last_completed_ts
+            last_completed_ts = task_queue.get_last_completed()
+            _log_recovery_metrics(len(task_queue))
+    finally:
+        try:
+            _global_lock.release()
+        except Exception as exc:
+            logger.warning("failed to release lock %s: %s", GLOBAL_LOCK_PATH, exc)
+    logger.info("queue recovery finished with %s tasks", len(task_queue))
+
+
 def _queue_worker():
     while not _exit_event.is_set():
-        if not task_queue:
+        try:
+            queue_empty = not task_queue
+        except sqlite3.DatabaseError:
+            logger.exception("queue database error on len")
+            _recover_queue()
+            continue
+        if queue_empty:
             _exit_event.wait(0.1)
             continue
         with _queue_lock:
-            task = task_queue.popleft()
+            try:
+                task = task_queue.popleft()
+            except sqlite3.DatabaseError:
+                logger.exception("queue database error on popleft")
+                _recover_queue()
+                continue
         if _exit_event.is_set():
             with _queue_lock:
-                task_queue.update_status(task["id"], "queued")
+                try:
+                    task_queue.update_status(task["id"], "queued")
+                except sqlite3.DatabaseError:
+                    logger.exception("queue database error on update_status")
+                    _recover_queue()
             break
         tid = task["id"]
         _running_lock.acquire()
@@ -340,11 +389,21 @@ def _queue_worker():
             _running_lock.release()
             with _queue_lock:
                 job_status[tid]["status"] = "failed"
-                task_queue.update_status(tid, "failed")
+                try:
+                    task_queue.update_status(tid, "failed")
+                except sqlite3.DatabaseError:
+                    logger.exception("queue database error on update_status")
+                    _recover_queue()
             continue
         with _queue_lock:
             job_status[tid]["status"] = "running"
-            task_queue.update_status(tid, "running")
+            try:
+                task_queue.update_status(tid, "running")
+            except sqlite3.DatabaseError:
+                logger.exception("queue database error on update_status")
+                _recover_queue()
+                _running_lock.release()
+                continue
         try:
             _global_lock.release()
         except Exception as exc:
@@ -360,7 +419,11 @@ def _queue_worker():
             with _queue_lock:
                 job_status[tid]["status"] = "failed"
                 job_status[tid]["error"] = str(exc)
-                task_queue.update_status(tid, "failed", str(exc))
+                try:
+                    task_queue.update_status(tid, "failed", str(exc))
+                except sqlite3.DatabaseError:
+                    logger.exception("queue database error on update_status")
+                    _recover_queue()
         finally:
             _current_job["active"] = False
             _current_job["id"] = None
@@ -368,13 +431,21 @@ def _queue_worker():
             if success:
                 global last_completed_ts
                 last_completed_ts = time.time()
-                task_queue.set_last_completed(last_completed_ts)
+                try:
+                    task_queue.set_last_completed(last_completed_ts)
+                except sqlite3.DatabaseError:
+                    logger.exception("queue database error on set_last_completed")
+                    _recover_queue()
 
         with _queue_lock:
             if success:
                 job_status[tid]["status"] = "completed"
                 job_status[tid].pop("error", None)
-                task_queue.update_status(tid, "completed")
+                try:
+                    task_queue.update_status(tid, "completed")
+                except sqlite3.DatabaseError:
+                    logger.exception("queue database error on update_status")
+                    _recover_queue()
 
         if _exit_event.is_set():
             break
@@ -410,7 +481,7 @@ _worker_thread = None
 
 def _start_background_threads() -> None:
     global _worker_thread
-    if _worker_thread is not None:
+    if _worker_thread is not None and _worker_thread.is_alive():
         return
     _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
     _worker_thread.start()

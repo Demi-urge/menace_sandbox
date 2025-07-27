@@ -711,6 +711,8 @@ startup. Set ``VISUAL_AGENT_AUTO_RECOVER=0`` or pass ``--no-auto-recover`` to
 disable this behaviour. If the SQLite queue is corrupted the file is renamed
 to ``visual_agent_queue.db.corrupt.<timestamp>`` and rebuilt from
 ``visual_agent_state.json`` when available.
+Database errors encountered during normal operation now trigger the same
+recovery automatically, so ``--recover-queue`` is rarely necessary.
 
 Running tasks are automatically requeued when the service starts.
 ``VisualAgentClient`` keeps a local
