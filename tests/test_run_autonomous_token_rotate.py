@@ -163,6 +163,7 @@ def test_token_rotate(monkeypatch, tmp_path):
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "1")
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok1")
     monkeypatch.setenv("VISUAL_AGENT_TOKEN_ROTATE", "tok2")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
 
     mod.main([
         "--max-iterations",

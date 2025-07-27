@@ -8,8 +8,6 @@ def test_run_autonomous_adds_audit_handler(monkeypatch, tmp_path):
     monkeypatch.delenv("SANDBOX_CENTRAL_LOGGING", raising=False)
     monkeypatch.setenv("AUDIT_LOG_PATH", str(log_path))
     mod = _load_module(monkeypatch)
-    import types
-    mod.shd = types.SimpleNamespace(connect_locked=lambda *_a, **_k: None)
     monkeypatch.setattr(mod, "validate_presets", lambda p: p)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *_a, **_k: True)
     monkeypatch.chdir(tmp_path)
