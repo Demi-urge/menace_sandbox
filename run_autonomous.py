@@ -146,6 +146,7 @@ from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
+from threshold_logger import ThresholdLogger
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
@@ -776,6 +777,9 @@ def main(argv: List[str] | None = None) -> None:
 
     meta_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
     exporter_log = AuditTrail(str(meta_log_path))
+    threshold_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "threshold_log.jsonl"
+    threshold_log = ThresholdLogger(str(threshold_log_path))
+    cleanup_funcs.append(threshold_log.close)
 
     synergy_exporter: SynergyExporter | None = None
     exporter_monitor: ExporterMonitor | None = None
@@ -1180,6 +1184,7 @@ def main(argv: List[str] | None = None) -> None:
                 synergy_ema=synergy_ema,
             ),
         )
+        syn_thr_val = None
         try:
             syn_thr_val = (
                 thr
@@ -1227,6 +1232,10 @@ def main(argv: List[str] | None = None) -> None:
                 convergence_confidence=conf,
             ),
         )
+        try:
+            threshold_log.log(run_idx, roi_threshold, syn_thr_val, converged)
+        except Exception:
+            logger.exception("failed to record threshold values")
 
         if module_history and set(module_history) <= flagged and converged:
             logger.info(

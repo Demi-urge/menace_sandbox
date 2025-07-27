@@ -318,6 +318,10 @@ its confidence interval, and the computed synergy threshold. Synergy convergence
 checks also log the maximum absolute EMA and the t‑test confidence so the
 associated p‑values are visible when troubleshooting.
 
+After each iteration the thresholds are appended to
+`sandbox_data/threshold_log.jsonl`. Each line contains a JSON object with the
+keys `timestamp`, `run`, `roi_threshold`, `synergy_threshold` and `converged`.
+
 ## Synergy metrics exporter
 
 Set `EXPORT_SYNERGY_METRICS=1` when launching `run_autonomous.py` to start the
