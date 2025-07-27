@@ -1272,11 +1272,19 @@ def generate_presets_from_history(
         except Exception:
             tracker = None
     presets = generate_presets(count)
+    source = "static generation"
     if tracker and tracker.metrics_history.get("security_score"):
         try:
+            source = (
+                "RL agent"
+                if getattr(adapt_presets, "_rl_agent", None)
+                else "history adaptation"
+            )
+            logger.info("adapting presets via %s", source)
             presets = adapt_presets(tracker, presets)
         except Exception:
             logger.exception("preset evolution failed")
+    logger.debug("generate_presets_from_history using %s", source)
     return presets
 
 
