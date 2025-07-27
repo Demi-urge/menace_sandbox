@@ -955,6 +955,17 @@ async def recover_queue(
     return {"status": "recovered", "queued": len(task_queue)}
 
 
+@app.post("/integrity", status_code=200)
+async def queue_integrity(
+    x_token: str = Header(default=""),
+    authorization: str = Header(default=""),
+):
+    """Validate queue DB and rebuild if corrupt."""
+    _verify_token(x_token, authorization)
+    rebuilt = task_queue.check_integrity()
+    return {"rebuilt": rebuilt}
+
+
 # ------------------------------------------------------------------
 # 3️⃣  BOOT SERVER  -------------------------------------------------
 if __name__ == "__main__":

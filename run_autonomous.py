@@ -240,8 +240,8 @@ class VisualAgentMonitor:
         queue_path = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "visual_agent_queue.db"
         while not self._stop.is_set():
             running = _visual_agent_running(self.urls)
+            tok = os.getenv("VISUAL_AGENT_TOKEN", "")
             if not running or not queue_path.exists():
-                tok = os.getenv("VISUAL_AGENT_TOKEN", "")
                 if not running:
                     try:
                         self.manager.restart_with_token(tok)
@@ -262,6 +262,16 @@ class VisualAgentMonitor:
                     )
                 except Exception:
                     logger.exception("failed to trigger agent recovery")
+            else:
+                try:
+                    import requests  # type: ignore
+                    requests.post(
+                        f"{base}/integrity",
+                        headers={"Authorization": f"Bearer {tok}"},
+                        timeout=5,
+                    )
+                except Exception:
+                    logger.exception("failed to check agent integrity")
             self._stop.wait(self.interval)
 class PresetModel(BaseModel):
     """Schema for environment presets."""
