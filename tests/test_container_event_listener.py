@@ -62,3 +62,20 @@ def test_exited_container_removed(monkeypatch, tmp_path):
     assert container.stopped and container.removed
     assert container.id not in env._CONTAINER_DIRS
     assert env._CLEANUP_METRICS.get("event", 0) >= 1
+
+
+def test_event_listener_api_error(monkeypatch):
+    class DummyDockerException(Exception):
+        pass
+
+    class BadAPIClient:
+        def __init__(self):
+            raise DummyDockerException("fail")
+
+    monkeypatch.setattr(env, "DockerException", DummyDockerException, raising=False)
+    monkeypatch.setattr(env, "docker", types.SimpleNamespace(APIClient=BadAPIClient))
+    monkeypatch.setattr(env, "_DOCKER_CLIENT", object())
+
+    env.start_container_event_listener()
+    time.sleep(0.05)
+    assert env._EVENT_THREAD is None
