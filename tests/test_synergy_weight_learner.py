@@ -260,6 +260,15 @@ def test_atomic_save_called(monkeypatch, tmp_path):
     assert path in called
 
 
+def test_load_invalid_file_uses_defaults(tmp_path, caplog):
+    path = tmp_path / "bad.json"
+    path.write_text("{\"roi\": 1.0}")
+    caplog.set_level("WARNING")
+    learner = sie.SynergyWeightLearner(path=path)
+    assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
+    assert "invalid synergy weight data" in caplog.text
+
+
 class _Rec:
     def __init__(self, r, sr):
         self.roi_delta = r
