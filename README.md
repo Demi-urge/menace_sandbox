@@ -58,6 +58,9 @@
 - Distributed rollback verification via `RollbackValidator`
 - ROI-driven autoscaling with `ROIScalingPolicy`
 - ROI history forecasting via `ROITracker` ([docs/roi_tracker.md](docs/roi_tracker.md))
+- Debug logs report the EMA and standard deviation used for ROI thresholds along
+  with per-metric synergy EMA, deviation and confidence. Window sizes and weight
+  parameters are included in each `log_record` entry.
 - Synergy-aware environment presets adapt CPU, memory, bandwidth and threat levels ([docs/environment_generator.md](docs/environment_generator.md))
 - Sandboxed self-debugging using `SelfDebuggerSandbox` (invoked by `launch_menace_bots.py` after the test run)
 - Comprehensive build pipeline in `launch_menace_bots.py` that plans,
