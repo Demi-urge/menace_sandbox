@@ -197,6 +197,16 @@ experiment_best_roi = Gauge(
     "experiment_best_roi", "ROI of current best experiment variant"
 )
 
+# Gauges tracking adaptive thresholds
+roi_threshold_gauge = Gauge(
+    "roi_threshold",
+    "Current ROI threshold for diminishing returns",
+)
+synergy_threshold_gauge = Gauge(
+    "synergy_threshold",
+    "Current synergy convergence threshold",
+)
+
 # New gauges for extended metrics
 security_score_gauge = Gauge(
     "security_score", "Overall security score of the system"
@@ -480,6 +490,8 @@ __all__ = [
     "learning_holdout_score",
     "evolution_cycle_count",
     "experiment_best_roi",
+    "roi_threshold_gauge",
+    "synergy_threshold_gauge",
     "error_bot_exceptions",
     "learning_engine_exceptions",
     "synergy_weight_updates_total",

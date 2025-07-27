@@ -130,7 +130,11 @@ from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db
-from metrics_exporter import start_metrics_server
+from metrics_exporter import (
+    start_metrics_server,
+    roi_threshold_gauge,
+    synergy_threshold_gauge,
+)
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 from sandbox_recovery_manager import SandboxRecoveryManager
@@ -1095,6 +1099,10 @@ def main(argv: List[str] | None = None) -> None:
         logger.debug(
             "ROI threshold %s, EMA %s", roi_threshold, roi_ema
         )
+        try:
+            roi_threshold_gauge.set(float(roi_threshold))
+        except Exception:
+            logger.exception("failed to update ROI threshold gauge")
         new_flags, _ = cli._diminishing_modules(
             module_history,
             flagged,
@@ -1114,6 +1122,19 @@ def main(argv: List[str] | None = None) -> None:
             synergy_threshold_weight,
             synergy_ema,
         )
+        try:
+            syn_thr_val = (
+                thr
+                if thr is not None
+                else cli._adaptive_synergy_threshold(
+                    synergy_history,
+                    synergy_threshold_window,
+                    weight=synergy_threshold_weight,
+                )
+            )
+            synergy_threshold_gauge.set(float(syn_thr_val))
+        except Exception:
+            logger.exception("failed to update synergy threshold gauge")
         converged, ema_val, _ = cli.adaptive_synergy_convergence(
             synergy_history,
             args.synergy_cycles,
