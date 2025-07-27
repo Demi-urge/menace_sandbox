@@ -156,6 +156,7 @@ from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
 from threshold_logger import ThresholdLogger
 from forecast_logger import ForecastLogger
+from preset_logger import PresetLogger
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
@@ -472,7 +473,10 @@ def load_previous_synergy(
 
 
 def prepare_presets(
-    run_idx: int, args: argparse.Namespace, settings: SandboxSettings
+    run_idx: int,
+    args: argparse.Namespace,
+    settings: SandboxSettings,
+    preset_log: PresetLogger | None = None,
 ) -> tuple[list[dict], str]:
     """Return presets for ``run_idx`` and their source."""
 
@@ -529,6 +533,12 @@ def prepare_presets(
             ),
         )
     os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
+    prepare_presets.last_source = preset_source  # type: ignore[attr-defined]
+    if preset_log is not None:
+        try:
+            preset_log.log(run_idx, preset_source, actions)
+        except Exception:
+            logger.exception("failed to log preset details")
     return presets, preset_source
 
 
@@ -935,6 +945,10 @@ def main(argv: List[str] | None = None) -> None:
         help="write ROI forecast and threshold details to this file",
     )
     parser.add_argument(
+        "--preset-log-file",
+        help="write preset source and actions to this JSONL file",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
@@ -1150,6 +1164,13 @@ def main(argv: List[str] | None = None) -> None:
     )
     threshold_log = ThresholdLogger(str(threshold_log_path))
     cleanup_funcs.append(threshold_log.close)
+    preset_log_path = (
+        Path(args.preset_log_file)
+        if args.preset_log_file
+        else Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "preset_log.jsonl"
+    )
+    preset_log = PresetLogger(str(preset_log_path))
+    cleanup_funcs.append(preset_log.close)
     forecast_log = None
     if args.forecast_log:
         forecast_log = ForecastLogger(str(args.forecast_log))
@@ -1420,7 +1441,7 @@ def main(argv: List[str] | None = None) -> None:
             )
             sys.exit(1)
 
-        presets, preset_source = prepare_presets(run_idx, args, settings)
+        presets, preset_source = prepare_presets(run_idx, args, settings, preset_log)
         logger.info(
             "using presets from %s",
             preset_source,
