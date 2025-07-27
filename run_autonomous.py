@@ -110,6 +110,7 @@ if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
 elif "menace" not in sys.modules:
     import importlib.util
 
+
 def _visual_agent_running(urls: str) -> bool:
     """Return ``True`` if the visual agent responds to ``/health``."""
     try:
@@ -120,6 +121,7 @@ def _visual_agent_running(urls: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
 
 spec = importlib.util.spec_from_file_location("menace", _pkg_dir / "__init__.py")
 menace_pkg = importlib.util.module_from_spec(spec)
@@ -153,7 +155,9 @@ from threshold_logger import ThresholdLogger
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location("sandbox_runner", _pkg_dir / "sandbox_runner.py")
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner", _pkg_dir / "sandbox_runner.py"
+    )
     sr_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sr_mod)
     sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
@@ -178,85 +182,46 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 class VisualAgentMonitor:
     """Background monitor that restarts the visual agent if it stops responding."""
-    def __init__(self, manager, urls: str, *, interval: float = AGENT_MONITOR_INTERVAL) -> None:
-        self.manager = manager; self.urls = urls; self.interval = float(interval); self._stop = threading.Event(); self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def __init__(
+        self, manager, urls: str, *, interval: float = AGENT_MONITOR_INTERVAL
+    ) -> None:
+        self.manager = manager
+        self.urls = urls
+        self.interval = float(interval)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self.run_idx = 0
+
     def start(self) -> None:
         self._thread.start()
+
     def stop(self) -> None:
-        self._stop.set(); self._thread.is_alive() and self._thread.join(timeout=1.0)
+        self._stop.set()
+        self._thread.is_alive() and self._thread.join(timeout=1.0)
         try:
             self.manager.shutdown()
         except Exception:
             logger.exception("failed to shutdown visual agent")
+
     def _loop(self) -> None:
         base = self.urls.split(";")[0]
-        queue_path = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "visual_agent_queue.db"
+        queue_path = (
+            Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            / "visual_agent_queue.db"
+        )
         while not self._stop.is_set():
             running = _visual_agent_running(self.urls)
             tok = os.getenv("VISUAL_AGENT_TOKEN", "")
             if not running:
                 try:
                     self.manager.restart_with_token(tok)
+                    logger.info(
+                        "visual agent restarted",
+                        extra=log_record(run=self.run_idx),
+                    )
                     for _ in range(10):
                         time.sleep(0.5)
                         if _visual_agent_running(self.urls):
@@ -268,6 +233,7 @@ class VisualAgentMonitor:
             healthy = True
             try:
                 import requests  # type: ignore
+
                 resp = requests.get(f"{base}/health", timeout=5)
                 healthy = resp.status_code == 200
             except Exception:
@@ -275,14 +241,21 @@ class VisualAgentMonitor:
             if not healthy or not queue_path.exists():
                 try:
                     import requests  # type: ignore
+
                     requests.post(
                         f"{base}/recover",
                         headers={"Authorization": f"Bearer {tok}"},
                         timeout=5,
                     )
+                    logger.info(
+                        "visual agent recovery triggered",
+                        extra=log_record(run=self.run_idx),
+                    )
                 except Exception:
                     logger.exception("failed to trigger agent recovery")
             self._stop.wait(self.interval)
+
+
 class PresetModel(BaseModel):
     """Schema for environment presets."""
 
@@ -343,7 +316,9 @@ class PresetModel(BaseModel):
         except Exception as e:
             raise ValueError("value must be numeric") from e
 
-    @validator("SECURITY_LEVEL", "THREAT_INTENSITY", "GPU_LIMIT", pre=True, allow_reuse=True)
+    @validator(
+        "SECURITY_LEVEL", "THREAT_INTENSITY", "GPU_LIMIT", pre=True, allow_reuse=True
+    )
     def _int_fields(cls, v):
         if v is None:
             return v
@@ -414,7 +389,9 @@ _SETUP_MARKER = Path(".autonomous_setup_complete")
 def _check_dependencies(settings: SandboxSettings) -> bool:
     """Return ``True`` and warn if the setup script has not been executed."""
     if not _SETUP_MARKER.exists():
-        logger.warning("Dependencies may be missing. Run 'python setup_dependencies.py' first")
+        logger.warning(
+            "Dependencies may be missing. Run 'python setup_dependencies.py' first"
+        )
     return True
 
 
@@ -427,8 +404,7 @@ def check_env() -> None:
     ]
     if missing:
         raise SystemExit(
-            "Missing required environment variables: "
-            + ", ".join(missing)
+            "Missing required environment variables: " + ", ".join(missing)
         )
 
 
@@ -506,7 +482,9 @@ def prepare_presets(
             pf.write_text(json.dumps(data))
         presets_raw = [data] if isinstance(data, dict) else list(data)
         presets = validate_presets(presets_raw)
-        logger.info("loaded presets from file", extra=log_record(run=run_idx, presets=presets))
+        logger.info(
+            "loaded presets from file", extra=log_record(run=run_idx, presets=presets)
+        )
     else:
         if getattr(args, "disable_preset_evolution", False):
             presets = validate_presets(generate_presets(args.preset_count))
@@ -522,7 +500,11 @@ def prepare_presets(
                 data_dir = args.sandbox_data_dir or settings.sandbox_data_dir
                 presets = validate_presets(gen_func(str(data_dir), args.preset_count))
                 preset_source = "history adaptation"
-                if getattr(getattr(environment_generator, "adapt_presets", object), "_rl_agent", None):
+                if getattr(
+                    getattr(environment_generator, "adapt_presets", object),
+                    "_rl_agent",
+                    None,
+                ):
                     preset_source = "RL agent"
         logger.info("generated presets", extra=log_record(run=run_idx, presets=presets))
         actions = getattr(environment_generator.adapt_presets, "last_actions", [])
@@ -531,6 +513,16 @@ def prepare_presets(
                 synergy_adaptation_actions_total.labels(action=act).inc()
             except Exception:
                 logger.exception("failed to update adaptation actions gauge")
+        logger.debug(
+            "preset source=%s last_actions=%s",
+            preset_source,
+            actions,
+            extra=log_record(
+                run=run_idx,
+                preset_source=preset_source,
+                last_actions=actions,
+            ),
+        )
     os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
     return presets, preset_source
 
@@ -588,7 +580,11 @@ def update_metrics(
     for mod, vals in tracker.module_deltas.items():
         module_history.setdefault(mod, []).extend(vals)
 
-    syn_vals = {k: v[-1] for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v}
+    syn_vals = {
+        k: v[-1]
+        for k, v in tracker.metrics_history.items()
+        if k.startswith("synergy_") and v
+    }
     synergy_ema = None
     if syn_vals:
         synergy_history.append(syn_vals)
@@ -669,8 +665,9 @@ def update_metrics(
     )
     synergy_threshold_gauge.set(float(syn_thr_val))
     logger.debug(
-        "synergy threshold=%.3f",
+        "synergy threshold=%.3f fixed=%s",
         syn_thr_val,
+        thr is not None,
         extra=log_record(
             run=run_idx,
             synergy_threshold=syn_thr_val,
@@ -726,7 +723,8 @@ def main(argv: List[str] | None = None) -> None:
         "--dashboard-port",
         type=int,
         help=(
-            "start MetricsDashboard on this port for each run" " (overrides AUTO_DASHBOARD_PORT)"
+            "start MetricsDashboard on this port for each run"
+            " (overrides AUTO_DASHBOARD_PORT)"
         ),
     )
     parser.add_argument(
@@ -856,13 +854,21 @@ def main(argv: List[str] | None = None) -> None:
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
-        if args.debug_log_file:
-            fh = logging.FileHandler(args.debug_log_file)
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(
-                logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        log_path = args.debug_log_file
+        if not log_path:
+            data_dir = Path(
+                args.sandbox_data_dir or os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
             )
-            logging.getLogger().addHandler(fh)
+            data_dir.mkdir(parents=True, exist_ok=True)
+            log_path = data_dir / "preset_debug.log"
+        else:
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_path)
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        logging.getLogger().addHandler(fh)
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
     created_env = not env_file.exists()
@@ -940,7 +946,7 @@ def main(argv: List[str] | None = None) -> None:
                 presets = validate_presets(generate_presets(args.preset_count))
                 os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
             logger.info(
-                "generated presets from environment", 
+                "generated presets from environment",
                 extra=log_record(presets=presets),
             )
         elif preset_file.exists():
@@ -952,15 +958,13 @@ def main(argv: List[str] | None = None) -> None:
             except ValidationError as exc:
                 sys.exit(f"Invalid preset file {preset_file}: {exc}")
             except json.JSONDecodeError as exc:
-                logger.warning(
-                    "preset file %s is corrupted: %s", preset_file, exc
-                )
+                logger.warning("preset file %s is corrupted: %s", preset_file, exc)
                 presets = validate_presets(generate_presets(args.preset_count))
                 preset_file.write_text(json.dumps(presets))
             except Exception:
                 presets = validate_presets(generate_presets(args.preset_count))
             logger.info(
-                "loaded presets from file", 
+                "loaded presets from file",
                 extra=log_record(presets=presets, source=str(preset_file)),
             )
         else:
@@ -975,16 +979,20 @@ def main(argv: List[str] | None = None) -> None:
                 if gen_func is generate_presets:
                     presets = validate_presets(generate_presets(args.preset_count))
                 else:
-                    presets = validate_presets(gen_func(str(data_dir), args.preset_count))
-                    actions = getattr(environment_generator.adapt_presets, "last_actions", [])
+                    presets = validate_presets(
+                        gen_func(str(data_dir), args.preset_count)
+                    )
+                    actions = getattr(
+                        environment_generator.adapt_presets, "last_actions", []
+                    )
                     for act in actions:
                         try:
                             synergy_adaptation_actions_total.labels(action=act).inc()
                         except Exception:
-                            logger.exception("failed to update adaptation actions gauge")
-            logger.info(
-                "generated presets", extra=log_record(presets=presets)
-            )
+                            logger.exception(
+                                "failed to update adaptation actions gauge"
+                            )
+            logger.info("generated presets", extra=log_record(presets=presets))
         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(presets)
         if not preset_file.exists():
             data_dir.mkdir(parents=True, exist_ok=True)
@@ -1018,9 +1026,13 @@ def main(argv: List[str] | None = None) -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
 
-    meta_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
+    meta_log_path = (
+        Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
+    )
     exporter_log = AuditTrail(str(meta_log_path))
-    threshold_log_path = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "threshold_log.jsonl"
+    threshold_log_path = (
+        Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "threshold_log.jsonl"
+    )
     threshold_log = ThresholdLogger(str(threshold_log_path))
     cleanup_funcs.append(threshold_log.close)
 
@@ -1034,7 +1046,8 @@ def main(argv: List[str] | None = None) -> None:
             port = _free_port()
             logger.info("using port %d for synergy exporter", port)
         history_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            / "synergy_history.db"
         )
         synergy_exporter = SynergyExporter(
             history_file=str(history_file),
@@ -1042,14 +1055,20 @@ def main(argv: List[str] | None = None) -> None:
         )
         try:
             synergy_exporter.start()
-            exporter_log.record({"timestamp": int(time.time()), "event": "exporter_started"})
+            exporter_log.record(
+                {"timestamp": int(time.time()), "event": "exporter_started"}
+            )
             exporter_monitor = ExporterMonitor(synergy_exporter, exporter_log)
             exporter_monitor.start()
             cleanup_funcs.append(exporter_monitor.stop)
         except Exception as exc:  # pragma: no cover - runtime issues
             logger.warning("failed to start synergy exporter: %s", exc)
             exporter_log.record(
-                {"timestamp": int(time.time()), "event": "exporter_start_failed", "error": str(exc)}
+                {
+                    "timestamp": int(time.time()),
+                    "event": "exporter_start_failed",
+                    "error": str(exc),
+                }
             )
 
     auto_trainer = None
@@ -1061,10 +1080,12 @@ def main(argv: List[str] | None = None) -> None:
         except Exception:
             interval = 600.0
         history_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            / "synergy_history.db"
         )
         weights_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_weights.json"
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            / "synergy_weights.json"
         )
         auto_trainer = SynergyAutoTrainer(
             history_file=str(history_file),
@@ -1089,7 +1110,10 @@ def main(argv: List[str] | None = None) -> None:
 
         from menace.metrics_dashboard import MetricsDashboard
 
-        history_file = Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "roi_history.json"
+        history_file = (
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            / "roi_history.json"
+        )
         dash = MetricsDashboard(str(history_file))
         dash_thread = Thread(
             target=dash.run,
@@ -1112,7 +1136,8 @@ def main(argv: List[str] | None = None) -> None:
         from menace.self_improvement_engine import SynergyDashboard
 
         synergy_file = (
-            Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "synergy_history.db"
+            Path(args.sandbox_data_dir or settings.sandbox_data_dir)
+            / "synergy_history.db"
         )
         s_dash = SynergyDashboard(str(synergy_file))
         dash_t = Thread(
@@ -1144,13 +1169,17 @@ def main(argv: List[str] | None = None) -> None:
             for _ in range(5):
                 time.sleep(1)
                 if agent_mgr.process and agent_mgr.process.poll() is not None:
-                    logger.error("visual agent exited with code %s", agent_mgr.process.returncode)
+                    logger.error(
+                        "visual agent exited with code %s", agent_mgr.process.returncode
+                    )
                     sys.exit(1)
                 if _visual_agent_running(settings.visual_agent_urls):
                     started = True
                     break
             if not started:
-                logger.error("visual agent failed to start at %s", settings.visual_agent_urls)
+                logger.error(
+                    "visual agent failed to start at %s", settings.visual_agent_urls
+                )
                 try:
                     agent_mgr.shutdown()
                 except Exception as exc:
@@ -1169,18 +1198,26 @@ def main(argv: List[str] | None = None) -> None:
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = list(synergy_ma_prev)
     roi_threshold = _get_env_override("ROI_THRESHOLD", args.roi_threshold, settings)
-    synergy_threshold = _get_env_override("SYNERGY_THRESHOLD", args.synergy_threshold, settings)
+    synergy_threshold = _get_env_override(
+        "SYNERGY_THRESHOLD", args.synergy_threshold, settings
+    )
     roi_confidence = _get_env_override("ROI_CONFIDENCE", args.roi_confidence, settings)
-    synergy_confidence = _get_env_override("SYNERGY_CONFIDENCE", args.synergy_confidence, settings)
+    synergy_confidence = _get_env_override(
+        "SYNERGY_CONFIDENCE", args.synergy_confidence, settings
+    )
     synergy_threshold_window = _get_env_override(
         "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window, settings
     )
     synergy_threshold_weight = _get_env_override(
         "SYNERGY_THRESHOLD_WEIGHT", args.synergy_threshold_weight, settings
     )
-    synergy_ma_window = _get_env_override("SYNERGY_MA_WINDOW", args.synergy_ma_window, settings)
+    synergy_ma_window = _get_env_override(
+        "SYNERGY_MA_WINDOW", args.synergy_ma_window, settings
+    )
     synergy_stationarity_confidence = _get_env_override(
-        "SYNERGY_STATIONARITY_CONFIDENCE", args.synergy_stationarity_confidence, settings
+        "SYNERGY_STATIONARITY_CONFIDENCE",
+        args.synergy_stationarity_confidence,
+        settings,
     )
     synergy_std_threshold = _get_env_override(
         "SYNERGY_STD_THRESHOLD", args.synergy_std_threshold, settings
@@ -1212,7 +1249,9 @@ def main(argv: List[str] | None = None) -> None:
                 synergy_history.append(entry)
                 ma_entry: dict[str, float] = {}
                 for k in entry:
-                    vals = [h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]]
+                    vals = [
+                        h.get(k, 0.0) for h in synergy_history[-args.synergy_cycles :]
+                    ]
                     ema, _ = cli._ema(vals) if vals else (0.0, 0.0)
                     ma_entry[k] = ema
                 synergy_ma_history.append(ma_entry)
@@ -1233,9 +1272,15 @@ def main(argv: List[str] | None = None) -> None:
     run_idx = 0
     while args.runs is None or run_idx < args.runs:
         run_idx += 1
+        if agent_monitor is not None:
+            agent_monitor.run_idx = run_idx
         if run_idx > 1:
             new_tok = os.getenv("VISUAL_AGENT_TOKEN_ROTATE")
-            if new_tok and agent_mgr and _visual_agent_running(settings.visual_agent_urls):
+            if (
+                new_tok
+                and agent_mgr
+                and _visual_agent_running(settings.visual_agent_urls)
+            ):
                 try:
                     agent_mgr.restart_with_token(new_tok)
                     os.environ["VISUAL_AGENT_TOKEN"] = new_tok
