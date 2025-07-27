@@ -14,6 +14,10 @@ def test_simulate_full_environment_vm(monkeypatch, tmp_path):
     tmp_clone.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
 
+    overlays = tmp_path / "overlays.json"
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_FILE", overlays)
+    monkeypatch.setattr(env, "_ACTIVE_OVERLAYS_LOCK", env.FileLock(str(overlays) + ".lock"))
+
     def fake_copytree(src, dst, dirs_exist_ok=True):
         Path(dst).mkdir(parents=True, exist_ok=True)
         (Path(dst) / "data").mkdir(exist_ok=True)
@@ -135,4 +139,56 @@ def test_simulate_full_environment_vm_timeout(monkeypatch, tmp_path):
     assert tracker.diagnostics.get("vm_error") == "timeout"
     assert tracker.diagnostics.get("local_execution") == "vm"
     assert not tmp_clone.exists()
+
+
+def test_vm_overlay_cleanup_backoff(monkeypatch, tmp_path):
+    tmp_clone = tmp_path / "overlay_backoff"
+    tmp_clone.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("SANDBOX_DOCKER", "0")
+    monkeypatch.setattr(env.tempfile, "mkdtemp", lambda prefix="": str(tmp_clone))
+
+    def fake_copytree(src, dst, dirs_exist_ok=True):
+        Path(dst).mkdir(parents=True, exist_ok=True)
+        (Path(dst) / "data").mkdir(exist_ok=True)
+        (Path(dst) / "sandbox_runner.py").write_text("print('ok')")
+
+    monkeypatch.setattr(env.shutil, "copytree", fake_copytree)
+    monkeypatch.setattr(env.shutil, "which", lambda n: "/usr/bin/qemu-system-x86_64")
+
+    delays = []
+    monkeypatch.setattr(env.time, "sleep", lambda d: delays.append(d))
+    monkeypatch.setattr(env, "_CREATE_BACKOFF_BASE", 1.0)
+    monkeypatch.setattr(env, "_CREATE_RETRY_LIMIT", 3)
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "qemu-img":
+            Path(cmd[-1]).touch()
+            return types.SimpleNamespace()
+        if "qemu-system" in cmd[0]:
+            raise OSError("fail")
+        if cmd[0] == "python":
+            (tmp_clone / "data").mkdir(exist_ok=True)
+            (tmp_clone / "data" / "roi_history.json").write_text("[]")
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(env.subprocess, "run", fake_run)
+
+    class DummyTracker:
+        def __init__(self):
+            self.loaded = None
+            self.diagnostics = {}
+        def load_history(self, path):
+            self.loaded = path
+
+    monkeypatch.setitem(sys.modules, "menace.roi_tracker", types.SimpleNamespace(ROITracker=DummyTracker))
+
+    tracker = env.simulate_full_environment({"OS_TYPE": "windows", "VM_SETTINGS": {"windows_image": "img.qcow2"}})
+
+    assert delays == [1.0, 2.0]
+    assert not (tmp_clone / "overlay.qcow2").exists()
+    assert env._read_active_overlays() == []
+    assert tracker.diagnostics.get("local_execution") == "vm"
+    assert tracker.diagnostics.get("vm_error")
+    assert tracker.loaded == str(tmp_clone / "data" / "roi_history.json")
 
