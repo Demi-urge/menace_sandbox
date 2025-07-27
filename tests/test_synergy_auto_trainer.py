@@ -153,7 +153,15 @@ def test_cli_continuous(monkeypatch) -> None:
     events: list[str] = []
 
     class DummyTrainer:
-        def __init__(self, *, history_file: str | Path, weights_file: str | Path, interval: float, progress_file: Path) -> None:
+        def __init__(
+            self,
+            *,
+            history_file: str | Path,
+            weights_file: str | Path,
+            interval: float,
+            progress_file: Path,
+            metrics_port: int | None = None,
+        ) -> None:
             events.append("init")
 
         def start(self) -> None:
@@ -193,7 +201,15 @@ def test_cli_continuous_async(monkeypatch) -> None:
     events: list[str] = []
 
     class DummyTrainer:
-        def __init__(self, *, history_file: str | Path, weights_file: str | Path, interval: float, progress_file: Path) -> None:
+        def __init__(
+            self,
+            *,
+            history_file: str | Path,
+            weights_file: str | Path,
+            interval: float,
+            progress_file: Path,
+            metrics_port: int | None = None,
+        ) -> None:
             events.append("init")
 
         def start_async(self) -> None:
@@ -891,3 +907,95 @@ async def test_async_failure_dispatch(monkeypatch, tmp_path: Path) -> None:
 
     assert sat.synergy_trainer_failures_total._value.get() == 1.0
     assert len(alerts) == 1
+
+
+
+def test_train_retry_updates_progress(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 1.0}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    calls = {"n": 0}
+
+    def maybe_fail(history, _path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        return {}
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", maybe_fail)
+    sat.synergy_trainer_failures_total.set(0.0)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=progress_file,
+    )
+
+    trainer._train_once()
+    assert sat.synergy_trainer_failures_total._value.get() == 1.0
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 0
+
+    trainer._train_once()
+    assert sat.synergy_trainer_failures_total._value.get() == 1.0
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 1
+
+
+@pytest.mark.asyncio
+async def test_async_start_stop_cancels_task(monkeypatch, tmp_path: Path) -> None:
+    me = importlib.import_module("menace.metrics_exporter")
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    calls: list[int] = []
+
+    def fake_start(port: int) -> None:
+        calls.append(port)
+    monkeypatch.setattr(me, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat, "start_metrics_server", fake_start)
+    monkeypatch.setattr(sat.SynergyAutoTrainer, "_train_once", lambda self: None)
+
+    hist_file = tmp_path / "hf.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        progress_file=tmp_path / "progress.json",
+        interval=0.05,
+        metrics_port=4321,
+    )
+
+    trainer.start_async()
+    task = trainer._task
+    await asyncio.sleep(0)
+    await trainer.stop_async()
+
+    assert calls == [4321]
+    assert trainer._task is None
+    assert task is not None and task.done()
