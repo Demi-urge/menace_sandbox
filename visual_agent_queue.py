@@ -4,8 +4,11 @@ import json
 import sqlite3
 import threading
 import time
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class VisualAgentQueue:
@@ -19,10 +22,11 @@ class VisualAgentQueue:
 
     # ------------------------------------------------------------------
     def _init_db(self) -> None:
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tasks(
+        try:
+            with sqlite3.connect(self.path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tasks(
                     id TEXT PRIMARY KEY,
                     prompt TEXT,
                     branch TEXT,
@@ -51,6 +55,60 @@ class VisualAgentQueue:
                 "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
             )
             conn.commit()
+        except sqlite3.DatabaseError:
+            ts = int(time.time())
+            corrupt = self.path.with_name(f"{self.path.name}.corrupt.{ts}")
+            try:
+                if self.path.exists():
+                    self.path.rename(corrupt)
+            except Exception:
+                pass
+            logger.warning("queue database corrupt; moved to %s", corrupt)
+            with sqlite3.connect(self.path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tasks(
+                        id TEXT PRIMARY KEY,
+                        prompt TEXT,
+                        branch TEXT,
+                        status TEXT,
+                        error TEXT,
+                        ts REAL,
+                        qorder INTEGER
+                    )
+                    """
+                )
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS metadata(last_completed REAL)"
+                )
+                conn.execute("INSERT INTO metadata(last_completed) VALUES(0)")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_tasks_status_qorder ON tasks(status, qorder)"
+                )
+                conn.commit()
+
+    # ------------------------------------------------------------------
+    def check_integrity(self) -> bool:
+        """Verify required tables exist. Rebuild DB if corrupt."""
+        try:
+            with sqlite3.connect(self.path) as conn:
+                tables = {r[0] for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+                if {"tasks", "metadata"} <= tables:
+                    return False
+        except sqlite3.DatabaseError:
+            pass
+
+        ts = int(time.time())
+        backup = self.path.with_name(f"{self.path.name}.corrupt.{ts}")
+        try:
+            if self.path.exists():
+                self.path.rename(backup)
+        except Exception:
+            pass
+        logger.warning("queue database invalid; moved to %s", backup)
+        self._init_db()
+        return True
 
     # ------------------------------------------------------------------
     @staticmethod
