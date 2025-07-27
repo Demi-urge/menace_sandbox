@@ -462,7 +462,7 @@ def load_previous_synergy(
         return [], []
     history: list[dict[str, float]] = []
     try:
-        with sqlite3.connect(path) as conn:
+        with connect_locked(path) as conn:
             rows = conn.execute(
                 "SELECT entry FROM synergy_history ORDER BY id"
             ).fetchall()
