@@ -128,9 +128,9 @@ visual agent is contacted. The most relevant are:
 - `MENACE_AGENT_PORT` – port where `menace_visual_agent_2.py` listens for HTTP connections.
 - `BOT_DEV_HEADLESS` – set to `1` to disable interactive windows and run in
   headless mode.
-- `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
+ - `VISUAL_AGENT_AUTOSTART` – set to `0` to prevent `run_autonomous` from
   launching a local visual agent when none is reachable.
-- `VISUAL_AGENT_AUTO_RECOVER` – set to `0` to disable automatic queue recovery.
+ - `VISUAL_AGENT_AUTO_RECOVER` – `1` by default; set to `0` to disable automatic queue recovery.
 - `VA_PROMPT_TEMPLATE` – path to a template (or inline template string) used to
   build the visual agent prompt. The template receives `{path}`,
   `{description}`, `{context}` and `{func}` placeholders.
@@ -141,10 +141,16 @@ visual agent is contacted. The most relevant are:
   prepends "Improve Menace by enhancing error handling and modifying
   existing bots." (see `DEFAULT_MESSAGE_PREFIX` in
   `visual_agent_client.py`).
-- `VISUAL_AGENT_STATUS_INTERVAL` – poll `/status` periodically to record queue
-  depth for the dashboard. Set to `0` to disable.
-  When enabled the sandbox dashboard exposes `visual_agent_queue_depth` and
-  `visual_agent_wait_time` metrics.
+  - `VISUAL_AGENT_STATUS_INTERVAL` – poll `/status` periodically to record queue
+    depth for the dashboard. Set to `0` to disable.
+    When enabled the sandbox dashboard exposes `visual_agent_queue_depth` and
+    `visual_agent_wait_time` metrics.
+
+When `run_autonomous.py` is used a `VisualAgentMonitor` thread keeps the
+service running. It restarts `menace_visual_agent_2.py` if the queue database
+is missing or the process stops responding and posts to `/recover` so queued
+jobs continue automatically. Manual commands such as `--recover-queue` or
+`--repair-running` are therefore typically reserved for troubleshooting.
 
 ## Visual agent service
 
@@ -160,7 +166,7 @@ The `/status` endpoint returns a JSON object with two fields:
 - `queue` – number of queued jobs waiting for execution.
 
 Jobs are processed sequentially so at most one task runs at a time regardless of how many clients enqueue work.
-If the service fails to start due to a stale lock run `python menace_visual_agent_2.py --cleanup` then repair the queue with `--repair-running --recover-queue`. Use `--resume` to process tasks without starting the server.
+If the service fails to start due to a stale lock run `python menace_visual_agent_2.py --cleanup` then repair the queue with `--repair-running --recover-queue`. These commands are mainly for troubleshooting because `run_autonomous.py` automatically restarts the service and triggers recovery. Use `--resume` to process tasks without starting the server.
 
 ## Prompt customisation
 
