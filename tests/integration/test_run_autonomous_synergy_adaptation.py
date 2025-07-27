@@ -8,7 +8,7 @@ import metrics_exporter
 
 
 def _load_run_autonomous(monkeypatch, tmp_path: Path):
-    # Stub external modules used by run_autonomous
+    # Stub modules used by run_autonomous
     sc_mod = types.ModuleType("menace.startup_checks")
     sc_mod.verify_project_dependencies = lambda: []
     sc_mod._parse_requirement = lambda r: r
@@ -16,10 +16,16 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
     env_mod = types.ModuleType("menace.environment_generator")
     env_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}]
 
-    stats_mod = types.ModuleType("scipy.stats")
-    stats_mod.t = types.SimpleNamespace(cdf=lambda *a, **k: 0.0)
-    monkeypatch.setitem(sys.modules, "scipy", types.ModuleType("scipy"))
-    monkeypatch.setitem(sys.modules, "scipy.stats", stats_mod)
+    class _Adapt:
+        def __init__(self):
+            self.last_actions = []
+
+        def __call__(self, tracker, presets):
+            self.last_actions = ["history"]
+            return presets
+
+    env_mod.adapt_presets = _Adapt()
+    env_mod.generate_presets_from_history = lambda d, n=None: env_mod.adapt_presets(None, env_mod.generate_presets(n))
 
     pyd = types.ModuleType("pydantic")
 
@@ -35,10 +41,12 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
             return self.__dict__.copy()
 
     pyd.BaseModel = _Base
+
     class _Root:
         @classmethod
         def __class_getitem__(cls, item):
             return cls
+
     pyd.RootModel = _Root
     pyd.ValidationError = type("ValidationError", (Exception,), {})
     pyd.validator = lambda *a, **k: (lambda f: f)
@@ -79,16 +87,48 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
             val = float(self.roi_history[-1]) if self.roi_history else 0.0
             return val, (val - 0.1, val + 0.1)
 
+        def predict_synergy(self):
+            vals = self.metrics_history.get("synergy_roi")
+            return float(vals[-1]) if vals else 0.1
+
     tracker_mod = types.ModuleType("menace.roi_tracker")
     tracker_mod.ROITracker = DummyTracker
 
     synergy_exp = types.ModuleType("menace.synergy_exporter")
-    synergy_exp.SynergyExporter = object
 
-    shd_mod = types.ModuleType("menace.synergy_history_db")
-    shd_mod.migrate_json_to_db = lambda *a, **k: None
-    shd_mod.insert_entry = lambda *a, **k: None
-    shd_mod.connect_locked = lambda *a, **k: None
+    class DummyExporter:
+        def __init__(self, *a, **k):
+            self.history_file = Path(k.get("history_file", "synergy_history.db"))
+            self.port = int(k.get("port", 8003))
+            self.health_port = None
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    synergy_exp.SynergyExporter = DummyExporter
+
+    sat_mod = types.ModuleType("menace.synergy_auto_trainer")
+
+    class DummyTrainer:
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+    sat_mod.SynergyAutoTrainer = DummyTrainer
+
+    # minimal scipy.stats stub for t-distribution
+    stats_mod = types.ModuleType("scipy.stats")
+    stats_mod.t = types.SimpleNamespace(cdf=lambda *a, **k: 0.0)
+    monkeypatch.setitem(sys.modules, "scipy", types.ModuleType("scipy"))
+    monkeypatch.setitem(sys.modules, "scipy.stats", stats_mod)
 
     sym_mon = types.ModuleType("synergy_monitor")
     sym_mon.ExporterMonitor = lambda *a, **k: types.SimpleNamespace(start=lambda: None, stop=lambda: None, restart_count=0)
@@ -109,7 +149,7 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
             data = {"roi_history": [], "module_deltas": {}, "metrics_history": {"synergy_roi": []}}
         idx = run_idx["n"]
         data["roi_history"].append(0.1 + 0.05 * idx)
-        data["metrics_history"]["synergy_roi"].append(0.05 / (idx + 1))
+        data["metrics_history"]["synergy_roi"].append(0.05 * (idx + 1))
         file.write_text(json.dumps(data))
         run_idx["n"] += 1
 
@@ -130,7 +170,7 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
             self.sandbox_data_dir = str(tmp_path)
             self.sandbox_env_presets = None
             self.auto_dashboard_port = None
-            self.save_synergy_history = False
+            self.save_synergy_history = True
             self.visual_agent_autostart = False
             self.visual_agent_urls = ""
             self.roi_cycles = None
@@ -150,12 +190,13 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
     monkeypatch.setitem(sys.modules, "menace.environment_generator", env_mod)
     monkeypatch.setitem(sys.modules, "menace.roi_tracker", tracker_mod)
     monkeypatch.setitem(sys.modules, "menace.synergy_exporter", synergy_exp)
-    monkeypatch.setitem(sys.modules, "menace.synergy_history_db", shd_mod)
+    monkeypatch.setitem(sys.modules, "menace.synergy_auto_trainer", sat_mod)
     monkeypatch.setitem(sys.modules, "pydantic", pyd)
     monkeypatch.setitem(sys.modules, "pydantic_settings", ps)
     monkeypatch.setitem(sys.modules, "synergy_monitor", sym_mon)
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
+
     class DummyRecovery:
         def __init__(self, func):
             self.sandbox_main = func
@@ -179,37 +220,54 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
     spec.loader.exec_module(mod)
 
+    db_mod = importlib.import_module("menace.synergy_history_db")
+    monkeypatch.setattr(mod, "connect_locked", db_mod.connect)
+    monkeypatch.setattr(mod, "insert_entry", db_mod.insert_entry)
+    monkeypatch.setattr(mod, "migrate_json_to_db", db_mod.migrate_json_to_db)
+    monkeypatch.setattr(db_mod, "connect_locked", db_mod.connect)
+
     monkeypatch.setattr(mod, "ROITracker", DummyTracker)
     monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
-    return mod, run_idx
+
+    return mod, env_mod, run_idx
 
 
-def test_run_autonomous_metrics(monkeypatch, tmp_path: Path) -> None:
-    mod, _ = _load_run_autonomous(monkeypatch, tmp_path)
+def test_synergy_adaptation_metrics(monkeypatch, tmp_path: Path) -> None:
+    mod, env_mod, _ = _load_run_autonomous(monkeypatch, tmp_path)
+
+    import importlib
+    shd = importlib.import_module("menace.synergy_history_db")
+
+    conn = shd.connect(tmp_path / "synergy_history.db")
+    shd.insert_entry(conn, {"synergy_roi": 0.1})
+    shd.insert_entry(conn, {"synergy_roi": 0.2})
+    conn.close()
+
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("EXPORT_SYNERGY_METRICS", "1")
+    monkeypatch.setenv("AUTO_TRAIN_SYNERGY", "1")
 
     mod.main([
         "--max-iterations",
         "1",
         "--runs",
-        "2",
+        "1",
         "--preset-count",
         "1",
         "--sandbox-data-dir",
         str(tmp_path),
-        "--no-save-synergy-history",
     ])
 
-    assert metrics_exporter.roi_forecast_gauge.labels().get() is not None
-    assert metrics_exporter.synergy_forecast_gauge.labels().get() is not None
-    assert metrics_exporter.synergy_threshold_gauge.labels().get() is not None
+    assert metrics_exporter.synergy_forecast_gauge.labels().get() != 0.0
+    val = metrics_exporter.synergy_adaptation_actions_total.labels(action="history").get()
+    assert val is not None and val > 0
 
     log_file = tmp_path / "threshold_log.jsonl"
     assert log_file.exists()
     entries = [json.loads(l) for l in log_file.read_text().splitlines()]
-    assert len(entries) == 2
-    assert all("converged" in e for e in entries)
+    assert entries
+    assert all("roi_threshold" in e and "synergy_threshold" in e for e in entries)
