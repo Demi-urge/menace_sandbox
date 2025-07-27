@@ -15,6 +15,8 @@ monitor preset adaptation:
 - `roi_forecast` – predicted ROI for the next sandbox cycle
 - `synergy_adaptation_actions_total{action="<name>"}` – counter of how often a
   specific adaptation action executed
+- `roi_forecast_failures_total` – number of exceptions raised while computing the ROI forecast
+- `synergy_forecast_failures_total` – number of exceptions raised while predicting synergy
 
 Add the metrics server to your Prometheus configuration and query these gauges
 to inspect upcoming ROI and the behaviour of the preset RL agent.
@@ -163,6 +165,8 @@ synergy training gauges alongside ROI metrics:
 * `synergy_trainer_iterations`
 * `synergy_trainer_failures_total`
 * `synergy_weight_update_failures_total`
+* `roi_forecast_failures_total`
+* `synergy_forecast_failures_total`
 * `roi_threshold_gauge`
 * `synergy_threshold_gauge`
 * `roi_forecast`

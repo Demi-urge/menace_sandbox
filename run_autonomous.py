@@ -149,6 +149,7 @@ from metrics_exporter import (
     synergy_forecast_gauge,
     synergy_adaptation_actions_total,
 )
+import metrics_exporter
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
@@ -627,6 +628,7 @@ def update_metrics(
         )
     except Exception:
         logger.exception("ROI forecast failed")
+        metrics_exporter.roi_forecast_failures_total.inc()
 
     try:
         syn_pred = tracker.predict_synergy()
@@ -638,6 +640,7 @@ def update_metrics(
         )
     except Exception:
         logger.exception("synergy forecast failed")
+        metrics_exporter.synergy_forecast_failures_total.inc()
 
     if getattr(args, "auto_thresholds", False):
         roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
