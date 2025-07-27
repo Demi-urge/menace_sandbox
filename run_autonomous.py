@@ -82,7 +82,10 @@ def _verify_required_dependencies() -> None:
         raise SystemExit("\n".join(messages))
 
     if missing_opt:
-        logging.warning("Missing optional Python packages: %s", ", ".join(missing_opt))
+        print(
+            "Missing optional Python packages: " + ", ".join(missing_opt),
+            file=sys.stderr,
+        )
 
 
 _verify_required_dependencies()
@@ -94,7 +97,10 @@ from pydantic import BaseModel, RootModel, ValidationError, validator
 if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
     "DATABASE_URL", ""
 ).startswith("sqlite"):
-    logging.warning("MENACE_MODE=production with SQLite database; switching to test mode")
+    print(
+        "MENACE_MODE=production with SQLite database; switching to test mode",
+        file=sys.stderr,
+    )
     os.environ["MENACE_MODE"] = "test"
 
 # allow execution directly from the package directory
@@ -591,6 +597,11 @@ def main(argv: List[str] | None = None) -> None:
         help="disable adapting presets from previous run history",
     )
     parser.add_argument(
+        "--log-level",
+        default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
+        help="logging level for console output",
+    )
+    parser.add_argument(
         "--save-synergy-history",
         dest="save_synergy_history",
         action="store_true",
@@ -616,7 +627,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    setup_logging()
+    setup_logging(level=args.log_level)
 
     env_file = Path(os.getenv("MENACE_ENV_FILE", ".env"))
     created_env = not env_file.exists()
