@@ -200,6 +200,7 @@ def test_run_autonomous_metrics(monkeypatch, tmp_path: Path) -> None:
     ])
 
     assert metrics_exporter.roi_forecast_gauge.labels().get() is not None
+    assert metrics_exporter.synergy_forecast_gauge.labels().get() is not None
     assert metrics_exporter.synergy_threshold_gauge.labels().get() is not None
 
     log_file = tmp_path / "threshold_log.jsonl"
