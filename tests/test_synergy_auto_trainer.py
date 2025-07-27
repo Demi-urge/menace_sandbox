@@ -775,3 +775,119 @@ async def test_metrics_server_started_async(monkeypatch, tmp_path: Path) -> None
     await trainer.stop_async()
 
     assert calls == [8888]
+
+@pytest.mark.asyncio
+async def test_async_metrics_and_restart(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 0.5}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    called = {}
+
+    def fake_train(history, path):
+        called["history"] = list(history)
+        called["path"] = Path(path)
+        Path(path).write_text(json.dumps({"w": 1}))
+        return {}
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", fake_train)
+    sat.synergy_trainer_iterations.set(0.0)
+    sat.synergy_trainer_last_id.set(0.0)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=progress_file,
+    )
+
+    trainer.start_async()
+    for _ in range(20):
+        if called:
+            break
+        await asyncio.sleep(0.05)
+    await trainer.stop_async()
+
+    assert called
+    assert sat.synergy_trainer_iterations._value.get() == 1.0
+    assert sat.synergy_trainer_last_id._value.get() == 1.0
+
+    data = json.loads(progress_file.read_text())
+    assert data["last_id"] == 1
+    assert json.loads(weights_file.read_text()) == {"w": 1}
+
+    trainer2 = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.1,
+        progress_file=progress_file,
+    )
+
+    assert trainer2._last_id == 1
+    assert trainer2.weights_file == weights_file
+
+
+@pytest.mark.asyncio
+async def test_async_failure_dispatch(monkeypatch, tmp_path: Path) -> None:
+    sat = importlib.import_module("menace.synergy_auto_trainer")
+
+    hist_file = tmp_path / "synergy_history.db"
+    conn = sqlite3.connect(hist_file)
+    conn.execute(
+        "CREATE TABLE synergy_history (id INTEGER PRIMARY KEY AUTOINCREMENT, entry TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO synergy_history(entry) VALUES (?)",
+        (json.dumps({"synergy_roi": 1.0}),),
+    )
+    conn.commit()
+    conn.close()
+
+    weights_file = tmp_path / "weights.json"
+    weights_file.write_text("{}")
+
+    progress_file = tmp_path / "progress.json"
+
+    alerts: list[tuple] = []
+
+    def bad_train(_hist, _path):
+        raise RuntimeError("boom")
+
+    def fake_alert(*a, **k):
+        alerts.append((a, k))
+
+    monkeypatch.setattr(sat.synergy_weight_cli, "train_from_history", bad_train)
+    monkeypatch.setattr(sat, "dispatch_alert", fake_alert)
+    sat.synergy_trainer_failures_total.set(0.0)
+
+    trainer = sat.SynergyAutoTrainer(
+        history_file=hist_file,
+        weights_file=weights_file,
+        interval=0.05,
+        progress_file=progress_file,
+    )
+
+    trainer.start_async()
+    for _ in range(20):
+        if alerts:
+            break
+        await asyncio.sleep(0.05)
+    await trainer.stop_async()
+
+    assert sat.synergy_trainer_failures_total._value.get() == 1.0
+    assert len(alerts) == 1
