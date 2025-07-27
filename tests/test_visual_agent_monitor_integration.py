@@ -13,12 +13,21 @@ TOKEN = "tok"
 
 def _load_monitor():
     path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
-    lines = path.read_text().splitlines()
-    func_src = "\n".join(lines[106:116])
-    class_src = "\n".join(lines[229:275])
+    text = path.read_text().splitlines()
+
+    def _extract(name):
+        start = next(i for i,l in enumerate(text) if l.startswith(name))
+        indent = len(text[start]) - len(text[start].lstrip())
+        end = start + 1
+        while end < len(text) and (not text[end].strip() or text[end].startswith(" " * (indent+1)) or text[end].startswith(" "*indent)):
+            end += 1
+        return "\n".join(text[start:end])
+
+    func_src = _extract("def _visual_agent_running")
+    class_src = _extract("class VisualAgentMonitor")
     ns = {}
     exec(
-        "import threading, os\nfrom pathlib import Path\nAGENT_MONITOR_INTERVAL=0.2\n"
+        "import threading, os, sys, importlib, importlib.util\nfrom pathlib import Path\n_pkg_dir=Path('.')\nAGENT_MONITOR_INTERVAL=0.2\n"
         + func_src
         + "\n"
         + class_src,

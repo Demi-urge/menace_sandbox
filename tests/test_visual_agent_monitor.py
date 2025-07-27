@@ -8,12 +8,20 @@ import pytest
 
 def _load_monitor():
     path = Path(__file__).resolve().parents[1] / "run_autonomous.py"
-    lines = path.read_text().splitlines()
-    func_src = "\n".join(lines[106:116])
-    class_src = "\n".join(lines[222:275])
+    text = path.read_text().splitlines()
+    def _extract(name):
+        start = next(i for i,l in enumerate(text) if l.startswith(name))
+        indent = len(text[start]) - len(text[start].lstrip())
+        end = start + 1
+        while end < len(text) and (not text[end].strip() or text[end].startswith(" " * (indent+1)) or text[end].startswith(" "*indent)):
+            end += 1
+        return "\n".join(text[start:end])
+
+    func_src = _extract("def _visual_agent_running")
+    class_src = _extract("class VisualAgentMonitor")
     ns = {}
     exec(
-        "import threading, os\nfrom pathlib import Path\nAGENT_MONITOR_INTERVAL=0.01\n"
+        "import threading, os, sys, importlib, importlib.util\nfrom pathlib import Path\n_pkg_dir=Path('.')\nAGENT_MONITOR_INTERVAL=0.01\n"
         + func_src
         + "\n"
         + class_src,
@@ -51,27 +59,21 @@ def test_monitor_restarts_when_status_fails(monkeypatch):
     assert manager.calls > 0
 
 
-def test_monitor_checks_integrity(monkeypatch, tmp_path):
+def test_monitor_triggers_recover_on_health_failure(monkeypatch):
     manager = DummyManager()
-    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    queue_db = tmp_path / "visual_agent_queue.db"
-    queue_db.write_text("bad")
-
     mon = VisualAgentMonitor(manager, "http://x", interval=0.01)
     monkeypatch.setitem(mon._loop.__globals__, "_visual_agent_running", lambda u: True)
 
     called = {}
 
+    def fake_get(url, timeout=0):
+        called[url] = called.get(url, 0) + 1
+        class Resp:
+            status_code = 500
+        return Resp()
+
     def fake_post(url, headers=None, timeout=0):
         called[url] = called.get(url, 0) + 1
-        if url.endswith("/integrity"):
-            q = VisualAgentQueue(queue_db)
-            rebuilt = q.check_integrity()
-            class Resp:
-                status_code = 200
-                def json(self):
-                    return {"rebuilt": rebuilt}
-            return Resp()
         class Resp:
             status_code = 200
             def json(self):
@@ -79,17 +81,19 @@ def test_monitor_checks_integrity(monkeypatch, tmp_path):
         return Resp()
 
     import types, sys
-    monkeypatch.setitem(sys.modules, "requests", types.SimpleNamespace(post=fake_post))
+    monkeypatch.setitem(
+        sys.modules,
+        "requests",
+        types.SimpleNamespace(post=fake_post, get=fake_get),
+    )
 
     mon.start()
     try:
         for _ in range(50):
-            if any(url.endswith("/integrity") for url in called):
+            if any(url.endswith("/recover") for url in called):
                 break
             time.sleep(0.01)
     finally:
         mon.stop()
 
-    assert any(url.endswith("/integrity") for url in called)
-    backups = list(tmp_path.glob("visual_agent_queue.db.corrupt.*"))
-    assert backups
+    assert any(url.endswith("/recover") for url in called)

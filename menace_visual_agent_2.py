@@ -29,6 +29,7 @@ from pathlib import Path
 import atexit
 import psutil
 from visual_agent_queue import VisualAgentQueue
+import metrics_exporter
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 _token = os.getenv("VISUAL_AGENT_TOKEN")
@@ -203,20 +204,34 @@ STATE_FILE = DATA_DIR / "visual_agent_state.json"
 AUTO_RECOVER_ON_STARTUP = os.getenv("VISUAL_AGENT_AUTO_RECOVER", "1") != "0"
 
 
-def _log_recovery_metrics(count: int) -> None:
-    """Update recovery metrics file."""
-    metrics = {"recovery_count": 0, "last_recovery_time": 0.0, "last_recovered": 0}
+def _log_recovery_metrics(count: int, watchdog: bool = False) -> None:
+    """Update recovery metrics file and gauges."""
+    metrics = {
+        "recovery_count": 0,
+        "watchdog_recoveries": 0,
+        "last_recovery_time": 0.0,
+        "last_recovered": 0,
+    }
     try:
         if RECOVERY_METRICS_FILE.exists():
             metrics.update(json.loads(RECOVERY_METRICS_FILE.read_text()))
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed reading metrics %s: %s", RECOVERY_METRICS_FILE, exc)
     metrics["recovery_count"] = float(metrics.get("recovery_count", 0)) + 1
+    if watchdog:
+        metrics["watchdog_recoveries"] = float(metrics.get("watchdog_recoveries", 0)) + 1
     metrics["last_recovery_time"] = time.time()
     metrics["last_recovered"] = count
     try:
         RECOVERY_METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
         RECOVERY_METRICS_FILE.write_text(json.dumps(metrics))
+        try:
+            metrics_exporter.visual_agent_recoveries_total.set(metrics["recovery_count"])
+            metrics_exporter.visual_agent_watchdog_recoveries_total.set(
+                metrics["watchdog_recoveries"]
+            )
+        except Exception:
+            pass
     except Exception as exc:  # pragma: no cover - fs errors
         logger.warning("failed writing metrics %s: %s", RECOVERY_METRICS_FILE, exc)
 
@@ -322,7 +337,7 @@ def _persist_state() -> None:
                 tmp.unlink()
 
 
-def _recover_queue() -> None:
+def _recover_queue(*, watchdog: bool = False) -> None:
     """Attempt to rebuild the queue database after a failure."""
     logger.warning("recovering task queue")
     try:
@@ -346,7 +361,7 @@ def _recover_queue() -> None:
             job_status.update(task_queue.get_status())
             global last_completed_ts
             last_completed_ts = task_queue.get_last_completed()
-            _log_recovery_metrics(len(task_queue))
+            _log_recovery_metrics(len(task_queue), watchdog)
     finally:
         try:
             _global_lock.release()
@@ -478,13 +493,43 @@ def _initialize_state() -> None:
 
 
 _worker_thread = None
+_watchdog_thread = None
+_watchdog = None
+
+
+class QueueWatchdog(threading.Thread):
+    """Background watchdog monitoring the queue worker."""
+
+    def __init__(self, interval: float = float(os.getenv("VA_WATCHDOG_INTERVAL", "5"))):
+        super().__init__(daemon=True)
+        self.interval = float(interval)
+        self.restarts = 0
+
+    def run(self) -> None:  # pragma: no cover - timing sensitive
+        while not _exit_event.is_set():
+            time.sleep(self.interval)
+            alive = _worker_thread.is_alive() if _worker_thread else False
+            rebuilt = False
+            try:
+                rebuilt = task_queue.check_integrity()
+            except sqlite3.DatabaseError:
+                logger.exception("queue integrity check failed")
+                rebuilt = True
+            if not alive or rebuilt:
+                logger.warning("queue watchdog triggered recovery")
+                _recover_queue(watchdog=True)
+                self.restarts += 1
+                _start_background_threads()
 
 def _start_background_threads() -> None:
-    global _worker_thread
-    if _worker_thread is not None and _worker_thread.is_alive():
-        return
-    _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
-    _worker_thread.start()
+    global _worker_thread, _watchdog_thread, _watchdog
+    if _worker_thread is None or not _worker_thread.is_alive():
+        _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
+        _worker_thread.start()
+    if _watchdog_thread is None or not _watchdog_thread.is_alive():
+        _watchdog = QueueWatchdog()
+        _watchdog_thread = _watchdog
+        _watchdog_thread.start()
 
 # ------------------------------------------------------------------
 # 2️⃣  END-POINT ----------------------------------------------------
@@ -892,6 +937,16 @@ async def status():
 @app.get("/metrics")
 async def metrics():
     return {"queue": len(task_queue), "last_completed": last_completed_ts}
+
+
+@app.get("/health")
+async def health():
+    """Return basic health information for the monitor."""
+    return {
+        "queue": len(task_queue),
+        "worker_alive": bool(_worker_thread and _worker_thread.is_alive()),
+        "watchdog_restarts": getattr(_watchdog, "restarts", 0),
+    }
 
 
 @app.get("/status/{task_id}")

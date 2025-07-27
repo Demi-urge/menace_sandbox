@@ -105,12 +105,12 @@ elif "menace" not in sys.modules:
     import importlib.util
 
 def _visual_agent_running(urls: str) -> bool:
-    """Return ``True`` if the visual agent responds to ``/status``."""
+    """Return ``True`` if the visual agent responds to ``/health``."""
     try:
         import requests  # type: ignore
 
         base = urls.split(";")[0]
-        resp = requests.get(f"{base}/status", timeout=3)
+        resp = requests.get(f"{base}/health", timeout=3)
         return resp.status_code == 200
     except Exception:
         return False
@@ -241,18 +241,25 @@ class VisualAgentMonitor:
         while not self._stop.is_set():
             running = _visual_agent_running(self.urls)
             tok = os.getenv("VISUAL_AGENT_TOKEN", "")
-            if not running or not queue_path.exists():
-                if not running:
-                    try:
-                        self.manager.restart_with_token(tok)
-                        for _ in range(10):
-                            time.sleep(0.5)
-                            if _visual_agent_running(self.urls):
-                                break
-                    except Exception:
-                        logger.exception("failed to restart visual agent")
-                        self._stop.wait(self.interval)
-                        continue
+            if not running:
+                try:
+                    self.manager.restart_with_token(tok)
+                    for _ in range(10):
+                        time.sleep(0.5)
+                        if _visual_agent_running(self.urls):
+                            break
+                except Exception:
+                    logger.exception("failed to restart visual agent")
+                    self._stop.wait(self.interval)
+                    continue
+            healthy = True
+            try:
+                import requests  # type: ignore
+                resp = requests.get(f"{base}/health", timeout=5)
+                healthy = resp.status_code == 200
+            except Exception:
+                healthy = False
+            if not healthy or not queue_path.exists():
                 try:
                     import requests  # type: ignore
                     requests.post(
@@ -262,16 +269,6 @@ class VisualAgentMonitor:
                     )
                 except Exception:
                     logger.exception("failed to trigger agent recovery")
-            else:
-                try:
-                    import requests  # type: ignore
-                    requests.post(
-                        f"{base}/integrity",
-                        headers={"Authorization": f"Bearer {tok}"},
-                        timeout=5,
-                    )
-                except Exception:
-                    logger.exception("failed to check agent integrity")
             self._stop.wait(self.interval)
 class PresetModel(BaseModel):
     """Schema for environment presets."""
