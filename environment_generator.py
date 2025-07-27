@@ -486,6 +486,7 @@ def adapt_presets(
     """
 
     debug = os.getenv("PRESET_DEBUG") == "1"
+    actions: list[str] = []
     agent = None
     rl_path = os.getenv("SANDBOX_PRESET_RL_PATH")
     if not rl_path:
@@ -524,6 +525,7 @@ def adapt_presets(
 
     sec_vals = tracker.metrics_history.get("security_score", [])
     if not sec_vals:
+        adapt_presets.last_actions = []
         return presets
 
     recent = sec_vals[-3:]
@@ -552,6 +554,8 @@ def adapt_presets(
         for p in presets:
             cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
             p["THREAT_INTENSITY"] = _next_level(cur, False)
+    if sec_decision != "none":
+        actions.append(f"security_{sec_decision}")
     if debug:
         logger.debug(
             "security avg %.2f -> %s threat intensity",
@@ -626,6 +630,8 @@ def adapt_presets(
                     roi_decision=roi_decision,
                 ),
             )
+        if roi_decision != "none":
+            actions.append(f"roi_{roi_decision}")
 
     # --------------------------------------------------------------
     # Use reinforcement learning when sufficient history is available
@@ -1297,6 +1303,8 @@ def adapt_presets(
             elif avg_syn_long < -0.05:
                 p["GPU_LIMIT"] = _next_val(_GPU_LIMITS, gpu, False)
                 p["DISK_LIMIT"] = _next_val(_DISK_LIMITS, disk, False)
+
+    adapt_presets.last_actions = actions
 
     return presets
 
