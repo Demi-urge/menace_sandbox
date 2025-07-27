@@ -135,14 +135,14 @@ from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
 from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
-from menace.synergy_history_db import migrate_json_to_db
+from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
+import menace.synergy_history_db as shd
 from metrics_exporter import (
     start_metrics_server,
     roi_threshold_gauge,
     synergy_threshold_gauge,
 )
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
-from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
