@@ -139,8 +139,11 @@ _DEFAULT_LOG_CONFIG: Dict[str, Any] = {
 }
 
 
-def setup_logging(config_path: str | None = None) -> None:
-    """Configure logging from *config_path* or defaults."""
+def setup_logging(config_path: str | None = None, level: str | int | None = None) -> None:
+    """Configure logging from *config_path* or defaults.
+
+    When *level* is provided the root logger level is overridden after
+    configuration. The argument may be a logging level name or numeric value."""
     path = Path(config_path or os.getenv("MENACE_LOGGING_CONFIG", ""))
     cfg: Dict[str, Any] | None = None
     if path.is_file():
@@ -160,6 +163,11 @@ def setup_logging(config_path: str | None = None) -> None:
                 handler["formatter"] = "json"
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
+    if level is not None:
+        if isinstance(level, int):
+            logging.getLogger().setLevel(level)
+        else:
+            logging.getLogger().setLevel(getattr(logging, str(level).upper(), logging.INFO))
     handler = _central_handler()
     if handler:
         handler.addFilter(
