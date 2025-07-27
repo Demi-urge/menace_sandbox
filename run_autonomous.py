@@ -612,16 +612,42 @@ def update_metrics(
         roi_ma_history.append(roi_ema)
 
     try:
-        pred, _ = tracker.forecast()
+        pred, (lo, hi) = tracker.forecast()
         roi_forecast_gauge.set(float(pred))
+        logger.debug(
+            "roi forecast=%.3f CI=(%.3f, %.3f)",
+            pred,
+            lo,
+            hi,
+            extra=log_record(
+                run=run_idx,
+                roi_prediction=pred,
+                ci_lower=lo,
+                ci_upper=hi,
+            ),
+        )
     except Exception:
         logger.exception("ROI forecast failed")
 
     if getattr(args, "auto_thresholds", False):
         roi_threshold = cli._adaptive_threshold(tracker.roi_history, args.roi_cycles)
+        thr_method = "adaptive"
     elif roi_threshold is None:
         roi_threshold = tracker.diminishing()
+        thr_method = "diminishing"
+    else:
+        thr_method = "fixed"
     roi_threshold_gauge.set(float(roi_threshold))
+    logger.debug(
+        "roi threshold=%.3f method=%s",
+        roi_threshold,
+        thr_method,
+        extra=log_record(
+            run=run_idx,
+            roi_threshold=roi_threshold,
+            method=thr_method,
+        ),
+    )
     new_flags, _ = cli._diminishing_modules(
         module_history,
         flagged,
@@ -642,6 +668,15 @@ def update_metrics(
         )
     )
     synergy_threshold_gauge.set(float(syn_thr_val))
+    logger.debug(
+        "synergy threshold=%.3f",
+        syn_thr_val,
+        extra=log_record(
+            run=run_idx,
+            synergy_threshold=syn_thr_val,
+            fixed=thr is not None,
+        ),
+    )
     converged, ema_val, conf = cli.adaptive_synergy_convergence(
         synergy_history,
         args.synergy_cycles,
@@ -652,11 +687,18 @@ def update_metrics(
     )
     threshold_log.log(run_idx, roi_threshold, syn_thr_val, converged)
     logger.debug(
-        "synergy convergence=%s max|ema|=%.3f conf=%.3f",
+        "synergy convergence=%s max|ema|=%.3f conf=%.3f thr=%.3f",
         converged,
         ema_val,
         conf,
-        extra=log_record(run=run_idx, converged=converged, ema_value=ema_val, confidence=conf),
+        syn_thr_val,
+        extra=log_record(
+            run=run_idx,
+            converged=converged,
+            ema_value=ema_val,
+            confidence=conf,
+            threshold=syn_thr_val,
+        ),
     )
     return converged, ema_val, roi_threshold
 
