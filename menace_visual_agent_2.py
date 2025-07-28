@@ -35,7 +35,10 @@ try:
     from .visual_agent_queue import VisualAgentQueue
 except ImportError:  # pragma: no cover - allow running as script
     from visual_agent_queue import VisualAgentQueue
-import metrics_exporter
+try:
+    from . import metrics_exporter
+except Exception:  # pragma: no cover - allow running as script
+    import metrics_exporter
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
 _token = "tombalolosvisualagent123"
