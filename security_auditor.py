@@ -3,7 +3,6 @@ from __future__ import annotations
 """Basic security auditing helpers with an optional auto-fix loop."""
 
 import logging
-import subprocess
 
 
 class SecurityAuditor:
