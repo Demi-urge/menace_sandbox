@@ -20,7 +20,7 @@ from . import metrics_exporter
 
 from .audit_logger import log_event
 
-from lock_utils import _ContextFileLock, LOCK_TIMEOUT
+from .lock_utils import _ContextFileLock, LOCK_TIMEOUT
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency

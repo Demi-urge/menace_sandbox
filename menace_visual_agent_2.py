@@ -23,7 +23,7 @@ import uvicorn
 import secrets
 import tempfile
 from contextlib import suppress
-from lock_utils import _ContextFileLock, is_lock_stale, Timeout
+from .lock_utils import _ContextFileLock, is_lock_stale, Timeout
 import json
 from pathlib import Path
 import atexit
