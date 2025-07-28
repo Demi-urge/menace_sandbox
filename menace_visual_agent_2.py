@@ -150,6 +150,15 @@ def _remove_pid_file() -> None:
         logger.exception("failed to remove pid file %s", path)
 
 
+def _read_pid_file(path: Path) -> int | None:
+    """Return the PID stored in ``path`` or ``None`` if unreadable."""
+    try:
+        return int(path.read_text().strip())
+    except Exception as exc:
+        logger.error("unable to read pid from %s: %s", path, exc)
+        return None
+
+
 def _remove_instance_lock() -> None:
     path = Path(INSTANCE_LOCK_PATH)
     try:
@@ -161,6 +170,15 @@ def _remove_instance_lock() -> None:
         logger.exception("failed to remove instance lock %s", path)
 
 
+def _read_instance_pid(path: Path) -> int | None:
+    """Return the PID stored in ``path`` or ``None`` if unreadable."""
+    try:
+        return int(path.read_text().split(",")[0])
+    except Exception as exc:
+        logger.error("unable to read lock pid from %s: %s", path, exc)
+        return None
+
+
 def _setup_pid_file() -> None:
     if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
         try:
@@ -169,11 +187,7 @@ def _setup_pid_file() -> None:
             logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
     path = Path(PID_FILE_PATH)
     if path.exists():
-        existing = None
-        try:
-            existing = int(path.read_text().strip())
-        except Exception as exc:
-            logger.error("unable to read pid from %s: %s", path, exc)
+        existing = _read_pid_file(path)
         if existing and existing != os.getpid() and _pid_alive(existing):
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {existing})"
@@ -193,12 +207,7 @@ def _setup_instance_lock() -> None:
     """Create a crash-resistant instance lock."""
     path = Path(INSTANCE_LOCK_PATH)
     if path.exists():
-        pid = None
-        try:
-            pid = int(path.read_text().split(",")[0])
-        except Exception as exc:
-            logger.error("unable to read lock pid from %s: %s", path, exc)
-
+        pid = _read_instance_pid(path)
         if pid and _pid_alive(pid) and pid != os.getpid():
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {pid})"
@@ -229,10 +238,7 @@ def _cleanup_stale_files() -> None:
     path = Path(INSTANCE_LOCK_PATH)
     try:
         if path.exists():
-            try:
-                pid = int(path.read_text().split(",")[0])
-            except Exception:
-                pid = None
+            pid = _read_instance_pid(path)
             if pid is None or not _pid_alive(pid):
                 path.unlink()
     except Exception:  # pragma: no cover - fs errors
@@ -240,10 +246,7 @@ def _cleanup_stale_files() -> None:
     path = Path(PID_FILE_PATH)
     try:
         if path.exists():
-            try:
-                pid = int(path.read_text().strip())
-            except Exception:
-                pid = None
+            pid = _read_pid_file(path)
             if pid is None or not _pid_alive(pid):
                 path.unlink()
     except Exception:  # pragma: no cover - fs errors
@@ -1223,11 +1226,16 @@ if __name__ == "__main__":
     def _handle_signal(sig, frame):
         _exit_event.set()
         server.handle_exit(sig, frame)
+        _remove_instance_lock()
+        _remove_pid_file()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _handle_signal)
-
-    server.run()
-    _exit_event.set()
-    if _worker_thread:
-        _worker_thread.join()
+    try:
+        server.run()
+    finally:
+        _exit_event.set()
+        if _worker_thread:
+            _worker_thread.join()
+        _remove_instance_lock()
+        _remove_pid_file()
