@@ -204,28 +204,23 @@ def _setup_pid_file() -> None:
 
 
 def _setup_instance_lock() -> None:
-    """Create or recover the instance lock for this process."""
+    """Create a crash-resistant instance lock for this process."""
     path = Path(INSTANCE_LOCK_PATH)
-    stale = False
     if path.exists():
         pid = _read_instance_pid(path)
-        if pid is None or not _pid_alive(pid):
-            stale = True
-        elif pid != os.getpid():
+        if pid is not None and _pid_alive(pid) and pid != os.getpid():
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {pid})"
             )
-        else:
-            stale = True
-
-        if stale:
-            try:
-                path.unlink()
-            except Exception:
-                logger.exception("failed to remove stale instance lock %s", path)
+        # Stale lock from dead process -> remove
+        with suppress(Exception):
+            path.unlink()
 
     try:
-        path.write_text(f"{os.getpid()},{time.time()}")
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(f"{os.getpid()},{time.time()}")
+        os.replace(tmp, path)
     finally:
         atexit.register(_remove_instance_lock)
 
