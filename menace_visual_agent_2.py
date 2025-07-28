@@ -222,15 +222,25 @@ def _setup_instance_lock() -> None:
     """Create a crash-resistant instance lock for this process."""
     path = Path(INSTANCE_LOCK_PATH)
 
+    # If a lock already exists validate it before proceeding
     if path.exists():
         pid = _read_instance_pid(path)
-        if pid is not None and _pid_alive(pid) and pid != os.getpid():
-            raise SystemExit(
-                f"Another instance of menace_visual_agent_2 is running (PID {pid})"
-            )
-        with suppress(Exception):
-            path.unlink()
+        if pid is not None:
+            if _pid_alive(pid):
+                if pid != os.getpid():
+                    raise SystemExit(
+                        f"Another instance of menace_visual_agent_2 is running (PID {pid})"
+                    )
+            else:
+                # Stale lock from crashed process
+                with suppress(Exception):
+                    path.unlink()
+        else:
+            # Corrupt lock file
+            with suppress(Exception):
+                path.unlink()
 
+    # Write our PID and timestamp atomically
     try:
         tmp = path.with_suffix(path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
