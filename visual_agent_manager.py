@@ -10,7 +10,10 @@ import time
 import json
 from pathlib import Path
 
-from visual_agent_queue import VisualAgentQueue
+try:
+    from .visual_agent_queue import VisualAgentQueue
+except ImportError:  # pragma: no cover - allow running as script
+    from visual_agent_queue import VisualAgentQueue
 
 
 def _pid_alive(pid: int) -> bool:

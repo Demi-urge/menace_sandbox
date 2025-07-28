@@ -23,12 +23,18 @@ import uvicorn
 import secrets
 import tempfile
 from contextlib import suppress
-from .lock_utils import _ContextFileLock, is_lock_stale, Timeout
+try:
+    from .lock_utils import _ContextFileLock, is_lock_stale, Timeout
+except ImportError:  # pragma: no cover - allow running as script
+    from lock_utils import _ContextFileLock, is_lock_stale, Timeout
 import json
 from pathlib import Path
 import atexit
 import psutil
-from visual_agent_queue import VisualAgentQueue
+try:
+    from .visual_agent_queue import VisualAgentQueue
+except ImportError:  # pragma: no cover - allow running as script
+    from visual_agent_queue import VisualAgentQueue
 import metrics_exporter
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
