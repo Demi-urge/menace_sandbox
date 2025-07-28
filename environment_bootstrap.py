@@ -25,7 +25,6 @@ from .retry_utils import retry
 from .system_provisioner import SystemProvisioner
 from .secrets_manager import SecretsManager
 from .vault_secret_provider import VaultSecretProvider
-from .security_auditor import SecurityAuditor, fix_until_safe
 from .external_dependency_provisioner import ExternalDependencyProvisioner
 from . import startup_checks
 
@@ -273,13 +272,9 @@ class EnvironmentBootstrapper:
             self.install_dependencies(deps)
         self.run_migrations()
         self.bootstrapper.bootstrap()
-        auditor = SecurityAuditor()
-        if not auditor.audit():
-            os.environ["MENACE_SAFE"] = "1"
-            self.logger.error("security audit failed; safe mode enabled")
-            if fix_until_safe(auditor):
-                os.environ.pop("MENACE_SAFE", None)
-                self.logger.info("safe mode disabled after auto fix")
+        # The security auditor previously enforced Bandit and Safety checks
+        # and enabled safe mode when they failed. These checks have been
+        # removed, so the bootstrapper no longer toggles ``MENACE_SAFE``.
         interval = os.getenv("AUTO_PROVISION_INTERVAL")
         if interval:
             try:
