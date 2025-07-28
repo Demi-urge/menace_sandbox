@@ -221,7 +221,15 @@ def _setup_pid_file() -> None:
 def _setup_instance_lock() -> None:
     """Create a crash-resistant instance lock for this process."""
     path = Path(INSTANCE_LOCK_PATH)
-    _check_existing_instance_lock(path)
+
+    if path.exists():
+        pid = _read_instance_pid(path)
+        if pid is not None and _pid_alive(pid) and pid != os.getpid():
+            raise SystemExit(
+                f"Another instance of menace_visual_agent_2 is running (PID {pid})"
+            )
+        with suppress(Exception):
+            path.unlink()
 
     try:
         tmp = path.with_suffix(path.suffix + ".tmp")
