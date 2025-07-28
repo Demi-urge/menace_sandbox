@@ -2,7 +2,7 @@
 
 `advanced_error_management.py` introduces helpers that push Menace error management toward a 10/10 score.
 
-- **FormalVerifier** runs `flake8`, `bandit`, `mypy` and Hypothesis-based tests against patched code. When `angr` is available it also performs a symbolic analysis and fails verification if new execution paths raise exceptions.
+- **FormalVerifier** runs `flake8`, `mypy` and Hypothesis-based tests against patched code. When `angr` is available it also performs a symbolic analysis and fails verification if new execution paths raise exceptions.
 - **TelemetryReplicator** streams error telemetry to Kafka, Sentry and local disk.
   Events include integrity hashes and fall back to disk if brokers are unavailable.
 - **AutomatedRollbackManager** rolls back patches across multiple nodes automatically.

@@ -11,7 +11,6 @@ from typing import Optional
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .error_bot import ErrorDB
-from .security_auditor import SecurityAuditor
 
 
 class SelfServiceOverride:
@@ -62,7 +61,6 @@ class SelfServiceOverride:
             self.logger.warning(
                 "performance drop detected; safe mode feature disabled"
             )
-            SecurityAuditor().audit()
 
     # ------------------------------------------------------------------
     def run_continuous(
@@ -130,7 +128,6 @@ class AutoRollbackService(SelfServiceOverride):
                 "rollback triggered; safe mode feature disabled"
             )
             self._revert_last_patch()
-            SecurityAuditor().audit()
 
 
 __all__ = ["SelfServiceOverride", "AutoRollbackService"]

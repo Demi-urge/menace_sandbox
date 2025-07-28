@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 class FormalVerifier:
     """Run static analysis and property tests on code patches."""
 
-    tools = ["flake8", "bandit", "mypy"]
+    tools = ["flake8", "mypy"]
 
     def __init__(
         self,

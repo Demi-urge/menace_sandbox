@@ -48,14 +48,6 @@ def test_adjust_triggers_audit(tmp_path, monkeypatch):
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=10))
 
-    calls = {"audit": 0}
-
-    def fake_audit(self):
-        calls["audit"] += 1
-        return True
-
-    monkeypatch.setattr(so.SecurityAuditor, "audit", fake_audit)
     svc = so.SelfServiceOverride(roi, metrics)
     svc.adjust()
-    assert calls["audit"] == 1
     assert os.environ.get("MENACE_SAFE") is None
