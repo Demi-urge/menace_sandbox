@@ -123,7 +123,7 @@ except Exception:  # pragma: no cover - fs errors
 _global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
 INSTANCE_LOCK_PATH = os.getenv(
     "VISUAL_AGENT_INSTANCE_LOCK",
-    os.path.join(tempfile.gettempdir(), "visual_agent.run.lock"),
+    os.path.join(tempfile.gettempdir(), "visual_agent.lock.tmp"),
 )
 # PID file setup
 PID_FILE_PATH = os.getenv(
@@ -195,7 +195,8 @@ def _setup_instance_lock() -> None:
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {pid})"
             )
-        # PID not running -> remove stale lock
+
+        # PID not running -> remove stale lock file
         try:
             path.unlink()
         except Exception:
