@@ -15,7 +15,7 @@ from .security_auditor import SecurityAuditor
 
 
 class SelfServiceOverride:
-    """Enable or disable safe mode without human input."""
+    """Toggle system behavior without human input."""
 
     def __init__(
         self,
@@ -88,7 +88,7 @@ class SelfServiceOverride:
 
 
 class AutoRollbackService(SelfServiceOverride):
-    """Enable safe mode and revert the last patch when thresholds are crossed."""
+    """Revert the last patch when thresholds are crossed."""
 
     def __init__(
         self,
