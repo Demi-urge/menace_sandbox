@@ -71,6 +71,7 @@ app = FastAPI(title="Menace-Visual-Agent")
 def _startup_load_state() -> None:
     _cleanup_stale_files()
     _setup_pid_file()
+    _setup_instance_lock()
     recovered = task_queue.check_integrity()
     if os.path.exists(GLOBAL_LOCK_PATH) and _global_lock.is_lock_stale():
         with suppress(Exception):
@@ -118,7 +119,12 @@ try:
 except Exception:  # pragma: no cover - fs errors
     logger.exception("failed to remove stale lock %s", GLOBAL_LOCK_PATH)
 
+# File-based lock preventing multiple agent instances
 _global_lock = _ContextFileLock(GLOBAL_LOCK_PATH)
+INSTANCE_LOCK_PATH = os.getenv(
+    "VISUAL_AGENT_INSTANCE_LOCK",
+    os.path.join(tempfile.gettempdir(), "visual_agent.run.lock"),
+)
 # PID file setup
 PID_FILE_PATH = os.getenv(
     "VISUAL_AGENT_PID_FILE",
@@ -134,6 +140,17 @@ def _remove_pid_file() -> None:
                 path.unlink()
     except Exception:
         logger.exception("failed to remove pid file %s", path)
+
+
+def _remove_instance_lock() -> None:
+    path = Path(INSTANCE_LOCK_PATH)
+    try:
+        if path.exists():
+            existing_pid = int(path.read_text().split(",")[0])
+            if existing_pid == os.getpid():
+                path.unlink()
+    except Exception:
+        logger.exception("failed to remove instance lock %s", path)
 
 
 def _setup_pid_file() -> None:
@@ -164,6 +181,28 @@ def _setup_pid_file() -> None:
         atexit.register(_remove_pid_file)
 
 
+def _setup_instance_lock() -> None:
+    path = Path(INSTANCE_LOCK_PATH)
+    if path.exists():
+        pid = None
+        try:
+            pid = int(path.read_text().split(",")[0])
+        except Exception as exc:
+            logger.error("unable to read lock pid from %s: %s", path, exc)
+        if pid and pid != os.getpid() and psutil.pid_exists(pid):
+            raise SystemExit(
+                f"Another instance of menace_visual_agent_2 is running (PID {pid})"
+            )
+        try:
+            path.unlink()
+        except Exception:
+            logger.exception("failed to remove stale instance lock %s", path)
+    try:
+        path.write_text(f"{os.getpid()},{time.time()}")
+    finally:
+        atexit.register(_remove_instance_lock)
+
+
 def _cleanup_stale_files() -> None:
     """Remove leftover lock and PID files."""
     try:
@@ -173,6 +212,18 @@ def _cleanup_stale_files() -> None:
             os.remove(GLOBAL_LOCK_PATH)
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove lock %s", GLOBAL_LOCK_PATH)
+
+    path = Path(INSTANCE_LOCK_PATH)
+    try:
+        if path.exists():
+            try:
+                pid = int(path.read_text().split(",")[0])
+            except Exception:
+                pid = None
+            if pid is None or not psutil.pid_exists(pid):
+                path.unlink()
+    except Exception:  # pragma: no cover - fs errors
+        logger.exception("failed to remove instance lock %s", path)
     path = Path(PID_FILE_PATH)
     try:
         if path.exists():
@@ -1118,6 +1169,7 @@ if __name__ == "__main__":
         AUTO_RECOVER_ON_STARTUP = True
         _cleanup_stale_files()
         _setup_pid_file()
+        _setup_instance_lock()
         _initialize_state()
         _start_background_threads()
         try:
@@ -1137,6 +1189,7 @@ if __name__ == "__main__":
 
     _cleanup_stale_files()
     _setup_pid_file()
+    _setup_instance_lock()
     logger.info(
         "Menace Visual Agent listening on :%s  token=%s",
         HTTP_PORT,
