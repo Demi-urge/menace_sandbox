@@ -24,7 +24,6 @@
 - `metrics_exporter` tries to install `prometheus_client` during bootstrap and
   serves a fallback HTTP endpoint if the install fails
 - Centralised logging via Elasticsearch or Splunk and optional Sentry alerts ([docs/monitoring_pipeline.md](docs/monitoring_pipeline.md))
-- Manual safe mode and override flags for risk-free operation
 - Daily and weekly budget enforcement via `CapitalManagementBot` ([docs/capital_management.md](docs/capital_management.md))
 - Military grade error management helpers ([docs/military_error_handling.md](docs/military_error_handling.md))
 - Optional systemd unit for auto-start on boot (`systemd/menace.service`)
@@ -925,15 +924,14 @@ creator.create_bots(tasks)
 
 ### Safe mode and overrides
 
-`SelfServiceOverride` automatically toggles safe mode when ROI or error
-metrics exceed the configured thresholds. Manual environment variables
-`MENACE_SAFE` and `EVOLUTION_PAUSED` no longer need to be set.
+`SelfServiceOverride` now only logs warnings when ROI or error metrics exceed
+the configured thresholds. The environment variables `MENACE_SAFE` and
+`EVOLUTION_PAUSED` have been removed.
 
-Enable safe mode when ROI drops by more than **10%**, error rates exceed **25%**
-or the energy score falls under **0.3**. These limits match the defaults used by
-the core evolution services. When triggered, `AutoRollbackService` automatically
-reverts the most recent commit via `git revert` and keeps safe mode active until
-metrics recover.
+The same thresholds apply&mdash;an ROI drop of more than **10%**, error rates
+above **25%** or an energy score below **0.3**&mdash;but safe mode is no longer
+toggled automatically. Instead `AutoRollbackService` simply logs a warning
+with the offending commit so you can decide whether to revert manually.
 
 
 ### Automated environment bootstrap
