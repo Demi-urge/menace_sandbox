@@ -46,6 +46,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _pid_alive(pid: int) -> bool:
+    """Return True if the given PID appears to be running."""
+    try:
+        return psutil.pid_exists(pid)
+    except Exception:
+        return False
+
+
 def _extract_token(x_token: str | None, authorization: str | None) -> str:
     """Return the token from ``authorization`` or ``x_token`` headers."""
     if authorization and authorization.lower().startswith("bearer "):
@@ -166,7 +174,7 @@ def _setup_pid_file() -> None:
             existing = int(path.read_text().strip())
         except Exception as exc:
             logger.error("unable to read pid from %s: %s", path, exc)
-        if existing and existing != os.getpid() and psutil.pid_exists(existing):
+        if existing and existing != os.getpid() and _pid_alive(existing):
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {existing})"
             )
@@ -191,7 +199,7 @@ def _setup_instance_lock() -> None:
         except Exception as exc:
             logger.error("unable to read lock pid from %s: %s", path, exc)
 
-        if pid and psutil.pid_exists(pid) and pid != os.getpid():
+        if pid and _pid_alive(pid) and pid != os.getpid():
             raise SystemExit(
                 f"Another instance of menace_visual_agent_2 is running (PID {pid})"
             )
@@ -225,7 +233,7 @@ def _cleanup_stale_files() -> None:
                 pid = int(path.read_text().split(",")[0])
             except Exception:
                 pid = None
-            if pid is None or not psutil.pid_exists(pid):
+            if pid is None or not _pid_alive(pid):
                 path.unlink()
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove instance lock %s", path)
@@ -236,7 +244,7 @@ def _cleanup_stale_files() -> None:
                 pid = int(path.read_text().strip())
             except Exception:
                 pid = None
-            if pid is None or not psutil.pid_exists(pid):
+            if pid is None or not _pid_alive(pid):
                 path.unlink()
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove pid file %s", path)
