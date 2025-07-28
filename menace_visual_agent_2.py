@@ -32,9 +32,7 @@ from visual_agent_queue import VisualAgentQueue
 import metrics_exporter
 # ------------------------------------------------------------------
 # 0️⃣  CONFIG -------------------------------------------------------
-_token = os.getenv("VISUAL_AGENT_TOKEN")
-if not _token:
-    raise RuntimeError("VISUAL_AGENT_TOKEN environment variable is required")
+_token = "tombalolosvisualagent123"
 API_TOKEN = _token
 API_TOKEN_HASH = hashlib.sha256(API_TOKEN.encode()).hexdigest()
 HTTP_PORT = int(os.getenv("MENACE_AGENT_PORT", 8001))
