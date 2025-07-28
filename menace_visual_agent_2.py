@@ -179,6 +179,21 @@ def _read_instance_pid(path: Path) -> int | None:
         return None
 
 
+def _check_existing_instance_lock(path: Path) -> None:
+    """Validate or remove an existing instance lock."""
+    if not path.exists():
+        return
+    pid = _read_instance_pid(path)
+    if pid is None or not _pid_alive(pid):
+        with suppress(Exception):
+            path.unlink()
+        return
+    if pid != os.getpid():
+        raise SystemExit(
+            f"Another instance of menace_visual_agent_2 is running (PID {pid})"
+        )
+
+
 def _setup_pid_file() -> None:
     if os.path.exists(GLOBAL_LOCK_PATH) and is_lock_stale(GLOBAL_LOCK_PATH):
         try:
@@ -206,15 +221,7 @@ def _setup_pid_file() -> None:
 def _setup_instance_lock() -> None:
     """Create a crash-resistant instance lock for this process."""
     path = Path(INSTANCE_LOCK_PATH)
-    if path.exists():
-        pid = _read_instance_pid(path)
-        if pid is not None and _pid_alive(pid) and pid != os.getpid():
-            raise SystemExit(
-                f"Another instance of menace_visual_agent_2 is running (PID {pid})"
-            )
-        # Stale lock from dead process -> remove
-        with suppress(Exception):
-            path.unlink()
+    _check_existing_instance_lock(path)
 
     try:
         tmp = path.with_suffix(path.suffix + ".tmp")
@@ -237,10 +244,7 @@ def _cleanup_stale_files() -> None:
 
     path = Path(INSTANCE_LOCK_PATH)
     try:
-        if path.exists():
-            pid = _read_instance_pid(path)
-            if pid is None or not _pid_alive(pid):
-                path.unlink()
+        _check_existing_instance_lock(path)
     except Exception:  # pragma: no cover - fs errors
         logger.exception("failed to remove instance lock %s", path)
     path = Path(PID_FILE_PATH)
