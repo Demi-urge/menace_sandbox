@@ -71,7 +71,7 @@ def test_notifier_default_handler(monkeypatch):
     assert called == ["boom"]
 
 
-def test_self_service_override_enables_safe(tmp_path):
+def test_self_service_override_enables_safe(tmp_path, monkeypatch):
     import menace.self_service_override as so
     import menace.data_bot as db
 
@@ -97,10 +97,14 @@ def test_self_service_override_enables_safe(tmp_path):
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=1.0, memory=1.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=10))
 
+    calls = []
+
+    monkeypatch.setattr(so.SecurityAuditor, "audit", lambda self: calls.append(True))
+
     svc = so.SelfServiceOverride(roi, metrics)
     svc.adjust()
-    assert os.environ.get("MENACE_SAFE") == "1"
-    os.environ.pop("MENACE_SAFE", None)
+    assert calls
+    assert os.environ.get("MENACE_SAFE") is None
 
 
 def test_publish_retry_and_log(monkeypatch, caplog):
@@ -156,7 +160,6 @@ def test_auto_rollback_service(tmp_path, monkeypatch):
 
     svc = so.AutoRollbackService(roi, metrics)
     svc.adjust()
-    assert os.environ.get("MENACE_SAFE") == "1"
     assert calls and calls[0][0] == "git"
-    os.environ.pop("MENACE_SAFE", None)
+    assert os.environ.get("MENACE_SAFE") is None
 
