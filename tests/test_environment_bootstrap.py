@@ -283,7 +283,6 @@ def test_bootstrap_installs_apscheduler(monkeypatch):
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "run_migrations", lambda s: None)
     monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda self: None)
-    monkeypatch.setattr(eb.SecurityAuditor, "audit", lambda self: True)
     monkeypatch.setattr(eb, "ensure_config", lambda: None)
     monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
     monkeypatch.setattr(eb.importlib.util, "find_spec", lambda name: None if name == "apscheduler" else object())
@@ -296,7 +295,7 @@ def test_bootstrap_installs_apscheduler(monkeypatch):
     assert "apscheduler" in installs
 
 
-def test_security_audit_failure_enables_safe_mode(monkeypatch, tmp_path, caplog):
+def test_security_audit_removed(monkeypatch, tmp_path, caplog):
     caplog.set_level("ERROR")
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_commands", lambda s, c: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_remote_dependencies", lambda s, u: None)
@@ -306,18 +305,22 @@ def test_security_audit_failure_enables_safe_mode(monkeypatch, tmp_path, caplog)
     monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: True)
     monkeypatch.setattr(eb, "ensure_config", lambda: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda self: None)
-    monkeypatch.setattr(eb.SecurityAuditor, "audit", lambda self: False)
-    monkeypatch.setattr(eb, "fix_until_safe", lambda auditor: False)
+    called = {"fix": 0}
+
+    def fake_fix(auditor):
+        called["fix"] += 1
+        return False
+
+    # fix_until_safe no longer used
 
     monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
     boot = eb.EnvironmentBootstrapper(tf_dir=str(tmp_path))
     boot.bootstrap()
-    assert os.environ.get("MENACE_SAFE") == "1"
-    assert "security audit failed" in caplog.text
-    os.environ.pop("MENACE_SAFE", None)
+    assert os.environ.get("MENACE_SAFE") is None
+    assert called["fix"] == 0
 
 
-def test_security_audit_auto_fix(monkeypatch, tmp_path):
+def test_security_audit_not_invoked(monkeypatch, tmp_path):
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_commands", lambda s, c: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_remote_dependencies", lambda s, u: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "install_dependencies", lambda s, r: None)
@@ -331,19 +334,19 @@ def test_security_audit_auto_fix(monkeypatch, tmp_path):
 
     def fake_audit(self):
         counts["audit"] += 1
-        return counts["audit"] > 1
+        return False
 
     def fake_fix(aud):
         counts["fix"] += 1
-        return aud.audit()
+        return False
 
-    monkeypatch.setattr(eb.SecurityAuditor, "audit", fake_audit)
-    monkeypatch.setattr(eb, "fix_until_safe", fake_fix)
+    # fix_until_safe no longer used
     monkeypatch.setattr(eb.startup_checks, "verify_project_dependencies", lambda: [])
     boot = eb.EnvironmentBootstrapper(tf_dir=str(tmp_path))
     boot.bootstrap()
-    assert counts["audit"] >= 2
-    assert counts["fix"] == 1
+    # The auditor and fixer should never be called
+    assert counts["audit"] == 0
+    assert counts["fix"] == 0
     assert os.environ.get("MENACE_SAFE") is None
 
 
@@ -412,7 +415,6 @@ def test_bootstrap_verifies_pyproject_dependencies(monkeypatch, tmp_path):
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "export_secrets", lambda s: None)
     monkeypatch.setattr(eb.EnvironmentBootstrapper, "check_nvidia_driver", lambda s: None)
     monkeypatch.setattr(eb.InfrastructureBootstrapper, "bootstrap", lambda self: None)
-    monkeypatch.setattr(eb.SecurityAuditor, "audit", lambda self: True)
     monkeypatch.setattr(eb, "ensure_config", lambda: None)
 
     def fake_install(self, reqs):
@@ -424,5 +426,5 @@ def test_bootstrap_verifies_pyproject_dependencies(monkeypatch, tmp_path):
     boot.bootstrap()
 
     assert checked == ["missing_pkg"]
-    assert installs == ["missing_pkg"]
+    assert installs == ["missing_pkg", "apscheduler"]
 
