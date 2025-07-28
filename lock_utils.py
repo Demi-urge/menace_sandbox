@@ -91,7 +91,8 @@ class _ContextFileLock(FileLock):
             while True:
                 fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, getattr(self._context, "mode", 0o644))
                 with suppress(PermissionError):
-                    os.fchmod(fd, getattr(self._context, "mode", 0o644))
+                    if hasattr(os, "fchmod"):
+                        os.fchmod(fd, getattr(self._context, "mode", 0o644))
                 try:
                     if fcntl:
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
