@@ -22,7 +22,7 @@ def test_run_continuous_invokes_adjust(tmp_path, monkeypatch):
     assert calls
 
 
-def test_adjust_auto_fix(tmp_path, monkeypatch):
+def test_adjust_triggers_audit(tmp_path, monkeypatch):
     class DummyDF(list):
         @property
         def iloc(self):
@@ -48,16 +48,14 @@ def test_adjust_auto_fix(tmp_path, monkeypatch):
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=0.0, memory=0.0, response_time=0.0, disk_io=0.0, net_io=0.0, errors=10))
 
-    calls = {"fix": 0}
+    calls = {"audit": 0}
 
-    monkeypatch.setattr(so.SecurityAuditor, "audit", lambda self: True)
-
-    def fake_fix(aud):
-        calls["fix"] += 1
+    def fake_audit(self):
+        calls["audit"] += 1
         return True
 
-    monkeypatch.setattr(so, "fix_until_safe", fake_fix)
+    monkeypatch.setattr(so.SecurityAuditor, "audit", fake_audit)
     svc = so.SelfServiceOverride(roi, metrics)
     svc.adjust()
-    assert calls["fix"] == 1
+    assert calls["audit"] == 1
     assert os.environ.get("MENACE_SAFE") is None

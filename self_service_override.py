@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Automatically adjust safe mode based on ROI and error metrics."""
+"""Previously toggled safe mode based on ROI and errors."""
 
 import logging
 import os
@@ -11,7 +11,7 @@ from typing import Optional
 from .resource_allocation_optimizer import ROIDB
 from .data_bot import MetricsDB
 from .error_bot import ErrorDB
-from .security_auditor import SecurityAuditor, fix_until_safe
+from .security_auditor import SecurityAuditor
 
 
 class SelfServiceOverride:
@@ -59,16 +59,10 @@ class SelfServiceOverride:
         drop = self._calc_roi_drop()
         err = self._error_rate()
         if drop >= self.roi_drop or err >= self.error_threshold:
-            os.environ["MENACE_SAFE"] = "1"
-            self.logger.warning("safe mode enabled")
-            auditor = SecurityAuditor()
-            if fix_until_safe(auditor):
-                os.environ.pop("MENACE_SAFE", None)
-                self.logger.info("safe mode disabled after auto fix")
-        else:
-            if os.environ.get("MENACE_SAFE"):
-                os.environ.pop("MENACE_SAFE", None)
-                self.logger.info("safe mode disabled")
+            self.logger.warning(
+                "performance drop detected; safe mode feature disabled"
+            )
+            SecurityAuditor().audit()
 
     # ------------------------------------------------------------------
     def run_continuous(
@@ -132,17 +126,11 @@ class AutoRollbackService(SelfServiceOverride):
         err = self._error_rate()
         energy = self._energy_score()
         if drop >= self.roi_drop or err >= self.error_threshold or energy < self.energy_threshold:
-            os.environ["MENACE_SAFE"] = "1"
-            self.logger.warning("safe mode enabled")
+            self.logger.warning(
+                "rollback triggered; safe mode feature disabled"
+            )
             self._revert_last_patch()
-            auditor = SecurityAuditor()
-            if fix_until_safe(auditor):
-                os.environ.pop("MENACE_SAFE", None)
-                self.logger.info("safe mode disabled after auto fix")
-        else:
-            if os.environ.get("MENACE_SAFE"):
-                os.environ.pop("MENACE_SAFE", None)
-                self.logger.info("safe mode disabled")
+            SecurityAuditor().audit()
 
 
 __all__ = ["SelfServiceOverride", "AutoRollbackService"]
