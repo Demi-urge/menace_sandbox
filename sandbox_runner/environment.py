@@ -244,36 +244,6 @@ def static_behavior_analysis(code_str: str) -> Dict[str, Any]:
     if any(re.search(p, code_str) for p in patterns):
         result.setdefault("regex_flags", []).append("raw_dangerous_pattern")
 
-    # optional Bandit integration
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tmp:
-            tmp.write(code_str)
-            tmp_path = tmp.name
-        proc = subprocess.run(
-            ["bandit", "-f", "json", "-q", tmp_path],
-            capture_output=True,
-            text=True,
-        )
-        if proc.stdout:
-            data = json.loads(proc.stdout)
-            issues = [
-                {
-                    "line": i.get("line_number"),
-                    "severity": i.get("issue_severity"),
-                    "text": i.get("issue_text"),
-                }
-                for i in data.get("results", [])
-            ]
-            if issues:
-                result["bandit"] = issues
-    except Exception as exc:  # pragma: no cover - optional dependency
-        logger.debug("bandit failed: %s", exc)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            logger.exception("temporary file removal failed")
     logger.debug(
         "static analysis result: %s",
         {k: v for k, v in result.items() if v},

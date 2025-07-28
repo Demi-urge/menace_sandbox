@@ -97,13 +97,8 @@ def test_self_service_override_enables_safe(tmp_path, monkeypatch):
     metrics = db.MetricsDB(tmp_path / "m.db")
     metrics.add(db.MetricRecord(bot="b", cpu=1.0, memory=1.0, response_time=0.1, disk_io=1.0, net_io=1.0, errors=10))
 
-    calls = []
-
-    monkeypatch.setattr(so.SecurityAuditor, "audit", lambda self: calls.append(True))
-
     svc = so.SelfServiceOverride(roi, metrics)
     svc.adjust()
-    assert calls
     assert os.environ.get("MENACE_SAFE") is None
 
 

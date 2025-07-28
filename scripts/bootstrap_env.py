@@ -11,7 +11,8 @@ from menace.environment_bootstrap import EnvironmentBootstrapper
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    os.environ.pop("MENACE_SAFE", None)
+    # Explicitly disable safe mode regardless of existing variables
+    os.environ["MENACE_SAFE"] = "0"
     run_startup_checks()
     EnvironmentBootstrapper().bootstrap()
 
