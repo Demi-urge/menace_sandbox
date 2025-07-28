@@ -12,8 +12,15 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict
 
-from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
-from . import synergy_auto_trainer  # ensure trainer gauges are registered
+try:
+    from .metrics_exporter import Gauge, start_metrics_server, stop_metrics_server
+except Exception:  # pragma: no cover - allow running as script
+    from metrics_exporter import Gauge, start_metrics_server, stop_metrics_server  # type: ignore
+
+try:
+    from . import synergy_auto_trainer  # ensure trainer gauges are registered
+except Exception:  # pragma: no cover - allow running as script
+    import synergy_auto_trainer  # type: ignore  # ensure trainer gauges are registered
 
 # Gauges tracking exporter uptime and failures
 exporter_uptime = Gauge(

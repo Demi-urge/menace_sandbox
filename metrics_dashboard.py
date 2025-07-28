@@ -8,7 +8,10 @@ from typing import List
 
 from flask import Flask, jsonify
 
-from . import metrics_exporter
+try:
+    from . import metrics_exporter
+except Exception:  # pragma: no cover - allow running as script
+    import metrics_exporter  # type: ignore
 
 
 class MetricsDashboard:

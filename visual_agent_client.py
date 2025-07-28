@@ -16,11 +16,20 @@ from typing import Iterable, Dict, Any, Callable, Deque, Tuple
 from pathlib import Path
 import json
 
-from . import metrics_exporter
+try:
+    from . import metrics_exporter
+except Exception:  # pragma: no cover - allow running as script
+    import metrics_exporter  # type: ignore
 
-from .audit_logger import log_event
+try:
+    from .audit_logger import log_event
+except Exception:  # pragma: no cover - allow running as script
+    from audit_logger import log_event  # type: ignore
 
-from .lock_utils import _ContextFileLock, LOCK_TIMEOUT
+try:
+    from .lock_utils import _ContextFileLock, LOCK_TIMEOUT
+except Exception:  # pragma: no cover - allow running as script
+    from lock_utils import _ContextFileLock, LOCK_TIMEOUT  # type: ignore
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
