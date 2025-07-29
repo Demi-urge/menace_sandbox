@@ -141,7 +141,7 @@ from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 import menace.synergy_history_db as shd
-from menace_sandbox.metrics_exporter import (
+from menace.metrics_exporter import (
     start_metrics_server,
     roi_threshold_gauge,
     synergy_threshold_gauge,
@@ -149,7 +149,7 @@ from menace_sandbox.metrics_exporter import (
     synergy_forecast_gauge,
     synergy_adaptation_actions_total,
 )
-from menace_sandbox import metrics_exporter
+from menace import metrics_exporter
 from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
