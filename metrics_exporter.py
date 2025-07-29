@@ -26,8 +26,13 @@ else:  # first import - register under all aliases
         sys.modules.setdefault(_alias, _current)
 
 try:
-    from prometheus_client import Gauge as _PromGauge, start_http_server as _start_http_server  # type: ignore
+    from prometheus_client import (
+        Gauge as _PromGauge,
+        start_http_server as _start_http_server,  # type: ignore
+        CollectorRegistry as _PromCollectorRegistry,  # type: ignore
+    )
     Gauge = _PromGauge  # type: ignore
+    CollectorRegistry = _PromCollectorRegistry  # type: ignore
     start_http_server = _start_http_server  # type: ignore
     _USING_STUB = False
 except Exception as exc:  # pragma: no cover - optional dependency missing
@@ -532,6 +537,7 @@ def start_metrics_server(port: int = 8001, *, registry: Registry | None = None) 
         raise
 
 __all__ = [
+    "CollectorRegistry",
     "start_metrics_server",
     "stop_metrics_server",
     "learning_cv_score",
