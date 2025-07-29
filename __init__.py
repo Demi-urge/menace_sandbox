@@ -26,6 +26,12 @@ else:
     _menace_db = types.ModuleType("menace.menace")
     sys.modules.setdefault("menace.menace", _menace_db)
 
+import importlib
+
+_log_utils = importlib.import_module(__name__ + ".logging_utils")
+sys.modules.setdefault("logging_utils", _log_utils)
+sys.modules.setdefault("menace.logging_utils", _log_utils)
+
 _pkg_dir = os.path.dirname(__file__)
 _sk_dir = os.path.join(_pkg_dir, "sklearn")
 _extra_dir = os.path.join(_pkg_dir, "menace")
