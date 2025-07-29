@@ -163,7 +163,10 @@ except ModuleNotFoundError:  # pragma: no cover - executed when not installed
 
 ExporterMonitor = synergy_monitor.ExporterMonitor
 AutoTrainerMonitor = synergy_monitor.AutoTrainerMonitor
-from sandbox_recovery_manager import SandboxRecoveryManager
+try:  # pragma: no cover - exercised implicitly in integration tests
+    from sandbox_recovery_manager import SandboxRecoveryManager
+except ModuleNotFoundError:  # pragma: no cover - executed when not installed
+    from .sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
 from threshold_logger import ThresholdLogger

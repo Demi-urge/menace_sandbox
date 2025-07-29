@@ -664,7 +664,7 @@ timestamp of the last failure. These values are available via the
 
 ```python
 from menace.metrics_exporter import start_metrics_server
-from sandbox_recovery_manager import SandboxRecoveryManager
+from menace.sandbox_recovery_manager import SandboxRecoveryManager
 
 start_metrics_server(8001)
 recovery = SandboxRecoveryManager(main)
