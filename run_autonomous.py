@@ -150,7 +150,19 @@ from menace.metrics_exporter import (
     synergy_adaptation_actions_total,
 )
 from menace import metrics_exporter
-from synergy_monitor import ExporterMonitor, AutoTrainerMonitor
+
+# ``synergy_monitor`` is normally imported as a top-level module so tests can
+# replace it via ``sys.modules['synergy_monitor']``.  When executing
+# ``run_autonomous`` as a package (e.g. with ``python -m menace_sandbox.run_autonomous``)
+# that import may fail because the package directory isn't on ``sys.path``.
+# Fallback to a relative import in that case.
+try:  # pragma: no cover - exercised implicitly in integration tests
+    synergy_monitor = importlib.import_module("synergy_monitor")
+except ModuleNotFoundError:  # pragma: no cover - executed when not installed
+    from . import synergy_monitor
+
+ExporterMonitor = synergy_monitor.ExporterMonitor
+AutoTrainerMonitor = synergy_monitor.AutoTrainerMonitor
 from sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
