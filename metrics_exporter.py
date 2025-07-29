@@ -4,7 +4,26 @@ from __future__ import annotations
 
 from typing import Optional, List, Iterable, Dict, Sequence, Tuple
 
+import sys
+
 import logging
+
+# Ensure this module is a single instance regardless of import path
+_ALIASES = (
+    "metrics_exporter",
+    "menace.metrics_exporter",
+    "menace_sandbox.metrics_exporter",
+)
+for _alias in _ALIASES:
+    _existing = sys.modules.get(_alias)
+    if _existing is not None and _existing is not sys.modules.get(__name__):
+        globals().update(_existing.__dict__)
+        sys.modules[__name__] = _existing
+        break
+else:  # first import - register under all aliases
+    _current = sys.modules[__name__]
+    for _alias in _ALIASES:
+        sys.modules.setdefault(_alias, _current)
 
 try:
     from prometheus_client import Gauge as _PromGauge, start_http_server as _start_http_server  # type: ignore
