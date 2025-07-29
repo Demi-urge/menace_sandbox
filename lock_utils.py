@@ -5,12 +5,9 @@ import errno
 from contextlib import suppress
 from filelock import FileLock, Timeout
 
-try:  # pragma: no cover - platform specific
-    import fcntl
-except Exception:  # pragma: no cover - win32
-    fcntl = None  # type: ignore
+from fcntl_compat import flock, LOCK_EX, LOCK_NB
 
-try:  # pragma: win32 cover
+try:  # pragma: no cover - platform specific
     import msvcrt  # type: ignore
 except Exception:  # pragma: no cover - posix
     msvcrt = None  # type: ignore
@@ -84,7 +81,7 @@ class _ContextFileLock(FileLock):
                     os.replace(tmp, lock_path)
             return self._Guard(self)
 
-        if fcntl or msvcrt:
+        if msvcrt or os.name != "nt":
             if timeout is None:
                 timeout = self._context.timeout
             start = time.perf_counter()
@@ -94,10 +91,10 @@ class _ContextFileLock(FileLock):
                     if hasattr(os, "fchmod"):
                         os.fchmod(fd, getattr(self._context, "mode", 0o644))
                 try:
-                    if fcntl:
-                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    else:
+                    if os.name == "nt":
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    else:
+                        flock(fd, LOCK_EX | LOCK_NB)
                     self._context.lock_file_fd = fd
                     break
                 except OSError as exc:  # pragma: no cover - race conditions
