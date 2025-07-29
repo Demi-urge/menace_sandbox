@@ -165,7 +165,7 @@ ExporterMonitor = synergy_monitor.ExporterMonitor
 AutoTrainerMonitor = synergy_monitor.AutoTrainerMonitor
 try:  # pragma: no cover - exercised implicitly in integration tests
     from sandbox_recovery_manager import SandboxRecoveryManager
-except ModuleNotFoundError:  # pragma: no cover - executed when not installed
+except ImportError:  # pragma: no cover - executed when not installed or run directly
     from .sandbox_recovery_manager import SandboxRecoveryManager
 from sandbox_runner.cli import full_autonomous_run
 from sandbox_settings import SandboxSettings
