@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from menace_sandbox.environment_generator import _CPU_LIMITS, _MEMORY_LIMITS
+from ..environment_generator import _CPU_LIMITS, _MEMORY_LIMITS
 
 logger = logging.getLogger(__name__)
 
