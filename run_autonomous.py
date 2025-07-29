@@ -141,15 +141,26 @@ from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 import menace.synergy_history_db as shd
-from .metrics_exporter import (
-    start_metrics_server,
-    roi_threshold_gauge,
-    synergy_threshold_gauge,
-    roi_forecast_gauge,
-    synergy_forecast_gauge,
-    synergy_adaptation_actions_total,
-)
-from . import metrics_exporter
+try:  # pragma: no cover - executed when run as a script
+    from metrics_exporter import (
+        start_metrics_server,
+        roi_threshold_gauge,
+        synergy_threshold_gauge,
+        roi_forecast_gauge,
+        synergy_forecast_gauge,
+        synergy_adaptation_actions_total,
+    )
+    import metrics_exporter
+except ImportError:  # pragma: no cover - executed when run as a module
+    from .metrics_exporter import (
+        start_metrics_server,
+        roi_threshold_gauge,
+        synergy_threshold_gauge,
+        roi_forecast_gauge,
+        synergy_forecast_gauge,
+        synergy_adaptation_actions_total,
+    )
+    from . import metrics_exporter
 
 # ``synergy_monitor`` is normally imported as a top-level module so tests can
 # replace it via ``sys.modules['synergy_monitor']``.  When executing
