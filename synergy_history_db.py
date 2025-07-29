@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Iterator
 from contextlib import contextmanager
 import logging
-import fcntl
+from filelock import FileLock
 
 from . import RAISE_ERRORS
 
@@ -41,14 +41,13 @@ def connect_locked(path: str | Path) -> Iterator[sqlite3.Connection]:
     p = Path(path)
     lock_path = p.with_suffix(p.suffix + ".lock")
     p.parent.mkdir(parents=True, exist_ok=True)
-    with open(lock_path, "w") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
+    lock = FileLock(str(lock_path))
+    with lock:
         conn = connect(p)
         try:
             yield conn
         finally:
             conn.close()
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 def load_history(path: str | Path) -> List[Dict[str, float]]:
@@ -85,17 +84,18 @@ def insert_entry(conn: sqlite3.Connection, entry: Dict[str, float]) -> None:
         path = conn.execute("PRAGMA database_list").fetchone()[2]
     except Exception:
         pass
-    lock_file = None
     if path:
-        lock_file = open(path + ".lock", "w")
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-    try:
-        conn.execute("INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps(entry),))
+        lock = FileLock(str(path) + ".lock")
+        with lock:
+            conn.execute(
+                "INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps(entry),)
+            )
+            conn.commit()
+    else:
+        conn.execute(
+            "INSERT INTO synergy_history(entry) VALUES (?)", (json.dumps(entry),)
+        )
         conn.commit()
-    finally:
-        if lock_file is not None:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
-            lock_file.close()
 
 
 def fetch_all(conn: sqlite3.Connection) -> List[Dict[str, float]]:
