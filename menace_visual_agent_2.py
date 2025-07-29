@@ -109,7 +109,12 @@ def _startup_load_state() -> None:
             task_queue.clear()
             job_status.clear()
             if not recovered and QUEUE_DB.exists():
-                QUEUE_DB.unlink()
+                try:
+                    QUEUE_DB.unlink()
+                except PermissionError as exc:  # pragma: no cover - win32
+                    logger.warning(
+                        "failed to remove queue db %s: %s", QUEUE_DB, exc
+                    )
             _load_state_locked()
         finally:
             try:
