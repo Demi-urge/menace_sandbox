@@ -15,7 +15,10 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
 from menace.audit_trail import AuditTrail
 from menace.synergy_exporter import SynergyExporter
-from menace.metrics_exporter import Gauge
+try:
+    from .metrics_exporter import Gauge
+except Exception:  # pragma: no cover - module may not be a package
+    from menace.metrics_exporter import Gauge  # type: ignore
 from logging_utils import get_logger
 from alert_dispatcher import dispatch_alert
 

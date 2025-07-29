@@ -141,7 +141,7 @@ from menace.roi_tracker import ROITracker
 from menace.synergy_exporter import SynergyExporter
 from menace.synergy_history_db import migrate_json_to_db, insert_entry, connect_locked
 import menace.synergy_history_db as shd
-from menace.metrics_exporter import (
+from .metrics_exporter import (
     start_metrics_server,
     roi_threshold_gauge,
     synergy_threshold_gauge,
@@ -149,7 +149,7 @@ from menace.metrics_exporter import (
     synergy_forecast_gauge,
     synergy_adaptation_actions_total,
 )
-from menace import metrics_exporter
+from . import metrics_exporter
 
 # ``synergy_monitor`` is normally imported as a top-level module so tests can
 # replace it via ``sys.modules['synergy_monitor']``.  When executing
