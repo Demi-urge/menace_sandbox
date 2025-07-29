@@ -5,7 +5,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from ..environment_generator import _CPU_LIMITS, _MEMORY_LIMITS
+# The sandbox_runner package may be executed as a top-level module. In that
+# situation there is no parent package, so relative imports referring to the
+# parent will fail.  Use an absolute import instead to ensure the constants are
+# available regardless of how the module is executed.
+# Importing from the ``menace`` package ensures that relative imports inside
+# :mod:`environment_generator` resolve correctly regardless of whether this
+# package is executed as ``menace`` or ``menace_sandbox``.
+from menace.environment_generator import _CPU_LIMITS, _MEMORY_LIMITS
 
 logger = logging.getLogger(__name__)
 
