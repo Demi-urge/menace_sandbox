@@ -31,6 +31,9 @@ import importlib
 _log_utils = importlib.import_module(__name__ + ".logging_utils")
 sys.modules.setdefault("logging_utils", _log_utils)
 sys.modules.setdefault("menace.logging_utils", _log_utils)
+_alert_dispatcher = importlib.import_module(__name__ + ".alert_dispatcher")
+sys.modules.setdefault("alert_dispatcher", _alert_dispatcher)
+sys.modules.setdefault("menace.alert_dispatcher", _alert_dispatcher)
 
 _pkg_dir = os.path.dirname(__file__)
 _sk_dir = os.path.join(_pkg_dir, "sklearn")
