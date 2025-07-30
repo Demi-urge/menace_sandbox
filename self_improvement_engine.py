@@ -211,7 +211,12 @@ class SynergyWeightLearner:
         for key, idx in mapping.items():
             val = q_vals_list[idx]
             self.weights[key] = max(0.0, min(val, 10.0))
-        logger.info("updated synergy weights", extra=log_record(weights=self.weights))
+        logger.info(
+            "updated synergy weights",
+            extra=log_record(
+                weights=self.weights, state=self._state, roi_delta=roi_delta
+            ),
+        )
         self.save()
 
 
@@ -351,7 +356,12 @@ class DQNSynergyLearner(SynergyWeightLearner):
                 )
             except Exception as exc:
                 logger.exception("target model sync failed: %s", exc)
-        logger.info("updated synergy weights", extra=log_record(weights=self.weights))
+        logger.info(
+            "updated synergy weights",
+            extra=log_record(
+                weights=self.weights, state=self._state, roi_delta=roi_delta
+            ),
+        )
         self.save()
 
 
@@ -942,7 +952,9 @@ class SelfImprovementEngine:
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         self.logger.info(
             "synergy weights after update",
-            extra=log_record(weights=self.synergy_learner.weights),
+            extra=log_record(
+                weights=self.synergy_learner.weights, roi_delta=roi_delta
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -1312,7 +1324,12 @@ class SelfImprovementEngine:
                     )
                     self.logger.info(
                         "policy adjusted energy",
-                        extra=log_record(value=energy),
+                        extra=log_record(
+                            value=energy,
+                            predicted_roi=predicted,
+                            state=state,
+                            weights=self.synergy_learner.weights,
+                        ),
                     )
                 except Exception as exc:
                     self.logger.exception(
@@ -1651,7 +1668,12 @@ class SelfImprovementEngine:
                             )
                     self.logger.info(
                         "policy updated",
-                        extra=log_record(reward=after_roi - before_roi),
+                        extra=log_record(
+                            reward=after_roi - before_roi,
+                            state=state,
+                            next_state=next_state,
+                            weights=self.synergy_learner.weights,
+                        ),
                     )
                 except Exception as exc:
                     self.logger.exception("policy update failed: %s", exc)
