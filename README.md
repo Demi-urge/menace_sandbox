@@ -597,8 +597,9 @@ export AUDIT_LOG_PATH=/var/log/menace/audit.log
 `setup_logging()` attaches an `AuditTrailHandler` so all services write to the
 configured path. Set `SANDBOX_CENTRAL_LOGGING=0` to disable forwarding.
 
-Set `SANDBOX_VERBOSE=1` to automatically enable debug logs when
-`setup_logging()` is called without a level.
+Set `SANDBOX_DEBUG=1` to automatically enable debug logs when
+`setup_logging()` is called without a level. The older `SANDBOX_VERBOSE=1`
+variable is still accepted for backward compatibility.
 
 Enable Prometheus metrics by starting the exporter on a port of your choice:
 
