@@ -428,8 +428,9 @@ class ROITracker:
             self.roi_history.append(filtered)
             if modules:
                 for m in modules:
-                    self.module_deltas.setdefault(m, []).append(filtered)
                     cid = self.cluster_map.get(m)
+                    key = str(cid) if cid is not None else m
+                    self.module_deltas.setdefault(key, []).append(filtered)
                     if cid is not None:
                         self.cluster_deltas.setdefault(cid, []).append(filtered)
             if resources:
@@ -1478,12 +1479,7 @@ class ROITracker:
     # ------------------------------------------------------------------
     def cluster_rankings(self) -> List[Tuple[int, float]]:
         """Return clusters sorted by cumulative ROI contribution."""
-        totals: Dict[int, float] = {}
-        for mod, vals in self.module_deltas.items():
-            cid = self.cluster_map.get(mod)
-            if cid is None:
-                continue
-            totals[cid] = totals.get(cid, 0.0) + sum(vals)
+        totals = {cid: sum(v) for cid, v in self.cluster_deltas.items()}
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
 
 

@@ -496,13 +496,14 @@ class _CycleMeta:
 
 
 class _SandboxMetaLogger:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, module_index: "ModuleIndexDB" | None = None) -> None:
         self.path = path
         self.audit = AuditTrail(str(path))
         self.records: list[_CycleMeta] = []
         self.module_deltas: dict[str, list[float]] = {}
         self.flagged_sections: set[str] = set()
         self.last_patch_id = 0
+        self.module_index = module_index
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
@@ -512,7 +513,16 @@ class _SandboxMetaLogger:
         delta = roi - prev
         self.records.append(_CycleMeta(cycle, roi, delta, modules, reason))
         for m in modules:
-            self.module_deltas.setdefault(m, []).append(delta)
+            if self.module_index:
+                try:
+                    from pathlib import Path
+
+                    gid = str(self.module_index.get(Path(m).name))
+                except Exception:
+                    gid = m
+            else:
+                gid = m
+            self.module_deltas.setdefault(gid, []).append(delta)
         try:
             self.audit.record(
                 {
@@ -737,6 +747,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         score_backend=score_backend,
     )
+    meta_log.module_index = improver.module_index
 
     telem_db = ErrorDB(Path(tmp) / "errors.db")
     improver.error_bot = ErrorBot(telem_db, MetricsDB())

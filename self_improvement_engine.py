@@ -1069,12 +1069,17 @@ class SelfImprovementEngine:
                     )
                     mod_name = Path(rows[0][3]).name
                     module_idx = self.module_index.get(mod_name)
+                    mods = [m for m, idx in self.module_clusters.items() if idx == module_idx]
                     try:
-                        total = conn.execute(
-                            "SELECT SUM(roi_delta) FROM patch_history WHERE filename=?",
-                            (rows[0][3],),
-                        ).fetchone()
-                        module_trend = float(total[0] or 0.0)
+                        if mods:
+                            placeholders = ",".join("?" * len(mods))
+                            total = conn.execute(
+                                f"SELECT SUM(roi_delta) FROM patch_history WHERE filename IN ({placeholders})",
+                                mods,
+                            ).fetchone()
+                            module_trend = float(total[0] or 0.0)
+                        else:
+                            module_trend = 0.0
                     except Exception:
                         module_trend = 0.0
                     if self.meta_logger:
