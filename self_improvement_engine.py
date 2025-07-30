@@ -1443,8 +1443,8 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "evolution history logging failed: %s", exc
                     )
+            eff = bottleneck = patch_rate = trend = anomaly = 0.0
             if self.data_bot:
-                eff = bottleneck = patch_rate = trend = anomaly = 0.0
                 try:
                     df = self.data_bot.db.fetch(20)
                     if hasattr(df, "empty"):
@@ -1561,6 +1561,16 @@ class SelfImprovementEngine:
             self.roi_history.append(delta)
             self._save_state()
             self._update_synergy_weights(delta)
+            self.logger.info(
+                "cycle summary",
+                extra=log_record(
+                    roi_delta=delta,
+                    patch_success=patch_rate,
+                    roi_trend=trend,
+                    anomaly=anomaly,
+                    synergy_weights=self.synergy_learner.weights,
+                ),
+            )
             if self._score_backend:
                 try:
                     self._score_backend.store(
@@ -1636,6 +1646,15 @@ class SelfImprovementEngine:
                         "self improvement run_cycle failed with energy %s: %s",
                         int(round(current_energy * 5)),
                         exc,
+                    )
+            else:
+                if current_energy < self.energy_threshold:
+                    self.logger.debug(
+                        "energy below threshold - skipping cycle",
+                        extra=log_record(
+                            energy=current_energy,
+                            threshold=self.energy_threshold,
+                        ),
                     )
             await asyncio.sleep(self.interval)
 
