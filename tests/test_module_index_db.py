@@ -14,3 +14,10 @@ def test_merge_groups(tmp_path):
     assert db.get("b") == 1
     # new module shares index with the first known group member
     assert db.get("c") == old_a
+
+
+def test_get_resolves_suffix(tmp_path):
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps({"foo": 7}))
+    db = ModuleIndexDB(path)
+    assert db.get("foo.py") == 7
