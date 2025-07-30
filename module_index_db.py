@@ -3,19 +3,39 @@ import os
 from pathlib import Path
 from typing import Dict
 
+try:  # optional dependency only needed when auto mapping
+    from scripts.generate_module_map import generate_module_map
+except Exception:  # pragma: no cover - during tests script may not exist
+    generate_module_map = None  # type: ignore
+
 
 class ModuleIndexDB:
-    """Persist mapping of module names to hashed indices."""
+    """Persist mapping of module names to numeric indices."""
 
-    def __init__(self, path: Path | str = "module_map.json") -> None:
+    def __init__(self, path: Path | str = "module_map.json", *, auto_map: bool | None = None) -> None:
         self.path = Path(path)
+        self._map: Dict[str, int] = {}
+
+        if (auto_map or (auto_map is None and os.getenv("SANDBOX_AUTO_MAP") == "1")) and generate_module_map:
+            try:
+                generate_module_map(self.path)
+            except Exception:
+                pass
+
         if self.path.exists():
             try:
-                self._map: Dict[str, int] = json.loads(self.path.read_text())
+                data = json.loads(self.path.read_text())
+                if isinstance(data, dict):
+                    if all(isinstance(v, int) for v in data.values()):
+                        self._map = {k: int(v) for k, v in data.items()}
+                    else:
+                        grp_idx: Dict[str, int] = {}
+                        for mod, grp in data.items():
+                            key = str(grp)
+                            idx = grp_idx.setdefault(key, abs(hash(key)) % 1000)
+                            self._map[mod] = idx
             except Exception:
                 self._map = {}
-        else:
-            self._map = {}
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
@@ -24,6 +44,27 @@ class ModuleIndexDB:
             self._map[name] = abs(hash(name)) % 1000
             self.save()
         return int(self._map[name])
+
+    # --------------------------------------------------------------
+    def merge_groups(self, groups: Dict[str, int]) -> None:
+        """Merge ``groups`` mapping into this DB keeping indices stable."""
+        group_to_idx: Dict[int, int] = {}
+        for mod, idx in self._map.items():
+            grp = groups.get(mod)
+            if grp is not None:
+                group_to_idx.setdefault(grp, idx)
+
+        next_idx = max(self._map.values(), default=0) + 1
+        for mod, grp in groups.items():
+            if mod in self._map:
+                continue
+            if grp in group_to_idx:
+                self._map[mod] = group_to_idx[grp]
+            else:
+                self._map[mod] = next_idx
+                group_to_idx[grp] = next_idx
+                next_idx += 1
+        self.save()
 
     # --------------------------------------------------------------
     def save(self) -> None:
