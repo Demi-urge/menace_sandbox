@@ -267,7 +267,33 @@ class VisualAgentMonitor:
                 healthy = resp.status_code == 200
             except Exception:
                 healthy = False
-            if not healthy or not queue_path.exists():
+            logger.debug(
+                "visual agent /health responded: %s",
+                healthy,
+                extra=log_record(run=self.run_idx),
+            )
+            if not healthy:
+                if queue_path.exists():
+                    logger.debug(
+                        "skipping visual agent recovery; queue database present",
+                        extra=log_record(run=self.run_idx),
+                    )
+                else:
+                    try:
+                        import requests  # type: ignore
+
+                        requests.post(
+                            f"{base}/recover",
+                            headers={"Authorization": f"Bearer {tok}"},
+                            timeout=5,
+                        )
+                        logger.info(
+                            "visual agent recovery triggered",
+                            extra=log_record(run=self.run_idx),
+                        )
+                    except Exception:
+                        logger.exception("failed to trigger agent recovery")
+            elif not queue_path.exists():
                 try:
                     import requests  # type: ignore
 
