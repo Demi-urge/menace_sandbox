@@ -130,7 +130,12 @@ spec.loader.exec_module(menace_pkg)
 import menace.environment_generator as environment_generator
 import sandbox_runner
 import sandbox_runner.cli as cli
-from logging_utils import get_logger, setup_logging, log_record
+from logging_utils import (
+    get_logger,
+    setup_logging,
+    log_record,
+    set_correlation_id,
+)
 from menace.audit_trail import AuditTrail
 from menace.auto_env_setup import ensure_env
 from menace.environment_generator import generate_presets
@@ -1082,11 +1087,15 @@ def main(argv: List[str] | None = None) -> None:
                 logger.warning("Invalid METRICS_PORT value: %s", env_val)
     if port is not None:
         try:
+            logger.info("starting metrics server on port %d", port)
             start_metrics_server(int(port))
+            logger.info("metrics server running on port %d", port)
         except Exception:
             logger.exception("failed to start metrics server")
 
+    logger.info("validating environment variables")
     check_env()
+    logger.info("environment validation complete")
 
     try:
         settings = SandboxSettings()
@@ -1198,7 +1207,9 @@ def main(argv: List[str] | None = None) -> None:
         if created_preset:
             logger.info("created preset file at %s", preset_file)
 
+    logger.info("performing dependency check")
     _check_dependencies(settings)
+    logger.info("dependency check complete")
 
     dash_port = args.dashboard_port
     dash_env = settings.auto_dashboard_port
@@ -1261,7 +1272,9 @@ def main(argv: List[str] | None = None) -> None:
             port=port,
         )
         try:
+            logger.info("starting synergy exporter on port %d", port)
             synergy_exporter.start()
+            logger.info("synergy exporter running on port %d", port)
             exporter_log.record(
                 {"timestamp": int(time.time()), "event": "exporter_started"}
             )
@@ -1300,7 +1313,9 @@ def main(argv: List[str] | None = None) -> None:
             interval=interval,
         )
         try:
+            logger.info("starting synergy auto trainer")
             auto_trainer.start()
+            logger.info("synergy auto trainer running")
             trainer_monitor = AutoTrainerMonitor(auto_trainer, exporter_log)
             trainer_monitor.start()
             cleanup_funcs.append(trainer_monitor.stop)
@@ -1327,7 +1342,9 @@ def main(argv: List[str] | None = None) -> None:
             kwargs={"port": dash_port},
             daemon=True,
         )
+        logger.info("starting MetricsDashboard on port %d", dash_port)
         dash_thread.start()
+        logger.info("MetricsDashboard running on port %d", dash_port)
         cleanup_funcs.append(
             lambda: dash_thread and dash_thread.is_alive() and dash_thread.join(0.1)
         )
@@ -1352,7 +1369,9 @@ def main(argv: List[str] | None = None) -> None:
             kwargs={"port": synergy_dash_port},
             daemon=True,
         )
+        logger.info("starting SynergyDashboard on port %d", synergy_dash_port)
         dash_t.start()
+        logger.info("SynergyDashboard running on port %d", synergy_dash_port)
         cleanup_funcs.append(s_dash.stop)
         cleanup_funcs.append(lambda: dash_t.is_alive() and dash_t.join(0.1))
 
@@ -1366,7 +1385,9 @@ def main(argv: List[str] | None = None) -> None:
         agent_mgr = VisualAgentManager(str(_pkg_dir / "menace_visual_agent_2.py"))
         if not _visual_agent_running(settings.visual_agent_urls):
             try:
+                logger.info("starting visual agent")
                 agent_mgr.start(os.getenv("VISUAL_AGENT_TOKEN", ""))
+                logger.info("visual agent started")
                 agent_proc = agent_mgr.process
             except Exception:  # pragma: no cover - runtime dependent
                 logger.exception("failed to launch visual agent")
@@ -1479,6 +1500,7 @@ def main(argv: List[str] | None = None) -> None:
     run_idx = 0
     while args.runs is None or run_idx < args.runs:
         run_idx += 1
+        set_correlation_id(f"run-{run_idx}")
         if agent_monitor is not None:
             agent_monitor.run_idx = run_idx
         if run_idx > 1:
@@ -1529,6 +1551,8 @@ def main(argv: List[str] | None = None) -> None:
             synergy_ma_history,
         )
         if tracker is None:
+            logger.info("completed autonomous run %d", run_idx)
+            set_correlation_id(None)
             continue
         last_tracker = tracker
 
@@ -1568,6 +1592,9 @@ def main(argv: List[str] | None = None) -> None:
             threshold_log,
             forecast_log,
         )
+
+        logger.info("completed autonomous run %d", run_idx)
+        set_correlation_id(None)
 
         if module_history and set(module_history) <= flagged and converged:
             logger.info(
