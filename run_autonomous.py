@@ -1593,6 +1593,22 @@ def main(argv: List[str] | None = None) -> None:
             forecast_log,
         )
 
+        logger.info(
+            "run %d summary roi_thr=%.3f ema=%.3f converged=%s flagged=%d",
+            run_idx,
+            roi_threshold,
+            ema_val,
+            converged,
+            len(flagged),
+            extra=log_record(
+                run=run_idx,
+                roi_threshold=roi_threshold,
+                ema_value=ema_val,
+                converged=converged,
+                flagged_count=len(flagged),
+            ),
+        )
+
         logger.info("completed autonomous run %d", run_idx)
         set_correlation_id(None)
 
