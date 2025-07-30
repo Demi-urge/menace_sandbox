@@ -313,7 +313,8 @@ forwarding. If `KAFKA_HOSTS` is set, logs are published to Kafka instead via
 Use `--log-level LEVEL` when running `run_autonomous.py` to change the console
 verbosity. The flag falls back to the `SANDBOX_LOG_LEVEL` environment variable
 (or `LOG_LEVEL`) when omitted. Pass `--verbose` to enable full debug output
-regardless of the configured log level.
+regardless of the configured log level. Setting `SANDBOX_VERBOSE=1` has the
+same effect when `setup_logging()` is invoked without an explicit level.
 
 Long running services rotate their own log files such as
 `service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or
