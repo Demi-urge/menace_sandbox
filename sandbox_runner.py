@@ -65,7 +65,7 @@ def _verify_required_dependencies() -> None:
             "Refer to docs/autonomous_sandbox.md for manual setup instructions."
         )
         msg = "\n".join(messages)
-        print(msg, file=sys.stderr)
+        logging.error(msg)
         raise SystemExit(msg)
 
     if missing_opt:
