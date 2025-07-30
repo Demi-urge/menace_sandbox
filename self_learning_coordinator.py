@@ -92,7 +92,7 @@ class SelfLearningCoordinator:
             outcome=Outcome.SUCCESS,
             roi=0.0,
         )
-        self._train_all(rec)
+        self._train_all(rec, source="memory")
 
     def _on_code(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -107,7 +107,7 @@ class SelfLearningCoordinator:
             outcome=Outcome.SUCCESS,
             roi=float(payload.get("complexity_score", 0.0)),
         )
-        self._train_all(rec)
+        self._train_all(rec, source="code")
 
     def _on_workflow(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -128,7 +128,7 @@ class SelfLearningCoordinator:
             outcome=oc,
             roi=float(payload.get("estimated_profit_per_bot", 0.0)),
         )
-        self._train_all(rec)
+        self._train_all(rec, source="workflow")
 
     def _on_pathway(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -146,7 +146,7 @@ class SelfLearningCoordinator:
             )
         except Exception:
             return
-        self._train_all(rec)
+        self._train_all(rec, source="pathway")
 
     def _on_error(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -161,7 +161,7 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec)
+        self._train_all(rec, source="error")
 
     def _on_telemetry(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -176,7 +176,7 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec)
+        self._train_all(rec, source="telemetry")
 
     def _on_metrics(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -202,7 +202,7 @@ class SelfLearningCoordinator:
             roi=roi,
             ts=str(payload.get("ts", "")),
         )
-        self._train_all(rec)
+        self._train_all(rec, source="metrics")
 
     def _on_transaction(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -222,7 +222,7 @@ class SelfLearningCoordinator:
             outcome=oc,
             roi=amount,
         )
-        self._train_all(rec)
+        self._train_all(rec, source="transaction")
 
     def _on_curriculum(self, topic: str, payload: object) -> None:
         if not self.running or not isinstance(payload, dict):
@@ -239,12 +239,18 @@ class SelfLearningCoordinator:
             outcome=Outcome.FAILURE,
             roi=0.0,
         )
-        self._train_all(rec)
+        self._train_all(rec, source="curriculum")
 
     # --------------------------------------------------------------
-    def _train_all(self, rec: PathwayRecord) -> None:
+    def _train_all(self, rec: PathwayRecord, *, source: str = "unknown") -> None:
         self._train_record(rec)
         self._train_count += 1
+        logger.info(
+            "processed training record %s from %s (count=%d)",
+            getattr(rec, "ts", ""),
+            source,
+            self._train_count,
+        )
         if self.eval_interval and self._train_count >= self.eval_interval:
             self._evaluate_all()
             self._train_count = 0
@@ -279,13 +285,21 @@ class SelfLearningCoordinator:
 
     def _train_from_summary(self) -> None:
         if self.curriculum_builder:
-            self.curriculum_builder.publish()
+            items = self.curriculum_builder.publish()
+            logger.info(
+                "published %d curriculum entries via CurriculumBuilder",
+                len(items),
+            )
             return
         if not self.error_bot:
             return
         summary = self.error_bot.summarize_telemetry()
+        logger.info(
+            "publishing %d summary records from ErrorBot",
+            len(summary),
+        )
         summary.sort(key=lambda s: s.get("success_rate", 0.0))
-        for item in summary:
+        for idx, item in enumerate(summary, start=1):
             rec = PathwayRecord(
                 actions=str(item.get("error_type", "")),
                 inputs="",
@@ -298,6 +312,12 @@ class SelfLearningCoordinator:
                 roi=0.0,
             )
             self._train_record(rec)
+            logger.info(
+                "processed summary training record %s (%d/%d)",
+                getattr(rec, "ts", ""),
+                idx,
+                len(summary),
+            )
 
     def _evaluate_all(self) -> None:
         try:
