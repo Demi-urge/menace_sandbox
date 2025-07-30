@@ -7,7 +7,11 @@ import argparse
 import json
 from pathlib import Path
 
-from module_graph_analyzer import build_import_graph, cluster_modules
+from menace.module_mapper import (
+    build_module_graph,
+    cluster_modules,
+    save_module_map,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -20,17 +24,10 @@ def generate_module_map(
     threshold: float = 0.1,
     semantic: bool = False,
 ) -> dict[str, int]:
-    graph = build_import_graph(root)
-    mapping = cluster_modules(
-        graph,
-        algorithm=algorithm,
-        threshold=threshold,
-        use_semantic=semantic,
-        root=root,
-    )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with open(output, "w", encoding="utf-8") as fh:
-        json.dump(mapping, fh, indent=2)
+    graph = build_module_graph(root)
+    clusters = cluster_modules(graph)
+    mapping = {mod: cid for cid, mods in clusters.items() for mod in mods}
+    save_module_map(mapping, output)
     return mapping
 
 
