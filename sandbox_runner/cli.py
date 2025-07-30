@@ -113,7 +113,17 @@ def rank_scenarios(paths: list[str]) -> None:
 
     results.sort(key=lambda x: (x[1], x[2]), reverse=True)
     for name, roi_val, sec_val in results:
-        print(f"{name} ROI={roi_val:.3f} security_score={sec_val:.3f}")
+        logger.info(
+            "%s ROI=%.3f security_score=%.3f",
+            name,
+            roi_val,
+            sec_val,
+            extra={
+                "preset": name,
+                "roi": roi_val,
+                "security_score": sec_val,
+            },
+        )
 
 
 def rank_scenario_synergy(paths: list[str], metric: str = "roi") -> None:
@@ -149,7 +159,13 @@ def rank_scenario_synergy(paths: list[str], metric: str = "roi") -> None:
 
         results = aggregate_synergy_metrics(files, metric)
         for name, val in results:
-            print(f"{name} {metric}={val:.3f}")
+            logger.info(
+                "%s %s=%.3f",
+                name,
+                metric,
+                val,
+                extra={"preset": name, "metric": metric, "value": val},
+            )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -212,7 +228,13 @@ def synergy_metrics(file: str, *, window: int = 5, plot: bool = False) -> None:
 
     if not plot:
         for name, last, ma in data:
-            print(f"{name} last={last:.3f} ema={ma:.3f}")
+            logger.info(
+                "%s last=%.3f ema=%.3f",
+                name,
+                last,
+                ma,
+                extra={"metric": name, "last": last, "ema": ma},
+            )
 
 
 def _capture_run(preset: dict[str, str], args: argparse.Namespace):
@@ -786,15 +808,25 @@ def full_autonomous_run(
             break
 
     if last_tracker:
-        print("=== Final Module Rankings ===")
+        logger.info("=== Final Module Rankings ===", extra={"iteration": iteration})
         for mod, total in last_tracker.rankings():
-            print(f"{mod}: {total:.3f}")
-        print("=== Metrics ===")
+            logger.info(
+                "%s: %.3f",
+                mod,
+                total,
+                extra={"iteration": iteration, "module": mod, "total": total},
+            )
+        logger.info("=== Metrics ===", extra={"iteration": iteration})
         for name, vals in last_tracker.metrics_history.items():
             if vals:
-                print(f"{name}: {vals[-1]:.3f}")
+                logger.info(
+                    "%s: %.3f",
+                    name,
+                    vals[-1],
+                    extra={"iteration": iteration, "metric": name, "value": vals[-1]},
+                )
     else:
-        print("No sandbox runs executed")
+        logger.warning("No sandbox runs executed", extra={"iteration": iteration})
 
 
 def run_complete(args: argparse.Namespace) -> None:
@@ -844,7 +876,15 @@ def check_resources_command() -> None:
 
     removed_containers = env._STALE_CONTAINERS_REMOVED - before_containers
     removed_overlays = env._STALE_VMS_REMOVED - before_overlays
-    print(f"Removed {removed_containers} containers and {removed_overlays} overlays")
+    logger.info(
+        "Removed %s containers and %s overlays",
+        removed_containers,
+        removed_overlays,
+        extra={
+            "removed_containers": removed_containers,
+            "removed_overlays": removed_overlays,
+        },
+    )
 
 
 def install_autopurge_command() -> None:
@@ -868,10 +908,20 @@ def install_autopurge_command() -> None:
                 ],
                 check=True,
             )
-            print("Scheduled task installed. Adjust via Task Scheduler if needed.")
+            logger.info(
+                "Scheduled task installed. Adjust via Task Scheduler if needed.",
+                extra={"system": system},
+            )
         except Exception:
-            print("Failed to import scheduled task. Run the following manually:")
-            print(f"schtasks /Create /TN SandboxPurge /XML {xml} /F")
+            logger.warning(
+                "Failed to import scheduled task. Run the following manually:",
+                extra={"system": system},
+            )
+            logger.warning(
+                "schtasks /Create /TN SandboxPurge /XML %s /F",
+                xml,
+                extra={"system": system},
+            )
         return
 
     if system in {"linux", "darwin"} and shutil.which("systemctl"):
@@ -892,16 +942,32 @@ def install_autopurge_command() -> None:
                 ["systemctl", *user_flag, "enable", "--now", "sandbox_autopurge.timer"],
                 check=True,
             )
-            print("sandbox_autopurge timer installed and enabled")
+            logger.info(
+                "sandbox_autopurge timer installed and enabled",
+                extra={"system": system, "unit_dir": str(unit_dir)},
+            )
         except Exception:
-            print("Failed to install systemd units automatically.")
-            print(
-                f"Copy {service} and {timer} to {unit_dir} and enable with systemctl"
+            logger.warning(
+                "Failed to install systemd units automatically.",
+                extra={"system": system, "unit_dir": str(unit_dir)},
+            )
+            logger.warning(
+                "Copy %s and %s to %s and enable with systemctl",
+                service,
+                timer,
+                unit_dir,
+                extra={"system": system, "unit_dir": str(unit_dir)},
             )
         return
 
-    print("Automatic installation not supported on this platform.")
-    print("See systemd/sandbox_autopurge.service for manual instructions.")
+    logger.warning(
+        "Automatic installation not supported on this platform.",
+        extra={"system": system},
+    )
+    logger.warning(
+        "See systemd/sandbox_autopurge.service for manual instructions.",
+        extra={"system": system},
+    )
 
 
 def main(argv: List[str] | None = None) -> None:
@@ -1208,7 +1274,13 @@ def main(argv: List[str] | None = None) -> None:
 
         results = aggregate_synergy_metrics(args.paths, args.metric)
         for name, val in results:
-            print(f"{name} {args.metric}={val:.3f}")
+            logger.info(
+                "%s %s=%.3f",
+                name,
+                args.metric,
+                val,
+                extra={"preset": name, "metric": args.metric, "value": val},
+            )
         return
 
     if getattr(args, "cmd", None) == "rank-scenario-synergy":
