@@ -186,7 +186,13 @@ class SynergyAutoTrainer:
             return
         if self.metrics_port is not None and not self._metrics_started:
             try:
+                self.logger.info(
+                    "starting metrics server on port %d", self.metrics_port
+                )
                 start_metrics_server(int(self.metrics_port))
+                self.logger.info(
+                    "metrics server running on port %d", self.metrics_port
+                )
                 self._metrics_started = True
             except Exception:
                 self.logger.exception("failed to start metrics server")
@@ -229,7 +235,13 @@ class SynergyAutoTrainer:
             return
         if self.metrics_port is not None and not self._metrics_started:
             try:
+                self.logger.info(
+                    "starting metrics server on port %d", self.metrics_port
+                )
                 start_metrics_server(int(self.metrics_port))
+                self.logger.info(
+                    "metrics server running on port %d", self.metrics_port
+                )
                 self._metrics_started = True
             except Exception:
                 self.logger.exception("failed to start metrics server")
@@ -311,7 +323,13 @@ def cli(argv: list[str] | None = None) -> int:
     if args.run_once:
         if args.metrics_port is not None:
             try:
+                logging.getLogger(__name__).info(
+                    "starting metrics server on port %d", args.metrics_port
+                )
                 start_metrics_server(int(args.metrics_port))
+                logging.getLogger(__name__).info(
+                    "metrics server running on port %d", args.metrics_port
+                )
             except Exception:
                 print("failed to start metrics server", file=sys.stderr)
         try:
