@@ -122,6 +122,7 @@ class SynergyAutoTrainer:
     # --------------------------------------------------------------
     def _train_once(self) -> None:
         hist = self._load_history()
+        self.logger.info("processing %d history entries", len(hist))
         if not hist:
             return
         # update metrics for each successful cycle
@@ -158,6 +159,9 @@ class SynergyAutoTrainer:
             except Exception:
                 self.logger.exception("failed to dispatch weight alert")
         finally:
+            self.logger.info(
+                "weight update %s", "succeeded" if success else "failed"
+            )
             if success:
                 self._last_id = hist[-1][0]
                 try:
@@ -166,7 +170,10 @@ class SynergyAutoTrainer:
                     pass
             try:
                 self.progress_file.parent.mkdir(parents=True, exist_ok=True)
-                self.progress_file.write_text(json.dumps({"last_id": self._last_id}))
+                self.progress_file.write_text(
+                    json.dumps({"last_id": self._last_id})
+                )
+                self.logger.info("progress saved (last_id=%d)", self._last_id)
             except Exception as exc:
                 self.logger.exception("failed to update progress: %s", exc)
 
@@ -221,6 +228,7 @@ class SynergyAutoTrainer:
 
         self._thread = threading.Thread(target=run, daemon=True)
         self._thread.start()
+        self.logger.info("trainer thread started")
 
     def stop(self) -> None:
         self.logger.info("stopping SynergyAutoTrainer")
@@ -228,6 +236,7 @@ class SynergyAutoTrainer:
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
+            self.logger.info("trainer thread stopped")
 
     def restart(self) -> None:
         """Restart the trainer."""
@@ -275,6 +284,7 @@ class SynergyAutoTrainer:
             self.metrics_port,
         )
         self._task = asyncio.create_task(self._async_loop())
+        self.logger.info("async trainer task started")
 
     async def stop_async(self) -> None:
         self.logger.info("stopping SynergyAutoTrainer (async)")
@@ -282,6 +292,7 @@ class SynergyAutoTrainer:
         if self._task:
             await self._task
             self._task = None
+            self.logger.info("async trainer task stopped")
 
     async def restart_async(self) -> None:
         """Restart the trainer within an asyncio loop."""
