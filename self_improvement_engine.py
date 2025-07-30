@@ -3,7 +3,7 @@ from __future__ import annotations
 """Periodic self-improvement engine for the Menace system."""
 
 import logging
-from .logging_utils import log_record, get_logger, setup_logging
+from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
 import time
 import threading
 import asyncio
@@ -610,6 +610,7 @@ class SelfImprovementEngine:
         self._stop_event: asyncio.Event | None = None
         self._trainer_stop: threading.Event | None = None
         self._trainer_thread: threading.Thread | None = None
+        self._cycle_count = 0
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -699,6 +700,10 @@ class SelfImprovementEngine:
         self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
         self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
+        self.logger.info(
+            "synergy weights updated",
+            extra=log_record(weights=self.synergy_learner.weights),
+        )
 
     # ------------------------------------------------------------------
     def _save_synergy_weights(self) -> None:
@@ -873,6 +878,10 @@ class SelfImprovementEngine:
             )
         except Exception:
             syn_adj = 0.0
+        self.logger.debug(
+            "weighted synergy adjustment",
+            extra=log_record(factor=float(syn_adj), weights=weights),
+        )
         return float(syn_adj)
 
     # ------------------------------------------------------------------
@@ -1231,6 +1240,9 @@ class SelfImprovementEngine:
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
+        self._cycle_count += 1
+        cid = f"cycle-{self._cycle_count}"
+        set_correlation_id(cid)
         try:
             state = (
                 self._policy_state()
@@ -1315,15 +1327,30 @@ class SelfImprovementEngine:
             if tracker is not None:
                 try:
                     syn_adj = self._weighted_synergy_adjustment()
+                    self.logger.info(
+                        "synergy adjustment",
+                        extra=log_record(factor=syn_adj, energy_before=energy),
+                    )
                     if syn_adj:
                         energy = int(round(energy * (1.0 + syn_adj)))
+                        self.logger.info(
+                            "synergy adjusted energy",
+                            extra=log_record(value=energy),
+                        )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "synergy energy adjustment failed: %s", exc
                     )
             try:
                 roi_scale = 1.0 + max(0.0, self.roi_delta_ema)
+                self.logger.info(
+                    "roi ema adjustment",
+                    extra=log_record(factor=roi_scale, energy_before=energy),
+                )
                 energy = int(round(energy * roi_scale))
+                self.logger.info(
+                    "roi ema adjusted energy", extra=log_record(value=energy)
+                )
             except Exception as exc:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
@@ -1618,6 +1645,7 @@ class SelfImprovementEngine:
             return result
         finally:
             self._cycle_running = False
+            set_correlation_id(None)
 
     async def _schedule_loop(self, energy: int = 1) -> None:
         while not self._stop_event.is_set():
@@ -1649,7 +1677,7 @@ class SelfImprovementEngine:
                     )
             else:
                 if current_energy < self.energy_threshold:
-                    self.logger.debug(
+                    self.logger.info(
                         "energy below threshold - skipping cycle",
                         extra=log_record(
                             energy=current_energy,
