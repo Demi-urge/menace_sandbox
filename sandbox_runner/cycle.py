@@ -119,20 +119,41 @@ def _sandbox_cycle_runner(
     prev_res_avg: float | None = None
     failure_start: float | None = None
     for idx in range(ctx.cycles):
+        logger.debug(
+            "resource tuning start",
+            extra={"cycle": idx, "prev_roi": ctx.prev_roi},
+        )
         try:
             SANDBOX_ENV_PRESETS = tuner.adjust(tracker, SANDBOX_ENV_PRESETS)
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
         except Exception:
             logger.exception("resource tuning failed")
+        logger.debug(
+            "resource tuning end",
+            extra={"cycle": idx, "preset_count": len(SANDBOX_ENV_PRESETS)},
+        )
         logger.info("sandbox cycle %d starting", idx)
+        logger.debug("orchestrator start", extra={"cycle": idx})
         ctx.orchestrator.run_cycle(ctx.models)
+        logger.debug("orchestrator end", extra={"cycle": idx})
+        logger.debug("improver start", extra={"cycle": idx})
         result = ctx.improver.run_cycle()
+        logger.debug(
+            "improver end",
+            extra={"cycle": idx, "roi": result.roi.roi if result.roi else 0.0},
+        )
         ctx.tester._run_once()
+        logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
         except TypeError:
             ctx.sandbox.analyse_and_fix()
+        logger.debug("sandbox analysis end", extra={"cycle": idx})
         roi = result.roi.roi if result.roi else 0.0
+        logger.info(
+            "roi calculated",
+            extra={"cycle": idx, "roi": roi, "prev_roi": ctx.prev_roi},
+        )
         if ctx.predicted_roi is not None:
             logger.info(
                 "roi actual",
@@ -317,6 +338,10 @@ def _sandbox_cycle_runner(
                 patch_complexity = 0.0
         energy_consumption = 100.0 - efficiency_metric
         resilience = 100.0 if roi >= ctx.prev_roi else 50.0
+        logger.info(
+            "resilience calculated",
+            extra={"cycle": idx, "roi": roi, "resilience": resilience},
+        )
         network_latency = float(resources.get("time", 0.0)) if resources else 0.0
         throughput = 100.0 / (network_latency + 1.0)
         risk_index = max(0.0, 100.0 - (security_score + safety_rating) / 2.0)
@@ -699,10 +724,18 @@ def _sandbox_cycle_runner(
             flagged = []
     if ctx.adapt_presets and flagged:
         try:
+            logger.debug(
+                "preset adaptation start",
+                extra={"flagged": flagged},
+            )
             from menace.environment_generator import adapt_presets
 
             SANDBOX_ENV_PRESETS = adapt_presets(tracker, SANDBOX_ENV_PRESETS)
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
+            logger.debug(
+                "preset adaptation end",
+                extra={"preset_count": len(SANDBOX_ENV_PRESETS)},
+            )
         except Exception:
             logger.exception("preset adaptation failed")
 
