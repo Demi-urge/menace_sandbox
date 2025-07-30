@@ -7,7 +7,9 @@ import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
-logger = logging.getLogger(__name__)
+from logging_utils import get_logger, setup_logging
+
+logger = get_logger(__name__)
 
 MetricsFunc = Callable[[float, float, Optional[Dict[str, float]]], Dict[str, float]]
 
@@ -96,3 +98,7 @@ def collect_plugin_metrics(
         except Exception:
             logger.exception("metrics plugin %s failed", getattr(func, "__name__", "?"))
     return merged
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    setup_logging()

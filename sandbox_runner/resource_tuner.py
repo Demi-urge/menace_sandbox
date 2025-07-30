@@ -3,6 +3,8 @@ from __future__ import annotations
 """Resource tuning utilities for sandbox cycles."""
 
 import logging
+
+from logging_utils import get_logger, setup_logging
 from typing import Any, Dict, List
 
 # The sandbox_runner package may be executed as a top-level module. In that
@@ -14,7 +16,7 @@ from typing import Any, Dict, List
 # package is executed as ``menace`` or ``menace_sandbox``.
 from menace.environment_generator import _CPU_LIMITS, _MEMORY_LIMITS
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ResourceTuner:
@@ -71,3 +73,7 @@ class ResourceTuner:
 
 
 __all__ = ["ResourceTuner"]
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    setup_logging()
