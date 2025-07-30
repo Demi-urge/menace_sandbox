@@ -595,8 +595,9 @@ The `run_autonomous.py` helper exposes the same functionality while verifying
 dependencies first. It keeps launching new runs until ROI improvements fade for
 all modules and workflows. `--roi-cycles` and `--synergy-cycles` cap how many
 consecutive below-threshold cycles trigger convergence. The optional `--runs`
-argument acts as an upper bound. Pass `--log-level LEVEL` to override the
-console logging verbosity (defaults to `SANDBOX_LOG_LEVEL` or `LOG_LEVEL`):
+argument acts as an upper bound. Use `--log-level LEVEL` or set
+`SANDBOX_LOG_LEVEL` to adjust console verbosity. Pass `--verbose` to force
+debug output regardless of the configured level:
 
 Synergy convergence now checks the rolling correlation of metric values to
 ensure improvements are not simply trending upward or downward. Confidence
