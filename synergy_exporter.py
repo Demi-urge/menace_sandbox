@@ -129,7 +129,9 @@ class SynergyExporter:
 
     # ------------------------------------------------------------------
     def start(self) -> None:
+        self.logger.info("starting metrics server on port %d", self.port)
         start_metrics_server(self.port)
+        self.logger.info("metrics server running on port %d", self.port)
         self.start_time = time.time()
         exporter_uptime.set(0.0)
         exporter_failures.set(float(self.failures))
