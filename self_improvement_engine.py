@@ -924,6 +924,14 @@ class SelfImprovementEngine:
         deltas = {n: self._metric_delta(n) for n in names}
         try:
             self.synergy_learner.update(roi_delta, deltas)
+            self.logger.info(
+                "synergy weights updated",
+                extra=log_record(
+                    weights=self.synergy_learner.weights,
+                    roi_delta=roi_delta,
+                    state=self.synergy_learner._state,
+                ),
+            )
         except Exception as exc:  # pragma: no cover - runtime issues
             try:
                 synergy_weight_update_failures_total.inc()
@@ -1288,6 +1296,15 @@ class SelfImprovementEngine:
                     energy=energy, predicted_roi=predicted, state=state
                 ),
             )
+            if self.policy:
+                self.logger.info(
+                    "policy predicted roi",
+                    extra=log_record(
+                        predicted_roi=predicted,
+                        state=state,
+                        weights=self.synergy_learner.weights,
+                    ),
+                )
             before_roi = 0.0
             if self.capital_bot:
                 try:
@@ -1366,13 +1383,19 @@ class SelfImprovementEngine:
                     syn_adj = self._weighted_synergy_adjustment()
                     self.logger.info(
                         "synergy adjustment",
-                        extra=log_record(factor=syn_adj, energy_before=energy),
+                        extra=log_record(
+                            factor=syn_adj,
+                            energy_before=energy,
+                            weights=self.synergy_learner.weights,
+                        ),
                     )
                     if syn_adj:
                         energy = int(round(energy * (1.0 + syn_adj)))
                         self.logger.info(
                             "synergy adjusted energy",
-                            extra=log_record(value=energy),
+                            extra=log_record(
+                                value=energy, weights=self.synergy_learner.weights
+                            ),
                         )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
