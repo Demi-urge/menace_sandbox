@@ -34,11 +34,38 @@ from .stub_providers import (
     load_stub_providers,
 )
 
+from pathlib import Path
+import ast
+
+
+def _load_discover_func():
+    path = Path(__file__).with_name("sandbox_runner.py")
+    try:
+        src = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        tree = ast.parse(src)
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "discover_orphan_modules":
+                mod: dict[str, object] = {}
+                ast.fix_missing_locations(node)
+                code = ast.Module(body=[node], type_ignores=[])
+                exec(compile(code, str(path), "exec"), mod)
+                return mod.get("discover_orphan_modules")
+    except Exception:
+        return None
+    return None
+
+
+discover_orphan_modules = _load_discover_func()
+
 __all__ = [
     "simulate_execution_environment",
     "generate_sandbox_report",
     "run_repo_section_simulations",
     "run_workflow_simulations",
+    "discover_orphan_modules",
     "simulate_full_environment",
     "generate_input_stubs",
     "SANDBOX_INPUT_STUBS",
