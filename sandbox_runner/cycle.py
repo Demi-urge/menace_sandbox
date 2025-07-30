@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from logging_utils import get_logger, setup_logging
+from logging_utils import get_logger, setup_logging, log_record
 import os
 import json
 import subprocess
@@ -120,6 +120,8 @@ def _sandbox_cycle_runner(
     resilience_history: list[float] = []
     prev_res_avg: float | None = None
     failure_start: float | None = None
+    start_roi = ctx.prev_roi
+    last_metrics: Dict[str, float] | None = None
     for idx in range(ctx.cycles):
         logger.debug(
             "resource tuning start",
@@ -130,27 +132,27 @@ def _sandbox_cycle_runner(
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
         except Exception:
             logger.exception("resource tuning failed")
-        logger.debug(
-            "resource tuning end",
-            extra={"cycle": idx, "preset_count": len(SANDBOX_ENV_PRESETS)},
+        logger.info(
+            "resource tuning complete",
+            extra=log_record(cycle=idx, presets=SANDBOX_ENV_PRESETS),
         )
         logger.info("sandbox cycle %d starting", idx)
-        logger.debug("orchestrator start", extra={"cycle": idx})
+        logger.info("orchestrator run", extra=log_record(cycle=idx))
         ctx.orchestrator.run_cycle(ctx.models)
-        logger.debug("orchestrator end", extra={"cycle": idx})
-        logger.debug("improver start", extra={"cycle": idx})
+        logger.info("patch engine start", extra=log_record(cycle=idx))
         result = ctx.improver.run_cycle()
-        logger.debug(
-            "improver end",
-            extra={"cycle": idx, "roi": result.roi.roi if result.roi else 0.0},
+        logger.info(
+            "patch engine complete",
+            extra=log_record(cycle=idx, roi=result.roi.roi if result.roi else 0.0),
         )
+        logger.info("tester run", extra=log_record(cycle=idx))
         ctx.tester._run_once()
         logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
         except TypeError:
             ctx.sandbox.analyse_and_fix()
-        logger.debug("sandbox analysis end", extra={"cycle": idx})
+        logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(
             "roi calculated",
@@ -459,6 +461,7 @@ def _sandbox_cycle_runner(
         vertex, curve, should_stop = tracker.update(
             ctx.prev_roi, roi, name_list, resources, {**metrics, **scenario_metrics}
         )
+        last_metrics = metrics
         feat_vec = [
             roi,
             security_score,
@@ -740,6 +743,17 @@ def _sandbox_cycle_runner(
             )
         except Exception:
             logger.exception("preset adaptation failed")
+
+    logger.info(
+        "cycle summary",
+        extra=log_record(
+            start_roi=start_roi,
+            final_roi=ctx.prev_roi,
+            roi_delta=ctx.prev_roi - start_roi,
+            metrics=last_metrics,
+            flagged=list(ctx.meta_log.flagged_sections),
+        ),
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation

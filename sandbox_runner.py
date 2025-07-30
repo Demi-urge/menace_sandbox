@@ -557,6 +557,11 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
     env._cleanup_pools()
 
+    logger.info(
+        "initialising sandbox",
+        extra=log_record(env=dict(os.environ), preset=preset),
+    )
+
     def _handle_signal(signum, frame) -> None:  # pragma: no cover - signal path
         env._cleanup_pools()
         env._await_cleanup_task()
@@ -902,9 +907,13 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             os.environ[k] = v
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
-    logger.debug(
+    logger.info(
         "sandbox cleanup complete",
-        extra=log_record(path=str(ctx.tmp)),
+        extra=log_record(
+            tmp_dir=str(ctx.tmp),
+            data_dir=str(ctx.data_dir),
+            policy_saved=bool(ctx.policy),
+        ),
     )
 
 
