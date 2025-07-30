@@ -143,7 +143,9 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
     """Configure logging from *config_path* or defaults.
 
     When *level* is provided the root logger level is overridden after
-    configuration. The argument may be a logging level name or numeric value."""
+    configuration. The argument may be a logging level name or numeric value.
+    If ``SANDBOX_VERBOSE=1`` is set and *level* is ``None`` the root logger
+    level defaults to :data:`logging.DEBUG`."""
     path = Path(config_path or os.getenv("MENACE_LOGGING_CONFIG", ""))
     cfg: Dict[str, Any] | None = None
     if path.is_file():
@@ -163,7 +165,9 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
                 handler["formatter"] = "json"
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
-    if level is not None:
+    if level is None and os.getenv("SANDBOX_VERBOSE") == "1":
+        logging.getLogger().setLevel(logging.DEBUG)
+    elif level is not None:
         if isinstance(level, int):
             logging.getLogger().setLevel(level)
         else:
