@@ -43,6 +43,7 @@ Options include:
 - `--container-runtime` – container runtime executable (e.g. `docker` or `podman`)
 - `--docker-host` – Docker/Podman host or URL for remote engines
 - `--metrics-port` – expose Prometheus gauges on this port
+- `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
 
 Remove stale containers left over from interrupted runs with:
 
@@ -83,3 +84,10 @@ prebuilt image tarball before running the tests.  Provide the tarball path via
 
 Container runs are serialized across processes using a file lock. Set the lock
 file path with `SELF_TEST_LOCK_FILE` (default `sandbox_data/self_test.lock`).
+
+## Orphan Modules
+
+Run `scripts/find_orphan_modules.py` to locate Python files that are not
+referenced by any tests. The script writes the list to
+`sandbox_data/orphan_modules.json` which the service can load when started with
+`--include-orphans`.

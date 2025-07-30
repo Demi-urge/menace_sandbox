@@ -98,6 +98,10 @@ A new `menace` CLI wraps common workflows so you no longer need to remember indi
 6. **Deployment** – successful bots are redeployed and metrics are logged back
    into `PathwayDB`, closing the loop.
 
+Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
+"not yet tested". During autonomous runs the `SelfTestService` executes these
+modules separately when started with `--include-orphans`.
+
 ## Installation
 
 Run the setup helper to install the required system tools and Python
