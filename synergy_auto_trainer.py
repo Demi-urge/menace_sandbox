@@ -184,6 +184,14 @@ class SynergyAutoTrainer:
     def start(self) -> None:
         if self._thread:
             return
+        self.logger.info(
+            "starting SynergyAutoTrainer with history=%s weights=%s progress=%s interval=%.1fs metrics_port=%s",
+            self.history_file,
+            self.weights_file,
+            self.progress_file,
+            self.interval,
+            self.metrics_port,
+        )
         if self.metrics_port is not None and not self._metrics_started:
             try:
                 self.logger.info(
@@ -215,10 +223,18 @@ class SynergyAutoTrainer:
         self._thread.start()
 
     def stop(self) -> None:
+        self.logger.info("stopping SynergyAutoTrainer")
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
             self._thread = None
+
+    def restart(self) -> None:
+        """Restart the trainer."""
+        self.logger.info("restarting SynergyAutoTrainer")
+        self.stop()
+        self._stop.clear()
+        self.start()
 
     # --------------------------------------------------------------
     async def _async_loop(self) -> None:
@@ -250,13 +266,29 @@ class SynergyAutoTrainer:
             synergy_trainer_last_id.set(float(self._last_id))
         except Exception:
             pass
+        self.logger.info(
+            "starting async SynergyAutoTrainer with history=%s weights=%s progress=%s interval=%.1fs metrics_port=%s",
+            self.history_file,
+            self.weights_file,
+            self.progress_file,
+            self.interval,
+            self.metrics_port,
+        )
         self._task = asyncio.create_task(self._async_loop())
 
     async def stop_async(self) -> None:
+        self.logger.info("stopping SynergyAutoTrainer (async)")
         self._stop.set()
         if self._task:
             await self._task
             self._task = None
+
+    async def restart_async(self) -> None:
+        """Restart the trainer within an asyncio loop."""
+        self.logger.info("restarting SynergyAutoTrainer (async)")
+        await self.stop_async()
+        self._stop.clear()
+        self.start_async()
 
 # --------------------------------------------------------------
 def cli(argv: list[str] | None = None) -> int:
