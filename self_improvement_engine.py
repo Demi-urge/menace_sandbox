@@ -701,6 +701,10 @@ class SelfImprovementEngine:
         self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         self.logger.info(
+            "synergy weights after update",
+            extra=log_record(weights=self.synergy_learner.weights),
+        )
+        self.logger.info(
             "synergy weights updated",
             extra=log_record(weights=self.synergy_learner.weights),
         )
@@ -878,9 +882,13 @@ class SelfImprovementEngine:
             )
         except Exception:
             syn_adj = 0.0
-        self.logger.debug(
+        self.logger.info(
             "weighted synergy adjustment",
             extra=log_record(factor=float(syn_adj), weights=weights),
+        )
+        self.logger.debug(
+            "synergy weights used for adjustment",
+            extra=log_record(weights=weights),
         )
         return float(syn_adj)
 
@@ -925,6 +933,10 @@ class SelfImprovementEngine:
         self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
         self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
+        self.logger.info(
+            "synergy weights after update",
+            extra=log_record(weights=self.synergy_learner.weights),
+        )
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
