@@ -49,8 +49,8 @@ for name, attr in {
     "menace.code_database": ["PatchHistoryDB", "CodeDB"],
     "menace.error_bot": ["ErrorBot", "ErrorDB"],
     "menace.data_bot": ["MetricsDB", "DataBot"],
-    "menace.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics"],
-    "sandbox_runner.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics"],
+    "menace.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics", "discover_metrics_plugins"],
+    "sandbox_runner.metrics_plugins": ["load_metrics_plugins", "collect_plugin_metrics", "discover_metrics_plugins"],
     "menace.discrepancy_detection_bot": "DiscrepancyDetectionBot",
     "menace.pre_execution_roi_bot": "PreExecutionROIBot",
     "menace.menace_memory_manager": "MenaceMemoryManager",
@@ -330,6 +330,20 @@ def test_run_sandbox_merges_module_index(monkeypatch, tmp_path):
 
     assert module_map.exists()
     assert isinstance(_ROITracker.instance.calls[0], dict)
+
+
+def test_module_map_clusters_have_same_index(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "a.py").write_text("from . import b\nb.f()\n")
+    (pkg / "b.py").write_text("def f():\n    pass\n")
+    out = tmp_path / "map.json"
+    from scripts.generate_module_map import generate_module_map
+    generate_module_map(out, root=tmp_path)
+    from module_index_db import ModuleIndexDB
+    db = ModuleIndexDB(out)
+    assert db.get("pkg/a") == db.get("pkg/b")
 
 
 def test_section_short_circuit(monkeypatch, tmp_path):

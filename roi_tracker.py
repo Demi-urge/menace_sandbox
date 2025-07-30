@@ -32,6 +32,7 @@ class ROITracker:
         filter_outliers: bool = True,
         weights: Optional[List[float]] = None,
         resource_db: "ROIHistoryDB" | None = None,
+        cluster_map: Optional[Dict[str, int]] = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -68,6 +69,8 @@ class ROITracker:
         self._poly = PolynomialFeatures(degree=2)
         self._model = LinearRegression()
         self.module_deltas: Dict[str, List[float]] = {}
+        self.cluster_map: Dict[str, int] = dict(cluster_map or {})
+        self.cluster_deltas: Dict[int, List[float]] = {}
         self.metrics_history: Dict[str, List[float]] = {
             "recovery_time": [],
             "synergy_adaptability": [],
@@ -426,6 +429,9 @@ class ROITracker:
             if modules:
                 for m in modules:
                     self.module_deltas.setdefault(m, []).append(filtered)
+                    cid = self.cluster_map.get(m)
+                    if cid is not None:
+                        self.cluster_deltas.setdefault(cid, []).append(filtered)
             if resources:
                 try:
                     self.resource_metrics.append(
@@ -1467,6 +1473,17 @@ class ROITracker:
     def rankings(self) -> List[Tuple[str, float]]:
         """Return modules sorted by cumulative ROI contribution."""
         totals = {m: sum(v) for m, v in self.module_deltas.items()}
+        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+    # ------------------------------------------------------------------
+    def cluster_rankings(self) -> List[Tuple[int, float]]:
+        """Return clusters sorted by cumulative ROI contribution."""
+        totals: Dict[int, float] = {}
+        for mod, vals in self.module_deltas.items():
+            cid = self.cluster_map.get(mod)
+            if cid is None:
+                continue
+            totals[cid] = totals.get(cid, 0.0) + sum(vals)
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
 
 
