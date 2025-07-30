@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+
+from logging_utils import get_logger, setup_logging
 import os
 import json
 import subprocess
@@ -32,7 +34,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 from .environment import SANDBOX_ENV_PRESETS
 from .resource_tuner import ResourceTuner
@@ -738,4 +740,8 @@ def _sandbox_cycle_runner(
             )
         except Exception:
             logger.exception("preset adaptation failed")
+
+
+if __name__ == "__main__":  # pragma: no cover - manual invocation
+    setup_logging()
 

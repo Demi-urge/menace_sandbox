@@ -42,6 +42,7 @@ except Exception:  # pragma: no cover - fallback when scipy is missing
 from threading import Thread
 
 from menace.metrics_dashboard import MetricsDashboard
+from logging_utils import get_logger, setup_logging
 
 from .environment import SANDBOX_ENV_PRESETS, simulate_full_environment
 
@@ -50,7 +51,7 @@ try:  # optional import for tests
 except Exception:  # pragma: no cover
     generate_presets = lambda n=None: [{}]  # type: ignore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
@@ -1244,3 +1245,8 @@ def main(argv: List[str] | None = None) -> None:
         run_workflow_simulations(args.workflow_db)
     else:
         _run_sandbox(args)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI usage
+    setup_logging()
+    main()
