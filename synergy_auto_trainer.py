@@ -310,7 +310,10 @@ def cli(argv: list[str] | None = None) -> int:
             try:
                 args.metrics_port = int(env_port)
             except Exception:
-                print(f"Invalid SYNERGY_METRICS_PORT value: {env_port}", file=sys.stderr)
+                logging.getLogger(__name__).warning(
+                    "Invalid SYNERGY_METRICS_PORT value: %s",
+                    env_port,
+                )
 
     trainer = SynergyAutoTrainer(
         history_file=args.history_file,
@@ -330,8 +333,11 @@ def cli(argv: list[str] | None = None) -> int:
                 logging.getLogger(__name__).info(
                     "metrics server running on port %d", args.metrics_port
                 )
-            except Exception:
-                print("failed to start metrics server", file=sys.stderr)
+            except Exception as exc:
+                logging.getLogger(__name__).error(
+                    "failed to start metrics server: %s",
+                    exc,
+                )
         try:
             synergy_trainer_iterations.set(0.0)
             synergy_trainer_last_id.set(float(trainer._last_id))
