@@ -104,7 +104,8 @@ modules separately when started with `--include-orphans`.
 The sandbox can also group modules automatically by analysing imports and
 function calls. Running `scripts/generate_module_map.py` writes
 `sandbox_data/module_map.json` which assigns each file to a numeric group. Set
-`SANDBOX_AUTO_MAP=1` to refresh this map on every startup.
+`SANDBOX_AUTODISCOVER_MODULES=1` to refresh this map on every startup. See
+[docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md).
 
 ## Installation
 
