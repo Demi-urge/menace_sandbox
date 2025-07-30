@@ -89,6 +89,7 @@ class SelfTestService:
         history_path: str | Path | None = None,
         state_path: str | Path | None = None,
         metrics_port: int | None = None,
+        include_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -167,6 +168,11 @@ class SelfTestService:
             self.workers = int(env_workers) if env_workers is not None else 1
         except ValueError:
             self.workers = 1
+        env_orphans = os.getenv("SELF_TEST_INCLUDE_ORPHANS")
+        if include_orphans or (env_orphans and env_orphans.lower() in ("1", "true", "yes")):
+            self.include_orphans = True
+        else:
+            self.include_orphans = False
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -434,6 +440,16 @@ class SelfTestService:
         if not paths:
             paths = [None]
 
+        orphan_list: list[str] = []
+        if self.include_orphans:
+            try:
+                with open("sandbox_data/orphan_modules.json", "r", encoding="utf-8") as fh:
+                    data = json.load(fh) or []
+                    if isinstance(data, list):
+                        orphan_list = [str(p) for p in data]
+            except Exception:
+                self.logger.exception("failed to load orphan modules")
+
         if self._state:
             saved_queue = self._state.get("queue")
             if saved_queue:
@@ -447,9 +463,12 @@ class SelfTestService:
             failed = 0
             coverage_total = 0.0
             runtime_total = 0.0
+            paths.extend(orphan_list)
         self._state = None
 
-        queue: list[str] = list(paths)
+        orphan_set = set(orphan_list)
+
+        queue: list[str] = [p or "" for p in paths]
         self._save_state(queue, passed, failed, coverage_total, runtime_total)
         proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
 
@@ -682,6 +701,7 @@ class SelfTestService:
             stdout_snip = ""
             stderr_snip = ""
             logs_snip = ""
+            orphan_failed: list[str] = []
 
             for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
@@ -698,6 +718,8 @@ class SelfTestService:
                     stdout_snip += out_snip
                     stderr_snip += err_snip
                     logs_snip += log_snip
+                    if p in orphan_set:
+                        orphan_failed.append(p)
 
                 if p in queue:
                     queue.remove(p)
@@ -728,6 +750,9 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
+            if orphan_set:
+                self.results["orphan_total"] = len(orphan_set)
+                self.results["orphan_failed"] = orphan_failed
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
@@ -974,6 +999,11 @@ def cli(argv: list[str] | None = None) -> int:
         type=int,
         help="Port to expose Prometheus gauges",
     )
+    run.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="Also test modules listed in sandbox_data/orphan_modules.json",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1024,6 +1054,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Port to expose Prometheus gauges",
     )
     sched.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="Also test modules listed in sandbox_data/orphan_modules.json",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1068,6 +1103,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_retries=args.retries,
             container_timeout=args.timeout,
             metrics_port=args.metrics_port,
+            include_orphans=args.include_orphans,
         )
         try:
             asyncio.run(service._run_once())
@@ -1101,6 +1137,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_retries=args.retries,
             container_timeout=args.timeout,
             metrics_port=args.metrics_port,
+            include_orphans=args.include_orphans,
         )
         try:
             service.run_scheduled(interval=args.interval)
