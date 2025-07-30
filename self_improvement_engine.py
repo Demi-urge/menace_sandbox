@@ -747,6 +747,12 @@ class SelfImprovementEngine:
     def _start_synergy_trainer(self, history_file: Path, interval: float) -> None:
         if self._trainer_thread:
             return
+        self.logger.info(
+            "starting synergy trainer thread",
+            extra=log_record(
+                history_file=str(history_file), interval=float(interval)
+            ),
+        )
         self._trainer_stop = threading.Event()
         self._trainer_thread = threading.Thread(
             target=self._synergy_trainer_loop,
@@ -757,6 +763,7 @@ class SelfImprovementEngine:
 
     def stop_synergy_trainer(self) -> None:
         if self._trainer_thread and self._trainer_stop:
+            self.logger.info("stopping synergy trainer thread")
             self._trainer_stop.set()
             self._trainer_thread.join(timeout=1.0)
             self._trainer_thread = None
