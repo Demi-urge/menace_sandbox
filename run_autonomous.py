@@ -442,19 +442,32 @@ def _get_env_override(name: str, current, settings: SandboxSettings):
     env_val = getattr(settings, name.lower())
     if current is not None or env_val is None:
         return current
+
+    result = None
     try:
         if isinstance(current, int):
-            return int(env_val)
-        if isinstance(current, float):
-            return float(env_val)
+            result = int(env_val)
+        elif isinstance(current, float):
+            result = float(env_val)
     except Exception:
-        return None
-    for cast in (int, float):
-        try:
-            return cast(env_val)
-        except Exception:
-            continue
-    return None
+        result = None
+
+    if result is None:
+        for cast in (int, float):
+            try:
+                result = cast(env_val)
+                break
+            except Exception:
+                continue
+
+    logger.debug(
+        "environment variable %s overrides CLI value: %s",
+        name,
+        result,
+        extra=log_record(variable=name, value=result),
+    )
+
+    return result
 
 
 def load_previous_synergy(
