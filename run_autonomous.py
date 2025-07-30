@@ -1618,7 +1618,7 @@ def main(argv: List[str] | None = None) -> None:
         )
 
         logger.info(
-            "run %d summary roi_thr=%.3f ema=%.3f converged=%s flagged=%d",
+            "run %d summary: roi_threshold=%.3f ema=%.3f converged=%s flagged_modules=%d",
             run_idx,
             roi_threshold,
             ema_val,
