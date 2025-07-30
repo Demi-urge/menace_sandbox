@@ -1105,6 +1105,13 @@ def main(argv: List[str] | None = None) -> None:
             return
         raise
 
+    logger.info(
+        "run_autonomous starting with data_dir=%s runs=%s metrics_port=%s",
+        args.sandbox_data_dir or settings.sandbox_data_dir,
+        args.runs,
+        port,
+    )
+
     data_dir = Path(args.sandbox_data_dir or settings.sandbox_data_dir)
     legacy_json = data_dir / "synergy_history.json"
     db_file = data_dir / "synergy_history.db"
@@ -1272,9 +1279,17 @@ def main(argv: List[str] | None = None) -> None:
             port=port,
         )
         try:
-            logger.info("starting synergy exporter on port %d", port)
+            logger.info(
+                "starting synergy exporter on port %d using history %s",
+                port,
+                history_file,
+            )
             synergy_exporter.start()
-            logger.info("synergy exporter running on port %d", port)
+            logger.info(
+                "synergy exporter running on port %d serving %s",
+                port,
+                history_file,
+            )
             exporter_log.record(
                 {"timestamp": int(time.time()), "event": "exporter_started"}
             )
@@ -1313,9 +1328,18 @@ def main(argv: List[str] | None = None) -> None:
             interval=interval,
         )
         try:
-            logger.info("starting synergy auto trainer")
+            logger.info(
+                "starting synergy auto trainer with history %s weights %s interval %.1fs",
+                history_file,
+                weights_file,
+                interval,
+            )
             auto_trainer.start()
-            logger.info("synergy auto trainer running")
+            logger.info(
+                "synergy auto trainer running with history %s weights %s",
+                history_file,
+                weights_file,
+            )
             trainer_monitor = AutoTrainerMonitor(auto_trainer, exporter_log)
             trainer_monitor.start()
             cleanup_funcs.append(trainer_monitor.stop)
@@ -1632,6 +1656,9 @@ def main(argv: List[str] | None = None) -> None:
     if exporter_monitor is not None:
         try:
             exporter_monitor.stop()
+            logger.info(
+                "synergy exporter stopped after %d restarts", exporter_monitor.restart_count
+            )
             exporter_log.record(
                 {
                     "timestamp": int(time.time()),
@@ -1645,6 +1672,9 @@ def main(argv: List[str] | None = None) -> None:
     if trainer_monitor is not None:
         try:
             trainer_monitor.stop()
+            logger.info(
+                "synergy auto trainer stopped after %d restarts", trainer_monitor.restart_count
+            )
             exporter_log.record(
                 {
                     "timestamp": int(time.time()),
@@ -1657,6 +1687,8 @@ def main(argv: List[str] | None = None) -> None:
 
     if history_conn is not None:
         history_conn.close()
+
+    logger.info("run_autonomous exiting")
 
 
 if __name__ == "__main__":

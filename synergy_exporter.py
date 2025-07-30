@@ -129,6 +129,12 @@ class SynergyExporter:
 
     # ------------------------------------------------------------------
     def start(self) -> None:
+        self.logger.info(
+            "starting SynergyExporter with history=%s port=%d interval=%.1fs",
+            self.history_file,
+            self.port,
+            self.interval,
+        )
         self.logger.info("starting metrics server on port %d", self.port)
         start_metrics_server(self.port)
         self.logger.info("metrics server running on port %d", self.port)
@@ -141,6 +147,7 @@ class SynergyExporter:
         self.logger.info("Synergy metrics exporter running on port %d", self.port)
 
     def stop(self) -> None:
+        self.logger.info("stopping SynergyExporter")
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
@@ -161,6 +168,13 @@ class SynergyExporter:
             except Exception:  # pragma: no cover - metrics library issues
                 pass
         stop_metrics_server()
+
+    def restart(self) -> None:
+        """Restart the exporter."""
+        self.logger.info("restarting SynergyExporter")
+        self.stop()
+        self._stop.clear()
+        self.start()
 
 
 def start_synergy_exporter(
