@@ -84,9 +84,9 @@ def _verify_required_dependencies() -> None:
         raise SystemExit("\n".join(messages))
 
     if missing_opt:
-        print(
-            "Missing optional Python packages: " + ", ".join(missing_opt),
-            file=sys.stderr,
+        logger.warning(
+            "Missing optional Python packages: %s",
+            ", ".join(missing_opt),
         )
 
 
@@ -99,10 +99,7 @@ from pydantic import BaseModel, RootModel, ValidationError, validator
 if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
     "DATABASE_URL", ""
 ).startswith("sqlite"):
-    print(
-        "MENACE_MODE=production with SQLite database; switching to test mode",
-        file=sys.stderr,
-    )
+    logger.warning("MENACE_MODE=production with SQLite database; switching to test mode")
     os.environ["MENACE_MODE"] = "test"
 
 # allow execution directly from the package directory
@@ -1051,7 +1048,7 @@ def main(argv: List[str] | None = None) -> None:
         settings = SandboxSettings()
     except ValidationError as exc:
         if args.check_settings:
-            print(exc)
+            logger.warning("%s", exc)
             return
         raise
 
@@ -1063,7 +1060,7 @@ def main(argv: List[str] | None = None) -> None:
         migrate_json_to_db(legacy_json, db_file)
 
     if args.check_settings:
-        print("Environment settings valid")
+        logger.info("Environment settings valid")
         return
 
     if settings.roi_cycles is not None:
