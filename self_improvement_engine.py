@@ -415,6 +415,7 @@ class SelfImprovementEngine:
         optimize_self: bool = False,
         meta_logger: object | None = None,
         module_index: "ModuleIndexDB" | None = None,
+        module_clusters: dict[str, int] | None = None,
         pre_roi_bot: PreExecutionROIBot | None = None,
         pre_roi_scale: float | None = None,
         pre_roi_bias: float | None = None,
@@ -604,6 +605,12 @@ class SelfImprovementEngine:
 
         auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
         self.module_index = module_index or ModuleIndexDB(auto_map=auto_map)
+        if module_clusters is None and self.module_index is not None:
+            try:
+                module_clusters = dict(getattr(self.module_index, "_map", {}))
+            except Exception:
+                module_clusters = None
+        self.module_clusters: dict[str, int] = module_clusters or {}
         logging.basicConfig(level=logging.INFO)
         self.logger = get_logger("SelfImprovementEngine")
         self._score_backend: PatchScoreBackend | None = None

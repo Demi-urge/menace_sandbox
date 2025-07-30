@@ -859,7 +859,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         except Exception:
             pre_roi_bot = None
 
-    tracker = ROITracker(resource_db=res_db)
+    tracker = ROITracker(resource_db=res_db, cluster_map=improver.module_clusters)
     roi_history_file = data_dir / "roi_history.json"
     try:
         tracker.load_history(str(roi_history_file))
@@ -1036,7 +1036,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 os.environ.update({k: str(v) for k, v in env_updates.items()})
                 ctx.prev_roi = 0.0
                 ctx.predicted_roi = None
-                sec_tracker = ROITracker(resource_db=ctx.res_db)
+                sec_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
                 _cycle(section_name, snippet, sec_tracker, scenario)
                 section_trackers.append(sec_tracker)
                 sec_res = section_results.setdefault(
@@ -1100,7 +1100,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         }
         synergy_history: list[dict[str, float]] = ctx.tracker.synergy_history
         while True:
-            synergy_tracker = ROITracker(resource_db=ctx.res_db)
+            synergy_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
             ctx.prev_roi = 0.0
             ctx.predicted_roi = None
             _cycle(None, None, synergy_tracker)
