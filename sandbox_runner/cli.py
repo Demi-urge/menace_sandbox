@@ -985,6 +985,11 @@ def main(argv: List[str] | None = None) -> None:
         "--sandbox-data-dir", help="override data directory for sandbox mode"
     )
     parser.add_argument(
+        "--autodiscover-modules",
+        action="store_true",
+        help="generate module map automatically (or set SANDBOX_AUTODISCOVER_MODULES=1)",
+    )
+    parser.add_argument(
         "--preset-count",
         type=int,
         help="number of presets to generate when none are provided",

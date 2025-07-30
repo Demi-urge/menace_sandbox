@@ -651,6 +651,24 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     patch_file = data_dir / "patch_history.db"
     module_map_file = data_dir / "module_map.json"
 
+    autodiscover = bool(
+        getattr(args, "autodiscover_modules", False)
+        or os.getenv("SANDBOX_AUTODISCOVER_MODULES")
+    )
+    if autodiscover or not module_map_file.exists():
+        try:
+            from menace import module_mapper
+
+            graph = module_mapper.build_module_graph(repo)
+            mapping = module_mapper.cluster_modules(graph)
+            module_mapper.save_module_map(mapping, module_map_file)
+            logger.info(
+                "module map generated",
+                extra=log_record(path=str(module_map_file)),
+            )
+        except Exception:
+            logger.exception("module autodiscovery failed")
+
     _env_vars = {
         "DATABASE_URL": "sqlite:///:memory:",
         "BOT_DB_PATH": str(Path(tmp) / "bots.db"),
@@ -710,10 +728,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             score_backend = backend_from_url(backend_url)
         except Exception:
             logger.exception("patch score backend init failed")
-    auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
-        module_index=ModuleIndexDB(module_map_file, auto_map=auto_map) if ModuleIndexDB else None,
+        module_index=ModuleIndexDB(module_map_file) if ModuleIndexDB else None,
         patch_db=patch_db,
         policy=policy,
         score_backend=score_backend,
