@@ -156,6 +156,8 @@ class SynergyWeightLearner:
         except Exception as exc:
             logger.exception("failed to load strategy pickle: %s", exc)
 
+        logger.info("loaded synergy weights", extra=log_record(weights=self.weights))
+
     # ------------------------------------------------------------------
     def save(self) -> None:
         if not self.path:
@@ -174,6 +176,8 @@ class SynergyWeightLearner:
             synergy_weight_updates_total.inc()
         except Exception:
             pass
+
+        logger.info("saved synergy weights", extra=log_record(weights=self.weights))
 
     # ------------------------------------------------------------------
     def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
@@ -207,6 +211,7 @@ class SynergyWeightLearner:
         for key, idx in mapping.items():
             val = q_vals_list[idx]
             self.weights[key] = max(0.0, min(val, 10.0))
+        logger.info("updated synergy weights", extra=log_record(weights=self.weights))
         self.save()
 
 
@@ -346,6 +351,7 @@ class DQNSynergyLearner(SynergyWeightLearner):
                 )
             except Exception as exc:
                 logger.exception("target model sync failed: %s", exc)
+        logger.info("updated synergy weights", extra=log_record(weights=self.weights))
         self.save()
 
 

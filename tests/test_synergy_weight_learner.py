@@ -450,3 +450,24 @@ def test_sb3_learners_persistence_and_files(tmp_path, cls_name):
 
     assert policy.exists()
     assert model.exists() or target.exists()
+
+
+def test_synergy_weight_logging_info(tmp_path, caplog):
+    path = tmp_path / "w.json"
+    caplog.set_level("INFO")
+    learner = sie.SynergyWeightLearner(path=path)
+    assert "loaded synergy weights" not in caplog.text
+
+    caplog.clear()
+    learner.save()
+    assert "saved synergy weights" in caplog.text
+
+    caplog.clear()
+    learner.load()
+    assert "loaded synergy weights" in caplog.text
+
+    caplog.clear()
+    learner.update(1.0, {"synergy_roi": 1.0})
+    text = caplog.text
+    assert "updated synergy weights" in text
+    assert "saved synergy weights" in text
