@@ -247,9 +247,12 @@ def generate_presets(
                     cur = int(p.get("THREAT_INTENSITY", _THREAT_INTENSITIES[0]))
                     p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
             agent.save()
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "preset adaptation failed",
+                "preset adaptation failed for policy %s with %d presets: %s",
+                getattr(getattr(agent, "policy", None), "path", "n/a"),
+                len(presets),
+                exc,
                 extra=log_record(
                     presets=presets,
                     tracker_state=getattr(tracker, "__dict__", {}),
@@ -321,14 +324,22 @@ class AdaptivePresetAgent:
             with open(self.state_file) as fh:
                 data = json.load(fh)
         except Exception as exc:
-            logger.warning("Failed to load RL state: %s", exc)
+            logger.warning(
+                "Failed to load RL state from %s: %s",
+                self.state_file,
+                exc,
+            )
             bak = f"{self.state_file}.bak"
             if os.path.exists(bak):
                 try:
                     with open(bak) as fh:
                         data = json.load(fh)
                 except Exception as exc2:
-                    logger.warning("Failed to load backup RL state: %s", exc2)
+                    logger.warning(
+                        "Failed to load backup RL state from %s: %s",
+                        bak,
+                        exc2,
+                    )
                     return
             else:
                 return
@@ -348,7 +359,11 @@ class AdaptivePresetAgent:
                 os.replace(self.state_file, bak_file)
             os.replace(tmp_file, self.state_file)
         except Exception as exc:
-            logger.warning("Failed to save RL state: %s", exc)
+            logger.warning(
+                "Failed to save RL state to %s: %s",
+                self.state_file,
+                exc,
+            )
             try:
                 if os.path.exists(tmp_file):
                     os.remove(tmp_file)
@@ -693,9 +708,12 @@ def adapt_presets(
                     p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
             agent.save()
             return presets
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "preset adaptation failed",
+                "preset adaptation failed for policy %s with %d presets: %s",
+                getattr(getattr(agent, "policy", None), "path", "n/a"),
+                len(presets),
+                exc,
                 extra=log_record(
                     presets=presets,
                     tracker_state=getattr(tracker, "__dict__", {}),
@@ -747,9 +765,11 @@ def adapt_presets(
                     p["THREAT_INTENSITY"] = _lvl(cur, actions["threat"] > 0)
             adapt_agent.save()
             return presets
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "preset adaptation failed",
+                "preset adaptation failed for adaptive agent with %d presets: %s",
+                len(presets),
+                exc,
                 extra=log_record(
                     presets=presets,
                     tracker_state=getattr(tracker, "__dict__", {}),
@@ -1343,16 +1363,27 @@ def generate_presets_from_history(
     source = "static generation"
     if tracker and tracker.metrics_history.get("security_score"):
         try:
-            source = (
-                "RL agent"
-                if getattr(adapt_presets, "_rl_agent", None)
-                else "history adaptation"
+            rl_agent = getattr(adapt_presets, "_rl_agent", None)
+            source = "RL agent" if rl_agent else "history adaptation"
+            logger.info(
+                "adapting %d presets via %s (policy=%s)",
+                len(presets),
+                source,
+                getattr(getattr(rl_agent, "policy", None), "path", "n/a"),
             )
-            logger.info("adapting presets via %s", source)
             presets = adapt_presets(tracker, presets)
-        except Exception:
-            logger.exception("preset evolution failed")
-    logger.debug("generate_presets_from_history using %s", source)
+        except Exception as exc:
+            logger.exception(
+                "preset evolution failed for %s using %d presets: %s",
+                history,
+                len(presets),
+                exc,
+            )
+    logger.debug(
+        "generate_presets_from_history using %s from %s",
+        source,
+        history,
+    )
     return presets
 
 
