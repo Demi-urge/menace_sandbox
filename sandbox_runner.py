@@ -197,6 +197,67 @@ def scan_repo_sections(repo_path: str) -> Dict[str, Dict[str, List[str]]]:
 
 
 # ----------------------------------------------------------------------
+def discover_orphan_modules(repo_path: str) -> List[str]:
+    """Return module names that are never imported by other modules."""
+
+    repo_path = os.path.abspath(repo_path)
+    imported: set[str] = set()
+    modules: dict[str, str] = {}
+
+    for base, _, files in os.walk(repo_path):
+        rel_base = os.path.relpath(base, repo_path)
+        if rel_base.split(os.sep)[0] == "tests":
+            continue
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            if name == "__init__.py":
+                continue
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, repo_path)
+            if rel.split(os.sep)[0] == "tests":
+                continue
+            try:
+                text = open(path, "r", encoding="utf-8").read()
+            except Exception:
+                continue
+            if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
+                continue
+
+            module = os.path.splitext(rel)[0].replace(os.sep, ".")
+            modules[module] = path
+
+            try:
+                tree = ast.parse(text)
+            except Exception:
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imported.add(alias.name)
+                elif isinstance(node, ast.ImportFrom):
+                    pkg_parts = module.split(".")[:-1]
+                    if node.level:
+                        if node.level - 1 <= len(pkg_parts):
+                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                        else:
+                            base_prefix = []
+                    else:
+                        base_prefix = pkg_parts
+
+                    if node.module:
+                        imported.add(".".join(base_prefix + node.module.split(".")))
+                    elif node.names:
+                        for alias in node.names:
+                            imported.add(".".join(base_prefix + alias.name.split(".")))
+
+    orphans = [m for m in modules if m not in imported]
+    orphans.sort()
+    return orphans
+
+
+# ----------------------------------------------------------------------
 def prepare_snippet(
     snippet: str,
     *,
@@ -1228,6 +1289,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
 __all__ = [
     "load_modified_code",
     "scan_repo_sections",
+    "discover_orphan_modules",
     "build_section_prompt",
     "simulate_execution_environment",
     "simulate_full_environment",
