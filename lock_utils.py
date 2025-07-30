@@ -5,7 +5,10 @@ import errno
 from contextlib import suppress
 from filelock import FileLock, Timeout
 
-from fcntl_compat import flock, LOCK_EX, LOCK_NB
+try:
+    from .fcntl_compat import flock, LOCK_EX, LOCK_NB
+except Exception:  # pragma: no cover - allow running as script
+    from fcntl_compat import flock, LOCK_EX, LOCK_NB
 
 try:  # pragma: no cover - platform specific
     import msvcrt  # type: ignore
