@@ -1711,6 +1711,10 @@ class SelfImprovementEngine:
         """Start the scheduling loop in the background."""
         if self._schedule_task and not self._schedule_task.done():
             return self._schedule_task
+        self.logger.info(
+            "scheduling started",
+            extra=log_record(energy=energy),
+        )
         self._stop_event = asyncio.Event()
         loop = loop or asyncio.get_event_loop()
         self._schedule_task = loop.create_task(self._schedule_loop(energy))
@@ -1720,9 +1724,11 @@ class SelfImprovementEngine:
         """Stop the scheduler and wait for the task to finish."""
         if self._schedule_task:
             assert self._stop_event is not None
+            self.logger.info("schedule shutdown initiated")
             self._stop_event.set()
             try:
                 await self._schedule_task
+                self.logger.info("schedule task finished")
             finally:
                 self._schedule_task = None
 
