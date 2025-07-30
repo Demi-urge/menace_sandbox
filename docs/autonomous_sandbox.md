@@ -310,6 +310,11 @@ the variable defaults to `1`, so set `SANDBOX_CENTRAL_LOGGING=0` to disable the
 forwarding. If `KAFKA_HOSTS` is set, logs are published to Kafka instead via
 `KafkaMetaLogger`.
 
+Use `--log-level LEVEL` when running `run_autonomous.py` to change the console
+verbosity. The flag falls back to the `SANDBOX_LOG_LEVEL` environment variable
+(or `LOG_LEVEL`) when omitted. Pass `--verbose` to enable full debug output
+regardless of the configured log level.
+
 Long running services rotate their own log files such as
 `service_supervisor.py` which keeps up to three 1&nbsp;MB archives. Rotate or
 clean old logs periodically when persisting them on disk.

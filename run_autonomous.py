@@ -1011,6 +1011,11 @@ def main(argv: List[str] | None = None) -> None:
         help="write preset source and actions to this JSONL file",
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="enable debug logging (overrides --log-level)",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.getenv("SANDBOX_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")),
         help="logging level for console output",
@@ -1041,7 +1046,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    setup_logging(level=args.log_level)
+    setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
