@@ -889,6 +889,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
 
 def _sandbox_cleanup(ctx: SandboxContext) -> None:
+    logger.debug(
+        "sandbox cleanup starting",
+        extra=log_record(path=str(ctx.tmp)),
+    )
     os.chdir(ctx.orig_cwd)
     ctx.policy.save()
     for k, v in ctx.backups.items():
@@ -898,6 +902,10 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             os.environ[k] = v
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
+    logger.debug(
+        "sandbox cleanup complete",
+        extra=log_record(path=str(ctx.tmp)),
+    )
 
 
 def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
@@ -1204,7 +1212,6 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     except Exception:
         logger.exception("failed to save roi history")
     logger.info("sandbox run complete")
-    logger.debug("sandbox cleanup starting")
     _sandbox_cleanup(ctx)
     return ctx.tracker
 
