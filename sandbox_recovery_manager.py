@@ -221,11 +221,11 @@ def cli(argv: List[str] | None = None) -> int:
     try:
         data = load_metrics(Path(args.file))
     except Exception as exc:  # pragma: no cover - runtime issues
-        print(f"failed to read {args.file}: {exc}", file=sys.stderr)
+        logger.error("failed to read %s: %s", args.file, exc)
         return 1
 
     for k, v in data.items():
-        print(f"{k}: {v}")
+        logger.info("%s: %s", k, v)
     return 0
 
 
