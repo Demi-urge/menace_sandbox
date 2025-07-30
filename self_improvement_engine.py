@@ -711,11 +711,7 @@ class SelfImprovementEngine:
         self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         self.logger.info(
-            "synergy weights after update",
-            extra=log_record(weights=self.synergy_learner.weights),
-        )
-        self.logger.info(
-            "synergy weights updated",
+            "synergy weights loaded",
             extra=log_record(weights=self.synergy_learner.weights),
         )
 
@@ -730,6 +726,10 @@ class SelfImprovementEngine:
         self.synergy_learner.weights["maintainability"] = self.synergy_weight_maintainability
         self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.synergy_learner.save()
+        self.logger.info(
+            "synergy weights saved",
+            extra=log_record(weights=self.synergy_learner.weights),
+        )
 
     # ------------------------------------------------------------------
     def _train_synergy_weights_once(self, history_file: Path) -> None:
@@ -1281,6 +1281,7 @@ class SelfImprovementEngine:
                 else (0,) * POLICY_STATE_LEN
             )
             predicted = self.policy.score(state) if self.policy else 0.0
+            roi_pred: float | None = None
             self.logger.info(
                 "cycle start",
                 extra=log_record(
@@ -1405,6 +1406,15 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "learning engine run failed: %s", exc
                     )
+            self.logger.info(
+                "pipeline pre-run metrics",
+                extra=log_record(
+                    predicted_roi=roi_pred if roi_pred is not None else predicted,
+                    policy_score=predicted,
+                    energy=energy,
+                    synergy_weights=self.synergy_learner.weights,
+                ),
+            )
             self.logger.info(
                 "running automation pipeline", extra=log_record(energy=energy)
             )
