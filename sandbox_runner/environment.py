@@ -1674,6 +1674,14 @@ async def _create_pool_container(image: str) -> tuple[Any, str]:
                 _CONTAINER_DIRS[container.id] = td
                 _CONTAINER_LAST_USED[container.id] = time.time()
                 _CONTAINER_CREATED[container.id] = time.time()
+            try:
+                img_tag = getattr(getattr(container, "image", None), "tags", None)
+                img_tag = img_tag[0] if img_tag else image
+                logger.info(
+                    "created container %s from image %s", container.id, img_tag
+                )
+            except Exception:
+                pass
             return container, td
         except Exception as exc:
             last_exc = exc
@@ -1783,6 +1791,14 @@ async def _get_pooled_container(image: str) -> tuple[Any, str]:
                 _ensure_pool_size_async(image)
                 with _POOL_LOCK:
                     dir_path = _CONTAINER_DIRS[c.id]
+                try:
+                    img_tag = getattr(getattr(c, "image", None), "tags", None)
+                    img_tag = img_tag[0] if img_tag else image
+                    logger.info(
+                        "reusing pooled container %s for image %s", c.id, img_tag
+                    )
+                except Exception:
+                    pass
                 return c, dir_path
             success = _stop_and_remove(c)
             _log_cleanup_event(c.id, "unhealthy", success)
@@ -2047,6 +2063,15 @@ def _stop_and_remove(container: Any, retries: int = 3, base_delay: float = 0.1) 
     if cid and not exists:
         _remove_active_container(cid)
         _remove_failed_cleanup(cid)
+        try:
+            img_tag = getattr(getattr(container, "image", None), "tags", None)
+            if img_tag:
+                img_tag = img_tag[0]
+            logger.info(
+                "container %s (image %s) shutdown and removed", cid, img_tag or "?"
+            )
+        except Exception:
+            pass
     elif cid and exists:
         _CLEANUP_FAILURES += 1
         logger.error("container %s still exists after removal attempts", cid)
