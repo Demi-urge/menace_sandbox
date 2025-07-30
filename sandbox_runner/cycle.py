@@ -521,6 +521,10 @@ def _sandbox_cycle_runner(
                     tracker.update(roi, new_roi, [mod], resources)
                     ctx.meta_log.log_cycle(idx, new_roi, [mod], "gpt4")
                     if new_roi - roi <= tracker.diminishing() and patch_id:
+                        logger.info(
+                            "rolling back patch",
+                            extra={"module": mod, "patch_id": patch_id},
+                        )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
                     else:
@@ -640,6 +644,10 @@ def _sandbox_cycle_runner(
                     tracker.update(roi, new_roi, [mod], resources)
                     ctx.meta_log.log_cycle(idx, new_roi, [mod], "offline")
                     if new_roi - roi <= tracker.diminishing() and patch_id:
+                        logger.info(
+                            "rolling back patch",
+                            extra={"module": mod, "patch_id": patch_id},
+                        )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
                     else:

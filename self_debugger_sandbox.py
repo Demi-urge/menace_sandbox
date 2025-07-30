@@ -1135,6 +1135,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             and hasattr(self.engine, "rollback_patch")
                         ):
                             try:
+                                self.logger.info(
+                                    "rolling back patch",
+                                    extra=log_record(
+                                        patch_id=pid, module=str(root_test)
+                                    ),
+                                )
                                 self.engine.rollback_patch(str(pid))
                             except Exception as exc:
                                 self.logger.exception(
