@@ -1,27 +1,36 @@
 from __future__ import annotations
 
-"""Build and cluster a module graph across the repository."""
+"""Dynamic module graph discovery and clustering utilities."""
 
 import ast
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable, Mapping
 
-import networkx as nx
+try:  # networkx is an optional dependency during some tests
+    import networkx as nx
+except Exception:  # pragma: no cover - fallback stub
+    nx = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
 
-def _iter_py_files(root: Path) -> list[Path]:
-    """Return all Python files under ``root``."""
-    return [p for p in root.rglob("*.py") if p.is_file()]
+def _iter_py_files(root: Path) -> Iterable[Path]:
+    """Yield all ``.py`` files below ``root``."""
+    for p in root.rglob("*.py"):
+        if p.is_file():
+            yield p
 
 
-def generate_module_graph(repo_path: str) -> nx.DiGraph:
-    """Return a dependency graph including imports and call edges."""
+def build_import_graph(repo_path: str | Path) -> "nx.DiGraph":
+    """Return a directed graph of import relationships between modules."""
+    if nx is None:  # pragma: no cover - networkx missing
+        raise RuntimeError("networkx is required to build the module graph")
+
     root = Path(repo_path)
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
+
     for file in _iter_py_files(root):
         mod = file.relative_to(root).with_suffix("").as_posix()
         modules[mod] = file
@@ -32,78 +41,52 @@ def generate_module_graph(repo_path: str) -> nx.DiGraph:
             tree = ast.parse(file.read_text())
         except Exception:
             continue
-        imports: Dict[str, str] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    name = alias.asname or alias.name.split(".")[0]
-                    imports[name] = alias.name
-                    if alias.name in modules:
-                        graph.add_edge(mod, alias.name)
+                    target = alias.name.split(".")[0]
+                    if target in modules:
+                        graph.add_edge(mod, target)
             elif isinstance(node, ast.ImportFrom):
                 pkg_parts = mod.split("/")[:-1]
-                if node.level > 1:
-                    pkg_parts = pkg_parts[: -(node.level - 1)]
-                module = node.module.split(".") if node.module else []
-                package_parts = pkg_parts + module
-                target_pkg = "/".join(package_parts)
-                for alias in node.names:
-                    name = alias.asname or alias.name
-                    imports[name] = "/".join(package_parts + [alias.name])
-                if target_pkg in modules:
-                    graph.add_edge(mod, target_pkg)
-            elif isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
-                    target_mod = imports.get(func.value.id)
-                    if target_mod and target_mod in modules:
-                        graph.add_edge(mod, target_mod)
-                elif isinstance(func, ast.Name):
-                    target_mod = imports.get(func.id)
-                    if target_mod and target_mod in modules:
-                        graph.add_edge(mod, target_mod)
+                if node.level > 0:
+                    pkg_parts = pkg_parts[: -node.level]
+                module = (node.module or "").split(".")
+                target = "/".join(pkg_parts + module).rstrip("/")
+                if target in modules:
+                    graph.add_edge(mod, target)
     return graph
 
 
 # ---------------------------------------------------------------------------
 
-def discover_module_groups(graph: nx.DiGraph) -> dict[str, int]:
-    """Cluster modules using community detection."""
-    try:
-        import hdbscan  # type: ignore
-    except Exception:
-        hdbscan = None  # type: ignore
+def _cluster_graph(graph: "nx.DiGraph") -> dict[str, list[str]]:
+    """Return communities of ``graph`` using ``networkx`` algorithms."""
+    if nx is None:  # pragma: no cover - networkx missing
+        raise RuntimeError("networkx is required to cluster modules")
 
-    if hdbscan is not None and graph.number_of_nodes() > 1:
-        import numpy as np
+    try:  # prefer greedy modularity
+        from networkx.algorithms.community import greedy_modularity_communities
 
-        data = nx.to_numpy_array(graph)
-        clusterer = hdbscan.HDBSCAN(min_cluster_size=2)
-        labels = clusterer.fit_predict(data)
-        if len(set(labels)) > 1 and set(labels) != {-1}:
-            nodes = list(graph.nodes())
-            mapping: dict[str, int] = {}
-            for node, label in zip(nodes, labels, strict=False):
-                mapping[node] = int(label)
-            return mapping
+        communities = list(greedy_modularity_communities(graph.to_undirected()))
+    except Exception:  # pragma: no cover - extremely small graphs
+        communities = [set(c) for c in nx.connected_components(graph.to_undirected())]
 
-    from networkx.algorithms.community import greedy_modularity_communities
+    return {str(i): sorted(comm) for i, comm in enumerate(communities)}
 
-    communities = greedy_modularity_communities(graph.to_undirected())
-    mapping: dict[str, int] = {}
-    for idx, comm in enumerate(communities):
-        for mod in comm:
-            mapping[mod] = idx
-    return mapping
+
+def discover_module_groups(repo_path: str | Path) -> dict[str, list[str]]:
+    """Analyse ``repo_path`` and return groups of related modules."""
+    graph = build_import_graph(repo_path)
+    return _cluster_graph(graph)
 
 
 # ---------------------------------------------------------------------------
 
-def build_module_map(repo_path: str) -> dict[str, int]:
-    """Build and persist a module grouping map."""
+def build_module_map(repo_path: str | Path) -> dict[str, list[str]]:
+    """Build and persist a module grouping map under ``sandbox_data``."""
     root = Path(repo_path)
-    graph = generate_module_graph(root)
-    mapping = discover_module_groups(graph)
+    mapping = discover_module_groups(root)
     out = root / "sandbox_data" / "module_map.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:
@@ -111,5 +94,20 @@ def build_module_map(repo_path: str) -> dict[str, int]:
     return mapping
 
 
-__all__ = ["generate_module_graph", "discover_module_groups", "build_module_map"]
+def main(args: list[str] | None = None) -> None:
+    """CLI entry point for generating the module map."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Discover module groups")
+    parser.add_argument("repo", nargs="?", default=".", help="Repository root")
+    opts = parser.parse_args(args)
+
+    build_module_map(opts.repo)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
+
+
+__all__ = ["build_import_graph", "discover_module_groups", "build_module_map"]
 
