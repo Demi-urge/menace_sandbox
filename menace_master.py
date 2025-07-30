@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - optional dependency
 from pathlib import Path
 import sys
 import logging
+from logging_utils import log_record
 
 # Logger for this module
 logger = logging.getLogger(__name__)
@@ -385,7 +386,10 @@ def run_once(models: Iterable[str]) -> None:
         logger.exception("run_once failed: %s", exc)
         raise
     for model, res in results.items():
-        print(f"{model}: {res}")
+        logger.info(
+            "model run result",
+            extra=log_record(model=model, result=res),
+        )
 
 
 def _first_run_flag(path: str) -> Path:
@@ -547,7 +551,10 @@ def main(argv: Iterable[str] | None = None) -> None:
             results = orchestrator.run_cycle(models_env)
             cycle_count += 1
             for model, res in results.items():
-                print(f"{model}: {res}")
+                logger.info(
+                    "model run result",
+                    extra=log_record(model=model, result=res),
+                )
 
             if sleep_seconds < 0:
                 break
