@@ -13,9 +13,16 @@ class ModuleIndexDB:
     """Persist mapping of module names to numeric indices."""
 
     def __init__(
-        self, path: Path | str = "module_map.json", *, auto_map: bool | None = None
+        self,
+        path: Path | str | None = None,
+        *,
+        auto_map: bool | None = None,
     ) -> None:
-        self.path = Path(path)
+        default_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        default_path = default_dir / "module_map.json"
+        self.path = Path(path) if path is not None else default_path
+        if not self.path.exists() and self.path != default_path and default_path.exists():
+            self.path = default_path
         self._map: Dict[str, int] = {}
 
         if (
@@ -55,23 +62,19 @@ class ModuleIndexDB:
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
         """Return persistent index for ``name`` creating it if needed."""
-        if name in self._map:
-            return int(self._map[name])
-
-        # attempt lookup without file suffix or path variations
+        parts = [name]
         base = Path(name).with_suffix("").as_posix()
-        if base in self._map:
-            return int(self._map[base])
         stem = Path(name).name
         stem_no_ext = Path(stem).with_suffix("").as_posix()
-        for key in {stem, stem_no_ext}:
+        parts.extend({base, stem, stem_no_ext})
+        for key in parts:
             if key in self._map:
                 return int(self._map[key])
 
-        # fallback to hashed index
-        self._map[name] = abs(hash(name)) % 1000
+        idx = abs(hash(name)) % 1000
+        self._map[name] = idx
         self.save()
-        return int(self._map[name])
+        return idx
 
     # --------------------------------------------------------------
     def merge_groups(self, groups: Dict[str, int]) -> None:
