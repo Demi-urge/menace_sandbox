@@ -161,7 +161,7 @@ from sandbox_runner.environment import (
     _section_worker,
     validate_preset,
 )
-from sandbox_runner.cycle import _sandbox_cycle_runner
+from sandbox_runner.cycle import _sandbox_cycle_runner, map_module_identifier
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
 
 
@@ -651,23 +651,25 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     patch_file = data_dir / "patch_history.db"
     module_map_file = data_dir / "module_map.json"
 
+    refresh_map = os.getenv("SANDBOX_REFRESH_MODULE_MAP") == "1"
     autodiscover = bool(
         getattr(args, "autodiscover_modules", False)
         or os.getenv("SANDBOX_AUTODISCOVER_MODULES")
     )
-    if autodiscover or not module_map_file.exists():
+    if refresh_map or autodiscover or not module_map_file.exists():
         try:
-            from menace import module_mapper
+            from dynamic_module_mapper import build_module_map
 
-            graph = module_mapper.build_module_graph(repo)
-            mapping = module_mapper.cluster_modules(graph)
-            module_mapper.save_module_map(mapping, module_map_file)
+            build_module_map(str(repo))
+            built = repo / "sandbox_data" / "module_map.json"
+            if built != module_map_file:
+                shutil.copy2(built, module_map_file)
             logger.info(
                 "module map generated",
                 extra=log_record(path=str(module_map_file)),
             )
         except Exception:
-            logger.exception("module autodiscovery failed")
+            logger.exception("module map generation failed")
 
     _env_vars = {
         "DATABASE_URL": "sqlite:///:memory:",
@@ -1180,8 +1182,8 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             ctx.tracker.update(
                 roi_sum,
                 combined_roi,
-                list(ctx.meta_log.flagged_sections),
-                synergy_metrics,
+                [map_module_identifier(m, ctx.repo) for m in ctx.meta_log.flagged_sections],
+                metrics=synergy_metrics,
             )
             synergy_history.append(synergy_metrics)
             ctx.best_roi = max(ctx.best_roi, combined_roi)

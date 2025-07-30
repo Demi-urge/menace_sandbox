@@ -13,4 +13,5 @@ python scripts/generate_module_map.py --root . --output sandbox_data/module_map.
 Additional options allow you to choose the clustering algorithm, adjust the threshold and enable semantic docstring matching.
 
 `SANDBOX_AUTODISCOVER_MODULES=1` tells `sandbox_runner` to invoke this process automatically when the sandbox starts. The map is stored in `SANDBOX_DATA_DIR/module_map.json` and used to attribute ROI metrics per module group.
+`SANDBOX_REFRESH_MODULE_MAP=1` forces regeneration of the map even when the file already exists.
 

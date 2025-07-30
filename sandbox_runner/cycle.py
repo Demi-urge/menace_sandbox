@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from logging_utils import get_logger, setup_logging, log_record
 import os
@@ -38,6 +39,16 @@ logger = get_logger(__name__)
 
 from .environment import SANDBOX_ENV_PRESETS
 from .resource_tuner import ResourceTuner
+
+
+def map_module_identifier(name: str, repo: Path) -> str:
+    """Return canonical module identifier for ``name`` relative to ``repo``."""
+    base = name.split(":", 1)[0]
+    try:
+        rel = Path(base).resolve().relative_to(repo)
+    except Exception:
+        rel = Path(base)
+    return rel.with_suffix("").as_posix()
 
 
 def _choose_suggestion(ctx: Any, module: str) -> str:
@@ -192,6 +203,8 @@ def _sandbox_cycle_runner(
         mods, ctx.meta_log.last_patch_id = ctx.changed_modules(ctx.meta_log.last_patch_id)
         if section:
             mods = [m for m in mods if m == section.split(":", 1)[0]]
+        mapped_mods = [map_module_identifier(m, ctx.repo) for m in mods]
+        mapped_section = map_module_identifier(section, ctx.repo) if section else None
         resources = None
         if ctx.res_db is not None:
             try:
@@ -457,7 +470,7 @@ def _sandbox_cycle_runner(
             maintainability=maintainability,
             code_quality=code_quality,
         )
-        name_list = [section] if section else mods
+        name_list = [mapped_section] if section else mapped_mods
         vertex, curve, should_stop = tracker.update(
             ctx.prev_roi, roi, name_list, resources, {**metrics, **scenario_metrics}
         )
@@ -548,8 +561,9 @@ def _sandbox_cycle_runner(
                 try:
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
-                    tracker.update(roi, new_roi, [mod], resources)
-                    ctx.meta_log.log_cycle(idx, new_roi, [mod], "gpt4")
+                    mapped = map_module_identifier(mod, ctx.repo)
+                    tracker.update(roi, new_roi, [mapped], resources)
+                    ctx.meta_log.log_cycle(idx, new_roi, [mapped], "gpt4")
                     if new_roi - roi <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
@@ -671,8 +685,9 @@ def _sandbox_cycle_runner(
                 try:
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
-                    tracker.update(roi, new_roi, [mod], resources)
-                    ctx.meta_log.log_cycle(idx, new_roi, [mod], "offline")
+                    mapped = map_module_identifier(mod, ctx.repo)
+                    tracker.update(roi, new_roi, [mapped], resources)
+                    ctx.meta_log.log_cycle(idx, new_roi, [mapped], "offline")
                     if new_roi - roi <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",

@@ -239,6 +239,7 @@ The sandbox reads several paths and authentication tokens from environment varia
 - `VISUAL_AGENT_SSL_KEY` – path to the private key for the certificate.
 - `SANDBOX_DATA_DIR` – directory where ROI history, presets and patch records are stored. Defaults to `sandbox_data`.
 - `SANDBOX_AUTO_MAP` – when set to `1` the sandbox regenerates `module_map.json` on startup using `scripts/build_module_map.py`.
+- `SANDBOX_REFRESH_MODULE_MAP` – rebuild the module map even when it already exists.
 - `PATCH_SCORE_BACKEND_URL` – optional remote backend for patch scores. Supports `http://`, `https://` or `s3://bucket/prefix` URLs.
 - `DATABASE_URL` – connection string for the primary database. Defaults to `sqlite:///menace.db`.
 - `BOT_DB_PATH` – location of the bot registry database, default `bots.db`.
