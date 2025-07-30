@@ -602,7 +602,8 @@ class SelfImprovementEngine:
         self._load_synergy_weights()
         from .module_index_db import ModuleIndexDB
 
-        self.module_index = module_index or ModuleIndexDB()
+        auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
+        self.module_index = module_index or ModuleIndexDB(auto_map=auto_map)
         logging.basicConfig(level=logging.INFO)
         self.logger = get_logger("SelfImprovementEngine")
         self._score_backend: PatchScoreBackend | None = None

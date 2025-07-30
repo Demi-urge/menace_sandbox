@@ -710,9 +710,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             score_backend = backend_from_url(backend_url)
         except Exception:
             logger.exception("patch score backend init failed")
+    auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
-        module_index=ModuleIndexDB(module_map_file) if ModuleIndexDB else None,
+        module_index=ModuleIndexDB(module_map_file, auto_map=auto_map) if ModuleIndexDB else None,
         patch_db=patch_db,
         policy=policy,
         score_backend=score_backend,
