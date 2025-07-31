@@ -93,7 +93,7 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
 
     import types
     helper = types.ModuleType("sandbox_runner")
-    helper.discover_orphan_modules = lambda repo: ["foo", "bar"]
+    helper.discover_orphan_modules = lambda repo, recursive=False: ["foo", "bar"]
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True)
@@ -140,7 +140,7 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     import types
 
     helper = types.ModuleType("scripts.find_orphan_modules")
-    helper.find_orphan_modules = lambda root: [Path("foo.py"), Path("bar.py")]
+    helper.find_orphan_modules = lambda root, recursive=False: [Path("foo.py"), Path("bar.py")]
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", helper)
 
     svc = mod.SelfTestService(discover_orphans=True)

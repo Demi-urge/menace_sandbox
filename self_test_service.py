@@ -445,7 +445,7 @@ class SelfTestService:
         """Run find_orphan_modules and save results."""
         from scripts.find_orphan_modules import find_orphan_modules
 
-        modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+        modules = [str(p) for p in find_orphan_modules(Path.cwd(), recursive=False)]
         path = Path("sandbox_data") / "orphan_modules.json"
         try:
             path.parent.mkdir(exist_ok=True)
@@ -480,7 +480,7 @@ class SelfTestService:
 
                 if _discover is not None:
                     try:
-                        names = _discover(str(Path.cwd()))
+                        names = _discover(str(Path.cwd()), recursive=False)
                         orphan_list = [
                             str(Path(*n.split(".")).with_suffix(".py")) for n in names
                         ]

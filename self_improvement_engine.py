@@ -1389,7 +1389,7 @@ class SelfImprovementEngine:
 
         if _discover is not None:
             try:
-                names = _discover(str(repo))
+                names = _discover(str(repo), recursive=False)
                 modules.extend(
                     [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
                 )
@@ -1400,7 +1400,7 @@ class SelfImprovementEngine:
             try:
                 from scripts.find_orphan_modules import find_orphan_modules
 
-                modules = [str(p) for p in find_orphan_modules(repo)]
+                modules = [str(p) for p in find_orphan_modules(repo, recursive=False)]
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan discovery failed: %s", exc)
 
