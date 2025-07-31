@@ -100,6 +100,8 @@ Network behaviour can be tuned with:
 - `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
 - `SANDBOX_AUTODISCOVER_MODULES` – rebuilds `module_map.json` on startup. See
   [dynamic_module_mapping.md](dynamic_module_mapping.md).
+  The deprecated `SANDBOX_AUTO_MAP` variable is still supported for
+  compatibility.
 - `SANDBOX_REFRESH_MODULE_MAP` – force regeneration of the module map when the file already exists.
 - `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
   `menace_sandbox_pool`).
