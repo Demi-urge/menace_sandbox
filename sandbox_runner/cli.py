@@ -1347,7 +1347,13 @@ def main(argv: List[str] | None = None) -> None:
         from sandbox_runner.environment import run_workflow_simulations
 
         run_workflow_simulations(
-            args.workflow_db, dynamic_workflows=args.dynamic_workflows
+            args.workflow_db,
+            dynamic_workflows=args.dynamic_workflows,
+            module_algorithm=args.module_algorithm or "greedy",
+            module_threshold=float(args.module_threshold)
+            if args.module_threshold is not None
+            else 0.1,
+            module_semantic=args.module_semantic,
         )
     else:
         _run_sandbox(args)

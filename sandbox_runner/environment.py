@@ -5034,10 +5034,19 @@ def run_workflow_simulations(
     env_presets: List[Dict[str, Any]] | None = None,
     *,
     dynamic_workflows: bool = False,
+    module_algorithm: str = "greedy",
+    module_threshold: float = 0.1,
+    module_semantic: bool = False,
     return_details: bool = False,
     tracker: "ROITracker" | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
-    """Execute stored workflows under optional environment presets."""
+    """Execute stored workflows under optional environment presets.
+
+    ``module_algorithm`` selects the clustering method used when
+    ``dynamic_workflows`` generates workflows from module groups. The
+    ``module_threshold`` and ``module_semantic`` options mirror the
+    parameters accepted by :func:`discover_module_groups`.
+    """
     from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
     from menace.roi_tracker import ROITracker
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
@@ -5066,7 +5075,14 @@ def run_workflow_simulations(
     if dynamic_workflows or not workflows:
         from dynamic_module_mapper import discover_module_groups, dotify_groups
 
-        groups = dotify_groups(discover_module_groups(Path.cwd()))
+        groups = dotify_groups(
+            discover_module_groups(
+                Path.cwd(),
+                algorithm=module_algorithm,
+                threshold=module_threshold,
+                use_semantic=module_semantic,
+            )
+        )
         workflows = [
             WorkflowRecord(workflow=mods, title=f"workflow_{gid}", wid=i + 1)
             for i, (gid, mods) in enumerate(sorted(groups.items()))
