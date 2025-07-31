@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from dynamic_module_mapper import build_module_map
+from module_graph_analyzer import build_import_graph, cluster_modules
 
 
 # ---------------------------------------------------------------------------
@@ -20,11 +20,13 @@ def generate_module_map(
     threshold: float = 0.1,
     semantic: bool = False,
 ) -> dict[str, int]:
-    mapping = build_module_map(
-        root,
+    graph = build_import_graph(root)
+    mapping = cluster_modules(
+        graph,
         algorithm=algorithm,
         threshold=threshold,
         use_semantic=semantic,
+        root=root,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(mapping, indent=2))

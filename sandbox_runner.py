@@ -668,22 +668,38 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     if refresh_map or autodiscover or not module_map_file.exists():
         try:
-            from dynamic_module_mapper import build_module_map
+            from module_graph_analyzer import build_import_graph, cluster_modules
 
-            algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")
-            try:
-                threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
-            except Exception:
-                threshold = 0.1
-            sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
-            use_semantic = autodiscover if sem_env is None else sem_env == "1"
+            algo = (
+                getattr(args, "module_algorithm", None)
+                or os.getenv("SANDBOX_MODULE_ALGO", "greedy")
+            )
+            thr_arg = getattr(args, "module_threshold", None)
+            if thr_arg is not None:
+                threshold = thr_arg
+            else:
+                try:
+                    threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
+                except Exception:
+                    threshold = 0.1
+            sem_arg = getattr(args, "module_semantic", None)
+            if sem_arg is None:
+                sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
+                use_semantic = autodiscover if sem_env is None else sem_env == "1"
+            else:
+                use_semantic = bool(sem_arg)
 
-            build_module_map(
-                str(repo),
+            graph = build_import_graph(repo)
+            mapping = cluster_modules(
+                graph,
                 algorithm=algo,
                 threshold=threshold,
                 use_semantic=use_semantic,
+                root=Path(repo),
             )
+            module_map_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(module_map_file, "w", encoding="utf-8") as fh:
+                json.dump(mapping, fh, indent=2)
             logger.info(
                 "module map generated",
                 extra=log_record(path=str(module_map_file)),

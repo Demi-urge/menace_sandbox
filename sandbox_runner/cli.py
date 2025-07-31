@@ -990,6 +990,23 @@ def main(argv: List[str] | None = None) -> None:
         help="generate module map automatically (or set SANDBOX_AUTODISCOVER_MODULES=1)",
     )
     parser.add_argument(
+        "--module-algorithm",
+        choices=["greedy", "label"],
+        default=os.getenv("SANDBOX_MODULE_ALGO"),
+        help="module clustering algorithm",
+    )
+    parser.add_argument(
+        "--module-threshold",
+        type=float,
+        default=os.getenv("SANDBOX_MODULE_THRESHOLD"),
+        help="semantic similarity threshold",
+    )
+    parser.add_argument(
+        "--module-semantic",
+        action="store_true",
+        help="enable docstring similarity (or SANDBOX_MODULE_SEMANTIC=1)",
+    )
+    parser.add_argument(
         "--preset-count",
         type=int,
         help="number of presets to generate when none are provided",
