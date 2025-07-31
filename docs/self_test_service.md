@@ -45,6 +45,7 @@ Options include:
 - `--metrics-port` – expose Prometheus gauges on this port
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
 - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
+- `--discover-isolated` – load modules returned by `discover_isolated_modules` before scanning for orphans
 
 Remove stale containers left over from interrupted runs with:
 
@@ -101,6 +102,8 @@ new scan when the list already exists. Enable recursive discovery with
 modules are added when an orphan imports other files. The search uses
 `sandbox_runner.discover_recursive_orphans` to walk each orphan's imports
 until no new local modules remain.
+Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to include
+modules returned by `discover_isolated_modules` before searching for orphans.
 
 Example running tests with recursive orphan discovery:
 
@@ -122,6 +125,9 @@ regular test suite. If the file does not exist, the service attempts to locate
 orphan modules automatically using `sandbox_runner.discover_orphan_modules` or
 the fallback `scripts/find_orphan_modules.py` helper. The generated list is
 saved for future runs and the new modules are tested immediately.
+Setting `SELF_TEST_DISCOVER_ISOLATED=1` or passing `--discover-isolated` tells
+the service to include modules returned by `discover_isolated_modules` during
+these automatic scans.
 
 Results for these files are summarised under the `orphan_total`,
 `orphan_failed` and `orphan_passed` fields of the returned statistics. When
