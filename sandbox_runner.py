@@ -661,7 +661,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     patch_file = data_dir / "patch_history.db"
     module_map_file = data_dir / "module_map.json"
 
-    refresh_map = os.getenv("SANDBOX_REFRESH_MODULE_MAP") == "1"
+    refresh_map = bool(
+        getattr(args, "refresh_module_map", False)
+        or os.getenv("SANDBOX_REFRESH_MODULE_MAP") == "1"
+    )
     auto_map = bool(
         getattr(args, "autodiscover_modules", False)
         or os.getenv("SANDBOX_AUTO_MAP")
@@ -672,41 +675,14 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             "SANDBOX_AUTODISCOVER_MODULES is deprecated; use SANDBOX_AUTO_MAP",
         )
 
-    if refresh_map or auto_map or not module_map_file.exists():
+    try:
+        from menace.module_index_db import ModuleIndexDB  # type: ignore
+    except Exception:
+        ModuleIndexDB = None  # type: ignore
+    module_index = ModuleIndexDB(module_map_file, auto_map=False) if ModuleIndexDB else None
+    if module_index and (refresh_map or auto_map or not module_map_file.exists()):
         try:
-            from scripts.generate_module_map import generate_module_map
-
-            algo = (
-                getattr(args, "module_algorithm", None)
-                or os.getenv("SANDBOX_MODULE_ALGO", "greedy")
-            )
-            thr_arg = getattr(args, "module_threshold", None)
-            if thr_arg is not None:
-                threshold = thr_arg
-            else:
-                try:
-                    threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
-                except Exception:
-                    threshold = 0.1
-            sem_arg = getattr(args, "module_semantic", None)
-            if sem_arg is None:
-                sem_env = os.getenv("SANDBOX_SEMANTIC_MODULES")
-                if sem_env is None:
-                    sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
-                use_semantic = auto_map if sem_env is None else sem_env == "1"
-            else:
-                use_semantic = bool(sem_arg)
-            exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
-            exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
-
-            mapping = generate_module_map(
-                module_map_file,
-                root=Path(repo),
-                algorithm=algo,
-                threshold=threshold,
-                semantic=use_semantic,
-                exclude=exclude,
-            )
+            module_index.refresh(force=True)
             logger.info(
                 "module map generated",
                 extra=log_record(path=str(module_map_file)),
@@ -760,10 +736,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     os.chdir(repo)
     orchestrator = MenaceOrchestrator()
     orchestrator.create_oversight("root", "L1")
-    try:
-        from menace.module_index_db import ModuleIndexDB  # type: ignore
-    except Exception:
-        ModuleIndexDB = None  # type: ignore
     policy = SelfImprovementPolicy(path=str(policy_file))
     patch_db = PatchHistoryDB(patch_db_path)
     score_backend = None
@@ -775,7 +747,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             logger.exception("patch score backend init failed")
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
-        module_index=ModuleIndexDB(module_map_file) if ModuleIndexDB else None,
+        module_index=module_index,
         patch_db=patch_db,
         policy=policy,
         score_backend=score_backend,

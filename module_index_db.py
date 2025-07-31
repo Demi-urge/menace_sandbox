@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable
 
 try:  # optional dependency only needed when auto mapping
     from scripts.generate_module_map import generate_module_map
@@ -151,6 +151,45 @@ class ModuleIndexDB:
                 self._groups.setdefault(str(grp), next_idx)
                 next_idx += 1
         self.save()
+
+    # --------------------------------------------------------------
+    def refresh(self, modules: Iterable[str] | None = None, *, force: bool = False) -> None:
+        """Regenerate the module map if ``modules`` contain unknown entries."""
+        if generate_module_map is None:
+            return
+        if not force:
+            for m in modules or []:
+                if Path(m).name not in self._map:
+                    force = True
+                    break
+        if not force:
+            return
+        try:
+            algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")
+            try:
+                threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
+            except Exception:
+                threshold = 0.1
+            sem_env = os.getenv("SANDBOX_SEMANTIC_MODULES")
+            if sem_env is None:
+                sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
+            use_semantic = sem_env == "1"
+            repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
+            exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
+            mapping = generate_module_map(
+                self.path,
+                root=repo_path,
+                algorithm=algo,
+                threshold=threshold,
+                semantic=use_semantic,
+                exclude=exclude,
+            )
+            self._map = {str(k): int(v) for k, v in mapping.items()}
+            self._groups = {str(v): v for v in mapping.values()}
+            self.save()
+        except Exception:
+            pass
 
     # --------------------------------------------------------------
     def save(self) -> None:

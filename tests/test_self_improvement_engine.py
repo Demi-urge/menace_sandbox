@@ -752,3 +752,48 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
 
     engine.run_cycle()
     assert engine.roi_group_history.get(gid) == [1.0, 1.0]
+
+
+def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
+    map_path = tmp_path / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    class DummyPatchDB:
+        def _connect(self):
+            import sqlite3
+            conn = sqlite3.connect(":memory:")
+            conn.execute("CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT)")
+            conn.execute("INSERT INTO patch_history(filename) VALUES('new.py')")
+            conn.commit()
+            import contextlib
+            @contextlib.contextmanager
+            def ctx():
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+            return ctx()
+
+    patch_db = DummyPatchDB()
+    from module_index_db import ModuleIndexDB
+    module_index = ModuleIndexDB(map_path)
+    called = {}
+    def fake_refresh(mods=None, *, force=False):
+        called["mods"] = list(mods or [])
+        called["force"] = force
+    monkeypatch.setattr(module_index, "refresh", fake_refresh)
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=prb.ROIResult(0.0, 0.0, 0.0, 0.0, 0.0))
+    sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        patch_db=patch_db,
+        module_index=module_index,
+    )
+    assert called.get("mods") == ["new.py"]
