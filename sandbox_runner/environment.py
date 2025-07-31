@@ -5033,11 +5033,12 @@ def run_workflow_simulations(
     workflows_db: str | Path = "workflows.db",
     env_presets: List[Dict[str, Any]] | None = None,
     *,
+    dynamic_workflows: bool = False,
     return_details: bool = False,
     tracker: "ROITracker" | None = None,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Execute stored workflows under optional environment presets."""
-    from menace.task_handoff_bot import WorkflowDB
+    from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
     from menace.roi_tracker import ROITracker
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
     from menace.self_coding_engine import SelfCodingEngine
@@ -5062,6 +5063,14 @@ def run_workflow_simulations(
 
     wf_db = WorkflowDB(Path(workflows_db))
     workflows = wf_db.fetch()
+    if dynamic_workflows or not workflows:
+        from dynamic_module_mapper import discover_module_groups, dotify_groups
+
+        groups = dotify_groups(discover_module_groups(Path.cwd()))
+        workflows = [
+            WorkflowRecord(workflow=mods, title=f"workflow_{gid}", wid=i + 1)
+            for i, (gid, mods) in enumerate(sorted(groups.items()))
+        ]
 
     async def _run() -> (
         "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]
@@ -5081,15 +5090,31 @@ def run_workflow_simulations(
             for idx, step in enumerate(steps):
                 mod = ""
                 func = ""
+                alias = f"_wf_{idx}"
                 if ":" in step:
                     mod, func = step.split(":", 1)
-                elif "." in step:
-                    mod, func = step.rsplit(".", 1)
+                    imports.append(f"from {mod} import {func} as {alias}")
+                    calls.append(f"{alias}()")
                 else:
-                    mod, func = "simple_functions", step
-                alias = f"_wf_{idx}"
-                imports.append(f"from {mod} import {func} as {alias}")
-                calls.append(f"{alias}()")
+                    if "." in step:
+                        path = Path(step.replace(".", "/"))
+                        file = Path.cwd() / (path.as_posix() + ".py")
+                        init = Path.cwd() / path / "__init__.py"
+                        if file.exists() or init.exists():
+                            mod = step
+                            imports.append(f"import {mod} as {alias}")
+                            calls.append(f"getattr({alias}, 'main', lambda: None)()")
+                            continue
+                        mod, func = step.rsplit(".", 1)
+                    else:
+                        if "/" in step:
+                            mod = step.replace("/", ".")
+                            imports.append(f"import {mod} as {alias}")
+                            calls.append(f"getattr({alias}, 'main', lambda: None)()")
+                            continue
+                        mod, func = "simple_functions", step
+                    imports.append(f"from {mod} import {func} as {alias}")
+                    calls.append(f"{alias}()")
             if not calls:
                 return "\n".join(f"# {s}" for s in steps) + "\npass\n"
             return "\n".join(imports + [""] + calls) + "\n"

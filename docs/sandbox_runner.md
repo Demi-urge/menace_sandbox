@@ -158,6 +158,9 @@ aggregated per workflow ID. After iterating over individual workflows a single
 combined snippet containing all steps is executed. Metrics from this run are
 recorded under the module name `all_workflows`, allowing the tracker to show the
 overall behaviour across every workflow.
+When the workflow database is empty or `--dynamic-workflows` is enabled the
+groups returned by `discover_module_groups()` are converted into temporary
+workflows and executed instead.
 
 ## Synergy Metrics
 

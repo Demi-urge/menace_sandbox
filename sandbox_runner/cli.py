@@ -982,6 +982,11 @@ def main(argv: List[str] | None = None) -> None:
         "--workflow-db", default="workflows.db", help="path to workflow database"
     )
     parser.add_argument(
+        "--dynamic-workflows",
+        action="store_true",
+        help="generate workflows from module groups when missing",
+    )
+    parser.add_argument(
         "--sandbox-data-dir", help="override data directory for sandbox mode"
     )
     parser.add_argument(
@@ -1341,7 +1346,9 @@ def main(argv: List[str] | None = None) -> None:
     if args.workflow_sim:
         from sandbox_runner.environment import run_workflow_simulations
 
-        run_workflow_simulations(args.workflow_db)
+        run_workflow_simulations(
+            args.workflow_db, dynamic_workflows=args.dynamic_workflows
+        )
     else:
         _run_sandbox(args)
 
