@@ -81,7 +81,8 @@ referenced by any tests. The self‑test service loads
 `sandbox_data/orphan_modules.json` or generates it using
 `discover_orphan_modules` when missing. Modules that pass their tests are
 merged into `module_map.json` so future runs treat them like regular members of
-their assigned groups.
+their assigned groups. When the integration succeeds simple one-step workflows
+are created for the new modules so they can be benchmarked immediately.
 
 Example workflow:
 

@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Iterable
 
+import sandbox_runner.environment as env
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # load SelfTestService from source
@@ -53,6 +55,7 @@ class DummyEngine:
             self.module_clusters.update(grp_map)
             self.module_index.save()
             self._last_map_refresh = time.time()
+            env.generate_workflows_for_modules(sorted(mods))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
 
@@ -93,6 +96,14 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.chdir(tmp_path)
 
+    generated: list[list[str]] = []
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        generated.append(list(mods))
+        return [1]
+
+    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
+
     svc = sts.SelfTestService(include_orphans=True)
     asyncio.run(svc._run_once())
 
@@ -118,3 +129,4 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     assert engine.module_clusters.get("foo.py") == 1
     data = json.loads(map_path.read_text())
     assert "foo.py" in data.get("modules", {})
+    assert generated and generated[0] == ["foo.py"]
