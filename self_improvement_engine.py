@@ -1371,6 +1371,12 @@ class SelfImprovementEngine:
                 self.module_clusters[m] = idx
             self.module_index.save()
             self._last_map_refresh = time.time()
+            try:
+                generate_workflows_for_modules(sorted(mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "workflow generation failed: %s", exc
+                )
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
 
