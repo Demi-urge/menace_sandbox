@@ -725,6 +725,7 @@ def full_autonomous_run(
                 no_workflow_run=False,
                 max_prompt_length=None,
                 summary_depth=None,
+                discover_orphans=getattr(args, "discover_orphans", False),
             )
             tracker = _capture_run(preset, run_args)
             if not tracker:
@@ -1026,6 +1027,11 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--summary-depth", type=int, help="lines to keep when summarising snippets"
+    )
+    parser.add_argument(
+        "--discover-orphans",
+        action="store_true",
+        help="automatically run find_orphan_modules (or SANDBOX_DISCOVER_ORPHANS=1)",
     )
     parser.add_argument(
         "--offline-suggestions",

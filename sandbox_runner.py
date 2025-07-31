@@ -823,7 +823,11 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         state_getter=improver._policy_state,
     )
-    tester = SelfTestService(telem_db)
+    tester = SelfTestService(
+        telem_db,
+        include_orphans=include_orphans,
+        discover_orphans=discover_orphans,
+    )
     from menace.roi_tracker import ROITracker
 
     try:
@@ -917,6 +921,14 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     offline_suggestions = bool(
         getattr(args, "offline_suggestions", False)
         or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
+    )
+    include_orphans = bool(
+        getattr(args, "include_orphans", False)
+        or os.getenv("SANDBOX_INCLUDE_ORPHANS", "0") in {"1", "true", "yes"}
+    )
+    discover_orphans = bool(
+        getattr(args, "discover_orphans", False)
+        or os.getenv("SANDBOX_DISCOVER_ORPHANS", "0") in {"1", "true", "yes"}
     )
     adapt_env = os.getenv("SANDBOX_ADAPT_PRESETS")
     if adapt_env is not None:

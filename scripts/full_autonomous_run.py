@@ -108,6 +108,7 @@ def main() -> None:
                 no_workflow_run=False,
                 max_prompt_length=None,
                 summary_depth=None,
+                discover_orphans=getattr(args, "discover_orphans", False),
             )
             tracker = _capture_run(preset, run_args)
             if not tracker:
