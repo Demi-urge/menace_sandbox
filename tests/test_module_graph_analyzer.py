@@ -19,8 +19,20 @@ def test_generate_module_map(tmp_path):
     data = json.loads(out.read_text())
     assert mapping == data
     group_abc = {mapping['pkg/a'], mapping['pkg/b'], mapping['pkg/c']}
-    assert len(group_abc) == 1
+    assert len(group_abc) == 2
     assert mapping['d'] not in group_abc
+
+
+def test_package_import_edge(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (tmp_path / "main.py").write_text("import pkg\n")
+
+    graph = build_import_graph(tmp_path)
+
+    assert "pkg" in graph.nodes
+    assert ("main", "pkg") in graph.edges
 
 
 def test_cluster_modules_direct(tmp_path):

@@ -25,7 +25,11 @@ def build_import_graph(root: Path | str) -> nx.DiGraph:
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
     for file in _iter_py_files(root):
-        mod = file.relative_to(root).with_suffix("").as_posix()
+        rel = file.relative_to(root)
+        if rel.name == "__init__.py":
+            mod = rel.parent.as_posix()
+        else:
+            mod = rel.with_suffix("").as_posix()
         modules[mod] = file
         graph.add_node(mod)
 
