@@ -29,6 +29,11 @@ def discover_module_groups(
     return {str(k): sorted(v) for k, v in groups.items()}
 
 
+def dotify_groups(groups: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Convert module paths to dotted import form."""
+    return {k: [m.replace("/", ".") for m in mods] for k, mods in groups.items()}
+
+
 def build_module_map(
     repo_path: str | Path,
     *,
@@ -85,4 +90,9 @@ def main(args: list[str] | None = None) -> None:
 if __name__ == "__main__":  # pragma: no cover
     main()
 
-__all__ = ["build_import_graph", "build_module_map", "discover_module_groups"]
+__all__ = [
+    "build_import_graph",
+    "build_module_map",
+    "discover_module_groups",
+    "dotify_groups",
+]
