@@ -97,3 +97,18 @@ Set `SELF_TEST_DISCOVER_ORPHANS=1` or pass `--discover-orphans` to scan the
 repository automatically. The discovered modules are saved to the same file and
 appended to the test queue on the next run. Use `--refresh-orphans` to force a
 new scan when the list already exists.
+
+## Automatic Orphan Detection
+
+When the service is launched with `--include-orphans` or the environment
+variable `SANDBOX_INCLUDE_ORPHANS=1`, it searches for
+`sandbox_data/orphan_modules.json` and runs each listed module alongside the
+regular test suite. If the file does not exist, the service attempts to locate
+orphan modules automatically using `sandbox_runner.discover_orphan_modules` or
+the fallback `scripts/find_orphan_modules.py` helper. The generated list is
+saved for future runs and the new modules are tested immediately.
+
+Results for these files are summarised under the `orphan_total`,
+`orphan_failed` and `orphan_passed` fields of the returned statistics. When
+triggered from `sandbox_runner` any successfully tested orphans are merged into
+the module map so subsequent cycles treat them like normal modules.
