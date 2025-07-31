@@ -196,11 +196,17 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
      --module-semantic --module-threshold 0.25
    ```
 
-   Example scanning for orphan modules:
+    Example scanning for orphan modules:
 
-   ```bash
-   python run_autonomous.py --discover-orphans --recursive-orphans
-   ```
+    ```bash
+    python run_autonomous.py --discover-orphans --recursive-orphans \
+      --include-orphans
+    ```
+
+    Set `SELF_TEST_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ORPHANS=1` to
+    achieve the same behaviour via environment variables. Modules that pass their
+    tests are merged into `module_map.json` and simple one-step workflows are
+    created automatically so the new code can be benchmarked on the next run.
 
 ## Visual agent queueing
 

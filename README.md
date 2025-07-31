@@ -113,8 +113,12 @@ immediately available for benchmarking.
 Example discovering orphans recursively:
 
 ```bash
-python run_autonomous.py --discover-orphans --recursive-orphans
+python run_autonomous.py --discover-orphans --recursive-orphans \
+    --include-orphans
 ```
+The same behaviour can be enabled via `SELF_TEST_RECURSIVE_ORPHANS=1` and
+`SANDBOX_RECURSIVE_ORPHANS=1`. Passing modules update the module map and spawn
+one-step workflows automatically.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be
 selected when the optional dependency is installed. Run the unified helper:
