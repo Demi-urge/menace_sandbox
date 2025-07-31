@@ -797,3 +797,84 @@ def test_init_refresh_called_for_unknown_patches(tmp_path, monkeypatch):
         module_index=module_index,
     )
     assert called.get("mods") == ["new.py"]
+
+
+def test_init_discovers_module_groups(tmp_path, monkeypatch):
+    class DummyPatchDB:
+        def _connect(self):
+            import sqlite3
+
+            conn = sqlite3.connect(":memory:")
+            conn.execute(
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0)"
+            )
+            conn.commit()
+
+            import contextlib
+
+            @contextlib.contextmanager
+            def ctx():
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+
+            return ctx()
+
+    patch_db = DummyPatchDB()
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    def fake_discover(path):
+        assert Path(path) == tmp_path
+        return {"core": ["a"]}
+
+    monkeypatch.setattr(sie, "discover_module_groups", fake_discover)
+
+    from module_index_db import ModuleIndexDB
+
+    module_index = ModuleIndexDB(tmp_path / "map.json")
+
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0))
+
+    class DummyCapitalBot:
+        def __init__(self) -> None:
+            self.val = 0.0
+
+        def energy_score(self, **_: object) -> float:
+            return 1.0
+
+        def profit(self) -> float:
+            v = self.val
+            self.val += 1.0
+            return v
+
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+        patch_db=patch_db,
+        module_index=module_index,
+    )
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    engine.run_cycle()
+
+    gid = engine.module_clusters.get("a.py")
+    assert gid is not None
+    assert engine.roi_group_history.get(gid) == [1.0]
+    data = json.loads((tmp_path / "map.json").read_text())
+    assert data["modules"].get("a.py") == gid
