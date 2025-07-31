@@ -130,6 +130,10 @@ After the system tools are in place install the Python requirements via
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
+- `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
+  orphan scans
+- `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
+  chains when refreshing the module map
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
@@ -195,7 +199,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    Example scanning for orphan modules:
 
    ```bash
-   python run_autonomous.py --discover-orphans
+   python run_autonomous.py --discover-orphans --recursive-orphans
    ```
 
 ## Visual agent queueing

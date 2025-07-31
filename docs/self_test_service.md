@@ -96,7 +96,9 @@ referenced by any tests. The script writes the list to
 Set `SELF_TEST_DISCOVER_ORPHANS=1` or pass `--discover-orphans` to scan the
 repository automatically. The discovered modules are saved to the same file and
 appended to the test queue on the next run. Use `--refresh-orphans` to force a
-new scan when the list already exists.
+new scan when the list already exists. Enable recursive discovery with
+`SELF_TEST_RECURSIVE_ORPHANS=1` or `--recursive-orphans` so that dependent
+modules are added when an orphan imports other files.
 
 ## Automatic Orphan Detection
 

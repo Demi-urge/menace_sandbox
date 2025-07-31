@@ -102,7 +102,17 @@ Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 "not yet tested". During autonomous runs the `SelfTestService` executes these
 modules separately when started with `--include-orphans`. Pass
 `--discover-orphans` or set `SELF_TEST_DISCOVER_ORPHANS=1` to scan the
-repository automatically and update the file before running.
+repository automatically and update the file before running. Use
+`--recursive-orphans` or `SELF_TEST_RECURSIVE_ORPHANS=1` to follow dependency
+chains so related modules are included as well. When launched via
+`run_autonomous.py` the same flag also sets `SANDBOX_RECURSIVE_ORPHANS=1` so the
+module map refresh integrates the additional files.
+
+Example discovering orphans recursively:
+
+```bash
+python run_autonomous.py --discover-orphans --recursive-orphans
+```
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be
 selected when the optional dependency is installed. Run the unified helper:
