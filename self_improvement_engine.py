@@ -1406,12 +1406,8 @@ class SelfImprovementEngine:
 
         if not modules:
             try:
-                if recursive:
-                    from sandbox_runner import discover_recursive_orphans as _discover
-                    names = _discover(str(repo))
-                else:
-                    from sandbox_runner import discover_orphan_modules as _discover
-                    names = _discover(str(repo), recursive=False)
+                from sandbox_runner import discover_orphan_modules as _discover
+                names = _discover(str(repo), recursive=recursive)
                 modules.extend(
                     [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
                 )

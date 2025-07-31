@@ -191,7 +191,7 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in {"discover_recursive_orphans", "discover_orphan_modules", "_discover_orphans_once"}
+        and node.name in {"discover_orphan_modules", "_discover_orphans_once"}
     ]
     from typing import List, Iterable
     mod_dict = {"ast": ast, "os": os, "json": json, "Path": Path, "List": List, "Iterable": Iterable}
@@ -199,7 +199,6 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     code = ast.Module(body=funcs, type_ignores=[])
     exec(compile(code, str(path), "exec"), mod_dict)
     helper = types.ModuleType("sandbox_runner")
-    helper.discover_recursive_orphans = mod_dict["discover_recursive_orphans"]
     helper.discover_orphan_modules = mod_dict["discover_orphan_modules"]
     helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
