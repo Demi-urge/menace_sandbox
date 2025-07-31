@@ -668,18 +668,15 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     if refresh_map or autodiscover or not module_map_file.exists():
         try:
-            from dynamic_module_mapper import discover_module_groups
+            from dynamic_module_mapper import build_module_map
 
-            groups = discover_module_groups(str(repo))
-            module_map_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(module_map_file, "w", encoding="utf-8") as fh:
-                json.dump(groups, fh, indent=2)
+            build_module_map(str(repo), use_semantic=autodiscover)
             logger.info(
-                "module groups discovered",
+                "module map generated",
                 extra=log_record(path=str(module_map_file)),
             )
         except Exception:
-            logger.exception("module group discovery failed")
+            logger.exception("module map generation failed")
 
     _env_vars = {
         "DATABASE_URL": "sqlite:///:memory:",
