@@ -670,7 +670,20 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         try:
             from dynamic_module_mapper import build_module_map
 
-            build_module_map(str(repo), use_semantic=autodiscover)
+            algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")
+            try:
+                threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
+            except Exception:
+                threshold = 0.1
+            sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
+            use_semantic = autodiscover if sem_env is None else sem_env == "1"
+
+            build_module_map(
+                str(repo),
+                algorithm=algo,
+                threshold=threshold,
+                use_semantic=use_semantic,
+            )
             logger.info(
                 "module map generated",
                 extra=log_record(path=str(module_map_file)),
