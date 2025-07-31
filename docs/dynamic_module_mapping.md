@@ -86,9 +86,10 @@ their assigned groups.
 Example workflow:
 
 ```bash
-python run_autonomous.py --discover-orphans --include-orphans
+python run_autonomous.py --discover-orphans --recursive-orphans --include-orphans
 ```
 
-The command scans for orphan modules, runs them with the standard unit tests
-and updates the module map once they succeed.
+The command scans for orphan modules (following their dependencies when
+`--recursive-orphans` or `SANDBOX_RECURSIVE_ORPHANS=1` is set), runs them with
+the standard unit tests and updates the module map once they succeed.
 
