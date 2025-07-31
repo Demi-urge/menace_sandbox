@@ -1351,8 +1351,20 @@ class SelfImprovementEngine:
                 )
 
     # ------------------------------------------------------------------
-    def _refresh_module_map(self) -> None:
+    def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
+        if modules and self.module_index:
+            try:
+                mods = {Path(m).name for m in modules}
+                self.module_index.refresh(mods, force=True)
+                grp_map = {m: self.module_index.get(Path(m).name) for m in mods}
+                self.module_clusters.update(grp_map)
+                self.module_index.save()
+                self._last_map_refresh = time.time()
+            except Exception as exc:  # pragma: no cover - runtime issues
+                self.logger.exception("module map refresh failed: %s", exc)
+            return
+
         if not self.auto_refresh_map or not self.module_index:
             return
         pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
@@ -1927,7 +1939,7 @@ class SelfImprovementEngine:
                 self._schedule_task = None
 
 
-from typing import Callable, Optional, Type
+from typing import Callable, Optional, Type, Iterable
 
 
 class ImprovementEngineRegistry:
