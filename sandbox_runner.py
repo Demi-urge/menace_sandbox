@@ -283,6 +283,83 @@ def discover_orphan_modules(repo_path: str, recursive: bool = False) -> List[str
     return sorted(collected)
 
 
+def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = None) -> List[str]:
+    """Return orphan modules along with local dependencies not tracked in the module map."""
+
+    repo = Path(repo_path)
+    if module_map is None:
+        module_map = repo / "sandbox_data" / "module_map.json"
+
+    known: set[str] = set()
+    if module_map and Path(module_map).exists():
+        try:
+            data = json.loads(Path(module_map).read_text())
+            if isinstance(data, dict):
+                if "modules" in data:
+                    keys = data.get("modules", {}).keys()
+                else:
+                    keys = data.keys()
+                for k in keys:
+                    p = Path(str(k))
+                    name = p.with_suffix("").as_posix().replace("/", ".")
+                    known.add(name)
+        except Exception:
+            known = set()
+
+    found = set(discover_orphan_modules(repo_path))
+    queue = list(found)
+
+    while queue:
+        mod = queue.pop(0)
+        path = repo / Path(*mod.split(".")).with_suffix(".py")
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text()
+            tree = ast.parse(text)
+        except Exception:
+            continue
+        pkg_parts = mod.split(".")[:-1]
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    name = alias.name
+                    mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                    pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                    if not (mod_path.exists() or pkg_init.exists()):
+                        continue
+                    if name not in found and name not in known:
+                        found.add(name)
+                        queue.append(name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    if node.level - 1 <= len(pkg_parts):
+                        base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                    else:
+                        base_prefix = []
+                else:
+                    base_prefix = pkg_parts
+                if node.module:
+                    name = ".".join(base_prefix + node.module.split("."))
+                    mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                    pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                    if mod_path.exists() or pkg_init.exists():
+                        if name not in found and name not in known:
+                            found.add(name)
+                            queue.append(name)
+                elif node.names:
+                    for alias in node.names:
+                        name = ".".join(base_prefix + alias.name.split("."))
+                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                        if mod_path.exists() or pkg_init.exists():
+                            if name not in found and name not in known:
+                                found.add(name)
+                                queue.append(name)
+
+    return sorted(found)
+
+
 # ----------------------------------------------------------------------
 def prepare_snippet(
     snippet: str,
@@ -1375,6 +1452,7 @@ __all__ = [
     "load_modified_code",
     "scan_repo_sections",
     "discover_orphan_modules",
+    "discover_recursive_orphans",
     "build_section_prompt",
     "simulate_execution_environment",
     "simulate_full_environment",

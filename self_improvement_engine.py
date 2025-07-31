@@ -1390,18 +1390,17 @@ class SelfImprovementEngine:
         modules: list[str] = []
         recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
         try:
-            from sandbox_runner import discover_orphan_modules as _discover
-        except Exception:
-            _discover = None
-
-        if _discover is not None:
-            try:
-                names = _discover(str(repo), recursive=recursive)
-                modules.extend(
-                    [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("orphan discovery failed: %s", exc)
+            if recursive:
+                from sandbox_runner import discover_recursive_orphans as _discover
+                names = _discover(str(repo))
+            else:
+                from sandbox_runner import discover_orphan_modules as _discover
+                names = _discover(str(repo), recursive=False)
+            modules.extend(
+                [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("orphan discovery failed: %s", exc)
 
         if not modules:
             try:

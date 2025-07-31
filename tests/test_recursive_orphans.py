@@ -75,11 +75,11 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     called = {}
     sr = types.ModuleType("sandbox_runner")
 
-    def discover(repo_path: str, recursive: bool = False):
-        called["recursive"] = recursive
+    def discover(repo_path: str):
+        called["used"] = True
         return ["foo.bar"]
 
-    sr.discover_orphan_modules = discover
+    sr.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -90,7 +90,7 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
 
     _update_orphan_modules(eng)
 
-    assert called.get("recursive") is True
+    assert called.get("used") is True
     data = json.loads((tmp_path / "orphan_modules.json").read_text())
     assert "foo/bar.py" in data
 

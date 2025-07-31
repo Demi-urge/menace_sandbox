@@ -491,18 +491,17 @@ class SelfTestService:
                     self.logger.exception("failed to load orphan modules")
             else:
                 try:
-                    from sandbox_runner import discover_orphan_modules as _discover
+                    if self.recursive_orphans:
+                        from sandbox_runner import discover_recursive_orphans as _discover
+                        names = _discover(str(Path.cwd()))
+                    else:
+                        from sandbox_runner import discover_orphan_modules as _discover
+                        names = _discover(str(Path.cwd()), recursive=False)
+                    orphan_list = [
+                        str(Path(*n.split(".")).with_suffix(".py")) for n in names
+                    ]
                 except Exception:
-                    _discover = None
-
-                if _discover is not None:
-                    try:
-                        names = _discover(str(Path.cwd()), recursive=self.recursive_orphans)
-                        orphan_list = [
-                            str(Path(*n.split(".")).with_suffix(".py")) for n in names
-                        ]
-                    except Exception:
-                        self.logger.exception("failed to discover orphan modules")
+                    self.logger.exception("failed to discover orphan modules")
                 if orphan_list:
                     try:
                         path.parent.mkdir(exist_ok=True)
