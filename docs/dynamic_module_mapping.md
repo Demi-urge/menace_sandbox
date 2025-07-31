@@ -50,3 +50,26 @@ python scripts/generate_module_map.py --semantic --threshold 0.2
 will cluster any modules describing *"ROI prediction helpers"* together, even
 if they call each other dynamically rather than via normal imports.
 
+### Dynamic workflows
+
+When `sandbox_runner` starts with `--dynamic-workflows` it builds
+temporary workflows from the module groups returned by the mapper. The
+feature is triggered automatically when the workflow database is empty
+and can be tuned via the same options used for generating the module
+map:
+
+- `--module-algorithm` – clustering algorithm for grouping modules.
+- `--module-threshold` – semantic similarity threshold.
+- `--module-semantic` – enable docstring similarity.
+
+For example the following command creates semantic module groups and
+executes them as workflows:
+
+```bash
+python run_autonomous.py --dynamic-workflows --module-semantic \
+  --module-threshold 0.25
+```
+
+The temporary workflows are discarded once explicit definitions are
+stored in `workflows.db`.
+

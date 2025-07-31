@@ -184,6 +184,13 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    Use `--forecast-log <path>` to store ROI forecasts and threshold values for each run.
    Use `--dynamic-workflows` to build temporary workflows from module groups when the workflow database is empty. Control the clustering with `--module-algorithm`, `--module-threshold` and `--module-semantic` which mirror the options of `discover_module_groups`.
 
+   Example:
+
+   ```bash
+   python run_autonomous.py --dynamic-workflows \
+     --module-semantic --module-threshold 0.25
+   ```
+
 ## Visual agent queueing
 
 `menace_visual_agent_2.py` accepts concurrent requests but `/run` always
