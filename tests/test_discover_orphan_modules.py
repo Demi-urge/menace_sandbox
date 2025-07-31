@@ -54,3 +54,15 @@ def test_recursive_chain_detection(tmp_path):
 
     assert non_rec == ["a"]
     assert rec == ["a", "b", "c"]
+
+
+def test_shared_dependency_not_included(tmp_path):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "d.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n")
+    (tmp_path / "c.py").write_text("x = 1\n")
+    (tmp_path / "e.py").write_text("import b\nimport f\n")
+    (tmp_path / "f.py").write_text("import e\n")
+
+    res = discover_orphan_modules(str(tmp_path), recursive=True)
+    assert sorted(res) == ["a", "d"]

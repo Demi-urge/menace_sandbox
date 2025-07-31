@@ -263,24 +263,88 @@ def _discover_orphans_once(repo_path: str, *, excludes: Iterable[str] | None = N
 def discover_orphan_modules(repo_path: str, recursive: bool = False) -> List[str]:
     """Return module names that are never imported by other modules.
 
-    If ``recursive`` is ``True`` the detection step repeats while newly
-    discovered modules are excluded, ensuring nested orphan chains are fully
-    resolved.
+    When ``recursive`` is ``True`` any modules imported exclusively by the
+    discovered orphans are also included. The dependency walk continues until no
+    new modules are found.
     """
 
-    if not recursive:
-        return _discover_orphans_once(repo_path)
+    repo_path = os.path.abspath(repo_path)
 
-    collected: List[str] = []
-    excludes: List[str] = []
-    while True:
-        found = _discover_orphans_once(repo_path, excludes=excludes)
-        new = [m for m in found if m not in collected]
-        if not new:
-            break
-        collected.extend(new)
-        excludes.extend(new)
-    return sorted(collected)
+    modules: dict[str, str] = {}
+    imported_by: dict[str, set[str]] = {}
+    imports: dict[str, set[str]] = {}
+
+    for base, _, files in os.walk(repo_path):
+        rel_base = os.path.relpath(base, repo_path)
+        if rel_base.split(os.sep)[0] == "tests":
+            continue
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            if name == "__init__.py":
+                continue
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, repo_path)
+            if rel.split(os.sep)[0] == "tests":
+                continue
+            module = os.path.splitext(rel)[0].replace(os.sep, ".")
+            try:
+                text = open(path, "r", encoding="utf-8").read()
+            except Exception:
+                continue
+            if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
+                continue
+
+            modules[module] = path
+
+            try:
+                tree = ast.parse(text)
+            except Exception:
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.setdefault(module, set()).add(alias.name)
+                        imported_by.setdefault(alias.name, set()).add(module)
+                elif isinstance(node, ast.ImportFrom):
+                    pkg_parts = module.split(".")[:-1]
+                    if node.level:
+                        if node.level - 1 <= len(pkg_parts):
+                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                        else:
+                            base_prefix = []
+                    else:
+                        base_prefix = pkg_parts
+
+                    if node.module:
+                        name = ".".join(base_prefix + node.module.split("."))
+                        imports.setdefault(module, set()).add(name)
+                        imported_by.setdefault(name, set()).add(module)
+                    elif node.names:
+                        for alias in node.names:
+                            name = ".".join(base_prefix + alias.name.split("."))
+                            imports.setdefault(module, set()).add(name)
+                            imported_by.setdefault(name, set()).add(module)
+
+    orphans: set[str] = {m for m in modules if m not in imported_by}
+    if not recursive:
+        return sorted(orphans)
+
+    queue = list(orphans)
+    while queue:
+        mod = queue.pop(0)
+        for name in imports.get(mod, set()):
+            if name not in modules:
+                continue
+            importers = imported_by.get(name, set())
+            if importers and not importers.issubset(orphans):
+                continue
+            if name not in orphans:
+                orphans.add(name)
+                queue.append(name)
+
+    return sorted(orphans)
 
 
 def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = None) -> List[str]:
