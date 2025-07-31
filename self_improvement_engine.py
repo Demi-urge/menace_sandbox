@@ -26,7 +26,7 @@ import tempfile
 import math
 from pathlib import Path
 from datetime import datetime
-from dynamic_module_mapper import build_module_map
+from dynamic_module_mapper import build_module_map, discover_module_groups
 import numpy as np
 import socket
 import contextlib
@@ -636,17 +636,36 @@ class SelfImprovementEngine:
             except Exception:
                 module_clusters = None
         self.module_clusters: dict[str, int] = module_clusters or {}
+
+        if module_groups is None:
+            try:
+                repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                discovered = discover_module_groups(repo_path)
+                module_groups = {
+                    (Path(m).name + (".py" if "." not in Path(m).name else "")):
+                    grp
+                    for grp, mods in discovered.items()
+                    for m in mods
+                }
+            except Exception:
+                module_groups = None
+
         if module_groups:
             grp_map: dict[str, int] = {}
             for mod, grp in module_groups.items():
                 try:
-                    idx = self.module_index.group_id(str(grp)) if self.module_index else abs(hash(grp)) % 1000
+                    idx = (
+                        self.module_index.group_id(str(grp))
+                        if self.module_index
+                        else abs(hash(grp)) % 1000
+                    )
                 except Exception:
                     idx = abs(hash(grp)) % 1000
                 grp_map[mod] = idx
             if self.module_index:
                 try:
                     self.module_index.merge_groups(grp_map)
+                    grp_map = {m: self.module_index.get(m) for m in grp_map}
                 except Exception:
                     pass
             self.module_clusters.update(grp_map)
