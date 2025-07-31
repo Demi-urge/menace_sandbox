@@ -10,7 +10,6 @@ spec = importlib.util.spec_from_file_location(
 )
 menace = importlib.util.module_from_spec(spec)
 sys.modules["menace"] = menace
-spec.loader.exec_module(menace)
 
 try:
     import jinja2 as _j2  # noqa: F401
@@ -92,22 +91,49 @@ if "joblib" not in sys.modules:
     joblib_mod.dump = joblib_mod.load = lambda *a, **k: None
     sys.modules["joblib"] = joblib_mod
 
-if "sklearn" not in sys.modules:
-    sk_mod = types.ModuleType("sklearn")
-    fe_mod = types.ModuleType("sklearn.feature_extraction")
-    text_mod = types.ModuleType("sklearn.feature_extraction.text")
-    text_mod.TfidfVectorizer = object
-    fe_mod.text = text_mod
-    cluster_mod = types.ModuleType("sklearn.cluster")
-    cluster_mod.KMeans = object
-    lm_mod = types.ModuleType("sklearn.linear_model")
-    lm_mod.LinearRegression = object
-    sk_mod.feature_extraction = fe_mod
-    sys.modules["sklearn"] = sk_mod
-    sys.modules["sklearn.feature_extraction"] = fe_mod
-    sys.modules["sklearn.feature_extraction.text"] = text_mod
-    sys.modules["sklearn.cluster"] = cluster_mod
-    sys.modules["sklearn.linear_model"] = lm_mod
+if "pydantic" not in sys.modules:
+    pyd_mod = types.ModuleType("pydantic")
+    pyd_mod.__path__ = []  # type: ignore
+    pyd_dc = types.ModuleType("dataclasses")
+    pyd_dc.dataclass = lambda *a, **k: (lambda f: f)
+    pyd_mod.dataclasses = pyd_dc
+    pyd_mod.Field = lambda default=None, **k: default
+    class _VE(Exception):
+        pass
+    pyd_mod.ValidationError = _VE
+    pyd_mod.BaseModel = object
+    sys.modules["pydantic"] = pyd_mod
+    sys.modules["pydantic.dataclasses"] = pyd_dc
+    pyd_settings_mod = types.ModuleType("pydantic_settings")
+    pyd_settings_mod.BaseSettings = object
+    pyd_settings_mod.SettingsConfigDict = dict
+    sys.modules["pydantic_settings"] = pyd_settings_mod
+
+sk_mod = types.ModuleType("sklearn")
+sk_mod.__path__ = []  # type: ignore
+fe_mod = types.ModuleType("sklearn.feature_extraction")
+fe_mod.__path__ = []  # type: ignore
+text_mod = types.ModuleType("sklearn.feature_extraction.text")
+text_mod.__path__ = []  # type: ignore
+text_mod.TfidfVectorizer = object
+fe_mod.text = text_mod
+sk_mod.feature_extraction = fe_mod
+sk_mod.feature_extraction.text = text_mod
+cluster_mod = types.ModuleType("sklearn.cluster")
+cluster_mod.__path__ = []  # type: ignore
+cluster_mod.KMeans = object
+lm_mod = types.ModuleType("sklearn.linear_model")
+lm_mod.__path__ = []  # type: ignore
+lm_mod.LinearRegression = object
+sk_mod.cluster = cluster_mod
+sk_mod.linear_model = lm_mod
+sys.modules["sklearn"] = sk_mod
+sys.modules["sklearn.feature_extraction"] = fe_mod
+sys.modules["sklearn.feature_extraction.text"] = text_mod
+sys.modules["sklearn.cluster"] = cluster_mod
+sys.modules["sklearn.linear_model"] = lm_mod
+
+spec.loader.exec_module(menace)
 
 pytest.importorskip("pandas")
 
@@ -566,4 +592,73 @@ def test_policy_update_receives_synergy_deltas(tmp_path, monkeypatch):
     engine.run_cycle()
 
     assert policy.deltas == (0.2, 0.3)
+
+
+def test_roi_history_group_ids(tmp_path, monkeypatch):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0))
+
+    class DummyCapitalBot:
+        def __init__(self) -> None:
+            self.val = 0.0
+
+        def energy_score(self, **_: object) -> float:
+            return 1.0
+
+        def profit(self) -> float:
+            v = self.val
+            self.val += 1.0
+            return v
+
+    class DummyPatchDB:
+        def _connect(self):
+            import sqlite3
+            conn = sqlite3.connect(":memory:")
+            conn.execute(
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER)"
+            )
+            conn.execute(
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0)"
+            )
+            conn.commit()
+            import contextlib
+
+            @contextlib.contextmanager
+            def ctx():
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+
+            return ctx()
+
+    patch_db = DummyPatchDB()
+
+    from module_index_db import ModuleIndexDB
+
+    module_index = ModuleIndexDB(tmp_path / "map.json")
+
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+        patch_db=patch_db,
+        module_index=module_index,
+        module_groups={"a.py": "core"},
+    )
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    engine.run_cycle()
+
+    gid = module_index.group_id("core")
+    assert engine.roi_group_history.get(gid) == [1.0]
 

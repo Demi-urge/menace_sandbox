@@ -416,6 +416,7 @@ class SelfImprovementEngine:
         meta_logger: object | None = None,
         module_index: "ModuleIndexDB" | None = None,
         module_clusters: dict[str, int] | None = None,
+        module_groups: dict[str, str] | None = None,
         pre_roi_bot: PreExecutionROIBot | None = None,
         pre_roi_scale: float | None = None,
         pre_roi_bias: float | None = None,
@@ -597,8 +598,10 @@ class SelfImprovementEngine:
             ] = self.synergy_weight_throughput
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
+        self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
         self._synergy_cache: dict | None = None
+        self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
         from .module_index_db import ModuleIndexDB
@@ -611,8 +614,21 @@ class SelfImprovementEngine:
             except Exception:
                 module_clusters = None
         self.module_clusters: dict[str, int] = module_clusters or {}
+        if module_groups:
+            grp_map: dict[str, int] = {}
+            for mod, grp in module_groups.items():
+                try:
+                    idx = self.module_index.group_id(str(grp)) if self.module_index else abs(hash(grp)) % 1000
+                except Exception:
+                    idx = abs(hash(grp)) % 1000
+                grp_map[mod] = idx
+            if self.module_index:
+                try:
+                    self.module_index.merge_groups(grp_map)
+                except Exception:
+                    pass
+            self.module_clusters.update(grp_map)
         logging.basicConfig(level=logging.INFO)
-        self.logger = get_logger("SelfImprovementEngine")
         self._score_backend: PatchScoreBackend | None = None
         if score_backend is not None:
             self._score_backend = score_backend
@@ -676,6 +692,10 @@ class SelfImprovementEngine:
             with open(self.state_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             self.roi_history = [float(x) for x in data.get("roi_history", [])]
+            self.roi_group_history = {
+                int(k): [float(vv) for vv in v]
+                for k, v in data.get("roi_group_history", {}).items()
+            }
             self.last_run = float(data.get("last_run", self.last_run))
             self.roi_delta_ema = float(
                 data.get("roi_delta_ema", self.roi_delta_ema)
@@ -695,6 +715,7 @@ class SelfImprovementEngine:
                 json.dump(
                     {
                         "roi_history": self.roi_history,
+                        "roi_group_history": self.roi_group_history,
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
                     },
@@ -1667,6 +1688,23 @@ class SelfImprovementEngine:
             self.roi_delta_ema = (
                 1 - self.roi_ema_alpha
             ) * self.roi_delta_ema + self.roi_ema_alpha * delta
+            group_idx = None
+            if self.patch_db:
+                try:
+                    with self.patch_db._connect() as conn:
+                        row = conn.execute(
+                            "SELECT filename FROM patch_history ORDER BY id DESC LIMIT 1"
+                        ).fetchone()
+                    if row:
+                        mod_name = Path(row[0]).name
+                        group_idx = self.module_clusters.get(mod_name)
+                        if group_idx is None and self.module_index:
+                            group_idx = self.module_index.get(mod_name)
+                            self.module_clusters[mod_name] = group_idx
+                except Exception as exc:
+                    self.logger.exception("group index lookup failed: %s", exc)
+            if group_idx is not None:
+                self.roi_group_history.setdefault(int(group_idx), []).append(delta)
             self.roi_history.append(delta)
             self._save_state()
             self._update_synergy_weights(delta)
