@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a module grouping map using the dependency graph."""
+"""Generate a module grouping map using the dynamic module mapper."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from module_graph_analyzer import build_import_graph, cluster_modules
+from dynamic_module_mapper import build_module_map as _build_map
 
 
 # ---------------------------------------------------------------------------
@@ -20,13 +20,11 @@ def generate_module_map(
     threshold: float = 0.1,
     semantic: bool = False,
 ) -> dict[str, int]:
-    graph = build_import_graph(root)
-    mapping = cluster_modules(
-        graph,
+    mapping = _build_map(
+        root,
         algorithm=algorithm,
         threshold=threshold,
         use_semantic=semantic,
-        root=root,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(mapping, indent=2))
@@ -36,8 +34,8 @@ def generate_module_map(
 # ---------------------------------------------------------------------------
 
 def main(args: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Generate sandbox module map")
-    parser.add_argument("--root", default=".", help="Repository root")
+    parser = argparse.ArgumentParser(description="Build sandbox module map")
+    parser.add_argument("repo", nargs="?", default=".", help="Repository path")
     parser.add_argument("--output", default="sandbox_data/module_map.json")
     parser.add_argument("--algorithm", default="greedy", choices=["greedy", "label"])
     parser.add_argument("--threshold", type=float, default=0.1)
@@ -46,7 +44,7 @@ def main(args: list[str] | None = None) -> None:
 
     generate_module_map(
         output=Path(opts.output),
-        root=Path(opts.root),
+        root=Path(opts.repo),
         algorithm=opts.algorithm,
         threshold=opts.threshold,
         semantic=opts.semantic,
