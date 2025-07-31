@@ -110,8 +110,9 @@ python scripts/generate_module_map.py --semantic --threshold 0.2
 
 This writes `sandbox_data/module_map.json` assigning each file to a numeric
 cluster. `SANDBOX_AUTODISCOVER_MODULES=1` triggers the same process on startup.
-See [docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md) for details
-on the `--algorithm`, `--threshold` and `--semantic` flags.
+Set `SANDBOX_SEMANTIC_MODULES=1` to include docstring-based edges when generating
+the map. See [docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md)
+for details on the `--algorithm`, `--threshold` and `--semantic` flags.
 
 ## Installation
 
