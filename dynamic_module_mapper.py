@@ -2,10 +2,11 @@ from __future__ import annotations
 
 """Dynamic module graph discovery and clustering utilities."""
 
-import ast
 import json
 from pathlib import Path
-from typing import Dict, Iterable, Mapping
+from typing import Dict, Mapping
+
+from module_graph_analyzer import build_import_graph as _build_graph, cluster_modules
 
 try:  # networkx is an optional dependency during some tests
     import networkx as nx
@@ -15,78 +16,78 @@ except Exception:  # pragma: no cover - fallback stub
 
 # ---------------------------------------------------------------------------
 
-def _iter_py_files(root: Path) -> Iterable[Path]:
-    """Yield all ``.py`` files below ``root``."""
-    for p in root.rglob("*.py"):
-        if p.is_file():
-            yield p
-
-
 def build_import_graph(repo_path: str | Path) -> "nx.DiGraph":
     """Return a directed graph of import relationships between modules."""
     if nx is None:  # pragma: no cover - networkx missing
         raise RuntimeError("networkx is required to build the module graph")
 
-    root = Path(repo_path)
-    graph = nx.DiGraph()
-    modules: Dict[str, Path] = {}
-
-    for file in _iter_py_files(root):
-        mod = file.relative_to(root).with_suffix("").as_posix()
-        modules[mod] = file
-        graph.add_node(mod)
-
-    for mod, file in modules.items():
-        try:
-            tree = ast.parse(file.read_text())
-        except Exception:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    target = alias.name.split(".")[0]
-                    if target in modules:
-                        graph.add_edge(mod, target)
-            elif isinstance(node, ast.ImportFrom):
-                pkg_parts = mod.split("/")[:-1]
-                if node.level > 0:
-                    pkg_parts = pkg_parts[: -node.level]
-                module = (node.module or "").split(".")
-                target = "/".join(pkg_parts + module).rstrip("/")
-                if target in modules:
-                    graph.add_edge(mod, target)
-    return graph
+    return _build_graph(Path(repo_path))
 
 
 # ---------------------------------------------------------------------------
 
-def _cluster_graph(graph: "nx.DiGraph") -> dict[str, list[str]]:
-    """Return communities of ``graph`` using ``networkx`` algorithms."""
+def _cluster_graph(
+    graph: "nx.DiGraph",
+    *,
+    algorithm: str = "greedy",
+    threshold: float = 0.1,
+    use_semantic: bool = False,
+    root: Path | None = None,
+) -> dict[str, list[str]]:
+    """Return communities of ``graph`` using :mod:`module_graph_analyzer`."""
     if nx is None:  # pragma: no cover - networkx missing
         raise RuntimeError("networkx is required to cluster modules")
 
-    try:  # prefer greedy modularity
-        from networkx.algorithms.community import greedy_modularity_communities
+    mapping = cluster_modules(
+        graph,
+        algorithm=algorithm,
+        threshold=threshold,
+        use_semantic=use_semantic,
+        root=root,
+    )
 
-        communities = list(greedy_modularity_communities(graph.to_undirected()))
-    except Exception:  # pragma: no cover - extremely small graphs
-        communities = [set(c) for c in nx.connected_components(graph.to_undirected())]
+    groups: Dict[int, list[str]] = {}
+    for mod, cid in mapping.items():
+        groups.setdefault(cid, []).append(mod)
 
-    return {str(i): sorted(comm) for i, comm in enumerate(communities)}
+    return {str(k): sorted(v) for k, v in groups.items()}
 
 
-def discover_module_groups(repo_path: str | Path) -> dict[str, list[str]]:
+def discover_module_groups(
+    repo_path: str | Path,
+    *,
+    algorithm: str = "greedy",
+    threshold: float = 0.1,
+    use_semantic: bool = False,
+) -> dict[str, list[str]]:
     """Analyse ``repo_path`` and return groups of related modules."""
     graph = build_import_graph(repo_path)
-    return _cluster_graph(graph)
+    return _cluster_graph(
+        graph,
+        algorithm=algorithm,
+        threshold=threshold,
+        use_semantic=use_semantic,
+        root=Path(repo_path),
+    )
 
 
 # ---------------------------------------------------------------------------
 
-def build_module_map(repo_path: str | Path) -> dict[str, list[str]]:
+def build_module_map(
+    repo_path: str | Path,
+    *,
+    algorithm: str = "greedy",
+    threshold: float = 0.1,
+    use_semantic: bool = False,
+) -> dict[str, list[str]]:
     """Build and persist a module grouping map under ``sandbox_data``."""
     root = Path(repo_path)
-    mapping = discover_module_groups(root)
+    mapping = discover_module_groups(
+        root,
+        algorithm=algorithm,
+        threshold=threshold,
+        use_semantic=use_semantic,
+    )
     out = root / "sandbox_data" / "module_map.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:
@@ -100,9 +101,17 @@ def main(args: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(description="Discover module groups")
     parser.add_argument("repo", nargs="?", default=".", help="Repository root")
+    parser.add_argument("--algorithm", default="greedy", choices=["greedy", "label"])
+    parser.add_argument("--threshold", type=float, default=0.1)
+    parser.add_argument("--semantic", action="store_true", help="Use docstring similarity")
     opts = parser.parse_args(args)
 
-    build_module_map(opts.repo)
+    build_module_map(
+        opts.repo,
+        algorithm=opts.algorithm,
+        threshold=opts.threshold,
+        use_semantic=opts.semantic,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover
