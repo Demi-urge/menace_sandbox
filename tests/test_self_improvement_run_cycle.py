@@ -2,6 +2,7 @@ import types
 import importlib.util
 import importlib.machinery
 import sys
+import json
 from pathlib import Path
 import pytest
 
@@ -157,3 +158,60 @@ def test_run_cycle_updates(tmp_path):
     assert len(policy.records) == 3
     rewards = [r[1] for r in policy.records]
     assert rewards == [pytest.approx(1.0), pytest.approx(0.5), pytest.approx(2.0)]
+
+
+class DummyMetaLogger:
+    def __init__(self) -> None:
+        self.events: list[object] = []
+        self.audit = types.SimpleNamespace(record=lambda obj: self.events.append(obj))
+
+
+def _make_refresh_engine(tmp_path, patch_db, module_index, meta_log):
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+    pipe = StubPipeline()
+    capital = CapBot([0.0])
+    policy = CapturePolicy()
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=pipe,
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=capital,
+        patch_db=patch_db,
+        policy=policy,
+        roi_ema_alpha=0.5,
+        bot_name="testbot",
+        module_index=module_index,
+        meta_logger=meta_log,
+        auto_refresh_map=True,
+    )
+    engine.tracker = rt.ROITracker()
+    sie.bootstrap = lambda: 0
+    return engine, policy
+
+
+def test_auto_refresh_module_map(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    map_path = tmp_path / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    module_index = sie.ModuleIndexDB(map_path)
+    patch_db = sie.PatchHistoryDB(tmp_path / "p.db")
+    rec = sie.PatchRecord(filename="new.py", description="", roi_before=0.0, roi_after=0.0)
+    patch_db.add(rec)
+    meta = DummyMetaLogger()
+
+    def fake_build(repo_path, **kw):
+        return {"new.py": 1, "old.py": 0}
+
+    monkeypatch.setattr(sie, "build_module_map", fake_build)
+    engine, _ = _make_refresh_engine(tmp_path, patch_db, module_index, meta)
+    res = engine.run_cycle()
+    assert isinstance(res, mp.AutomationResult)
+    assert module_index.get("new.py") == 1
+    data = json.loads(map_path.read_text())
+    assert "new.py" in data.get("modules", {})
+    assert meta.events and meta.events[0]["event"] == "module_map_refreshed"
