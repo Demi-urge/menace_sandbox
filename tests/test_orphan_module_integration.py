@@ -10,6 +10,26 @@ from typing import Iterable
 import sandbox_runner.environment as env
 
 ROOT = Path(__file__).resolve().parents[1]
+# provide minimal pydantic stub for optional dependencies
+pyd_mod = types.ModuleType("pydantic")
+sub = types.ModuleType("pydantic.dataclasses")
+pyd_mod.BaseModel = type("BaseModel", (), {})
+from dataclasses import dataclass as _dc
+sub.dataclass = _dc
+pyd_mod.dataclasses = sub
+# stub jinja2 Template to avoid heavy dependency
+jinja_mod = types.ModuleType("jinja2")
+jinja_mod.Template = lambda *a, **k: object()
+sys.modules.setdefault("jinja2", jinja_mod)
+yaml_mod = types.ModuleType("yaml")
+yaml_mod.safe_load = lambda *a, **k: {}
+yaml_mod.dump = lambda *a, **k: ""
+sys.modules.setdefault("yaml", yaml_mod)
+
+
+sys.modules.setdefault("pydantic", pyd_mod)
+sys.modules.setdefault("pydantic.dataclasses", sub)
+
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
@@ -130,3 +150,91 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert "foo.py" in data.get("modules", {})
     assert generated and generated[0] == ["foo.py"]
+
+
+def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("x = 1\n")
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    import ast, os
+    path = ROOT / "sandbox_runner.py"
+    src = path.read_text()
+    tree = ast.parse(src)
+    funcs = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"discover_recursive_orphans", "discover_orphan_modules", "_discover_orphans_once"}
+    ]
+    from typing import List, Iterable
+    mod_dict = {"ast": ast, "os": os, "json": json, "Path": Path, "List": List, "Iterable": Iterable}
+    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
+    code = ast.Module(body=funcs, type_ignores=[])
+    exec(compile(code, str(path), "exec"), mod_dict)
+    helper = types.ModuleType("sandbox_runner")
+    helper.discover_recursive_orphans = mod_dict["discover_recursive_orphans"]
+    helper.discover_orphan_modules = mod_dict["discover_orphan_modules"]
+    helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+
+    generated: list[list[str]] = []
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        generated.append(list(mods))
+        return [1]
+
+    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
+
+    svc = sts.SelfTestService(include_orphans=True, recursive_orphans=True)
+    asyncio.run(svc._run_once())
+
+    orphans = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert sorted(orphans) == ["a.py", "b.py"]
+    passed = list(orphans)
+
+    map_path = tmp_path / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+    index = mod_db.ModuleIndexDB(map_path)
+    engine = DummyEngine(index)
+
+    def fake_refresh(self, modules=None, force=False):
+        for m in modules or []:
+            self._map[m] = 1
+            self._groups[str(1)] = 1
+        self.save()
+
+    monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", fake_refresh)
+
+    engine._refresh_module_map(passed)
+
+    data = json.loads(map_path.read_text())
+    assert "a.py" in data.get("modules", {})
+    assert "b.py" in data.get("modules", {})
+    assert generated and generated[0] == ["a.py", "b.py"]
