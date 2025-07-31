@@ -98,6 +98,19 @@ def test_semantic_fixture_grouping(tmp_path):
     assert mapping["a"] == mapping["b"] == mapping["c"]
 
 
+def test_semantic_tfidf_similarity(tmp_path):
+    (tmp_path / "a.py").write_text('"""Database helper utilities."""\n')
+    (tmp_path / "b.py").write_text('"""Utilities for working with database"""\n')
+
+    plain = dmm.build_module_map(tmp_path, algorithm="label", threshold=0.2)
+    assert plain["a"] != plain["b"]
+
+    mapping = dmm.build_module_map(
+        tmp_path, algorithm="label", threshold=0.2, use_semantic=True
+    )
+    assert mapping["a"] == mapping["b"]
+
+
 def test_cli_option_parsing(monkeypatch):
     calls = {}
 
