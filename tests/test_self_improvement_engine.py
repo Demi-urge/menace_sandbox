@@ -4,6 +4,8 @@ import sys
 import pytest
 import asyncio
 
+import json
+from pathlib import Path
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
@@ -662,3 +664,91 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
     gid = module_index.group_id("core")
     assert engine.roi_group_history.get(gid) == [1.0]
 
+
+
+def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "old.py").write_text("print('old')")
+    map_path = tmp_path / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    os.utime(map_path, (0, 0))
+
+    class DummyPatchDB:
+        def _connect(self):
+            import sqlite3
+            from datetime import datetime
+            conn = sqlite3.connect(":memory:")
+            conn.execute(
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER, ts TEXT)"
+            )
+            conn.execute(
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted, ts) VALUES ('new.py', 0.0, 0.0, 0, ?)",
+                (datetime.utcnow().isoformat(),),
+            )
+            conn.commit()
+            import contextlib
+
+            @contextlib.contextmanager
+            def ctx():
+                try:
+                    yield conn
+                finally:
+                    conn.close()
+
+            return ctx()
+
+    patch_db = DummyPatchDB()
+
+    from module_index_db import ModuleIndexDB
+
+    module_index = ModuleIndexDB(map_path)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    def fake_build(repo_path, **kw):
+        assert Path(repo_path) == repo
+        return {"old.py": 0, "new.py": 1}
+
+    monkeypatch.setattr(sie, "build_module_map", fake_build)
+
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    edb = eb.ErrorDB(tmp_path / "e.db")
+    info = rab.InfoDB(tmp_path / "i.db")
+    diag = dm.DiagnosticManager(mdb, eb.ErrorBot(edb, mdb))
+
+    class StubPipeline:
+        def run(self, model: str, energy: int = 1):
+            return mp.AutomationResult(package=None, roi=prb.ROIResult(1.0, 0.0, 0.0, 1.0, 0.0))
+
+    class DummyCapitalBot:
+        def __init__(self) -> None:
+            self.val = 0.0
+        def energy_score(self, **_: object) -> float:
+            return 1.0
+        def profit(self) -> float:
+            v = self.val
+            self.val += 1.0
+            return v
+
+    engine = sie.SelfImprovementEngine(
+        interval=0,
+        pipeline=StubPipeline(),
+        diagnostics=diag,
+        info_db=info,
+        capital_bot=DummyCapitalBot(),
+        patch_db=patch_db,
+        module_index=module_index,
+        auto_refresh_map=True,
+    )
+
+    monkeypatch.setattr(sie, "bootstrap", lambda: 0)
+
+    engine.run_cycle()
+    gid = module_index.get("new.py")
+    assert gid == 1
+    assert engine.roi_group_history.get(gid) == [1.0]
+
+    engine.run_cycle()
+    assert engine.roi_group_history.get(gid) == [1.0, 1.0]
