@@ -72,3 +72,33 @@ def test_semantic_group_no_imports(tmp_path):
     mapping = dmm.build_module_map(tmp_path, algorithm="label", use_semantic=True)
     assert mapping["a"] == mapping["b"]
 
+
+
+
+def test_semantic_fixture_grouping(tmp_path):
+    src = Path(__file__).parent / "fixtures" / "semantic"
+    import shutil
+    shutil.copytree(src, tmp_path / "mods")
+    plain = dmm.build_module_map(tmp_path / "mods", algorithm="label")
+    idxs = {plain["a"], plain["b"], plain["c"]}
+    assert len(idxs) > 1
+
+    mapping = dmm.build_module_map(tmp_path / "mods", algorithm="label", use_semantic=True)
+    assert mapping["a"] == mapping["b"] == mapping["c"]
+
+
+def test_cli_option_parsing(monkeypatch):
+    calls = {}
+
+    def fake_build(repo, *, algorithm, threshold, use_semantic):
+        calls.update(repo=repo, algorithm=algorithm, threshold=threshold, semantic=use_semantic)
+        return {}
+
+    monkeypatch.setattr(dmm, "build_module_map", fake_build)
+    dmm.main(["src", "--algorithm", "label", "--threshold", "0.5", "--semantic"])
+    assert calls == {
+        "repo": "src",
+        "algorithm": "label",
+        "threshold": 0.5,
+        "semantic": True,
+    }
