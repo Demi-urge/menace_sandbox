@@ -14,10 +14,11 @@ Modules are clustered using HDBSCAN when available or community detection from
 To generate a module map manually run the unified helper:
 
 ```bash
-python scripts/build_module_map.py
+python scripts/generate_module_map.py
 ```
 
-The legacy `scripts/generate_module_map.py` script remains as a thin alias.
+The old `scripts/build_module_map.py` helper has been removed after merging
+its functionality here.
 
 The helper accepts several flags:
 
@@ -36,7 +37,7 @@ With `--semantic` enabled the mapper groups modules sharing similar docstrings
 even without direct imports. Running
 
 ```bash
-python scripts/build_module_map.py --semantic --threshold 0.2
+python scripts/generate_module_map.py --semantic --threshold 0.2
 ```
 
 will cluster any modules describing *"ROI prediction helpers"* together, even

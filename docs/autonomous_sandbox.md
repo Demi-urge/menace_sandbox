@@ -256,7 +256,7 @@ The sandbox reads several paths and authentication tokens from environment varia
 Generate the module grouping manually with:
 
 ```bash
-python scripts/build_module_map.py
+python scripts/generate_module_map.py
 ```
 
 ### Example `.env`
