@@ -48,12 +48,15 @@ class ModuleIndexDB:
                     sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
                 use_semantic = sem_env == "1"
                 repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
+                exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
                 mapping = generate_module_map(
                     self.path,
                     root=repo_path,
                     algorithm=algo,
                     threshold=threshold,
                     semantic=use_semantic,
+                    exclude=exclude,
                 )
                 if self.path != repo_path / "sandbox_data" / "module_map.json":
                     self.path.parent.mkdir(parents=True, exist_ok=True)

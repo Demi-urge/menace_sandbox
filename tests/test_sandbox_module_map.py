@@ -23,3 +23,15 @@ def test_generate_map_semantic(tmp_path):
     assert plain["a"] != plain["b"]
     mapping = generate_module_map(out, root=tmp_path, algorithm="label", semantic=True)
     assert mapping["a"] == mapping["b"]
+
+
+def test_generate_map_exclude(tmp_path):
+    skip = tmp_path / "skip"
+    skip.mkdir()
+    (skip / "x.py").write_text("pass\n")
+    (tmp_path / "a.py").write_text("pass\n")
+
+    out = tmp_path / "map.json"
+    mapping = generate_module_map(out, root=tmp_path, exclude=["skip"])
+    assert "a" in mapping
+    assert "skip/x" not in mapping

@@ -112,7 +112,9 @@ This writes `sandbox_data/module_map.json` assigning each file to a numeric
 cluster. `SANDBOX_AUTO_MAP=1` triggers the same process on startup.
 Set `SANDBOX_SEMANTIC_MODULES=1` to include docstring-based edges when generating
 the map. See [docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md)
-for details on the `--algorithm`, `--threshold` and `--semantic` flags.
+for details on the `--algorithm`, `--threshold`, `--semantic` and `--exclude`
+flags. Patterns from `SANDBOX_EXCLUDE_DIRS` are passed to the helper
+automatically.
 
 ## Installation
 

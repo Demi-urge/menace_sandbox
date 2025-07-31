@@ -696,6 +696,8 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 use_semantic = auto_map if sem_env is None else sem_env == "1"
             else:
                 use_semantic = bool(sem_arg)
+            exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
+            exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
 
             mapping = generate_module_map(
                 module_map_file,
@@ -703,6 +705,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 algorithm=algo,
                 threshold=threshold,
                 semantic=use_semantic,
+                exclude=exclude,
             )
             logger.info(
                 "module map generated",

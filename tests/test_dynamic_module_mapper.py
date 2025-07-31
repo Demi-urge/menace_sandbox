@@ -58,6 +58,17 @@ def test_call_links_modules(tmp_path):
     assert mapping["a"] == mapping["b/c"]
 
 
+def test_exclude_patterns(tmp_path):
+    skip = tmp_path / "skip"
+    skip.mkdir()
+    (skip / "x.py").write_text("pass\n")
+    (tmp_path / "a.py").write_text("pass\n")
+
+    mapping = dmm.build_module_map(tmp_path, ignore=["skip"])
+    assert "a" in mapping
+    assert "skip/x" not in mapping
+
+
 def test_semantic_group_no_imports(tmp_path):
     (tmp_path / "a.py").write_text(
         '"""Database utilities."""\n\ndef a():\n    pass\n'
@@ -90,15 +101,31 @@ def test_semantic_fixture_grouping(tmp_path):
 def test_cli_option_parsing(monkeypatch):
     calls = {}
 
-    def fake_build(repo, *, algorithm, threshold, use_semantic):
-        calls.update(repo=repo, algorithm=algorithm, threshold=threshold, semantic=use_semantic)
+    def fake_build(repo, *, algorithm, threshold, use_semantic, ignore):
+        calls.update(
+            repo=repo,
+            algorithm=algorithm,
+            threshold=threshold,
+            semantic=use_semantic,
+            ignore=ignore,
+        )
         return {}
 
     monkeypatch.setattr(dmm, "build_module_map", fake_build)
-    dmm.main(["src", "--algorithm", "label", "--threshold", "0.5", "--semantic"])
+    dmm.main([
+        "src",
+        "--algorithm",
+        "label",
+        "--threshold",
+        "0.5",
+        "--semantic",
+        "--exclude",
+        "tests",
+    ])
     assert calls == {
         "repo": "src",
         "algorithm": "label",
         "threshold": 0.5,
         "semantic": True,
+        "ignore": ["tests"],
     }
