@@ -1007,6 +1007,11 @@ def main(argv: List[str] | None = None) -> None:
         help="enable docstring similarity (or SANDBOX_SEMANTIC_MODULES=1)",
     )
     parser.add_argument(
+        "--refresh-module-map",
+        action="store_true",
+        help="recalculate module groups as patches land",
+    )
+    parser.add_argument(
         "--preset-count",
         type=int,
         help="number of presets to generate when none are provided",
