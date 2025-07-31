@@ -153,6 +153,56 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     assert any("bar.py" in c for c in joined)
 
 
+def test_discover_isolated_option(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(cmd)
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    import types
+
+    mod_iso = types.ModuleType("scripts.discover_isolated_modules")
+    mod_iso.discover_isolated_modules = lambda root: ["foo.py", "bar.py"]
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod_iso
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+
+    svc = mod.SelfTestService(discover_isolated=True)
+    asyncio.run(svc._run_once())
+
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert data == ["foo.py", "bar.py"]
+    joined = [" ".join(map(str, c)) for c in calls]
+    assert any("foo.py" in c for c in joined)
+    assert any("bar.py" in c for c in joined)
+
+
 def test_recursive_option_used(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
 
