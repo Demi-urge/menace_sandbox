@@ -73,3 +73,22 @@ python run_autonomous.py --dynamic-workflows --module-semantic \
 The temporary workflows are discarded once explicit definitions are
 stored in `workflows.db`.
 
+### Automatic orphan detection
+
+Running `sandbox_runner` with `--include-orphans` or setting
+`SANDBOX_INCLUDE_ORPHANS=1` enables automatic discovery of modules that are not
+referenced by any tests. The self‑test service loads
+`sandbox_data/orphan_modules.json` or generates it using
+`discover_orphan_modules` when missing. Modules that pass their tests are
+merged into `module_map.json` so future runs treat them like regular members of
+their assigned groups.
+
+Example workflow:
+
+```bash
+python run_autonomous.py --discover-orphans --include-orphans
+```
+
+The command scans for orphan modules, runs them with the standard unit tests
+and updates the module map once they succeed.
+
