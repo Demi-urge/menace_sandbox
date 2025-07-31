@@ -102,7 +102,8 @@ Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 "not yet tested". During autonomous runs the `SelfTestService` executes these
 modules separately when started with `--include-orphans`.
 The sandbox can also group modules automatically by analysing imports,
-function calls and optionally docstring similarity. Run the unified helper:
+function calls and optionally docstring similarity. HDBSCAN clustering can be
+selected when the optional dependency is installed. Run the unified helper:
 
 ```bash
 python scripts/build_module_map.py --semantic --threshold 0.2
@@ -112,8 +113,8 @@ This writes `sandbox_data/module_map.json` assigning each file to a numeric
 cluster. `SANDBOX_AUTO_MAP=1` triggers the same process on startup.
 Set `SANDBOX_SEMANTIC_MODULES=1` to include docstring-based edges when generating
 the map. See [docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md)
-for details on the `--algorithm`, `--threshold`, `--semantic` and `--exclude`
-flags. Patterns from `SANDBOX_EXCLUDE_DIRS` are passed to the helper
+for details on the `--algorithm` options (``greedy``, ``label`` or ``hdbscan``),
+the `--threshold`, `--semantic` and `--exclude` flags. Patterns from `SANDBOX_EXCLUDE_DIRS` are passed to the helper
 automatically.
 
 ## Installation

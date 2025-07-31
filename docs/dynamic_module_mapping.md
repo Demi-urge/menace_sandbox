@@ -8,8 +8,9 @@ semantic matching is enabled the tool also compares docstrings and links modules
 with similar descriptions.
 
 Modules are clustered using HDBSCAN when available or community detection from
-`networkx` otherwise. The resulting mapping is written to JSON with
-`build_module_map()`.
+`networkx` otherwise. Pass `--algorithm hdbscan` to opt into HDBSCAN; the
+package is optional so the tool falls back to community detection if it is not
+installed. The resulting mapping is written to JSON with `build_module_map()`.
 
 To generate a module map manually run the unified helper:
 
@@ -22,7 +23,7 @@ its functionality here.
 
 The helper accepts several flags:
 
-- `--algorithm {greedy,label}` – choose the community detection algorithm.
+- `--algorithm {greedy,label,hdbscan}` – choose the clustering algorithm.
 - `--threshold <float>` – similarity threshold used by semantic mode.
 - `--semantic` – enable docstring matching for additional edges.
 - `--exclude` – glob patterns of directories to ignore when scanning.
