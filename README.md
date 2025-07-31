@@ -109,6 +109,8 @@ chains so related modules are included as well. When launched via
 module map refresh integrates the additional files. Successful integrations
 also create one-step workflows for the passing orphan modules so they become
 immediately available for benchmarking.
+Set `SANDBOX_DISCOVER_ISOLATED=1` to include modules that are not referenced by
+any tests or other modules using `discover_isolated_modules`.
 
 Example discovering orphans recursively:
 

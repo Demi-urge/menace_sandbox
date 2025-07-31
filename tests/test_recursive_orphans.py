@@ -32,6 +32,7 @@ def _load_methods():
         "Iterable": __import__("typing").Iterable,
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": lambda mods: None,
+        "log_record": lambda **k: {},
     }
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     code = ast.Module(body=methods, type_ignores=[])
@@ -47,9 +48,10 @@ _integrate_orphans, _update_orphan_modules, _refresh_module_map = _load_methods(
 
 
 class DummyIndex:
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
         self._map = {}
         self._groups = {}
+        self.path = path
 
     def refresh(self, modules=None, force=False):
         for m in modules or []:
@@ -60,7 +62,9 @@ class DummyIndex:
         return 1
 
     def save(self):
-        pass
+        if self.path:
+            with open(self.path, "w", encoding="utf-8") as fh:
+                json.dump({"modules": self._map, "groups": self._groups}, fh)
 
 
 class DummyLogger:
@@ -121,3 +125,39 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
     _refresh_module_map(eng, ["foo.py"])
 
     assert calls["update"] == 1
+
+
+def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
+    index = DummyIndex(tmp_path / "module_map.json")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "iso.py").write_text("pass\n")
+
+    mod = types.ModuleType("scripts.discover_isolated_modules")
+
+    def discover(path):
+        assert Path(path) == repo
+        return ["iso.py"]
+
+    mod.discover_isolated_modules = discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
+
+    eng = types.SimpleNamespace(
+        module_index=index,
+        module_clusters={},
+        logger=DummyLogger(),
+    )
+    eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "1")
+
+    _update_orphan_modules(eng)
+
+    data = json.loads((tmp_path / "module_map.json").read_text())
+    assert data["modules"].get("iso.py") == 1
