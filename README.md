@@ -100,7 +100,9 @@ A new `menace` CLI wraps common workflows so you no longer need to remember indi
 
 Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 "not yet tested". During autonomous runs the `SelfTestService` executes these
-modules separately when started with `--include-orphans`.
+modules separately when started with `--include-orphans`. Pass
+`--discover-orphans` or set `SELF_TEST_DISCOVER_ORPHANS=1` to scan the
+repository automatically and update the file before running.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be
 selected when the optional dependency is installed. Run the unified helper:

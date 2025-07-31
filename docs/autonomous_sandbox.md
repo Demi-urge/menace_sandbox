@@ -129,6 +129,7 @@ After the system tools are in place install the Python requirements via
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
+- `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
@@ -189,6 +190,12 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    ```bash
    python run_autonomous.py --dynamic-workflows \
      --module-semantic --module-threshold 0.25
+   ```
+
+   Example scanning for orphan modules:
+
+   ```bash
+   python run_autonomous.py --discover-orphans
    ```
 
 ## Visual agent queueing
@@ -613,3 +620,6 @@ local installation.
   `self_test_average_coverage` are available on
   `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
   progress in `SELF_TEST_STATE`.
+- **Orphan modules not discovered** – run with `--discover-orphans` or set
+  `SELF_TEST_DISCOVER_ORPHANS=1` so the self-test service scans the repository
+  automatically.
