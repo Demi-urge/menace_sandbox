@@ -1,15 +1,15 @@
 # Dynamic Module Mapping
 
-`module_mapper.py` builds a graph of interactions across the repository. Every
-Python file is parsed so imports and function calls are discovered. When a call
-uses a name imported from another module an edge is added between the files,
-producing a `networkx` graph that models runtime dependencies. When semantic
-matching is enabled the tool also compares docstrings and links modules with
-similar descriptions.
+`dynamic_module_mapper.py` builds a graph of interactions across the repository.
+Every Python file is parsed so imports and function calls are discovered. When a
+call uses a name imported from another module an edge is added between the
+files, producing a `networkx` graph that models runtime dependencies. When
+semantic matching is enabled the tool also compares docstrings and links modules
+with similar descriptions.
 
-`cluster_modules()` then groups nodes using HDBSCAN when available or falls back
-to the greedy modularity algorithm from `networkx`. The mapping is written to
-JSON with `save_module_map()`.
+Modules are clustered using HDBSCAN when available or community detection from
+`networkx` otherwise. The resulting mapping is written to JSON with
+`build_module_map()`.
 
 To generate a module map manually run:
 

@@ -243,8 +243,8 @@ The sandbox reads several paths and authentication tokens from environment varia
    variable is still recognised.
  - `SANDBOX_REFRESH_MODULE_MAP` – force regeneration even when the map already
    exists.
-   When either condition is met the repository is analysed with
-   `discover_module_groups` and the resulting clusters are stored in the file.
+  When either condition is met the repository is analysed with
+  `build_module_map` and the resulting clusters are stored in the file.
    `ModuleIndexDB` loads these assignments so ROI and synergy metrics aggregate
    by module group.
 - `PATCH_SCORE_BACKEND_URL` – optional remote backend for patch scores. Supports `http://`, `https://` or `s3://bucket/prefix` URLs.
