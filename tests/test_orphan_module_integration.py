@@ -5,6 +5,7 @@ import sys
 import types
 import time
 from pathlib import Path
+from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,17 +40,25 @@ class DummyEngine:
         self.auto_refresh_map = True
         self.meta_logger = None
 
+    def _integrate_orphans(self, paths: Iterable[str]) -> None:
+        if not self.module_index:
+            return
+        mods = {Path(p).name for p in paths}
+        unknown = [m for m in mods if m not in self.module_clusters]
+        if not unknown:
+            return
+        try:
+            self.module_index.refresh(mods, force=True)
+            grp_map = {m: self.module_index.get(m) for m in mods}
+            self.module_clusters.update(grp_map)
+            self.module_index.save()
+            self._last_map_refresh = time.time()
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("orphan integration failed: %s", exc)
+
     def _refresh_module_map(self, modules: list[str] | None = None) -> None:
-        if modules and self.module_index:
-            try:
-                mods = {Path(m).name for m in modules}
-                self.module_index.refresh(mods, force=True)
-                grp_map = {m: self.module_index.get(Path(m).name) for m in mods}
-                self.module_clusters.update(grp_map)
-                self.module_index.save()
-                self._last_map_refresh = time.time()
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("module map refresh failed: %s", exc)
+        if modules:
+            self._integrate_orphans(modules)
             return
 
 

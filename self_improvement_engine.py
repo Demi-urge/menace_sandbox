@@ -1352,24 +1352,39 @@ class SelfImprovementEngine:
                 )
 
     # ------------------------------------------------------------------
+    def _integrate_orphans(self, paths: Iterable[str]) -> None:
+        """Refresh module index and clusters for newly tested orphan modules."""
+        if not self.module_index:
+            return
+        try:
+            mods = {Path(p).name for p in paths}
+        except Exception:
+            mods = set()
+        unknown = [m for m in mods if m not in self.module_clusters]
+        if not unknown:
+            return
+        try:
+            self.module_index.refresh(mods, force=True)
+            grp_map = {m: self.module_index.get(m) for m in mods}
+            for m, idx in grp_map.items():
+                self.module_clusters[m] = idx
+            self.module_index.save()
+            self._last_map_refresh = time.time()
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("orphan integration failed: %s", exc)
+
+    # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
-        if modules and self.module_index:
-            try:
-                mods = {Path(m).name for m in modules}
-                self.module_index.refresh(mods, force=True)
-                grp_map = {m: self.module_index.get(Path(m).name) for m in mods}
-                self.module_clusters.update(grp_map)
-                self.module_index.save()
-                self._last_map_refresh = time.time()
+        if modules:
+            self._integrate_orphans(modules)
+            if modules and self.module_index:
                 try:
-                    generate_workflows_for_modules(sorted(mods))
+                    generate_workflows_for_modules(sorted({Path(m).name for m in modules}))
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "workflow generation failed: %s", exc
                     )
-            except Exception as exc:  # pragma: no cover - runtime issues
-                self.logger.exception("module map refresh failed: %s", exc)
             return
 
         if not self.auto_refresh_map or not self.module_index:
