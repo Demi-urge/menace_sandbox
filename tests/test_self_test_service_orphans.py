@@ -57,7 +57,7 @@ def test_include_orphans(tmp_path, monkeypatch):
     assert any("foo.py" in c for c in joined)
     assert any("bar.py" in c for c in joined)
     assert svc.results.get("orphan_total") == 2
-    assert svc.results.get("orphan_failed") == []
+    assert svc.results.get("orphan_failed") == 0
 
 
 def test_auto_discover_orphans(tmp_path, monkeypatch):
@@ -92,9 +92,9 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import types
-    helper = types.ModuleType("scripts.discover_isolated_modules")
-    helper.discover_isolated_modules = lambda base=None: ["foo.py", "bar.py"]
-    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", helper)
+    helper = types.ModuleType("sandbox_runner")
+    helper.discover_orphan_modules = lambda repo: ["foo", "bar"]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True)
     asyncio.run(svc._run_once())
