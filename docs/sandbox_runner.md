@@ -98,10 +98,10 @@ Network behaviour can be tuned with:
 - `VISUAL_AGENT_TOKEN` – authentication token passed to `menace_visual_agent_2.py`.
 - `SANDBOX_REPO_PATH` – local path of the sandbox repository clone.
 - `SANDBOX_DATA_DIR` – directory used for ROI history and patch records.
-- `SANDBOX_AUTODISCOVER_MODULES` – rebuilds `module_map.json` on startup. See
-  [dynamic_module_mapping.md](dynamic_module_mapping.md).
-  The deprecated `SANDBOX_AUTO_MAP` variable is still supported for
-  compatibility.
+- `SANDBOX_AUTODISCOVER_MODULES` – builds or refreshes `module_map.json` on
+  startup. See [dynamic_module_mapping.md](dynamic_module_mapping.md) for the
+  `--algorithm`, `--threshold` and `--semantic` options. The deprecated
+  `SANDBOX_AUTO_MAP` variable is still supported for compatibility.
 - `SANDBOX_REFRESH_MODULE_MAP` – force regeneration of the module map when the file already exists.
 - `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
   `menace_sandbox_pool`).

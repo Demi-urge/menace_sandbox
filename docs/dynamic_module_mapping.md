@@ -1,8 +1,15 @@
 # Dynamic Module Mapping
 
-`module_mapper.py` builds a graph of module interactions across the repository. Each Python file is parsed with `ast` so both imports and call expressions are discovered. When a call uses a name imported from another module an edge is added between the files. The resulting `networkx` graph represents import relationships as well as runtime dependencies.
+`module_mapper.py` builds a graph of interactions across the repository. Every
+Python file is parsed so imports and function calls are discovered. When a call
+uses a name imported from another module an edge is added between the files,
+producing a `networkx` graph that models runtime dependencies. When semantic
+matching is enabled the tool also compares docstrings and links modules with
+similar descriptions.
 
-`cluster_modules()` then groups nodes using HDBSCAN if installed or falls back to the greedy modularity algorithm from `networkx`. The mapping is written to JSON with `save_module_map()`.
+`cluster_modules()` then groups nodes using HDBSCAN when available or falls back
+to the greedy modularity algorithm from `networkx`. The mapping is written to
+JSON with `save_module_map()`.
 
 To generate a module map manually run:
 
@@ -10,8 +17,14 @@ To generate a module map manually run:
 python scripts/generate_module_map.py --root . --output sandbox_data/module_map.json
 ```
 
-Additional options allow you to choose the clustering algorithm, adjust the threshold and enable semantic docstring matching.
+The helper accepts several flags:
 
-`SANDBOX_AUTODISCOVER_MODULES=1` tells `sandbox_runner` to invoke this process automatically when the sandbox starts. The map is stored in `SANDBOX_DATA_DIR/module_map.json` and used to attribute ROI metrics per module group.
-`SANDBOX_REFRESH_MODULE_MAP=1` forces regeneration of the map even when the file already exists.
+- `--algorithm {greedy,label}` – choose the community detection algorithm.
+- `--threshold <float>` – similarity threshold used by semantic mode.
+- `--semantic` – enable docstring matching for additional edges.
+
+Set `SANDBOX_AUTODISCOVER_MODULES=1` to have `sandbox_runner` build the map
+automatically on startup. The file is written to
+`SANDBOX_DATA_DIR/module_map.json` and loaded for ROI aggregation. Use
+`SANDBOX_REFRESH_MODULE_MAP=1` to force regeneration when the map already exists.
 
