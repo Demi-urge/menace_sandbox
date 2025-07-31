@@ -24,6 +24,7 @@ class ModuleIndexDB:
         if not self.path.exists() and self.path != default_path and default_path.exists():
             self.path = default_path
         self._map: Dict[str, int] = {}
+        self._groups: Dict[str, int] = {}
 
         if (
             auto_map or (auto_map is None and os.getenv("SANDBOX_AUTO_MAP") == "1")
@@ -37,7 +38,14 @@ class ModuleIndexDB:
             try:
                 data = json.loads(self.path.read_text())
                 if isinstance(data, dict):
-                    if all(isinstance(v, int) for v in data.values()):
+                    if "modules" in data or "groups" in data:
+                        mods = data.get("modules", {})
+                        grps = data.get("groups", {})
+                        if isinstance(mods, dict):
+                            self._map = {str(k): int(v) for k, v in mods.items()}
+                        if isinstance(grps, dict):
+                            self._groups = {str(k): int(v) for k, v in grps.items()}
+                    elif all(isinstance(v, int) for v in data.values()):
                         # ``build_module_map`` writes module -> int mappings
                         self._map = {k: int(v) for k, v in data.items()}
                     elif all(isinstance(v, list) for v in data.values()):
@@ -47,6 +55,7 @@ class ModuleIndexDB:
                                 idx = int(grp)
                             except Exception:
                                 idx = abs(hash(grp)) % 1000
+                            self._groups[str(grp)] = idx
                             for mod in modules:
                                 self._map[str(mod)] = idx
                     else:
@@ -55,9 +64,11 @@ class ModuleIndexDB:
                         for mod, grp in data.items():
                             key = str(grp)
                             idx = grp_idx.setdefault(key, abs(hash(key)) % 1000)
+                            self._groups.setdefault(key, idx)
                             self._map[mod] = idx
             except Exception:
                 self._map = {}
+                self._groups = {}
 
     # --------------------------------------------------------------
     def get(self, name: str) -> int:
@@ -77,6 +88,16 @@ class ModuleIndexDB:
         return idx
 
     # --------------------------------------------------------------
+    def group_id(self, group: str) -> int:
+        """Return persistent index for group ``group`` creating it if needed."""
+        if group in self._groups:
+            return int(self._groups[group])
+        next_idx = max([*self._groups.values(), *self._map.values()], default=-1) + 1
+        self._groups[group] = next_idx
+        self.save()
+        return next_idx
+
+    # --------------------------------------------------------------
     def merge_groups(self, groups: Dict[str, int]) -> None:
         """Merge ``groups`` mapping into this DB keeping indices stable."""
         group_to_idx: Dict[int, int] = {}
@@ -84,16 +105,19 @@ class ModuleIndexDB:
             grp = groups.get(mod)
             if grp is not None:
                 group_to_idx.setdefault(grp, idx)
+                self._groups.setdefault(str(grp), idx)
 
         next_idx = max(self._map.values(), default=0) + 1
         for mod, grp in groups.items():
             if mod in self._map:
+                self._groups.setdefault(str(grp), self._map[mod])
                 continue
             if grp in group_to_idx:
                 self._map[mod] = group_to_idx[grp]
             else:
                 self._map[mod] = next_idx
                 group_to_idx[grp] = next_idx
+                self._groups.setdefault(str(grp), next_idx)
                 next_idx += 1
         self.save()
 
@@ -102,7 +126,7 @@ class ModuleIndexDB:
         try:
             tmp = self.path.with_suffix(".tmp")
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(self._map, fh, indent=2)
+                json.dump({"modules": self._map, "groups": self._groups}, fh, indent=2)
             os.replace(tmp, self.path)
         except Exception:
             pass
