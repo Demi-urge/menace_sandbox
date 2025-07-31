@@ -25,6 +25,8 @@ import io
 import tempfile
 import math
 from pathlib import Path
+from datetime import datetime
+from dynamic_module_mapper import build_module_map
 import numpy as np
 import socket
 import contextlib
@@ -417,6 +419,7 @@ class SelfImprovementEngine:
         module_index: "ModuleIndexDB" | None = None,
         module_clusters: dict[str, int] | None = None,
         module_groups: dict[str, str] | None = None,
+        auto_refresh_map: bool = False,
         pre_roi_bot: PreExecutionROIBot | None = None,
         pre_roi_scale: float | None = None,
         pre_roi_bias: float | None = None,
@@ -470,6 +473,7 @@ class SelfImprovementEngine:
                 self.logger.exception("policy load failed: %s", exc)
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
+        self.auto_refresh_map = bool(auto_refresh_map)
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -613,6 +617,11 @@ class SelfImprovementEngine:
             )
             auto_map = True
         self.module_index = module_index or ModuleIndexDB(auto_map=auto_map)
+        map_path = getattr(self.module_index, "path", Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "module_map.json")
+        try:
+            self._last_map_refresh = map_path.stat().st_mtime
+        except Exception:
+            self._last_map_refresh = 0.0
         if module_clusters is None and self.module_index is not None:
             try:
                 module_clusters = dict(getattr(self.module_index, "_map", {}))
@@ -1315,6 +1324,50 @@ class SelfImprovementEngine:
                 )
 
     # ------------------------------------------------------------------
+    def _refresh_module_map(self) -> None:
+        """Refresh module grouping when new modules appear."""
+        if not self.auto_refresh_map or not self.module_index:
+            return
+        pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
+        if not pdb:
+            return
+        try:
+            iso_ts = datetime.utcfromtimestamp(self._last_map_refresh).isoformat()
+            with pdb._connect() as conn:
+                rows = conn.execute(
+                    "SELECT filename FROM patch_history WHERE ts > ?",
+                    (iso_ts,),
+                ).fetchall()
+        except Exception as exc:  # pragma: no cover - database issues
+            self.logger.exception("module refresh query failed: %s", exc)
+            return
+        new_mods = {Path(r[0]).name for r in rows if Path(r[0]).name not in self.module_clusters}
+        if not new_mods:
+            return
+        try:
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            mapping = build_module_map(repo)
+            self.module_index.merge_groups(mapping)
+            self.module_clusters.update(mapping)
+            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            out = data_dir / "module_map.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with open(out, "w", encoding="utf-8") as fh:
+                json.dump({"modules": self.module_index._map, "groups": self.module_index._groups}, fh, indent=2)
+            self._last_map_refresh = time.time()
+            if self.meta_logger and hasattr(self.meta_logger, "audit"):
+                try:
+                    self.meta_logger.audit.record({"event": "module_map_refreshed", "modules": sorted(new_mods)})
+                except Exception:
+                    pass
+            self.logger.info(
+                "module map refreshed",
+                extra=log_record(modules=sorted(new_mods)),
+            )
+        except Exception as exc:  # pragma: no cover - runtime issues
+            self.logger.exception("module map refresh failed: %s", exc)
+
+    # ------------------------------------------------------------------
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
@@ -1322,6 +1375,7 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            self._refresh_module_map()
             state = (
                 self._policy_state()
                 if self.policy
