@@ -34,8 +34,9 @@ def test_auto_map(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_AUTODISCOVER_MODULES", "1")
     monkeypatch.setenv("SANDBOX_MODULE_ALGO", "label")
     monkeypatch.setenv("SANDBOX_MODULE_THRESHOLD", "0.3")
-    monkeypatch.setenv("SANDBOX_MODULE_SEMANTIC", "1")
+    monkeypatch.setenv("SANDBOX_SEMANTIC_MODULES", "1")
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
     path = tmp_path / "map.json"
     db = ModuleIndexDB(path, auto_map=None)

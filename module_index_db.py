@@ -35,7 +35,10 @@ class ModuleIndexDB:
                     threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
                 except Exception:
                     threshold = 0.1
-                use_semantic = os.getenv("SANDBOX_MODULE_SEMANTIC") == "1"
+                sem_env = os.getenv("SANDBOX_SEMANTIC_MODULES")
+                if sem_env is None:
+                    sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
+                use_semantic = sem_env == "1"
                 repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 mapping = generate_module_map(
                     self.path,

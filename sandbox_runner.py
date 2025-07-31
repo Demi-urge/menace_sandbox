@@ -668,7 +668,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     if refresh_map or autodiscover or not module_map_file.exists():
         try:
-            from module_graph_analyzer import build_import_graph, cluster_modules
+            from scripts.generate_module_map import generate_module_map
 
             algo = (
                 getattr(args, "module_algorithm", None)
@@ -684,22 +684,20 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                     threshold = 0.1
             sem_arg = getattr(args, "module_semantic", None)
             if sem_arg is None:
-                sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")
+                sem_env = os.getenv("SANDBOX_SEMANTIC_MODULES")
+                if sem_env is None:
+                    sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
                 use_semantic = autodiscover if sem_env is None else sem_env == "1"
             else:
                 use_semantic = bool(sem_arg)
 
-            graph = build_import_graph(repo)
-            mapping = cluster_modules(
-                graph,
+            mapping = generate_module_map(
+                module_map_file,
+                root=Path(repo),
                 algorithm=algo,
                 threshold=threshold,
-                use_semantic=use_semantic,
-                root=Path(repo),
+                semantic=use_semantic,
             )
-            module_map_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(module_map_file, "w", encoding="utf-8") as fh:
-                json.dump(mapping, fh, indent=2)
             logger.info(
                 "module map generated",
                 extra=log_record(path=str(module_map_file)),

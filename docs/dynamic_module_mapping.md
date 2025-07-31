@@ -30,6 +30,7 @@ Set `SANDBOX_AUTODISCOVER_MODULES=1` to have `sandbox_runner` build the map
 automatically on startup. The file is written to
 `SANDBOX_DATA_DIR/module_map.json` and loaded for ROI aggregation. Use
 `SANDBOX_REFRESH_MODULE_MAP=1` to force regeneration when the map already exists.
+Enable docstring-based linking with `SANDBOX_SEMANTIC_MODULES=1`.
 
 ### Semantic clustering example
 

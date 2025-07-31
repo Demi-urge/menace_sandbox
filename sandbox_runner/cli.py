@@ -1004,7 +1004,7 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--module-semantic",
         action="store_true",
-        help="enable docstring similarity (or SANDBOX_MODULE_SEMANTIC=1)",
+        help="enable docstring similarity (or SANDBOX_SEMANTIC_MODULES=1)",
     )
     parser.add_argument(
         "--preset-count",
