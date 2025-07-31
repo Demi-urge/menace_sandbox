@@ -18,11 +18,11 @@ def discover_isolated_modules(base_dir: str | Path) -> List[str]:
     """Return relative paths of isolated Python modules under *base_dir*."""
     root = Path(base_dir).resolve()
 
-    modules = {str(p) for p in find_orphan_modules(root)}
+    modules = {str(p) for p in find_orphan_modules(root, recursive=False)}
 
     if _discover_import_orphans is not None:
         try:
-            names = _discover_import_orphans(str(root))
+            names = _discover_import_orphans(str(root), recursive=False)
         except Exception:  # pragma: no cover - best effort
             names = []
         for name in names:

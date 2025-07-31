@@ -197,12 +197,13 @@ def scan_repo_sections(repo_path: str) -> Dict[str, Dict[str, List[str]]]:
 
 
 # ----------------------------------------------------------------------
-def discover_orphan_modules(repo_path: str) -> List[str]:
-    """Return module names that are never imported by other modules."""
+def _discover_orphans_once(repo_path: str, *, excludes: Iterable[str] | None = None) -> List[str]:
+    """Return orphan modules under *repo_path* once."""
 
     repo_path = os.path.abspath(repo_path)
     imported: set[str] = set()
     modules: dict[str, str] = {}
+    skip = set(excludes or [])
 
     for base, _, files in os.walk(repo_path):
         rel_base = os.path.relpath(base, repo_path)
@@ -217,6 +218,9 @@ def discover_orphan_modules(repo_path: str) -> List[str]:
             rel = os.path.relpath(path, repo_path)
             if rel.split(os.sep)[0] == "tests":
                 continue
+            module = os.path.splitext(rel)[0].replace(os.sep, ".")
+            if module in skip:
+                continue
             try:
                 text = open(path, "r", encoding="utf-8").read()
             except Exception:
@@ -224,7 +228,6 @@ def discover_orphan_modules(repo_path: str) -> List[str]:
             if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
                 continue
 
-            module = os.path.splitext(rel)[0].replace(os.sep, ".")
             modules[module] = path
 
             try:
@@ -255,6 +258,29 @@ def discover_orphan_modules(repo_path: str) -> List[str]:
     orphans = [m for m in modules if m not in imported]
     orphans.sort()
     return orphans
+
+
+def discover_orphan_modules(repo_path: str, recursive: bool = False) -> List[str]:
+    """Return module names that are never imported by other modules.
+
+    If ``recursive`` is ``True`` the detection step repeats while newly
+    discovered modules are excluded, ensuring nested orphan chains are fully
+    resolved.
+    """
+
+    if not recursive:
+        return _discover_orphans_once(repo_path)
+
+    collected: List[str] = []
+    excludes: List[str] = []
+    while True:
+        found = _discover_orphans_once(repo_path, excludes=excludes)
+        new = [m for m in found if m not in collected]
+        if not new:
+            break
+        collected.extend(new)
+        excludes.extend(new)
+    return sorted(collected)
 
 
 # ----------------------------------------------------------------------
