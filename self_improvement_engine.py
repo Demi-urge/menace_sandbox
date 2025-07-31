@@ -1382,6 +1382,7 @@ class SelfImprovementEngine:
         path = data_dir / "orphan_modules.json"
 
         modules: list[str] = []
+        recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
         try:
             from sandbox_runner import discover_orphan_modules as _discover
         except Exception:
@@ -1389,7 +1390,7 @@ class SelfImprovementEngine:
 
         if _discover is not None:
             try:
-                names = _discover(str(repo), recursive=False)
+                names = _discover(str(repo), recursive=recursive)
                 modules.extend(
                     [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
                 )
@@ -1400,7 +1401,7 @@ class SelfImprovementEngine:
             try:
                 from scripts.find_orphan_modules import find_orphan_modules
 
-                modules = [str(p) for p in find_orphan_modules(repo, recursive=False)]
+                modules = [str(p) for p in find_orphan_modules(repo, recursive=recursive)]
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan discovery failed: %s", exc)
 
@@ -1439,6 +1440,11 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "workflow generation failed: %s", exc
                     )
+            if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("recursive orphan update failed: %s", exc)
             return
 
         if not self.auto_refresh_map or not self.module_index:
@@ -1487,6 +1493,11 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "workflow generation failed: %s", exc
                 )
+            if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("recursive orphan update failed: %s", exc)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("module map refresh failed: %s", exc)
 
