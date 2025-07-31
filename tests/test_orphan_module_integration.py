@@ -97,7 +97,8 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     asyncio.run(svc._run_once())
 
     orphans = json.loads((data_dir / "orphan_modules.json").read_text())
-    passed = [m for m in orphans if m not in svc.results.get("orphan_failed", [])]
+    assert svc.results.get("orphan_failed") == 0
+    passed = list(orphans)
 
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))

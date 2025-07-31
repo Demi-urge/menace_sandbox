@@ -464,16 +464,7 @@ class SelfTestService:
         orphan_list: list[str] = []
         if self.include_orphans:
             path = Path("sandbox_data") / "orphan_modules.json"
-            if refresh_orphans or not path.exists():
-                try:
-                    from scripts.discover_isolated_modules import discover_isolated_modules
-
-                    orphan_list = discover_isolated_modules(Path.cwd())
-                    path.parent.mkdir(exist_ok=True)
-                    path.write_text(json.dumps(orphan_list, indent=2))
-                except Exception:
-                    self.logger.exception("failed to discover orphan modules")
-            else:
+            if path.exists() and not refresh_orphans:
                 try:
                     with open(path, "r", encoding="utf-8") as fh:
                         data = json.load(fh) or []
@@ -481,6 +472,26 @@ class SelfTestService:
                             orphan_list = [str(p) for p in data]
                 except Exception:
                     self.logger.exception("failed to load orphan modules")
+            else:
+                try:
+                    from sandbox_runner import discover_orphan_modules as _discover
+                except Exception:
+                    _discover = None
+
+                if _discover is not None:
+                    try:
+                        names = _discover(str(Path.cwd()))
+                        orphan_list = [
+                            str(Path(*n.split(".")).with_suffix(".py")) for n in names
+                        ]
+                    except Exception:
+                        self.logger.exception("failed to discover orphan modules")
+                if orphan_list:
+                    try:
+                        path.parent.mkdir(exist_ok=True)
+                        path.write_text(json.dumps(orphan_list, indent=2))
+                    except Exception:
+                        self.logger.exception("failed to write orphan modules")
 
         if self.discover_orphans:
             try:
@@ -794,7 +805,7 @@ class SelfTestService:
             }
             if orphan_set:
                 self.results["orphan_total"] = len(orphan_set)
-                self.results["orphan_failed"] = orphan_failed
+                self.results["orphan_failed"] = len(orphan_failed)
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
