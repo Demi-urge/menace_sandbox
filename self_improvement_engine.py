@@ -27,6 +27,7 @@ import math
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
+from sandbox_runner.environment import generate_workflows_for_modules
 import numpy as np
 import socket
 import contextlib
@@ -1361,6 +1362,12 @@ class SelfImprovementEngine:
                 self.module_clusters.update(grp_map)
                 self.module_index.save()
                 self._last_map_refresh = time.time()
+                try:
+                    generate_workflows_for_modules(sorted(mods))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "workflow generation failed: %s", exc
+                    )
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.exception("module map refresh failed: %s", exc)
             return
@@ -1405,6 +1412,12 @@ class SelfImprovementEngine:
                 "module map refreshed",
                 extra=log_record(modules=sorted(new_mods)),
             )
+            try:
+                generate_workflows_for_modules(sorted(new_mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "workflow generation failed: %s", exc
+                )
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("module map refresh failed: %s", exc)
 
