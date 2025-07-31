@@ -102,6 +102,17 @@ modules are added when an orphan imports other files. The search uses
 `sandbox_runner.discover_recursive_orphans` to walk each orphan's imports
 until no new local modules remain.
 
+Example running tests with recursive orphan discovery:
+
+```bash
+python -m menace.self_test_service run tests/unit \
+    --include-orphans --discover-orphans --recursive-orphans
+```
+
+When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` to
+achieve the same behaviour. Passing modules are added to `module_map.json`
+and simple one-step workflows are generated automatically on the next run.
+
 ## Automatic Orphan Detection
 
 When the service is launched with `--include-orphans` or the environment
