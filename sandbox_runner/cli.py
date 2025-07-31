@@ -987,7 +987,7 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--autodiscover-modules",
         action="store_true",
-        help="generate module map automatically (or set SANDBOX_AUTODISCOVER_MODULES=1)",
+        help="generate module map automatically (or set SANDBOX_AUTO_MAP=1)",
     )
     parser.add_argument(
         "--module-algorithm",

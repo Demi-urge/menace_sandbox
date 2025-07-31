@@ -238,9 +238,9 @@ The sandbox reads several paths and authentication tokens from environment varia
   `menace_visual_agent_2.py` when running over HTTPS.
 - `VISUAL_AGENT_SSL_KEY` – path to the private key for the certificate.
 - `SANDBOX_DATA_DIR` – directory where ROI history, presets and patch records are stored. Defaults to `sandbox_data`.
- - `SANDBOX_AUTODISCOVER_MODULES` – when set to `1` the sandbox builds or
-   refreshes `module_map.json` on startup. The deprecated `SANDBOX_AUTO_MAP`
-   variable is still recognised.
+ - `SANDBOX_AUTO_MAP` – when set to `1` the sandbox builds or
+   refreshes `module_map.json` on startup. The legacy `SANDBOX_AUTODISCOVER_MODULES`
+   variable is still recognised with a warning.
  - `SANDBOX_REFRESH_MODULE_MAP` – force regeneration even when the map already
    exists.
   When either condition is met the repository is analysed with
