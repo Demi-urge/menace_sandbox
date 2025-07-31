@@ -1389,18 +1389,34 @@ class SelfImprovementEngine:
 
         modules: list[str] = []
         recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
-        try:
-            if recursive:
-                from sandbox_runner import discover_recursive_orphans as _discover
-                names = _discover(str(repo))
-            else:
-                from sandbox_runner import discover_orphan_modules as _discover
-                names = _discover(str(repo), recursive=False)
-            modules.extend(
-                [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
-            )
-        except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("orphan discovery failed: %s", exc)
+
+        if os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1":
+            try:
+                from scripts.discover_isolated_modules import discover_isolated_modules
+
+                prev: set[str] = set()
+                while True:
+                    new_paths = set(discover_isolated_modules(str(repo))) - prev
+                    if not new_paths:
+                        break
+                    modules.extend(sorted(new_paths))
+                    prev.update(new_paths)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("isolated module discovery failed: %s", exc)
+
+        if not modules:
+            try:
+                if recursive:
+                    from sandbox_runner import discover_recursive_orphans as _discover
+                    names = _discover(str(repo))
+                else:
+                    from sandbox_runner import discover_orphan_modules as _discover
+                    names = _discover(str(repo), recursive=False)
+                modules.extend(
+                    [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("orphan discovery failed: %s", exc)
 
         if not modules:
             try:
@@ -1430,6 +1446,10 @@ class SelfImprovementEngine:
                 self.logger.info(
                     "orphan modules updated", extra=log_record(count=len(combined))
                 )
+                try:
+                    self._refresh_module_map(combined)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("module map refresh failed: %s", exc)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
 
