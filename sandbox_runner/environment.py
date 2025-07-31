@@ -5118,6 +5118,18 @@ def run_workflow_simulations(
                 use_semantic=module_semantic,
             )
         )
+        if dynamic_workflows:
+            try:
+                from menace.module_index_db import ModuleIndexDB
+
+                idx = ModuleIndexDB()
+                for mod, gid in idx._map.items():
+                    dotted = Path(mod).with_suffix("").as_posix().replace("/", ".")
+                    present = any(dotted in m for m in groups.values())
+                    if not present:
+                        groups.setdefault(str(gid), []).append(dotted)
+            except Exception:
+                pass
         workflows = [
             WorkflowRecord(workflow=mods, title=f"workflow_{gid}", wid=i + 1)
             for i, (gid, mods) in enumerate(sorted(groups.items()))
