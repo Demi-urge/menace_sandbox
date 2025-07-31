@@ -1035,6 +1035,11 @@ def main(argv: List[str] | None = None) -> None:
         help="automatically run find_orphan_modules (or SANDBOX_DISCOVER_ORPHANS=1)",
     )
     parser.add_argument(
+        "--discover-isolated",
+        action="store_true",
+        help="include modules from discover_isolated_modules before orphan scan",
+    )
+    parser.add_argument(
         "--recursive-orphans",
         action="store_true",
         help="recursively integrate orphan dependency chains (or SANDBOX_RECURSIVE_ORPHANS=1)",
