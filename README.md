@@ -568,6 +568,13 @@ written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
   manual ``--roi-threshold`` and ``--synergy-threshold`` values are optional.
   Fine‑tune synergy convergence with ``--synergy-threshold-window`` and
   ``--synergy-threshold-weight``.
+- ``--dynamic-workflows`` generates workflows from module groups when the
+  workflow database is empty.
+- ``--module-algorithm`` chooses the clustering algorithm used for module
+  grouping (``greedy``, ``label`` or ``hdbscan``).
+- ``--module-threshold`` sets the semantic similarity threshold when grouping
+  modules.
+- ``--module-semantic`` enables docstring similarity for module clustering.
 - ``menace_visual_agent_2.py --resume`` processes any queued tasks stored in
   ``visual_agent_queue.db`` without starting the server. Use ``--flush-queue`` to drop
   stalled entries.

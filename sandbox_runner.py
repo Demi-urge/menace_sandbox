@@ -1304,6 +1304,10 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 getattr(args, "workflow_db", "workflows.db"),
                 SANDBOX_ENV_PRESETS,
                 tracker=ctx.tracker,
+                dynamic_workflows=getattr(args, "dynamic_workflows", False),
+                module_algorithm=getattr(args, "module_algorithm", "greedy"),
+                module_threshold=float(getattr(args, "module_threshold", 0.1)),
+                module_semantic=getattr(args, "module_semantic", False),
             )
         except Exception:
             logger.exception("workflow simulations failed")
