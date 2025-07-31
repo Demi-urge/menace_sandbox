@@ -129,3 +129,40 @@ def test_cli_option_parsing(monkeypatch):
         "semantic": True,
         "ignore": ["tests"],
     }
+
+
+def _write_cluster_project(path: Path, heavy: bool) -> None:
+    """Create four modules with optional repeated calls."""
+    path.mkdir(parents=True, exist_ok=True)
+    calls = "".join("    b.x()\n" for _ in range(9)) if heavy else ""
+    (path / "a.py").write_text(
+        "import b\nimport c\nimport d\n\n" f"def go():\n{calls}"
+    )
+    (path / "b.py").write_text(
+        "import a\nimport c\nimport d\n\n" "def x():\n    pass\n"
+    )
+    calls_cd = "".join("    d.y()\n" for _ in range(9)) if heavy else ""
+    (path / "c.py").write_text(
+        "import a\nimport b\nimport d\n\n" f"def go():\n{calls_cd}"
+    )
+    (path / "d.py").write_text(
+        "import a\nimport b\nimport c\n\n" "def y():\n    pass\n"
+    )
+
+
+def test_repeated_calls_strengthen_clustering(tmp_path):
+    base = tmp_path / "base"
+    weighted = tmp_path / "weighted"
+    _write_cluster_project(base, heavy=False)
+    _write_cluster_project(weighted, heavy=True)
+
+    plain = dmm.build_module_map(base)
+    assert len({plain["a"], plain["b"], plain["c"], plain["d"]}) == 1
+
+    mapping = dmm.build_module_map(weighted)
+    groups = {mapping["a"], mapping["b"], mapping["c"], mapping["d"]}
+    assert len(groups) == 2
+    assert mapping["a"] == mapping["b"]
+    assert mapping["c"] == mapping["d"]
+    assert mapping["a"] != mapping["c"]
+
