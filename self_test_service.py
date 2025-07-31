@@ -755,6 +755,7 @@ class SelfTestService:
             stderr_snip = ""
             logs_snip = ""
             orphan_failed: list[str] = []
+            orphan_passed: list[str] = []
 
             for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
@@ -776,6 +777,8 @@ class SelfTestService:
 
                 if p in queue:
                     queue.remove(p)
+                if p in orphan_set and not failed_flag:
+                    orphan_passed.append(p)
                 self._save_state(queue, passed, failed, coverage_total, runtime_total)
 
                 if self.result_callback:
@@ -806,6 +809,9 @@ class SelfTestService:
             if orphan_set:
                 self.results["orphan_total"] = len(orphan_set)
                 self.results["orphan_failed"] = len(orphan_failed)
+                passed_set = [p for p in orphan_passed if p not in orphan_failed]
+                if passed_set:
+                    self.results["orphan_passed"] = sorted(passed_set)
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
