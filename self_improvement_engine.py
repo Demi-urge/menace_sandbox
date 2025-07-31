@@ -622,6 +622,14 @@ class SelfImprovementEngine:
             self._last_map_refresh = map_path.stat().st_mtime
         except Exception:
             self._last_map_refresh = 0.0
+        if self.module_index and self.patch_db:
+            try:
+                with self.patch_db._connect() as conn:
+                    rows = conn.execute("SELECT DISTINCT filename FROM patch_history").fetchall()
+                mods = [str(Path(r[0]).name) for r in rows]
+                self.module_index.refresh(mods)
+            except Exception:
+                self.logger.exception("module map refresh failed during init")
         if module_clusters is None and self.module_index is not None:
             try:
                 module_clusters = dict(getattr(self.module_index, "_map", {}))

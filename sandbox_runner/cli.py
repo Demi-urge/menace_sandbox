@@ -1009,7 +1009,7 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--refresh-module-map",
         action="store_true",
-        help="recalculate module groups as patches land",
+        help="rebuild module map before sandbox cycles",
     )
     parser.add_argument(
         "--preset-count",

@@ -41,6 +41,7 @@ def test_auto_map(monkeypatch, tmp_path):
 
     path = tmp_path / "map.json"
     db = ModuleIndexDB(path, auto_map=None)
+    db.refresh(force=True)
     assert generated["output"] == path
     assert generated["root"] == tmp_path
     assert generated["algorithm"] == "label"
@@ -62,6 +63,29 @@ def test_autodiscover_deprecated(monkeypatch, tmp_path):
     path = tmp_path / "map.json"
     with pytest.warns(UserWarning):
         db = ModuleIndexDB(path, auto_map=None)
+    db.refresh(force=True)
     assert generated["output"] == path
     assert db.get("m") == 1
+
+
+def test_refresh_generates_when_unknown(monkeypatch, tmp_path):
+    path = tmp_path / "map.json"
+    path.write_text(json.dumps({"modules": {"old.py": 0}, "groups": {"0": 0}}))
+    db = ModuleIndexDB(path)
+    called = {}
+
+    def fake_generate(output, *, root, algorithm, threshold, semantic, exclude=None):
+        called["called"] = True
+        output.write_text(json.dumps({"old.py": 0, "new.py": 1}))
+        return {"old.py": 0, "new.py": 1}
+
+    monkeypatch.setattr("module_index_db.generate_module_map", fake_generate)
+
+    db.refresh(["new.py"])
+    assert called.get("called")
+    assert db.get("new.py") == 1
+
+    called.clear()
+    db.refresh(["old.py"])
+    assert not called
 

@@ -102,10 +102,9 @@ Network behaviour can be tuned with:
   startup. See [dynamic_module_mapping.md](dynamic_module_mapping.md) for the
   `--algorithm`, `--threshold` and `--semantic` options. The legacy
   `SANDBOX_AUTODISCOVER_MODULES` variable is still supported with a warning.
-- `SANDBOX_REFRESH_MODULE_MAP` – force regeneration of the module map when the file already exists.
-- `--refresh-module-map` enables automatic refreshing of the module map after
-  each patch cycle. This toggles the `auto_refresh_map` option inside
-  `SelfImprovementEngine`.
+- `SANDBOX_REFRESH_MODULE_MAP` – rebuild the module map before running the sandbox cycles.
+- `--refresh-module-map` performs the same refresh at startup and also enables automatic
+  updates when new files are patched.
 - `SANDBOX_POOL_LABEL` – Docker label used for pooled containers (default
   `menace_sandbox_pool`).
 - `SANDBOX_POOL_LOCK` – optional lock file guarding container pool operations.
