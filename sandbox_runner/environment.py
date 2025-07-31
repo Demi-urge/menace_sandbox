@@ -33,7 +33,7 @@ import signal
 import weakref
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Callable, get_origin, get_args
+from typing import Any, Dict, List, Callable, Iterable, get_origin, get_args
 from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
 
@@ -5026,6 +5026,41 @@ def simulate_full_environment(preset: Dict[str, Any]) -> "ROITracker":
         return tracker
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ----------------------------------------------------------------------
+def generate_workflows_for_modules(
+    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+) -> list[int]:
+    """Create simple workflows executing each *module* in isolation.
+
+    Parameters
+    ----------
+    modules:
+        Iterable of module names or file paths. Each entry becomes a single step
+        workflow.
+    workflows_db:
+        Path to the workflows database. Defaults to ``"workflows.db"``.
+
+    Returns
+    -------
+    list[int]
+        The database IDs of the newly stored workflows.
+    """
+
+    from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
+
+    wf_db = WorkflowDB(Path(workflows_db))
+    ids: list[int] = []
+    for mod in modules:
+        name = str(mod)
+        dotted = Path(name).with_suffix("").as_posix().replace("/", ".")
+        try:
+            rec = WorkflowRecord(workflow=[dotted], title=dotted)
+            ids.append(wf_db.add(rec))
+        except Exception:
+            logger.exception("failed to store workflow for %s", dotted)
+    return ids
 
 
 # ----------------------------------------------------------------------
