@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict
 
 try:  # optional dependency only needed when auto mapping
-    from dynamic_module_mapper import build_module_map
+    from scripts.generate_module_map import generate_module_map
 except Exception:  # pragma: no cover - during tests optional dep may be missing
-    build_module_map = None  # type: ignore
+    generate_module_map = None  # type: ignore
 
 
 class ModuleIndexDB:
@@ -26,9 +26,9 @@ class ModuleIndexDB:
         self._map: Dict[str, int] = {}
         self._groups: Dict[str, int] = {}
 
-        if (
-            auto_map or (auto_map is None and os.getenv("SANDBOX_AUTO_MAP") == "1")
-        ) and build_module_map:
+        auto_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
+        legacy_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
+        if (auto_map or (auto_map is None and (auto_env or legacy_env))) and generate_module_map:
             try:
                 algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")
                 try:
@@ -36,13 +36,15 @@ class ModuleIndexDB:
                 except Exception:
                     threshold = 0.1
                 use_semantic = os.getenv("SANDBOX_MODULE_SEMANTIC") == "1"
-                mapping = build_module_map(
-                    os.getenv("SANDBOX_REPO_PATH", "."),
+                repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                mapping = generate_module_map(
+                    self.path,
+                    root=repo_path,
                     algorithm=algo,
                     threshold=threshold,
-                    use_semantic=use_semantic,
+                    semantic=use_semantic,
                 )
-                if self.path != (Path(os.getenv("SANDBOX_REPO_PATH", ".")) / "sandbox_data" / "module_map.json"):
+                if self.path != repo_path / "sandbox_data" / "module_map.json":
                     self.path.parent.mkdir(parents=True, exist_ok=True)
                     with open(self.path, "w", encoding="utf-8") as fh:
                         json.dump(mapping, fh, indent=2)
