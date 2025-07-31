@@ -25,12 +25,15 @@ The helper accepts several flags:
 - `--algorithm {greedy,label}` – choose the community detection algorithm.
 - `--threshold <float>` – similarity threshold used by semantic mode.
 - `--semantic` – enable docstring matching for additional edges.
+- `--exclude` – glob patterns of directories to ignore when scanning.
 
 Set `SANDBOX_AUTO_MAP=1` to have `sandbox_runner` build the map
 automatically on startup. The file is written to
 `SANDBOX_DATA_DIR/module_map.json` and loaded for ROI aggregation. Use
 `SANDBOX_REFRESH_MODULE_MAP=1` to force regeneration when the map already exists.
 Enable docstring-based linking with `SANDBOX_SEMANTIC_MODULES=1`.
+Provide comma-separated patterns in `SANDBOX_EXCLUDE_DIRS` to exclude
+directories from the generated map.
 The map can also be refreshed automatically as new files are patched by
 running `sandbox_runner` with `--refresh-module-map`. This sets the
 `auto_refresh_map` option of `SelfImprovementEngine`, causing

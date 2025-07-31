@@ -1346,7 +1346,9 @@ class SelfImprovementEngine:
             return
         try:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            mapping = build_module_map(repo)
+            exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
+            exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
+            mapping = build_module_map(repo, ignore=exclude)
             self.module_index.merge_groups(mapping)
             self.module_clusters.update(mapping)
             data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))

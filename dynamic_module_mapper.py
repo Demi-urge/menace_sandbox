@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable
 
 from module_graph_analyzer import build_import_graph, cluster_modules
 
@@ -35,11 +35,12 @@ def build_module_map(
     algorithm: str = "greedy",
     threshold: float = 0.1,
     use_semantic: bool = False,
+    ignore: Iterable[str] | None = None,
 ) -> dict[str, int]:
     """Persist a module grouping map under ``sandbox_data``."""
     root = Path(repo_path)
     mapping = cluster_modules(
-        build_import_graph(root),
+        build_import_graph(root, ignore=ignore),
         algorithm=algorithm,
         threshold=threshold,
         use_semantic=use_semantic,
@@ -60,6 +61,12 @@ def main(args: list[str] | None = None) -> None:
     parser.add_argument("--algorithm", default="greedy", choices=["greedy", "label"])
     parser.add_argument("--threshold", type=float, default=0.1)
     parser.add_argument("--semantic", action="store_true", help="Use docstring similarity")
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern of directories to exclude",
+    )
     opts = parser.parse_args(args)
 
     build_module_map(
@@ -67,6 +74,7 @@ def main(args: list[str] | None = None) -> None:
         algorithm=opts.algorithm,
         threshold=opts.threshold,
         use_semantic=opts.semantic,
+        ignore=opts.exclude,
     )
 
 

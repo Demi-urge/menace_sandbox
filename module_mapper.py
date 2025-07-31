@@ -12,19 +12,28 @@ import networkx as nx
 
 # ---------------------------------------------------------------------------
 
-def _iter_py_files(root: Path) -> Iterable[Path]:
-    """Yield all ``.py`` files under ``root``."""
+def _iter_py_files(root: Path, ignore: Iterable[str] | None = None) -> Iterable[Path]:
+    """Yield all ``.py`` files under ``root`` skipping ignored paths."""
+    ignore = set(ignore or [])
     for path in root.rglob("*.py"):
-        if path.is_file():
-            yield path
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if any(rel.match(pat) or pat in rel.parts for pat in ignore):
+            continue
+        yield path
 
 
-def build_module_graph(repo_path: str | Path) -> nx.DiGraph:
+def build_module_graph(
+    repo_path: str | Path,
+    *,
+    ignore: Iterable[str] | None = None,
+) -> nx.DiGraph:
     """Return a graph with import and call edges between modules."""
     root = Path(repo_path)
     graph = nx.DiGraph()
     modules: Dict[str, Path] = {}
-    for file in _iter_py_files(root):
+    for file in _iter_py_files(root, ignore=ignore):
         mod = file.relative_to(root).with_suffix("").as_posix()
         modules[mod] = file
         graph.add_node(mod)

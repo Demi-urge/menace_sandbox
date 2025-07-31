@@ -19,12 +19,14 @@ def generate_module_map(
     algorithm: str = "greedy",
     threshold: float = 0.1,
     semantic: bool = False,
+    exclude: list[str] | None = None,
 ) -> dict[str, int]:
     mapping = _build_map(
         root,
         algorithm=algorithm,
         threshold=threshold,
         use_semantic=semantic,
+        ignore=exclude,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(mapping, indent=2))
@@ -40,6 +42,12 @@ def main(args: list[str] | None = None) -> None:
     parser.add_argument("--algorithm", default="greedy", choices=["greedy", "label"])
     parser.add_argument("--threshold", type=float, default=0.1)
     parser.add_argument("--semantic", action="store_true", help="Use docstring similarity")
+    parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="Glob pattern of directories to exclude",
+    )
     opts = parser.parse_args(args)
 
     generate_module_map(
@@ -48,6 +56,7 @@ def main(args: list[str] | None = None) -> None:
         algorithm=opts.algorithm,
         threshold=opts.threshold,
         semantic=opts.semantic,
+        exclude=opts.exclude,
     )
 
 
