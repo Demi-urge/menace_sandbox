@@ -98,5 +98,7 @@ The command scans for orphan modules (following their dependencies when
 tests and updates the module map once they succeed.
 Pass `--discover-isolated` or set `SANDBOX_DISCOVER_ISOLATED=1` to also load
 modules returned by `discover_isolated_modules` before falling back to the
-recursive discovery.
+recursive discovery. These isolated modules are recursively tested just like
+regular orphans and merged into `module_map.json` once they pass so later runs
+treat them as normal members of their assigned groups.
 

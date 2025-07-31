@@ -109,8 +109,7 @@ chains so related modules are included as well. When launched via
 module map refresh integrates the additional files. Successful integrations
 also create one-step workflows for the passing orphan modules so they become
 immediately available for benchmarking.
-Set `SANDBOX_DISCOVER_ISOLATED=1` to include modules that are not referenced by
-any tests or other modules using `discover_isolated_modules`.
+Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to load modules returned by `discover_isolated_modules` before scanning for orphans. When launched via `run_autonomous.py` the flag also sets `SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map.
 
 Example discovering orphans recursively:
 
