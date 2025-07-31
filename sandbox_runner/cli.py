@@ -991,7 +991,7 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--module-algorithm",
-        choices=["greedy", "label"],
+        choices=["greedy", "label", "hdbscan"],
         default=os.getenv("SANDBOX_MODULE_ALGO"),
         help="module clustering algorithm",
     )

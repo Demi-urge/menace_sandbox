@@ -9,6 +9,11 @@ from typing import Dict, Iterable
 
 import networkx as nx
 
+try:  # optional dependency
+    import hdbscan  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    hdbscan = None  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 
@@ -143,6 +148,15 @@ def cluster_modules(
                     else:
                         undirected.add_edge(a, b, weight=1)
 
+    if algorithm == "hdbscan" and hdbscan is not None:
+        try:
+            matrix = nx.to_numpy_array(undirected, weight="weight")
+            labels = hdbscan.HDBSCAN(min_cluster_size=2).fit_predict(matrix)
+            if len(set(labels)) > 1:
+                return {n: int(l) for n, l in zip(undirected.nodes, labels, strict=False)}
+        except Exception:
+            pass
+
     if algorithm == "label":
         from networkx.algorithms.community import asyn_lpa_communities
 
@@ -150,7 +164,9 @@ def cluster_modules(
     else:
         from networkx.algorithms.community import greedy_modularity_communities
 
-        communities = list(greedy_modularity_communities(undirected, weight="weight"))
+        communities = list(
+            greedy_modularity_communities(undirected, weight="weight")
+        )
 
     mapping: Dict[str, int] = {}
     for idx, comm in enumerate(communities):

@@ -166,3 +166,14 @@ def test_repeated_calls_strengthen_clustering(tmp_path):
     assert mapping["c"] == mapping["d"]
     assert mapping["a"] != mapping["c"]
 
+
+def test_hdbscan_algorithm(tmp_path):
+    pytest.importorskip("hdbscan")
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("pass\n")
+
+    mapping = dmm.build_module_map(tmp_path, algorithm="hdbscan")
+    assert mapping["a"] == mapping["b"]
+    assert mapping["c"] != mapping["a"]
+

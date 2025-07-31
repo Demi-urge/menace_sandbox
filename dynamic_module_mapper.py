@@ -58,7 +58,11 @@ def main(args: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(description="Discover module groups")
     parser.add_argument("repo", nargs="?", default=".", help="Repository root")
-    parser.add_argument("--algorithm", default="greedy", choices=["greedy", "label"])
+    parser.add_argument(
+        "--algorithm",
+        default="greedy",
+        choices=["greedy", "label", "hdbscan"],
+    )
     parser.add_argument("--threshold", type=float, default=0.1)
     parser.add_argument("--semantic", action="store_true", help="Use docstring similarity")
     parser.add_argument(
