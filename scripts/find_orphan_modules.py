@@ -5,6 +5,9 @@ This utility scans all ``.py`` files in a repository (excluding ``tests`` and
 optional paths) and checks whether their module names appear anywhere under the
 ``tests/`` directory. Any modules not referenced are written to
 ``sandbox_data/orphan_modules.json``.
+
+Pass ``--recursive`` to repeatedly exclude discovered modules and run another
+scan until no further orphans are found.
 """
 from __future__ import annotations
 
@@ -37,7 +40,9 @@ def _should_exclude(rel_path: Path, excludes: Iterable[str]) -> bool:
     return False
 
 
-def find_orphan_modules(base_dir: Path, *, excludes: Iterable[str] | None = None) -> List[Path]:
+def _find_orphan_modules_once(
+    base_dir: Path, *, excludes: Iterable[str] | None = None
+) -> List[Path]:
     """Return ``.py`` files whose module names are not referenced in tests."""
     if excludes is None:
         excludes = []
@@ -57,6 +62,32 @@ def find_orphan_modules(base_dir: Path, *, excludes: Iterable[str] | None = None
     return orphans
 
 
+def find_orphan_modules(
+    base_dir: Path,
+    *,
+    excludes: Iterable[str] | None = None,
+    recursive: bool = False,
+) -> List[Path]:
+    """Return orphan modules under *base_dir*.
+
+    If ``recursive`` is ``True``, repeatedly scan while excluding previously
+    discovered modules until no new ones are found.
+    """
+    if not recursive:
+        return _find_orphan_modules_once(base_dir, excludes=excludes)
+
+    collected: List[Path] = []
+    excludes = list(excludes or [])
+    while True:
+        found = _find_orphan_modules_once(base_dir, excludes=excludes)
+        new = [p for p in found if p not in collected]
+        if not new:
+            break
+        collected.extend(new)
+        excludes.extend(str(p) for p in new)
+    return collected
+
+
 def main(argv: Iterable[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Find untested Python modules")
     parser.add_argument(
@@ -65,9 +96,16 @@ def main(argv: Iterable[str] | None = None) -> None:
         default=[],
         help="Directory or filename patterns to exclude",
     )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Repeat detection excluding discovered modules until stable",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
     root = Path.cwd()
-    orphan_paths = find_orphan_modules(root, excludes=args.exclude)
+    orphan_paths = find_orphan_modules(
+        root, excludes=args.exclude, recursive=args.recursive
+    )
     output = root / "sandbox_data" / "orphan_modules.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps([str(p) for p in orphan_paths], indent=2))
