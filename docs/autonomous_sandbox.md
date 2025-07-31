@@ -130,10 +130,13 @@ After the system tools are in place install the Python requirements via
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
+- `SELF_TEST_DISCOVER_ISOLATED=1` – include modules returned by
+  `discover_isolated_modules` in orphan scans
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
   orphan scans using `sandbox_runner.discover_recursive_orphans`
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
   chains when refreshing the module map
+- `SANDBOX_DISCOVER_ISOLATED=1` – extend orphan discovery with isolated modules
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
@@ -199,8 +202,8 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
     Example scanning for orphan modules:
 
     ```bash
-    python run_autonomous.py --discover-orphans --recursive-orphans \
-      --include-orphans
+     python run_autonomous.py --discover-orphans --discover-isolated \
+       --recursive-orphans --include-orphans
     ```
 
     Set `SELF_TEST_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ORPHANS=1` to
@@ -630,6 +633,4 @@ local installation.
   `self_test_average_coverage` are available on
   `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
   progress in `SELF_TEST_STATE`.
-- **Orphan modules not discovered** – run with `--discover-orphans` or set
-  `SELF_TEST_DISCOVER_ORPHANS=1` so the self-test service scans the repository
-  automatically.
+- **Orphan modules not discovered** – run with `--discover-orphans` and `--discover-isolated` or set `SELF_TEST_DISCOVER_ORPHANS=1` and `SELF_TEST_DISCOVER_ISOLATED=1` so the self-test service scans the repository automatically.

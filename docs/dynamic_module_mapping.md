@@ -96,6 +96,7 @@ The command scans for orphan modules (following their dependencies when
 `--recursive-orphans` or `SANDBOX_RECURSIVE_ORPHANS=1` is set) using
 `sandbox_runner.discover_recursive_orphans`, runs them with the standard unit
 tests and updates the module map once they succeed.
-Set `SANDBOX_DISCOVER_ISOLATED=1` to also load modules returned by
-`discover_isolated_modules` before falling back to the recursive discovery.
+Pass `--discover-isolated` or set `SANDBOX_DISCOVER_ISOLATED=1` to also load
+modules returned by `discover_isolated_modules` before falling back to the
+recursive discovery.
 
