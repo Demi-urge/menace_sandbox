@@ -606,7 +606,12 @@ class SelfImprovementEngine:
         self._load_synergy_weights()
         from .module_index_db import ModuleIndexDB
 
-        auto_map = os.getenv("SANDBOX_AUTO_MAP") == "1"
+        auto_map = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
+        if not auto_map and os.getenv("SANDBOX_AUTO_MAP") == "1":
+            self.logger.warning(
+                "SANDBOX_AUTO_MAP is deprecated; use SANDBOX_AUTODISCOVER_MODULES"
+            )
+            auto_map = True
         self.module_index = module_index or ModuleIndexDB(auto_map=auto_map)
         if module_clusters is None and self.module_index is not None:
             try:
