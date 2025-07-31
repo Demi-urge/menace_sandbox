@@ -28,6 +28,7 @@ from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 from sandbox_runner.environment import generate_workflows_for_modules
+
 import numpy as np
 import socket
 import contextlib
@@ -1374,6 +1375,59 @@ class SelfImprovementEngine:
             self.logger.exception("orphan integration failed: %s", exc)
 
     # ------------------------------------------------------------------
+    def _update_orphan_modules(self) -> None:
+        """Discover orphan modules and update the tracking file."""
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        path = data_dir / "orphan_modules.json"
+
+        modules: list[str] = []
+        try:
+            from sandbox_runner import discover_orphan_modules as _discover
+        except Exception:
+            _discover = None
+
+        if _discover is not None:
+            try:
+                names = _discover(str(repo))
+                modules.extend(
+                    [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("orphan discovery failed: %s", exc)
+
+        if not modules:
+            try:
+                from scripts.find_orphan_modules import find_orphan_modules
+
+                modules = [str(p) for p in find_orphan_modules(repo)]
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("orphan discovery failed: %s", exc)
+
+        if not modules:
+            return
+
+        try:
+            if path.exists():
+                existing = json.loads(path.read_text()) or []
+            else:
+                existing = []
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to load orphan modules")
+            existing = []
+
+        combined = sorted(set(existing).union(modules))
+        if set(combined) != set(existing):
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(combined, indent=2))
+                self.logger.info(
+                    "orphan modules updated", extra=log_record(count=len(combined))
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to write orphan modules")
+
+    # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
         if modules:
@@ -1444,6 +1498,7 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            self._update_orphan_modules()
             self._refresh_module_map()
             state = (
                 self._policy_state()
