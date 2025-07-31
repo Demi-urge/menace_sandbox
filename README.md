@@ -102,13 +102,17 @@ Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 "not yet tested". During autonomous runs the `SelfTestService` executes these
 modules separately when started with `--include-orphans`.
 The sandbox can also group modules automatically by analysing imports,
-function calls and optionally docstring similarity. Run
-`python scripts/build_module_map.py` to generate
-`sandbox_data/module_map.json` which assigns each file to a numeric group.
-Set `SANDBOX_AUTODISCOVER_MODULES=1` to build or refresh this map
-automatically on startup. See
-[docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md) for the
-`--algorithm`, `--threshold` and `--semantic` options.
+function calls and optionally docstring similarity. Run the unified helper:
+
+```bash
+python scripts/build_module_map.py --semantic --threshold 0.2
+```
+
+This writes `sandbox_data/module_map.json` assigning each file to a numeric
+cluster. `SANDBOX_AUTODISCOVER_MODULES=1` triggers the same process on startup.
+See [docs/dynamic_module_mapping.md](docs/dynamic_module_mapping.md) for details
+on the `--algorithm`, `--threshold` and `--semantic` flags. The older
+`scripts/generate_module_map.py` is still available as an alias.
 
 ## Installation
 
