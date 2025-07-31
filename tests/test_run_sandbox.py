@@ -338,8 +338,8 @@ def test_module_map_clusters_have_same_index(tmp_path):
     (pkg / "__init__.py").write_text("")
     (pkg / "a.py").write_text("from . import b\nb.f()\n")
     (pkg / "b.py").write_text("def f():\n    pass\n")
-    from dynamic_module_mapper import build_module_map
-    build_module_map(tmp_path)
+    from scripts.generate_module_map import generate_module_map
+    generate_module_map(tmp_path / "sandbox_data" / "module_map.json", root=tmp_path)
     from module_index_db import ModuleIndexDB
     db = ModuleIndexDB(tmp_path / "sandbox_data" / "module_map.json")
     assert db.get("pkg/a") == db.get("pkg/b")
