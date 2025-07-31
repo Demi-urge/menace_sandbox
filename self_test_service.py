@@ -434,7 +434,7 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
-    async def _run_once(self) -> None:
+    async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
         if not paths:
@@ -442,13 +442,24 @@ class SelfTestService:
 
         orphan_list: list[str] = []
         if self.include_orphans:
-            try:
-                with open("sandbox_data/orphan_modules.json", "r", encoding="utf-8") as fh:
-                    data = json.load(fh) or []
-                    if isinstance(data, list):
-                        orphan_list = [str(p) for p in data]
-            except Exception:
-                self.logger.exception("failed to load orphan modules")
+            path = Path("sandbox_data") / "orphan_modules.json"
+            if refresh_orphans or not path.exists():
+                try:
+                    from scripts.discover_isolated_modules import discover_isolated_modules
+
+                    orphan_list = discover_isolated_modules(Path.cwd())
+                    path.parent.mkdir(exist_ok=True)
+                    path.write_text(json.dumps(orphan_list, indent=2))
+                except Exception:
+                    self.logger.exception("failed to discover orphan modules")
+            else:
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh) or []
+                        if isinstance(data, list):
+                            orphan_list = [str(p) for p in data]
+                except Exception:
+                    self.logger.exception("failed to load orphan modules")
 
         if self._state:
             saved_queue = self._state.get("queue")
@@ -806,11 +817,11 @@ class SelfTestService:
                 except Exception:
                     pass
 
-    async def _schedule_loop(self, interval: float) -> None:
+    async def _schedule_loop(self, interval: float, *, refresh_orphans: bool = False) -> None:
         assert self._async_stop is not None
         while not self._async_stop.is_set():
             try:
-                await self._run_once()
+                await self._run_once(refresh_orphans=refresh_orphans)
             except Exception:
                 self.logger.exception("self test run failed")
             try:
@@ -856,6 +867,7 @@ class SelfTestService:
         *,
         loop: asyncio.AbstractEventLoop | None = None,
         health_port: int | None = None,
+        refresh_orphans: bool = False,
     ) -> asyncio.Task:
         """Start the background schedule loop on *loop*."""
 
@@ -874,7 +886,7 @@ class SelfTestService:
                 self._metrics_started = True
             except Exception:
                 self.logger.exception("failed to start metrics server")
-        self._task = self._loop.create_task(self._schedule_loop(interval))
+        self._task = self._loop.create_task(self._schedule_loop(interval, refresh_orphans=refresh_orphans))
         return self._task
 
     # ------------------------------------------------------------------
@@ -883,6 +895,7 @@ class SelfTestService:
         interval: float = 86400.0,
         *,
         runs: int | None = None,
+        refresh_orphans: bool = False,
     ) -> None:
         """Run :meth:`_run_once` repeatedly with a delay between runs."""
 
@@ -895,7 +908,7 @@ class SelfTestService:
         count = 0
         while True:
             try:
-                asyncio.run(self._run_once())
+                asyncio.run(self._run_once(refresh_orphans=refresh_orphans))
             except Exception:
                 self.logger.exception("self test run failed")
             count += 1
@@ -1004,6 +1017,11 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Also test modules listed in sandbox_data/orphan_modules.json",
     )
+    run.add_argument(
+        "--refresh-orphans",
+        action="store_true",
+        help="Regenerate orphan list before running",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1059,6 +1077,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Also test modules listed in sandbox_data/orphan_modules.json",
     )
     sched.add_argument(
+        "--refresh-orphans",
+        action="store_true",
+        help="Regenerate orphan list before running",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1106,7 +1129,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_orphans=args.include_orphans,
         )
         try:
-            asyncio.run(service._run_once())
+            asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
         except Exception as exc:
             print(f"self test run failed: {exc}", file=sys.stderr)
             if service.results:
@@ -1140,7 +1163,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_orphans=args.include_orphans,
         )
         try:
-            service.run_scheduled(interval=args.interval)
+            service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
         except KeyboardInterrupt:
             pass
         return 0
