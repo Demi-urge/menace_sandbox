@@ -91,6 +91,7 @@ class SelfTestService:
         metrics_port: int | None = None,
         include_orphans: bool = False,
         discover_orphans: bool = False,
+        discover_isolated: bool = False,
         recursive_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
@@ -181,6 +182,12 @@ class SelfTestService:
             self.discover_orphans = True
         else:
             self.discover_orphans = False
+
+        env_isolated = os.getenv("SELF_TEST_DISCOVER_ISOLATED")
+        if discover_isolated or (env_isolated and env_isolated.lower() in ("1", "true", "yes")):
+            self.discover_isolated = True
+        else:
+            self.discover_isolated = False
 
         env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
         if recursive_orphans or (env_recursive and env_recursive.lower() in ("1", "true", "yes")):
@@ -472,6 +479,30 @@ class SelfTestService:
         return modules
 
     # ------------------------------------------------------------------
+    def _discover_isolated(self) -> list[str]:
+        """Run discover_isolated_modules and append results."""
+        from scripts.discover_isolated_modules import discover_isolated_modules
+
+        modules = discover_isolated_modules(Path.cwd())
+        path = Path("sandbox_data") / "orphan_modules.json"
+        try:
+            path.parent.mkdir(exist_ok=True)
+            existing: list[str] = []
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh) or []
+                        if isinstance(data, list):
+                            existing = [str(p) for p in data]
+                except Exception:
+                    self.logger.exception("failed to load orphan modules")
+            combined = list(dict.fromkeys(existing + list(modules)))
+            path.write_text(json.dumps(combined, indent=2))
+        except Exception:
+            self.logger.exception("failed to write orphan modules")
+        return list(modules)
+
+    # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
@@ -525,6 +556,13 @@ class SelfTestService:
                 orphan_list.extend(found)
             except Exception:
                 self.logger.exception("failed to auto-discover orphan modules")
+
+        if self.discover_isolated:
+            try:
+                found = self._discover_isolated()
+                orphan_list.extend(found)
+            except Exception:
+                self.logger.exception("failed to auto-discover isolated modules")
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
@@ -1097,6 +1135,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Automatically run find_orphan_modules and include results",
     )
     run.add_argument(
+        "--discover-isolated",
+        action="store_true",
+        help="Automatically run discover_isolated_modules and append results",
+    )
+    run.add_argument(
         "--refresh-orphans",
         action="store_true",
         help="Regenerate orphan list before running",
@@ -1166,6 +1209,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Automatically run find_orphan_modules and include results",
     )
     sched.add_argument(
+        "--discover-isolated",
+        action="store_true",
+        help="Automatically run discover_isolated_modules and append results",
+    )
+    sched.add_argument(
         "--refresh-orphans",
         action="store_true",
         help="Regenerate orphan list before running",
@@ -1222,6 +1270,7 @@ def cli(argv: list[str] | None = None) -> int:
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
+            discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
         )
         try:
@@ -1258,6 +1307,7 @@ def cli(argv: list[str] | None = None) -> int:
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
+            discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
         )
         try:
