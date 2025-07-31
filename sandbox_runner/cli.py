@@ -726,6 +726,7 @@ def full_autonomous_run(
                 max_prompt_length=None,
                 summary_depth=None,
                 discover_orphans=getattr(args, "discover_orphans", False),
+                recursive_orphans=getattr(args, "recursive_orphans", False),
             )
             tracker = _capture_run(preset, run_args)
             if not tracker:
@@ -1032,6 +1033,11 @@ def main(argv: List[str] | None = None) -> None:
         "--discover-orphans",
         action="store_true",
         help="automatically run find_orphan_modules (or SANDBOX_DISCOVER_ORPHANS=1)",
+    )
+    parser.add_argument(
+        "--recursive-orphans",
+        action="store_true",
+        help="recursively integrate orphan dependency chains (or SANDBOX_RECURSIVE_ORPHANS=1)",
     )
     parser.add_argument(
         "--offline-suggestions",
