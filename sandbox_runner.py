@@ -776,6 +776,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         patch_db=patch_db,
         policy=policy,
         score_backend=score_backend,
+        auto_refresh_map=bool(getattr(args, "refresh_module_map", False)),
     )
     meta_log.module_index = improver.module_index
 
