@@ -37,8 +37,38 @@ def test_semantic_group_without_static_import(tmp_path):
         doc + "\n\n" "def b_func():\n    __import__('a').a_func()\n"
     )
 
-    plain = dmm.build_module_map(tmp_path)
+    plain = dmm.build_module_map(tmp_path, algorithm="label")
     assert plain["a"] != plain["b"]
 
-    mapping = dmm.build_module_map(tmp_path, use_semantic=True)
+    mapping = dmm.build_module_map(tmp_path, algorithm="label", use_semantic=True)
     assert mapping["a"] == mapping["b"]
+
+
+def test_call_links_modules(tmp_path):
+    pkg = tmp_path / "b"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "c.py").write_text("def foo():\n    pass\n")
+
+    (tmp_path / "a.py").write_text(
+        "from b import c\n\n" "def run():\n    c.foo()\n"
+    )
+
+    mapping = dmm.build_module_map(tmp_path)
+    assert mapping["a"] == mapping["b/c"]
+
+
+def test_semantic_group_no_imports(tmp_path):
+    (tmp_path / "a.py").write_text(
+        '"""Database utilities."""\n\ndef a():\n    pass\n'
+    )
+    (tmp_path / "b.py").write_text(
+        '"""Database utilities."""\n\ndef b():\n    pass\n'
+    )
+
+    plain = dmm.build_module_map(tmp_path, algorithm="label")
+    assert plain["a"] != plain["b"]
+
+    mapping = dmm.build_module_map(tmp_path, algorithm="label", use_semantic=True)
+    assert mapping["a"] == mapping["b"]
+
