@@ -90,6 +90,7 @@ class SelfTestService:
         state_path: str | Path | None = None,
         metrics_port: int | None = None,
         include_orphans: bool = False,
+        discover_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -173,6 +174,12 @@ class SelfTestService:
             self.include_orphans = True
         else:
             self.include_orphans = False
+
+        env_discover = os.getenv("SELF_TEST_DISCOVER_ORPHANS")
+        if discover_orphans or (env_discover and env_discover.lower() in ("1", "true", "yes")):
+            self.discover_orphans = True
+        else:
+            self.discover_orphans = False
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -434,6 +441,20 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
+    def _discover_orphans(self) -> list[str]:
+        """Run find_orphan_modules and save results."""
+        from scripts.find_orphan_modules import find_orphan_modules
+
+        modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+        path = Path("sandbox_data") / "orphan_modules.json"
+        try:
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(json.dumps(modules, indent=2))
+        except Exception:
+            self.logger.exception("failed to write orphan modules")
+        return modules
+
+    # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
@@ -460,6 +481,16 @@ class SelfTestService:
                             orphan_list = [str(p) for p in data]
                 except Exception:
                     self.logger.exception("failed to load orphan modules")
+
+        if self.discover_orphans:
+            try:
+                found = self._discover_orphans()
+                orphan_list.extend(found)
+            except Exception:
+                self.logger.exception("failed to auto-discover orphan modules")
+
+        if orphan_list:
+            orphan_list = list(dict.fromkeys(orphan_list))
 
         if self._state:
             saved_queue = self._state.get("queue")
@@ -1018,6 +1049,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Also test modules listed in sandbox_data/orphan_modules.json",
     )
     run.add_argument(
+        "--discover-orphans",
+        action="store_true",
+        help="Automatically run find_orphan_modules and include results",
+    )
+    run.add_argument(
         "--refresh-orphans",
         action="store_true",
         help="Regenerate orphan list before running",
@@ -1077,6 +1113,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Also test modules listed in sandbox_data/orphan_modules.json",
     )
     sched.add_argument(
+        "--discover-orphans",
+        action="store_true",
+        help="Automatically run find_orphan_modules and include results",
+    )
+    sched.add_argument(
         "--refresh-orphans",
         action="store_true",
         help="Regenerate orphan list before running",
@@ -1127,6 +1168,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_timeout=args.timeout,
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
+            discover_orphans=args.discover_orphans,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -1161,6 +1203,7 @@ def cli(argv: list[str] | None = None) -> int:
             container_timeout=args.timeout,
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
+            discover_orphans=args.discover_orphans,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
