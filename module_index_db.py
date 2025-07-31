@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict
 
 try:  # optional dependency only needed when auto mapping
-    from scripts.generate_module_map import generate_module_map
-except Exception:  # pragma: no cover - during tests script may not exist
-    generate_module_map = None  # type: ignore
+    from dynamic_module_mapper import build_module_map
+except Exception:  # pragma: no cover - during tests optional dep may be missing
+    build_module_map = None  # type: ignore
 
 
 class ModuleIndexDB:
@@ -28,9 +28,24 @@ class ModuleIndexDB:
 
         if (
             auto_map or (auto_map is None and os.getenv("SANDBOX_AUTO_MAP") == "1")
-        ) and generate_module_map:
+        ) and build_module_map:
             try:
-                generate_module_map(self.path)
+                algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")
+                try:
+                    threshold = float(os.getenv("SANDBOX_MODULE_THRESHOLD", "0.1"))
+                except Exception:
+                    threshold = 0.1
+                use_semantic = os.getenv("SANDBOX_MODULE_SEMANTIC") == "1"
+                mapping = build_module_map(
+                    os.getenv("SANDBOX_REPO_PATH", "."),
+                    algorithm=algo,
+                    threshold=threshold,
+                    use_semantic=use_semantic,
+                )
+                if self.path != (Path(os.getenv("SANDBOX_REPO_PATH", ".")) / "sandbox_data" / "module_map.json"):
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.path, "w", encoding="utf-8") as fh:
+                        json.dump(mapping, fh, indent=2)
             except Exception:
                 pass
 
