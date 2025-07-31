@@ -91,6 +91,7 @@ class SelfTestService:
         metrics_port: int | None = None,
         include_orphans: bool = False,
         discover_orphans: bool = False,
+        recursive_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -180,6 +181,12 @@ class SelfTestService:
             self.discover_orphans = True
         else:
             self.discover_orphans = False
+
+        env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+        if recursive_orphans or (env_recursive and env_recursive.lower() in ("1", "true", "yes")):
+            self.recursive_orphans = True
+        else:
+            self.recursive_orphans = False
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -445,11 +452,21 @@ class SelfTestService:
         """Run find_orphan_modules and save results."""
         from scripts.find_orphan_modules import find_orphan_modules
 
-        modules = [str(p) for p in find_orphan_modules(Path.cwd(), recursive=False)]
+        modules = [str(p) for p in find_orphan_modules(Path.cwd(), recursive=self.recursive_orphans)]
         path = Path("sandbox_data") / "orphan_modules.json"
         try:
             path.parent.mkdir(exist_ok=True)
-            path.write_text(json.dumps(modules, indent=2))
+            existing: list[str] = []
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as fh:
+                        data = json.load(fh) or []
+                        if isinstance(data, list):
+                            existing = [str(p) for p in data]
+                except Exception:
+                    self.logger.exception("failed to load orphan modules")
+            combined = list(dict.fromkeys(existing + modules))
+            path.write_text(json.dumps(combined, indent=2))
         except Exception:
             self.logger.exception("failed to write orphan modules")
         return modules
@@ -480,7 +497,7 @@ class SelfTestService:
 
                 if _discover is not None:
                     try:
-                        names = _discover(str(Path.cwd()), recursive=False)
+                        names = _discover(str(Path.cwd()), recursive=self.recursive_orphans)
                         orphan_list = [
                             str(Path(*n.split(".")).with_suffix(".py")) for n in names
                         ]
@@ -489,7 +506,17 @@ class SelfTestService:
                 if orphan_list:
                     try:
                         path.parent.mkdir(exist_ok=True)
-                        path.write_text(json.dumps(orphan_list, indent=2))
+                        existing: list[str] = []
+                        if path.exists():
+                            try:
+                                with open(path, "r", encoding="utf-8") as fh:
+                                    data = json.load(fh) or []
+                                    if isinstance(data, list):
+                                        existing = [str(p) for p in data]
+                            except Exception:
+                                self.logger.exception("failed to load orphan modules")
+                        combined = list(dict.fromkeys(existing + orphan_list))
+                        path.write_text(json.dumps(combined, indent=2))
                     except Exception:
                         self.logger.exception("failed to write orphan modules")
 
@@ -1075,6 +1102,11 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Regenerate orphan list before running",
     )
+    run.add_argument(
+        "--recursive-orphans",
+        action="store_true",
+        help="Recursively discover dependent orphan chains",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1140,6 +1172,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Regenerate orphan list before running",
     )
     sched.add_argument(
+        "--recursive-orphans",
+        action="store_true",
+        help="Recursively discover dependent orphan chains",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1186,6 +1223,7 @@ def cli(argv: list[str] | None = None) -> int:
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
+            recursive_orphans=args.recursive_orphans,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -1221,6 +1259,7 @@ def cli(argv: list[str] | None = None) -> int:
             metrics_port=args.metrics_port,
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
+            recursive_orphans=args.recursive_orphans,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
