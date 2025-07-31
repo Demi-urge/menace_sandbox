@@ -26,8 +26,16 @@ class ModuleIndexDB:
         self._map: Dict[str, int] = {}
         self._groups: Dict[str, int] = {}
 
-        auto_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
-        legacy_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
+        auto_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
+        legacy_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
+        if legacy_env and not auto_env:
+            import warnings
+
+            warnings.warn(
+                "SANDBOX_AUTODISCOVER_MODULES is deprecated; use SANDBOX_AUTO_MAP",
+                stacklevel=2,
+            )
+
         if (auto_map or (auto_map is None and (auto_env or legacy_env))) and generate_module_map:
             try:
                 algo = os.getenv("SANDBOX_MODULE_ALGO", "greedy")

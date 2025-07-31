@@ -662,11 +662,17 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     module_map_file = data_dir / "module_map.json"
 
     refresh_map = os.getenv("SANDBOX_REFRESH_MODULE_MAP") == "1"
-    autodiscover = bool(
+    auto_map = bool(
         getattr(args, "autodiscover_modules", False)
+        or os.getenv("SANDBOX_AUTO_MAP")
         or os.getenv("SANDBOX_AUTODISCOVER_MODULES")
     )
-    if refresh_map or autodiscover or not module_map_file.exists():
+    if not os.getenv("SANDBOX_AUTO_MAP") and os.getenv("SANDBOX_AUTODISCOVER_MODULES"):
+        logger.warning(
+            "SANDBOX_AUTODISCOVER_MODULES is deprecated; use SANDBOX_AUTO_MAP",
+        )
+
+    if refresh_map or auto_map or not module_map_file.exists():
         try:
             from scripts.generate_module_map import generate_module_map
 
@@ -687,7 +693,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
                 sem_env = os.getenv("SANDBOX_SEMANTIC_MODULES")
                 if sem_env is None:
                     sem_env = os.getenv("SANDBOX_MODULE_SEMANTIC")  # legacy
-                use_semantic = autodiscover if sem_env is None else sem_env == "1"
+                use_semantic = auto_map if sem_env is None else sem_env == "1"
             else:
                 use_semantic = bool(sem_arg)
 

@@ -1,4 +1,5 @@
 import json
+import pytest
 from module_index_db import ModuleIndexDB
 
 
@@ -31,7 +32,7 @@ def test_auto_map(monkeypatch, tmp_path):
         output.write_text(json.dumps({"mod": 3}))
         return {"mod": 3}
     monkeypatch.setattr("module_index_db.generate_module_map", fake_generate)
-    monkeypatch.setenv("SANDBOX_AUTODISCOVER_MODULES", "1")
+    monkeypatch.setenv("SANDBOX_AUTO_MAP", "1")
     monkeypatch.setenv("SANDBOX_MODULE_ALGO", "label")
     monkeypatch.setenv("SANDBOX_MODULE_THRESHOLD", "0.3")
     monkeypatch.setenv("SANDBOX_SEMANTIC_MODULES", "1")
@@ -46,3 +47,21 @@ def test_auto_map(monkeypatch, tmp_path):
     assert generated["threshold"] == 0.3
     assert generated["semantic"]
     assert db.get("mod") == 3
+
+
+def test_autodiscover_deprecated(monkeypatch, tmp_path):
+    generated = {}
+
+    def fake_generate(output, *, root, algorithm, threshold, semantic):
+        generated.update(dict(output=output))
+        output.write_text(json.dumps({"m": 1}))
+        return {"m": 1}
+
+    monkeypatch.setattr("module_index_db.generate_module_map", fake_generate)
+    monkeypatch.setenv("SANDBOX_AUTODISCOVER_MODULES", "1")
+    path = tmp_path / "map.json"
+    with pytest.warns(UserWarning):
+        db = ModuleIndexDB(path, auto_map=None)
+    assert generated["output"] == path
+    assert db.get("m") == 1
+
