@@ -23,6 +23,25 @@ sys.modules.setdefault("yaml", yaml_mod)
 np_mod = types.ModuleType("numpy")
 np_mod.array = lambda *a, **k: []
 sys.modules.setdefault("numpy", np_mod)
+if "filelock" not in sys.modules:
+    fl = types.ModuleType("filelock")
+    class _FL:
+        def __init__(self, *a, **k):
+            self.lock_file = "x"
+            self.is_locked = False
+        def acquire(self, *a, **k):
+            self.is_locked = True
+        def release(self):
+            self.is_locked = False
+        def __enter__(self):
+            self.acquire()
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            self.release()
+            return False
+    fl.FileLock = _FL
+    fl.Timeout = type("Timeout", (Exception,), {})
+    sys.modules["filelock"] = fl
 
 # stub modules used during sandbox_runner import
 meta_mod = types.ModuleType("menace.meta_logging")
@@ -130,6 +149,9 @@ class _ROITracker:
         return 0.0
 
     def record_prediction(self, predicted, actual):
+        pass
+
+    def record_metric_prediction(self, metric, predicted, actual):
         pass
 
     def rolling_mae(self, window=None):
@@ -697,3 +719,58 @@ def test_no_workflow_run_option(monkeypatch, tmp_path):
 
     sandbox_runner._sandbox_main({}, args)
     assert not called
+
+
+def test_dynamic_workflows_build_from_repo(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=_Audit)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+
+    import sandbox_runner
+    import sandbox_runner.environment as env
+    import types, sys
+    from pathlib import Path as _P
+    import importlib.util
+
+    ROOT = _P(__file__).resolve().parents[1]
+    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+    pkg.__path__ = [str(ROOT)]
+    spec = importlib.util.spec_from_file_location(
+        "menace.task_handoff_bot",
+        ROOT / "task_handoff_bot.py",
+        submodule_search_locations=[str(ROOT)],
+    )
+    thb = importlib.util.module_from_spec(spec)
+    sys.modules["menace.task_handoff_bot"] = thb
+    spec.loader.exec_module(thb)
+
+    groups = {"1": ["simple_functions", "sandbox_runner.cli"], "2": ["sandbox_runner.environment"]}
+    dmm = types.ModuleType("dynamic_module_mapper")
+    dmm.discover_module_groups = lambda *a, **k: groups
+    dmm.dotify_groups = lambda g: g
+    monkeypatch.setitem(sys.modules, "dynamic_module_mapper", dmm)
+
+    snippets = []
+
+    async def fake_worker(snippet, env_input, threshold):
+        snippets.append(snippet)
+        return {"exit_code": 0}, [(0.0, 1.0, {})]
+
+    monkeypatch.setattr(env, "_section_worker", fake_worker)
+    monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda s, e: {})
+
+    tracker = sandbox_runner.run_workflow_simulations(
+        workflows_db=str(tmp_path / "wf.db"),
+        env_presets=[{}],
+        dynamic_workflows=True,
+    )
+
+    assert len(snippets) == 3
+    assert any("import simple_functions" in s for s in snippets)
+    assert any("import sandbox_runner.cli" in s for s in snippets)
+    assert any("import sandbox_runner.environment" in s for s in snippets)
