@@ -105,7 +105,7 @@ The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. Run the unified helper:
 
 ```bash
-python scripts/generate_module_map.py --semantic --threshold 0.2
+python scripts/build_module_map.py --semantic --threshold 0.2
 ```
 
 This writes `sandbox_data/module_map.json` assigning each file to a numeric
