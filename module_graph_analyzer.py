@@ -122,31 +122,57 @@ def cluster_modules(
             undirected.add_edge(a, b, weight=w)
     undirected.add_nodes_from(graph.nodes)
     if use_semantic and root is not None:
-        docs: Dict[str, set[str]] = {}
+        docs: Dict[str, str] = {}
         for node in graph.nodes:
-            path = (root / (node + ".py")) if root else Path(node)
+            path = root / f"{node}.py"
             try:
                 tree = ast.parse(path.read_text())
             except Exception:
                 continue
-            doc = ast.get_docstring(tree) or ""
-            docs[node] = _tokenize_doc(doc)
-        for a in graph.nodes:
-            for b in graph.nodes:
-                if a >= b:
-                    continue
-                da, db = docs.get(a, set()), docs.get(b, set())
-                if not da or not db:
-                    continue
-                inter = len(da & db)
-                union = len(da | db)
-                if union and inter / union >= threshold:
-                    if undirected.has_edge(a, b):
-                        undirected[a][b]["weight"] += 1
-                    elif undirected.has_edge(b, a):
-                        undirected[b][a]["weight"] += 1
-                    else:
-                        undirected.add_edge(a, b, weight=1)
+            docs[node] = ast.get_docstring(tree) or ""
+
+        try:  # optional dependency
+            from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
+            from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+
+            nodes = list(graph.nodes)
+            corpus = [docs.get(n, "") for n in nodes]
+            if corpus and any(corpus):
+                vec = TfidfVectorizer(stop_words="english").fit(corpus)
+                tfidf = vec.transform(corpus)
+                sim = cosine_similarity(tfidf)
+                for i, a in enumerate(nodes):
+                    for j, b in enumerate(nodes[i + 1 :], start=i + 1):
+                        score = float(sim[i, j])
+                        if score >= threshold:
+                            if undirected.has_edge(a, b):
+                                undirected[a][b]["weight"] += score
+                            elif undirected.has_edge(b, a):
+                                undirected[b][a]["weight"] += score
+                            else:
+                                undirected.add_edge(a, b, weight=score)
+                use_semantic = False  # skip fallback
+        except Exception:
+            pass
+
+        if use_semantic:  # fallback token overlap if sklearn unavailable
+            tokenized = {n: _tokenize_doc(docs.get(n, "")) for n in graph.nodes}
+            for a in graph.nodes:
+                for b in graph.nodes:
+                    if a >= b:
+                        continue
+                    da, db = tokenized.get(a, set()), tokenized.get(b, set())
+                    if not da or not db:
+                        continue
+                    inter = len(da & db)
+                    union = len(da | db)
+                    if union and inter / union >= threshold:
+                        if undirected.has_edge(a, b):
+                            undirected[a][b]["weight"] += 1
+                        elif undirected.has_edge(b, a):
+                            undirected[b][a]["weight"] += 1
+                        else:
+                            undirected.add_edge(a, b, weight=1)
 
     if algorithm == "hdbscan" and hdbscan is not None:
         try:
