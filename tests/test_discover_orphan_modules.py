@@ -42,3 +42,15 @@ def test_orphan_detection(tmp_path):
     assert "pkg.helper" in orphans
     assert "pkg.util" not in orphans
     assert "cli" not in orphans
+
+
+def test_recursive_chain_detection(tmp_path):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n")
+    (tmp_path / "c.py").write_text("x = 1\n")
+
+    non_rec = discover_orphan_modules(str(tmp_path), recursive=False)
+    rec = discover_orphan_modules(str(tmp_path), recursive=True)
+
+    assert non_rec == ["a"]
+    assert rec == ["a", "b", "c"]

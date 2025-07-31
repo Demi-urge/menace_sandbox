@@ -250,3 +250,69 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     assert sorted(data2) == ["bar.py", "foo.py"]
     assert all(c is True for c in calls)
 
+
+def test_recursive_chain_modules(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n")
+    (tmp_path / "c.py").write_text("x = 1\n")
+
+    calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(" ".join(map(str, cmd)))
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    import ast, types, os
+    path = ROOT / "sandbox_runner.py"
+    src = path.read_text()
+    tree = ast.parse(src)
+    funcs = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {"discover_orphan_modules", "_discover_orphans_once"}
+    ]
+    from typing import List, Iterable
+    mod_dict = {"ast": ast, "os": os, "List": List, "Iterable": Iterable}
+    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
+    code = ast.Module(body=funcs, type_ignores=[])
+    exec(compile(code, str(path), "exec"), mod_dict)
+    discover = mod_dict["discover_orphan_modules"]
+
+    helper = types.ModuleType("sandbox_runner")
+    helper.discover_orphan_modules = discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+
+    svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
+    asyncio.run(svc._run_once())
+
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert sorted(data) == ["a.py", "b.py", "c.py"]
+    joined = "\n".join(calls)
+    assert "a.py" in joined
+    assert "b.py" in joined
+    assert "c.py" in joined
+
