@@ -31,6 +31,11 @@ automatically on startup. The file is written to
 `SANDBOX_DATA_DIR/module_map.json` and loaded for ROI aggregation. Use
 `SANDBOX_REFRESH_MODULE_MAP=1` to force regeneration when the map already exists.
 Enable docstring-based linking with `SANDBOX_SEMANTIC_MODULES=1`.
+The map can also be refreshed automatically as new files are patched by
+running `sandbox_runner` with `--refresh-module-map`. This sets the
+`auto_refresh_map` option of `SelfImprovementEngine`, causing
+`sandbox_runner` to rebuild and merge the map whenever additional modules
+appear.
 
 ### Semantic clustering example
 
