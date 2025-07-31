@@ -44,6 +44,7 @@ Options include:
 - `--docker-host` – Docker/Podman host or URL for remote engines
 - `--metrics-port` – expose Prometheus gauges on this port
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
+- `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
 
 Remove stale containers left over from interrupted runs with:
 
@@ -91,3 +92,8 @@ Run `scripts/find_orphan_modules.py` to locate Python files that are not
 referenced by any tests. The script writes the list to
 `sandbox_data/orphan_modules.json` which the service can load when started with
 `--include-orphans`.
+
+Set `SELF_TEST_DISCOVER_ORPHANS=1` or pass `--discover-orphans` to scan the
+repository automatically. The discovered modules are saved to the same file and
+appended to the test queue on the next run. Use `--refresh-orphans` to force a
+new scan when the list already exists.
