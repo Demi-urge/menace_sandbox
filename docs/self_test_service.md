@@ -98,7 +98,9 @@ repository automatically. The discovered modules are saved to the same file and
 appended to the test queue on the next run. Use `--refresh-orphans` to force a
 new scan when the list already exists. Enable recursive discovery with
 `SELF_TEST_RECURSIVE_ORPHANS=1` or `--recursive-orphans` so that dependent
-modules are added when an orphan imports other files.
+modules are added when an orphan imports other files. The search uses
+`sandbox_runner.discover_recursive_orphans` to walk each orphan's imports
+until no new local modules remain.
 
 ## Automatic Orphan Detection
 

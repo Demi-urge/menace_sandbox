@@ -91,6 +91,7 @@ python run_autonomous.py --discover-orphans --recursive-orphans --include-orphan
 ```
 
 The command scans for orphan modules (following their dependencies when
-`--recursive-orphans` or `SANDBOX_RECURSIVE_ORPHANS=1` is set), runs them with
-the standard unit tests and updates the module map once they succeed.
+`--recursive-orphans` or `SANDBOX_RECURSIVE_ORPHANS=1` is set) using
+`sandbox_runner.discover_recursive_orphans`, runs them with the standard unit
+tests and updates the module map once they succeed.
 

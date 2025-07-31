@@ -131,7 +131,7 @@ After the system tools are in place install the Python requirements via
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
-  orphan scans
+  orphan scans using `sandbox_runner.discover_recursive_orphans`
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
   chains when refreshing the module map
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
