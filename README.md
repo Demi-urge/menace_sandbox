@@ -117,6 +117,11 @@ for details on the `--algorithm` options (``greedy``, ``label`` or ``hdbscan``),
 the `--threshold`, `--semantic` and `--exclude` flags. Patterns from `SANDBOX_EXCLUDE_DIRS` are passed to the helper
 automatically.
 
+When the workflow database is empty you can generate temporary workflows from
+these module groups by launching the sandbox with `--dynamic-workflows`. The
+clustering behaviour mirrors the mapping helper and is controlled via
+`--module-algorithm`, `--module-threshold` and `--module-semantic`.
+
 ## Installation
 
 Run the setup helper to install the required system tools and Python
