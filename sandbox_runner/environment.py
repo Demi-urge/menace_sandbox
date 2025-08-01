@@ -5064,6 +5064,104 @@ def generate_workflows_for_modules(
 
 
 # ----------------------------------------------------------------------
+def try_integrate_into_workflows(
+    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+) -> list[int]:
+    """Append orphan ``modules`` to related workflows if possible.
+
+    Workflows already containing tasks from the same module group will receive
+    the orphan module as an additional step. The list of updated workflow IDs is
+    returned.
+    """
+
+    from menace.task_handoff_bot import WorkflowDB
+    from module_index_db import ModuleIndexDB
+    import sqlite3
+    import ast
+
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+
+    names = {
+        Path(m).name: Path(m).with_suffix("").as_posix().replace("/", ".")
+        for m in modules
+    }
+    if not names:
+        return []
+
+    idx = ModuleIndexDB()
+    grp_map: dict[str, int] = {}
+    for mod in names:
+        try:
+            grp_map[mod] = idx.get(mod)
+        except Exception:
+            continue
+
+    def _imports(path: Path) -> set[str]:
+        try:
+            src = path.read_text(encoding="utf-8")
+            tree = ast.parse(src)
+        except Exception:
+            return set()
+        imps: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imps.add(alias.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imps.add(node.module.split(".")[0])
+        return imps
+
+    orphan_imports = {
+        n: _imports(repo / n) for n in names
+    }
+
+    wf_db = WorkflowDB(Path(workflows_db))
+    workflows = wf_db.fetch(limit=1000)
+    updated: list[int] = []
+
+    for wf in workflows:
+        step_groups: set[int] = set()
+        step_imports: set[str] = set()
+        step_names: list[str] = []
+        for step in wf.workflow:
+            mod = step.split(":")[0]
+            step_names.append(mod)
+            file = repo / (mod.replace(".", "/") + ".py")
+            step_imports.update(_imports(file))
+            try:
+                step_groups.add(idx.get(file.name))
+            except Exception:
+                pass
+        changed = False
+        existing = set(wf.workflow)
+        imported = {Path(s).stem for s in step_names}
+        for mod, gid in grp_map.items():
+            dotted = names[mod]
+            if dotted in existing:
+                continue
+            if gid in step_groups or mod.split(".")[0] in step_imports or orphan_imports[mod] & imported:
+                wf.workflow.append(dotted)
+                existing.add(dotted)
+                changed = True
+        if changed:
+            updated.append(wf.wid)
+
+    if not updated:
+        return []
+
+    with sqlite3.connect(wf_db.path) as conn:
+        for wf in workflows:
+            if wf.wid in updated:
+                conn.execute(
+                    "UPDATE workflows SET workflow=? WHERE id=?",
+                    (",".join(wf.workflow), wf.wid),
+                )
+        conn.commit()
+
+    return updated
+
+
+# ----------------------------------------------------------------------
 def run_workflow_simulations(
     workflows_db: str | Path = "workflows.db",
     env_presets: List[Dict[str, Any]] | None = None,
