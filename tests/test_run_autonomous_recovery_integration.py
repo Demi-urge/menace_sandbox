@@ -116,6 +116,9 @@ def test_recovery_and_history_growth(monkeypatch, tmp_path):
         "1",
         "--sandbox-data-dir",
         str(tmp_path),
+        "--include-orphans",
+        "--discover-orphans",
+        "--discover-isolated",
     ])
 
     roi_file = tmp_path / "roi_history.json"
