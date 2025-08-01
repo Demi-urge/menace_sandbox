@@ -134,6 +134,8 @@ After the system tools are in place install the Python requirements via
   `discover_isolated_modules` in orphan scans
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
   orphan scans using `sandbox_runner.discover_recursive_orphans`
+- `SELF_TEST_INCLUDE_ORPHANS=1` – run modules listed in `sandbox_data/orphan_modules.json`
+- `SANDBOX_INCLUDE_ORPHANS=1` – same as above when launched via `sandbox_runner`
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
   chains when refreshing the module map
 - `SANDBOX_DISCOVER_ISOLATED=1` – extend orphan discovery with isolated modules
@@ -206,8 +208,10 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
        --recursive-orphans --include-orphans
     ```
 
-    Set `SELF_TEST_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ORPHANS=1` to
-    achieve the same behaviour via environment variables. Modules that pass their
+   Set `SELF_TEST_INCLUDE_ORPHANS=1` together with `SELF_TEST_RECURSIVE_ORPHANS=1`
+   (or `SANDBOX_INCLUDE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1` when
+   launching via `sandbox_runner`) to achieve the same behaviour via environment
+   variables. Modules that pass their
     tests are merged into `module_map.json` and simple one-step workflows are
     created automatically so the new code can be benchmarked on the next run.
 
@@ -633,4 +637,4 @@ local installation.
   `self_test_average_coverage` are available on
   `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
   progress in `SELF_TEST_STATE`.
-- **Orphan modules not discovered** – run with `--discover-orphans` and `--discover-isolated` or set `SELF_TEST_DISCOVER_ORPHANS=1` and `SELF_TEST_DISCOVER_ISOLATED=1` so the self-test service scans the repository automatically.
+- **Orphan modules not discovered** – run with `--include-orphans` and `--discover-orphans` (plus `--discover-isolated` if needed) or set `SELF_TEST_INCLUDE_ORPHANS=1`, `SELF_TEST_DISCOVER_ORPHANS=1` and `SELF_TEST_DISCOVER_ISOLATED=1` so the self-test service scans the repository automatically.
