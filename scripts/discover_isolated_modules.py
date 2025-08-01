@@ -9,20 +9,28 @@ from typing import Iterable, List
 from scripts.find_orphan_modules import find_orphan_modules
 
 try:
-    from sandbox_runner import discover_orphan_modules as _discover_import_orphans
+    from sandbox_runner import (
+        discover_orphan_modules as _discover_import_orphans,
+        discover_recursive_orphans as _discover_recursive_orphans,
+    )
 except Exception:  # pragma: no cover - sandbox_runner may not be available
     _discover_import_orphans = None
+    _discover_recursive_orphans = None
 
 
-def discover_isolated_modules(base_dir: str | Path) -> List[str]:
+def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) -> List[str]:
     """Return relative paths of isolated Python modules under *base_dir*."""
     root = Path(base_dir).resolve()
 
     modules = {str(p) for p in find_orphan_modules(root, recursive=False)}
 
-    if _discover_import_orphans is not None:
+    discover_func = _discover_recursive_orphans if recursive else _discover_import_orphans
+    if discover_func is not None:
         try:
-            names = _discover_import_orphans(str(root), recursive=False)
+            if recursive:
+                names = discover_func(str(root))
+            else:
+                names = discover_func(str(root), recursive=False)
         except Exception:  # pragma: no cover - best effort
             names = []
         for name in names:
@@ -38,7 +46,12 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", default=".", help="Repository root")
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Include dependencies of isolated modules",
+    )
     args = parser.parse_args()
-    res = discover_isolated_modules(Path(args.path))
+    res = discover_isolated_modules(Path(args.path), recursive=args.recursive)
     print(json.dumps(res, indent=2))
 
