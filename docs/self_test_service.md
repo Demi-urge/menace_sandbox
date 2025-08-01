@@ -101,7 +101,8 @@ same file and appended to the test queue on the next run. Use `--refresh-orphans
 to force a new scan when the list already exists. Disable recursion with
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `--recursive-orphans`. The search uses
 `sandbox_runner.discover_recursive_orphans` to walk each orphan's imports
-until no new local modules remain.
+until no new local modules remain. This function is part of the public
+`sandbox_runner` API and may be imported for custom workflows.
 Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to include
 modules returned by `discover_isolated_modules` before searching for orphans.
 Enable dependency traversal for these modules with `SELF_TEST_RECURSIVE_ISOLATED=1`

@@ -101,7 +101,8 @@ A new `menace` CLI wraps common workflows so you no longer need to remember indi
 Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 "not yet tested". The `SelfTestService` now discovers and runs these modules
 automatically, following their dependencies via
-`sandbox_runner.discover_recursive_orphans`. Set `SELF_TEST_DISABLE_ORPHANS=1`
+`sandbox_runner.discover_recursive_orphans`. The helper is exported from the
+package and can be imported directly. Set `SELF_TEST_DISABLE_ORPHANS=1`
 or pass `--include-orphans` to skip them. Use `SELF_TEST_RECURSIVE_ORPHANS=0`
 or `--recursive-orphans` to turn off dependency scanning. Discovery can be
 disabled entirely with `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
