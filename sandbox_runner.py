@@ -1095,6 +1095,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "include_orphans", False)
         or os.getenv("SANDBOX_INCLUDE_ORPHANS", "0") in {"1", "true", "yes"}
     )
+    os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if include_orphans else "0"
     discover_orphans = bool(
         getattr(args, "discover_orphans", False)
         or os.getenv("SANDBOX_DISCOVER_ORPHANS", "0") in {"1", "true", "yes"}
