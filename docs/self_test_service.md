@@ -109,19 +109,19 @@ modules returned by `discover_isolated_modules` before searching for orphans.
 Enable dependency traversal for these modules with `SELF_TEST_RECURSIVE_ISOLATED=1`
 or the `--recursive-isolated` option.
 
-Example running tests with recursive orphan discovery:
+Example running tests with recursive orphan and isolated discovery:
 
 ```bash
 python -m menace.self_test_service run tests/unit \
-    --include-orphans --discover-orphans --recursive-orphans
+    --include-orphans --discover-orphans --discover-isolated \
+    --recursive-orphans --recursive-isolated
 ```
 
-When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` to
-achieve the same behaviour. Passing modules are added to `module_map.json`
-and simple one-step workflows are generated automatically on the next run.
-Set `SANDBOX_RECURSIVE_ISOLATED=1` to recurse through isolated module
-dependencies during these runs.
-If a discovered module fits an existing workflow group, the sandbox tries to merge it into those flows automatically.
+When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
+`SANDBOX_RECURSIVE_ISOLATED=1` to achieve the same behaviour. Passing modules
+are merged into `module_map.json` and may be incorporated into existing
+workflows automatically on the next run. If a discovered module fits an existing
+workflow group, the sandbox tries to merge it into those flows automatically.
 
 ## Automatic Orphan Detection
 
