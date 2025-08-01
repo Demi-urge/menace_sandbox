@@ -93,6 +93,7 @@ class SelfTestService:
         discover_orphans: bool = False,
         discover_isolated: bool = False,
         recursive_orphans: bool = False,
+        recursive_isolated: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -198,6 +199,14 @@ class SelfTestService:
             self.recursive_orphans = True
         else:
             self.recursive_orphans = False
+
+        env_recursive_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
+        if recursive_isolated or (
+            env_recursive_iso and env_recursive_iso.lower() in ("1", "true", "yes")
+        ):
+            self.recursive_isolated = True
+        else:
+            self.recursive_isolated = False
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -492,11 +501,17 @@ class SelfTestService:
         return modules
 
     # ------------------------------------------------------------------
-    def _discover_isolated(self) -> list[str]:
+    def _discover_isolated(self, recursive: bool | None = None) -> list[str]:
         """Run discover_isolated_modules and append results."""
         from scripts.discover_isolated_modules import discover_isolated_modules
 
-        modules = discover_isolated_modules(Path.cwd())
+        if recursive is None:
+            env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
+            recursive = self.recursive_isolated or (
+                env_val and env_val.lower() in ("1", "true", "yes")
+            )
+
+        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
         path = Path("sandbox_data") / "orphan_modules.json"
         try:
             path.parent.mkdir(exist_ok=True)
@@ -1138,6 +1153,11 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Recursively discover dependent orphan chains",
     )
+    run.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        help="Recursively discover dependencies of isolated modules",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1213,6 +1233,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Recursively discover dependent orphan chains",
     )
     sched.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        help="Recursively discover dependencies of isolated modules",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1261,6 +1286,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_orphans=args.discover_orphans,
             discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
+            recursive_isolated=args.recursive_isolated,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -1298,6 +1324,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_orphans=args.discover_orphans,
             discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
+            recursive_isolated=args.recursive_isolated,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)

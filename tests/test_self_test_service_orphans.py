@@ -188,7 +188,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     import types
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
-    mod_iso.discover_isolated_modules = lambda root: ["foo.py", "bar.py"]
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=False: ["foo.py", "bar.py"]
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
@@ -436,4 +436,63 @@ def test_env_orphans_enabled(tmp_path, monkeypatch, var):
     svc = mod.SelfTestService()
 
     assert svc.include_orphans is True
+
+
+async def _fake_proc(*cmd, **kwargs):
+    class P:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+        async def wait(self):
+            return None
+
+    return P()
+
+
+def _setup_isolated(monkeypatch):
+    import types
+
+    called = {}
+
+    def discover(root, *, recursive=False):
+        called["recursive"] = recursive
+        return ["foo.py"]
+
+    mod_iso = types.ModuleType("scripts.discover_isolated_modules")
+    mod_iso.discover_isolated_modules = discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod_iso
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc)
+    return called
+
+
+def test_recursive_isolated_env(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "1")
+
+    called = _setup_isolated(monkeypatch)
+    svc = mod.SelfTestService(discover_isolated=True)
+    asyncio.run(svc._run_once())
+
+    assert called.get("recursive") is True
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert data == ["foo.py"]
+
+
+def test_recursive_isolated_arg(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    called = _setup_isolated(monkeypatch)
+    svc = mod.SelfTestService(discover_isolated=True, recursive_isolated=True)
+    asyncio.run(svc._run_once())
+
+    assert called.get("recursive") is True
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert data == ["foo.py"]
 
