@@ -713,6 +713,11 @@ When `sandbox_runner.environment` is imported it immediately calls
 been left behind by a previous crash.  Containers, Docker volumes and networks older than
 `SANDBOX_CONTAINER_MAX_LIFETIME` whose command includes `sandbox_runner.py` are
 also purged even if the pool label is missing.  Once this cross-run sweep has finished
+you can avoid loading the environment altogether by setting `MENACE_LIGHT_IMPORTS=1`
+before importing `sandbox_runner`.  This skips the cleanup step and defers all
+Docker/QEMU initialisation until sandbox features are explicitly used, allowing
+utility helpers such as ``discover_orphan_modules`` to run without Docker
+installed.
 two background workers are launched.  The regular cleanup worker removes idle or
 unhealthy containers and deletes stale VM overlays while the reaper worker
 collects orphaned containers that were not tracked correctly.  Both workers log
