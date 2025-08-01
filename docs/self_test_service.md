@@ -143,7 +143,8 @@ saved for future runs and the new modules are tested immediately.
 Isolated modules discovered by `discover_isolated_modules` are processed
 automatically. Set `SELF_TEST_DISCOVER_ISOLATED=0` or pass `--discover-isolated`
 to disable this step. Use `SELF_TEST_RECURSIVE_ISOLATED=1` or `--recursive-isolated`
-to follow their dependencies when generating the test list.
+to follow their dependencies when generating the test list. Passing orphan
+modules are merged into `module_map.json` automatically once the tests complete.
 
 Results for these files are summarised under the `orphan_total`,
 `orphan_failed` and `orphan_passed` fields of the returned statistics. The

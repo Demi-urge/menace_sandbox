@@ -107,10 +107,10 @@ or pass `--include-orphans` to skip them. Use `SELF_TEST_RECURSIVE_ORPHANS=0`
 or `--recursive-orphans` to turn off dependency scanning. Discovery can be
 disabled entirely with `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
 When launched via `run_autonomous.py` newly discovered files are written to
-`orphan_modules.json` unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. After the tests
-run, `SelfImprovementEngine` merges any passing modules by calling
-`_refresh_module_map`, which also creates one-step workflows so they become
-immediately available for benchmarking.
+`orphan_modules.json` unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Passing orphan
+modules are merged into `module_map.json` automatically after the tests run,
+creating one-step workflows so they become immediately available for
+benchmarking.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
 Isolated modules discovered by `discover_isolated_modules` are scanned automatically. Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=0` to skip them. When launched via `run_autonomous.py` this behaviour also sets `SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map.
 Use `--recursive-isolated` or `SELF_TEST_RECURSIVE_ISOLATED=1` to follow dependencies of isolated modules as well.

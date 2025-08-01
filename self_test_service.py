@@ -80,6 +80,7 @@ class SelfTestService:
         workers: int | None = None,
         data_bot: DataBot | None = None,
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
+        integration_callback: Callable[[list[str]], None] | None = None,
         container_image: str = "python:3.11-slim",
         use_container: bool = False,
         container_runtime: str = "docker",
@@ -106,12 +107,17 @@ class SelfTestService:
             using ``-H`` for Docker or ``--url`` for Podman.
         metrics_port:
             Port for the Prometheus metrics server. Overrides ``SELF_TEST_METRICS_PORT``.
+        integration_callback:
+            Callable invoked with a list of successfully tested orphan modules
+            after each run. Can be used to merge them into the sandbox's module
+            map.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
         self.error_logger = ErrorLogger(db)
         self.data_bot = data_bot
         self.result_callback = result_callback
+        self.integration_callback = integration_callback
         self.container_image = container_image
         self.use_container = use_container
         self.results: dict[str, Any] | None = None
@@ -837,6 +843,7 @@ class SelfTestService:
             logs_snip = ""
             orphan_failed: list[str] = []
             orphan_passed: list[str] = []
+            passed_set: list[str] = []
 
             for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
@@ -913,6 +920,12 @@ class SelfTestService:
                     self.result_callback(self.results)
                 except Exception:
                     self.logger.exception("result callback failed")
+
+            if self.integration_callback and passed_set:
+                try:
+                    self.integration_callback(passed_set)
+                except Exception:
+                    self.logger.exception("orphan integration failed")
 
             if not queue:
                 self._clear_state()

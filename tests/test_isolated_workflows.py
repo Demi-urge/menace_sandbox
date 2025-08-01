@@ -129,23 +129,28 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location(
         "menace.self_test_service", ROOT / "self_test_service.py"
     )
-    sts = importlib.util.module_from_spec(spec)
-    sys.modules["menace.self_test_service"] = sts
-    spec.loader.exec_module(sts)  # type: ignore[attr-defined]
-
-    svc = sts.SelfTestService(discover_isolated=True, recursive_isolated=True)
-    svc.run_once()
-    passed = svc.results.get("orphan_passed") or []
-    assert sorted(passed) == ["dep.py", "iso.py"]
+    if "menace.self_test_service" in sys.modules:
+        sts = sys.modules["menace.self_test_service"]
+    else:
+        sts = importlib.util.module_from_spec(spec)
+        sys.modules["menace.self_test_service"] = sts
+        spec.loader.exec_module(sts)  # type: ignore[attr-defined]
 
     wf_db_path = tmp_path / "workflows.db"
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
 
     index = DummyIndex(map_path)
-
     eng = SimpleEngine(index, wf_db_path)
-    eng.refresh_module_map(passed)
+
+    svc = sts.SelfTestService(
+        discover_isolated=True,
+        recursive_isolated=True,
+        integration_callback=eng.refresh_module_map,
+    )
+    svc.run_once()
+    passed = svc.results.get("orphan_passed") or []
+    assert sorted(passed) == ["dep.py", "iso.py"]
 
     wf_db = thb.WorkflowDB(wf_db_path)
     recs = wf_db.fetch(limit=10)
