@@ -33,6 +33,7 @@ def _load_methods():
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": lambda mods: None,
         "log_record": lambda **k: {},
+        "analyze_redundancy": lambda p: False,
     }
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     code = ast.Module(body=methods, type_ignores=[])

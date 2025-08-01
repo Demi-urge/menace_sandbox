@@ -31,6 +31,7 @@ from sandbox_runner.environment import (
     generate_workflows_for_modules,
     try_integrate_into_workflows,
 )
+from orphan_analyzer import analyze_redundancy
 
 import numpy as np
 import socket
@@ -1360,10 +1361,21 @@ class SelfImprovementEngine:
         """Refresh module index and clusters for newly tested orphan modules."""
         if not self.module_index:
             return
-        try:
-            mods = {Path(p).name for p in paths}
-        except Exception:
-            mods = set()
+        mods = set()
+        for p in paths:
+            path = Path(p)
+            try:
+                if analyze_redundancy(path):
+                    self.logger.info(
+                        "redundant module skipped",
+                        extra=log_record(module=path.name),
+                    )
+                    continue
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundancy analysis failed for %s: %s", path, exc
+                )
+            mods.add(path.name)
         unknown = [m for m in mods if m not in self.module_clusters]
         if not unknown:
             return

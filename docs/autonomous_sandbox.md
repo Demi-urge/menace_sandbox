@@ -221,7 +221,8 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
     variables. Modules that pass their
      tests are merged into `module_map.json` and may be incorporated into
      existing workflows automatically on the next run so the new code can be
-     benchmarked immediately.
+     benchmarked immediately. Modules flagged as redundant by
+     `orphan_analyzer.analyze_redundancy` are skipped during this integration.
 
 ## Visual agent queueing
 
