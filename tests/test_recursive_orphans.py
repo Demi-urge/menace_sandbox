@@ -165,3 +165,43 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     data = json.loads((tmp_path / "module_map.json").read_text())
     assert data["modules"].get("iso.py") == 1
+
+
+def test_recursive_isolated(monkeypatch, tmp_path):
+    index = DummyIndex(tmp_path / "module_map.json")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "iso.py").write_text("pass\n")
+
+    called = {}
+    mod = types.ModuleType("scripts.discover_isolated_modules")
+
+    def discover(path, *, recursive=False):
+        called["recursive"] = recursive
+        assert Path(path) == repo
+        return ["iso.py"]
+
+    mod.discover_isolated_modules = discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
+
+    eng = types.SimpleNamespace(
+        module_index=index,
+        module_clusters={},
+        logger=DummyLogger(),
+    )
+    eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "1")
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
+
+    _update_orphan_modules(eng)
+
+    data = json.loads((tmp_path / "module_map.json").read_text())
+    assert data["modules"].get("iso.py") == 1
+    assert called.get("recursive") is True
