@@ -111,7 +111,7 @@ newly discovered files unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Successful integr
 also create one-step workflows for the passing orphan modules so they become
 immediately available for benchmarking.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
-Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to load modules returned by `discover_isolated_modules` before scanning for orphans. When launched via `run_autonomous.py` the flag also sets `SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map.
+Isolated modules discovered by `discover_isolated_modules` are scanned automatically. Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=0` to skip them. When launched via `run_autonomous.py` this behaviour also sets `SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map.
 Use `--recursive-isolated` or `SELF_TEST_RECURSIVE_ISOLATED=1` to follow dependencies of isolated modules as well.
 
 Example discovering orphans recursively:

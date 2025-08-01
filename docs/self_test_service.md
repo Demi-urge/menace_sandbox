@@ -45,7 +45,7 @@ Options include:
 - `--metrics-port` – expose Prometheus gauges on this port
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
 - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
-- `--discover-isolated` – load modules returned by `discover_isolated_modules` before scanning for orphans
+ - `--discover-isolated` – disable automatic discovery of modules returned by `discover_isolated_modules`
 - `--recursive-orphans` – recursively include dependencies of discovered orphans
 - `--recursive-isolated` – recurse through dependencies of isolated modules
 Remove stale containers left over from interrupted runs with:
@@ -105,8 +105,8 @@ until no new local modules remain. This function is part of the public
 `sandbox_runner` API and may be imported for custom workflows.  When Docker or
 other heavy dependencies are unavailable set `MENACE_LIGHT_IMPORTS=1` before the
 import to skip environment initialisation.
-Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to include
-modules returned by `discover_isolated_modules` before searching for orphans.
+Modules returned by `discover_isolated_modules` are included automatically.
+Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=0` to skip them.
 Enable dependency traversal for these modules with `SELF_TEST_RECURSIVE_ISOLATED=1`
 or the `--recursive-isolated` option.
 
@@ -123,7 +123,7 @@ When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
 are merged into `module_map.json` and may be incorporated into existing
 workflows automatically on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
-Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies both flags for convenience.
+Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies recursive mode for convenience.
 
 ## Automatic Orphan Detection
 
@@ -135,9 +135,9 @@ or pass `--include-orphans` to skip the feature. Disable the search with
 with `SELF_TEST_RECURSIVE_ORPHANS=0` or `--recursive-orphans`.
 The generated list is
 saved for future runs and the new modules are tested immediately.
-Setting `SELF_TEST_DISCOVER_ISOLATED=1` or passing `--discover-isolated` tells
-the service to include modules returned by `discover_isolated_modules` during
-these automatic scans. Use `SELF_TEST_RECURSIVE_ISOLATED=1` or `--recursive-isolated`
+Isolated modules discovered by `discover_isolated_modules` are processed
+automatically. Set `SELF_TEST_DISCOVER_ISOLATED=0` or pass `--discover-isolated`
+to disable this step. Use `SELF_TEST_RECURSIVE_ISOLATED=1` or `--recursive-isolated`
 to follow their dependencies when generating the test list.
 
 Results for these files are summarised under the `orphan_total`,
