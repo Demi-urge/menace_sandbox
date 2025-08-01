@@ -124,6 +124,9 @@ are merged into `module_map.json` and may be incorporated into existing
 workflows automatically on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
 Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies recursive mode for convenience.
+When present, the service forces both `discover_isolated` and
+`recursive_isolated` to `True` regardless of the provided arguments or
+environment variables.
 
 ## Automatic Orphan Detection
 

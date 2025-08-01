@@ -216,6 +216,11 @@ class SelfTestService:
         else:
             self.recursive_isolated = False
 
+        auto_inc = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+        if auto_inc and auto_inc.lower() in ("1", "true", "yes"):
+            self.discover_isolated = True
+            self.recursive_isolated = True
+
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
             return
