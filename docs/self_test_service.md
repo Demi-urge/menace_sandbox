@@ -46,7 +46,7 @@ Options include:
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
 - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
 - `--discover-isolated` – load modules returned by `discover_isolated_modules` before scanning for orphans
-
+- `--recursive-orphans` – recursively include dependencies of discovered orphans
 Remove stale containers left over from interrupted runs with:
 
 ```bash
@@ -115,6 +115,7 @@ python -m menace.self_test_service run tests/unit \
 When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` to
 achieve the same behaviour. Passing modules are added to `module_map.json`
 and simple one-step workflows are generated automatically on the next run.
+If a discovered module fits an existing workflow group, the sandbox tries to merge it into those flows automatically.
 
 ## Automatic Orphan Detection
 
