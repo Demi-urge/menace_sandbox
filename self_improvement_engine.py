@@ -1399,13 +1399,16 @@ class SelfImprovementEngine:
         modules: list[str] = []
         recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
 
+        recursive_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
         if os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1":
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules
 
                 prev: set[str] = set()
                 while True:
-                    new_paths = set(discover_isolated_modules(str(repo))) - prev
+                    new_paths = set(
+                        discover_isolated_modules(str(repo), recursive=recursive_iso)
+                    ) - prev
                     if not new_paths:
                         break
                     modules.extend(sorted(new_paths))
