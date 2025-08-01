@@ -16,7 +16,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 import threading
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
@@ -95,6 +95,7 @@ class SelfTestService:
         discover_isolated: bool = True,
         recursive_orphans: bool = True,
         recursive_isolated: bool = False,
+        clean_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -111,6 +112,11 @@ class SelfTestService:
             Callable invoked with a list of successfully tested orphan modules
             after each run. Can be used to merge them into the sandbox's module
             map.
+        clean_orphans:
+            When ``True``, remove successfully integrated modules from
+            ``sandbox_data/orphan_modules.json`` after ``integration_callback``
+            runs. Can also be enabled via the ``SANDBOX_CLEAN_ORPHANS``
+            environment variable.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -226,6 +232,11 @@ class SelfTestService:
         if auto_inc and auto_inc.lower() in ("1", "true", "yes"):
             self.discover_isolated = True
             self.recursive_isolated = True
+
+        self.clean_orphans = bool(clean_orphans)
+        env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
+        if env_clean is not None:
+            self.clean_orphans = env_clean.lower() in ("1", "true", "yes")
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -548,6 +559,23 @@ class SelfTestService:
         except Exception:
             self.logger.exception("failed to write orphan modules")
         return list(modules)
+
+    # ------------------------------------------------------------------
+    def _clean_orphan_list(self, modules: Iterable[str]) -> None:
+        """Remove ``modules`` from ``sandbox_data/orphan_modules.json``."""
+        path = Path("sandbox_data") / "orphan_modules.json"
+        if not path.exists():
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh) or []
+                if not isinstance(data, list):
+                    return
+            remaining = [m for m in data if m not in modules]
+            if len(remaining) != len(data):
+                path.write_text(json.dumps(sorted(remaining), indent=2))
+        except Exception:
+            self.logger.exception("failed to clean orphan modules")
 
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
@@ -926,6 +954,11 @@ class SelfTestService:
                     self.integration_callback(passed_set)
                 except Exception:
                     self.logger.exception("orphan integration failed")
+                if self.clean_orphans:
+                    try:
+                        self._clean_orphan_list(passed_set)
+                    except Exception:
+                        self.logger.exception("failed to clean orphan list")
 
             if not queue:
                 self._clear_state()
@@ -1209,6 +1242,11 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Recursively discover dependencies of isolated modules",
     )
+    run.add_argument(
+        "--clean-orphans",
+        action="store_true",
+        help="Remove passing modules from orphan_modules.json",
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1289,6 +1327,11 @@ def cli(argv: list[str] | None = None) -> int:
         help="Recursively discover dependencies of isolated modules",
     )
     sched.add_argument(
+        "--clean-orphans",
+        action="store_true",
+        help="Remove passing modules from orphan_modules.json",
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1338,6 +1381,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
             recursive_isolated=args.recursive_isolated,
+            clean_orphans=args.clean_orphans,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -1376,6 +1420,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_isolated=args.discover_isolated,
             recursive_orphans=args.recursive_orphans,
             recursive_isolated=args.recursive_isolated,
+            clean_orphans=args.clean_orphans,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)

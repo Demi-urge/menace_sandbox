@@ -1493,6 +1493,19 @@ class SelfImprovementEngine:
         """Refresh module grouping when new modules appear."""
         if modules:
             self._integrate_orphans(modules)
+            try:
+                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                orphan_path = data_dir / "orphan_modules.json"
+                if orphan_path.exists():
+                    try:
+                        existing = json.loads(orphan_path.read_text()) or []
+                    except Exception:  # pragma: no cover - best effort
+                        existing = []
+                    keep = [p for p in existing if p not in modules]
+                    if len(keep) != len(existing):
+                        orphan_path.write_text(json.dumps(sorted(keep), indent=2))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to clean orphan modules")
             if modules and self.module_index:
                 try:
                     generate_workflows_for_modules(sorted({Path(m).name for m in modules}))
