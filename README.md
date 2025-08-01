@@ -99,15 +99,14 @@ A new `menace` CLI wraps common workflows so you no longer need to remember indi
    into `PathwayDB`, closing the loop.
 
 Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
-"not yet tested". During autonomous runs the `SelfTestService` executes these
-modules separately when started with `--include-orphans`. Pass
-`--discover-orphans` or set `SELF_TEST_DISCOVER_ORPHANS=1` to scan the
-repository automatically and update the file before running. Use
-`--recursive-orphans` or `SELF_TEST_RECURSIVE_ORPHANS=1` to follow dependency
-chains so related modules are included as well. When enabled the service uses
-`sandbox_runner.discover_recursive_orphans` to walk imports for each orphan.
-When launched via `run_autonomous.py` the same flag also sets `SANDBOX_RECURSIVE_ORPHANS=1` so the
-module map refresh integrates the additional files. Successful integrations
+"not yet tested". The `SelfTestService` now discovers and runs these modules
+automatically, following their dependencies via
+`sandbox_runner.discover_recursive_orphans`. Set `SELF_TEST_DISABLE_ORPHANS=1`
+or pass `--include-orphans` to skip them. Use `SELF_TEST_RECURSIVE_ORPHANS=0`
+or `--recursive-orphans` to turn off dependency scanning. Discovery can be
+disabled entirely with `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
+When launched via `run_autonomous.py` the sandbox refreshes the module map for
+newly discovered files unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Successful integrations
 also create one-step workflows for the passing orphan modules so they become
 immediately available for benchmarking.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.

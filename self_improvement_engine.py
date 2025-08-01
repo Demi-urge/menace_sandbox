@@ -1396,11 +1396,20 @@ class SelfImprovementEngine:
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
         path = data_dir / "orphan_modules.json"
 
-        modules: list[str] = []
-        recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
+        if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
+            return
 
-        recursive_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
-        if os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1":
+        modules: list[str] = []
+        recursive = True
+        env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+        if env_rec is not None:
+            recursive = env_rec.lower() in ("1", "true", "yes")
+
+        recursive_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "1")
+        recursive_iso = recursive_iso.lower() in ("1", "true", "yes")
+
+        discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
+        if discover_iso_flag is None or discover_iso_flag.lower() not in {"0", "false", "no"}:
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules
 
@@ -1416,20 +1425,19 @@ class SelfImprovementEngine:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("isolated module discovery failed: %s", exc)
 
-        if not modules:
-            try:
-                if recursive:
-                    from sandbox_runner import discover_recursive_orphans as _discover
-                    names = _discover(str(repo), module_map=data_dir / "module_map.json")
-                else:
-                    from sandbox_runner import discover_orphan_modules as _discover
-                    names = _discover(str(repo))
+        try:
+            if recursive:
+                from sandbox_runner import discover_recursive_orphans as _discover
+                names = _discover(str(repo), module_map=data_dir / "module_map.json")
+            else:
+                from sandbox_runner import discover_orphan_modules as _discover
+                names = _discover(str(repo))
 
-                modules.extend(
-                    [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("orphan discovery failed: %s", exc)
+            modules.extend(
+                [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("orphan discovery failed: %s", exc)
 
         if not modules and not recursive:
             try:
@@ -1452,15 +1460,15 @@ class SelfImprovementEngine:
             existing = []
 
         combined = sorted(set(existing).union(modules))
-        if set(combined) != set(existing):
+        new_mods = [m for m in modules if m not in existing]
+        if new_mods:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(combined, indent=2))
                 self.logger.info(
                     "orphan modules updated", extra=log_record(count=len(combined))
                 )
-                # Module map refresh now occurs after successful testing of
-                # discovered orphans so avoid integrating them here
+                self._integrate_orphans(new_mods)
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
 

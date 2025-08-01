@@ -1092,30 +1092,41 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "offline_suggestions", False)
         or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
     )
-    include_orphans = bool(
-        getattr(args, "include_orphans", False)
-        or os.getenv("SANDBOX_INCLUDE_ORPHANS", "0") in {"1", "true", "yes"}
-    )
+    include_orphans = True
+    if os.getenv("SANDBOX_DISABLE_ORPHANS") == "1":
+        include_orphans = False
+    env_val = os.getenv("SANDBOX_INCLUDE_ORPHANS")
+    if env_val is not None:
+        include_orphans = env_val.lower() in {"1", "true", "yes"}
+    if getattr(args, "include_orphans") is False:
+        include_orphans = False
     os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if include_orphans else "0"
-    discover_orphans = bool(
-        getattr(args, "discover_orphans", False)
-        or os.getenv("SANDBOX_DISCOVER_ORPHANS", "0") in {"1", "true", "yes"}
-    )
+
+    discover_orphans = True
+    if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
+        discover_orphans = False
+    if getattr(args, "discover_orphans") is False:
+        discover_orphans = False
     if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
-    discover_isolated = bool(
-        getattr(args, "discover_isolated", False)
-        or os.getenv("SANDBOX_DISCOVER_ISOLATED", "0") in {"1", "true", "yes"}
-    )
+    discover_isolated = True
+    env_isolated = os.getenv("SANDBOX_DISCOVER_ISOLATED")
+    if env_isolated is not None:
+        discover_isolated = env_isolated.lower() in {"1", "true", "yes"}
+    if getattr(args, "discover_isolated") is False:
+        discover_isolated = False
     recursive_isolated = bool(
         getattr(args, "recursive_isolated", False)
         or os.getenv("SANDBOX_RECURSIVE_ISOLATED", "0") in {"1", "true", "yes"}
     )
-    recursive_orphans = bool(
-        getattr(args, "recursive_orphans", False)
-        or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "0") in {"1", "true", "yes"}
-    )
+    recursive_orphans = True
+    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+    if env_rec is not None:
+        recursive_orphans = env_rec.lower() in {"1", "true", "yes"}
+    if getattr(args, "recursive_orphans") is False:
+        recursive_orphans = False
+    os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1" if not discover_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1" if recursive_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1" if recursive_isolated else "0"
     os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1" if discover_isolated else "0"

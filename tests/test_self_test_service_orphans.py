@@ -51,7 +51,7 @@ def test_include_orphans(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.chdir(tmp_path)
 
-    svc = mod.SelfTestService(include_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once()
 
     joined = [" ".join(map(str, c)) for c in calls]
@@ -97,7 +97,7 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     mod_find.find_orphan_modules = lambda root: [Path("foo.py"), Path("bar.py")]
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", mod_find)
 
-    svc = mod.SelfTestService(include_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -247,7 +247,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
-    svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once(refresh_orphans=True)
 
     assert calls.get("used") is True
@@ -358,7 +358,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -413,7 +413,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -427,15 +427,15 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     assert Path(m).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
 
-@pytest.mark.parametrize("var", ["SELF_TEST_INCLUDE_ORPHANS", "SANDBOX_INCLUDE_ORPHANS"])
-def test_env_orphans_enabled(tmp_path, monkeypatch, var):
+@pytest.mark.parametrize("var", ["SELF_TEST_DISABLE_ORPHANS", "SANDBOX_DISABLE_ORPHANS"])
+def test_env_orphans_disabled(tmp_path, monkeypatch, var):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(var, "1")
 
     svc = mod.SelfTestService()
 
-    assert svc.include_orphans is True
+    assert svc.include_orphans is False
 
 
 async def _fake_proc(*cmd, **kwargs):

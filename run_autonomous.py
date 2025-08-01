@@ -1046,23 +1046,31 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--recursive-orphans",
-        action="store_true",
-        help="recursively integrate orphan dependency chains",
+        action="store_false",
+        dest="recursive_orphans",
+        default=None,
+        help="disable recursive integration of orphan dependency chains",
     )
     parser.add_argument(
         "--include-orphans",
-        action="store_true",
-        help="include orphan modules in sandbox run",
+        action="store_false",
+        dest="include_orphans",
+        default=None,
+        help="disable running orphan modules during sandbox runs",
     )
     parser.add_argument(
         "--discover-orphans",
-        action="store_true",
-        help="automatically run find_orphan_modules",
+        action="store_false",
+        dest="discover_orphans",
+        default=None,
+        help="disable automatic orphan discovery",
     )
     parser.add_argument(
         "--discover-isolated",
-        action="store_true",
-        help="automatically run discover_isolated_modules",
+        action="store_false",
+        dest="discover_isolated",
+        default=None,
+        help="disable discover_isolated_modules during orphan scan",
     )
     parser.add_argument(
         "--recursive-isolated",
@@ -1078,18 +1086,19 @@ def main(argv: List[str] | None = None) -> None:
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
-    if getattr(args, "recursive_orphans", False):
-        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1"
+    if getattr(args, "recursive_orphans") is False:
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "0"
+        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "0"
 
-    if getattr(args, "include_orphans", False):
-        os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1"
-        os.environ["SELF_TEST_INCLUDE_ORPHANS"] = "1"
-    if getattr(args, "discover_orphans", False):
-        os.environ["SANDBOX_DISCOVER_ORPHANS"] = "1"
-        os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "1"
-    if getattr(args, "discover_isolated", False):
-        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
-        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+    if getattr(args, "include_orphans") is False:
+        os.environ["SANDBOX_DISABLE_ORPHANS"] = "1"
+        os.environ["SELF_TEST_DISABLE_ORPHANS"] = "1"
+    if getattr(args, "discover_orphans") is False:
+        os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "0"
+    if getattr(args, "discover_isolated") is False:
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
     if getattr(args, "recursive_isolated", False):
         os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
         os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"

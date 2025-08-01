@@ -129,17 +129,16 @@ After the system tools are in place install the Python requirements via
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
-- `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
-- `SELF_TEST_DISCOVER_ISOLATED=1` – include modules returned by
-  `discover_isolated_modules` in orphan scans
- - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
-   (equivalent to `--recursive-isolated`)
- - `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
-  orphan scans using `sandbox_runner.discover_recursive_orphans`
-- `SELF_TEST_INCLUDE_ORPHANS=1` – run modules listed in `sandbox_data/orphan_modules.json`
-- `SANDBOX_INCLUDE_ORPHANS=1` – same as above when launched via `sandbox_runner`
-- `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
-  chains when refreshing the module map
+- `SELF_TEST_DISABLE_ORPHANS=1` – skip orphan module discovery and execution
+- `SELF_TEST_DISCOVER_ORPHANS=0` – disable automatic orphan scans
+- `SELF_TEST_DISCOVER_ISOLATED=0` – ignore modules returned by
+  `discover_isolated_modules`
+- `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
+  (equivalent to `--recursive-isolated`)
+- `SELF_TEST_RECURSIVE_ORPHANS=0` – do not follow dependencies when scanning
+- `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
+- `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
+- `SANDBOX_RECURSIVE_ORPHANS=0` – disable dependency integration when refreshing the module map
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
    building the module map (same as `--recursive-isolated` when running
    `sandbox_runner`)
@@ -646,4 +645,4 @@ local installation.
   `self_test_average_coverage` are available on
   `http://localhost:${AUTO_DASHBOARD_PORT}/metrics`. The service keeps its
   progress in `SELF_TEST_STATE`.
-- **Orphan modules not discovered** – run with `--include-orphans` and `--discover-orphans` (plus `--discover-isolated` if needed) or set `SELF_TEST_INCLUDE_ORPHANS=1`, `SELF_TEST_DISCOVER_ORPHANS=1` and `SELF_TEST_DISCOVER_ISOLATED=1` so the self-test service scans the repository automatically.
+- **Orphan modules not discovered** – ensure `SELF_TEST_DISABLE_ORPHANS` and `SANDBOX_DISABLE_ORPHAN_SCAN` are unset. Use `--discover-orphans` or set `SELF_TEST_DISCOVER_ORPHANS=0` only when disabling the automatic scans.

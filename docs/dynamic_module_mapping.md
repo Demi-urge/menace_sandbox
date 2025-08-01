@@ -75,17 +75,15 @@ stored in `workflows.db`.
 
 ### Automatic orphan detection
 
-Running `sandbox_runner` with `--include-orphans` or setting
-`SELF_TEST_INCLUDE_ORPHANS=1` (alias `SANDBOX_INCLUDE_ORPHANS=1`) enables automatic discovery of modules that are not
-referenced by any tests. The self‑test service loads
-`sandbox_data/orphan_modules.json` or generates it using
-`discover_orphan_modules` when missing. Modules that pass their tests are
+`sandbox_runner` automatically discovers modules that are not referenced by any
+tests. The self‑test service loads `sandbox_data/orphan_modules.json` or
+generates it using `discover_recursive_orphans` when missing. Modules that pass
+their tests are
 merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.
 If a discovered module belongs to an existing workflow, the sandbox will attempt to merge it into that sequence automatically.
-Use `--recursive-orphans` or set `SELF_TEST_RECURSIVE_ORPHANS=1` (or `SANDBOX_RECURSIVE_ORPHANS=1` when running via `sandbox_runner`) to recursively scan
-dependencies of each orphan when building the list.
+Set `SELF_TEST_RECURSIVE_ORPHANS=0` or pass `--recursive-orphans` to disable dependency scanning when building the list.
 
 Example workflow:
 
