@@ -90,7 +90,6 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
 
     eng = types.SimpleNamespace(logger=DummyLogger())
 
@@ -123,8 +122,6 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
 
     eng._update_orphan_modules = types.MethodType(fake_update, eng)
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
-
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
 
     _refresh_module_map(eng, ["foo.py"])
 
@@ -159,7 +156,6 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "1")
 
     _update_orphan_modules(eng)
 
@@ -207,7 +203,6 @@ def test_recursive_isolated(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "1")
     monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
 
     _update_orphan_modules(eng)

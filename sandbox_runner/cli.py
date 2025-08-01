@@ -725,10 +725,10 @@ def full_autonomous_run(
                 no_workflow_run=False,
                 max_prompt_length=None,
                 summary_depth=None,
-                include_orphans=getattr(args, "include_orphans", False),
-                discover_orphans=getattr(args, "discover_orphans", False),
-                discover_isolated=getattr(args, "discover_isolated", False),
-                recursive_orphans=getattr(args, "recursive_orphans", False),
+                include_orphans=getattr(args, "include_orphans", None),
+                discover_orphans=getattr(args, "discover_orphans", None),
+                discover_isolated=getattr(args, "discover_isolated", None),
+                recursive_orphans=getattr(args, "recursive_orphans", None),
                 recursive_isolated=getattr(args, "recursive_isolated", False),
             )
             tracker = _capture_run(preset, run_args)
@@ -1034,13 +1034,17 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--discover-orphans",
-        action="store_true",
-        help="automatically run find_orphan_modules (or SANDBOX_DISCOVER_ORPHANS=1)",
+        action="store_false",
+        dest="discover_orphans",
+        default=None,
+        help="disable automatic find_orphan_modules scans",
     )
     parser.add_argument(
         "--discover-isolated",
-        action="store_true",
-        help="include modules from discover_isolated_modules before orphan scan",
+        action="store_false",
+        dest="discover_isolated",
+        default=None,
+        help="disable discover_isolated_modules before orphan scan",
     )
     parser.add_argument(
         "--recursive-isolated",
@@ -1049,13 +1053,17 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--recursive-orphans",
-        action="store_true",
-        help="recursively integrate orphan dependency chains (or SANDBOX_RECURSIVE_ORPHANS=1)",
+        action="store_false",
+        dest="recursive_orphans",
+        default=None,
+        help="disable recursive orphan dependency integration",
     )
     parser.add_argument(
         "--include-orphans",
-        action="store_true",
-        help="run modules listed in sandbox_data/orphan_modules.json",
+        action="store_false",
+        dest="include_orphans",
+        default=None,
+        help="skip modules listed in sandbox_data/orphan_modules.json",
     )
     parser.add_argument(
         "--offline-suggestions",
