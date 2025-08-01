@@ -727,7 +727,9 @@ def full_autonomous_run(
                 summary_depth=None,
                 include_orphans=getattr(args, "include_orphans", False),
                 discover_orphans=getattr(args, "discover_orphans", False),
+                discover_isolated=getattr(args, "discover_isolated", False),
                 recursive_orphans=getattr(args, "recursive_orphans", False),
+                recursive_isolated=getattr(args, "recursive_isolated", False),
             )
             tracker = _capture_run(preset, run_args)
             if not tracker:
@@ -1039,6 +1041,11 @@ def main(argv: List[str] | None = None) -> None:
         "--discover-isolated",
         action="store_true",
         help="include modules from discover_isolated_modules before orphan scan",
+    )
+    parser.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        help="recurse through dependencies of isolated modules",
     )
     parser.add_argument(
         "--recursive-orphans",

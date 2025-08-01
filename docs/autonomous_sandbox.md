@@ -132,12 +132,15 @@ After the system tools are in place install the Python requirements via
 - `SELF_TEST_DISCOVER_ORPHANS=1` – scan for untested modules automatically
 - `SELF_TEST_DISCOVER_ISOLATED=1` – include modules returned by
   `discover_isolated_modules` in orphan scans
+- `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – include dependent modules discovered during
   orphan scans using `sandbox_runner.discover_recursive_orphans`
 - `SELF_TEST_INCLUDE_ORPHANS=1` – run modules listed in `sandbox_data/orphan_modules.json`
 - `SANDBOX_INCLUDE_ORPHANS=1` – same as above when launched via `sandbox_runner`
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
   chains when refreshing the module map
+- `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
+  building the module map
 - `SANDBOX_DISCOVER_ISOLATED=1` – extend orphan discovery with isolated modules
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
@@ -205,11 +208,12 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
     ```bash
      python run_autonomous.py --discover-orphans --discover-isolated \
-       --recursive-orphans --include-orphans
+       --recursive-orphans --recursive-isolated --include-orphans
     ```
 
    Set `SELF_TEST_INCLUDE_ORPHANS=1` together with `SELF_TEST_RECURSIVE_ORPHANS=1`
-   (or `SANDBOX_INCLUDE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1` when
+   and `SELF_TEST_RECURSIVE_ISOLATED=1` (or `SANDBOX_INCLUDE_ORPHANS=1`,
+   `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1` when
    launching via `sandbox_runner`) to achieve the same behaviour via environment
    variables. Modules that pass their
     tests are merged into `module_map.json` and simple one-step workflows are
