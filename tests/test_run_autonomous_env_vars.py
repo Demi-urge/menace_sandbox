@@ -186,3 +186,18 @@ def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+
+
+def test_auto_include_isolated_flag(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    mod.main(["--runs", "0", "--check-settings", "--auto-include-isolated"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") == "1"
+    assert capture.get("recursive_isolated") is True
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
+    assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"

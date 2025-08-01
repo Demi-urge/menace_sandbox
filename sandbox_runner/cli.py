@@ -1052,6 +1052,11 @@ def main(argv: List[str] | None = None) -> None:
         help="recurse through dependencies of isolated modules",
     )
     parser.add_argument(
+        "--auto-include-isolated",
+        action="store_true",
+        help="automatically include isolated modules recursively",
+    )
+    parser.add_argument(
         "--recursive-orphans",
         action="store_false",
         dest="recursive_orphans",
@@ -1307,6 +1312,9 @@ def main(argv: List[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "auto_include_isolated", False):
+        os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
 
     level_str = str(getattr(args, "log_level", "INFO"))
     try:

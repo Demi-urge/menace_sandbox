@@ -1078,6 +1078,11 @@ def main(argv: List[str] | None = None) -> None:
         help="recursively process modules from discover_isolated_modules",
     )
     parser.add_argument(
+        "--auto-include-isolated",
+        action="store_true",
+        help="automatically include isolated modules recursively",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -1085,6 +1090,9 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    if getattr(args, "auto_include_isolated", False):
+        os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
 
     os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
 

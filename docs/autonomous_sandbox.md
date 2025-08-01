@@ -143,7 +143,7 @@ After the system tools are in place install the Python requirements via
   building the module map (same as `--recursive-isolated` when running
   `sandbox_runner`). Set to `0`, `false` or `no` to disable recursion.
 - `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
-- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable recursion for self tests
+ - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable recursion for self tests (same as `--auto-include-isolated`)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
