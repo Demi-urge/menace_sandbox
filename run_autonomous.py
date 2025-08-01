@@ -1050,6 +1050,21 @@ def main(argv: List[str] | None = None) -> None:
         help="recursively integrate orphan dependency chains",
     )
     parser.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="include orphan modules in sandbox run",
+    )
+    parser.add_argument(
+        "--discover-orphans",
+        action="store_true",
+        help="automatically run find_orphan_modules",
+    )
+    parser.add_argument(
+        "--discover-isolated",
+        action="store_true",
+        help="automatically run discover_isolated_modules",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -1060,6 +1075,16 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "recursive_orphans", False):
         os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1"
+
+    if getattr(args, "include_orphans", False):
+        os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1"
+        os.environ["SELF_TEST_INCLUDE_ORPHANS"] = "1"
+    if getattr(args, "discover_orphans", False):
+        os.environ["SANDBOX_DISCOVER_ORPHANS"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "1"
+    if getattr(args, "discover_isolated", False):
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"

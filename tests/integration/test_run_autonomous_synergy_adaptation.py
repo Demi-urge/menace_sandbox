@@ -16,6 +16,32 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
     env_mod = types.ModuleType("menace.environment_generator")
     env_mod.generate_presets = lambda n=None: [{"CPU_LIMIT": "1", "MEMORY_LIMIT": "1"}]
 
+    class DummyGauge:
+        def __init__(self, *a, **k):
+            self.value = 0.0
+
+        def labels(self, *a, **k):
+            return self
+
+        def set(self, v):
+            self.value = float(v)
+
+        def inc(self, a=1.0):
+            self.value += a
+
+        def dec(self, a=1.0):
+            self.value -= a
+
+        def get(self):
+            return self.value
+
+    monkeypatch.setattr(metrics_exporter, "Gauge", DummyGauge, raising=False)
+    metrics_exporter.roi_forecast_gauge = DummyGauge()
+    metrics_exporter.synergy_forecast_gauge = DummyGauge()
+    metrics_exporter.roi_threshold_gauge = DummyGauge()
+    metrics_exporter.synergy_threshold_gauge = DummyGauge()
+    metrics_exporter.synergy_adaptation_actions_total = DummyGauge()
+
     class _Adapt:
         def __init__(self):
             self.last_actions = []
@@ -206,7 +232,18 @@ def _load_run_autonomous(monkeypatch, tmp_path: Path):
 
     monkeypatch.setitem(sys.modules, "sandbox_recovery_manager", types.SimpleNamespace(SandboxRecoveryManager=DummyRecovery))
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
-    monkeypatch.setitem(sys.modules, "filelock", types.SimpleNamespace(FileLock=lambda *a, **k: types.SimpleNamespace(__enter__=lambda s: s, __exit__=lambda s, *a: None), Timeout=RuntimeError))
+    class DummyLock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "filelock",
+        types.SimpleNamespace(FileLock=lambda *a, **k: DummyLock(), Timeout=RuntimeError),
+    )
     monkeypatch.setitem(sys.modules, "menace.auto_env_setup", types.SimpleNamespace(ensure_env=lambda p: None))
 
     monkeypatch.setattr(metrics_exporter, "start_metrics_server", lambda *a, **k: None)
@@ -260,6 +297,9 @@ def test_synergy_adaptation_metrics(monkeypatch, tmp_path: Path) -> None:
         "1",
         "--sandbox-data-dir",
         str(tmp_path),
+        "--include-orphans",
+        "--discover-orphans",
+        "--discover-isolated",
     ])
 
     assert metrics_exporter.synergy_forecast_gauge.labels().get() != 0.0

@@ -117,6 +117,9 @@ def run_single(monkeypatch, tmp_path):
         "--sandbox-data-dir",
         str(tmp_path),
         "--recursive-orphans",
+        "--include-orphans",
+        "--discover-orphans",
+        "--discover-isolated",
     ])
 
     return call_state["count"]
