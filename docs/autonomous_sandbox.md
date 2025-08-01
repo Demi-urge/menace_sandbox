@@ -140,8 +140,8 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
 - `SANDBOX_RECURSIVE_ORPHANS=0` – disable dependency integration when refreshing the module map
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
-   building the module map (same as `--recursive-isolated` when running
-   `sandbox_runner`)
+  building the module map (same as `--recursive-isolated` when running
+  `sandbox_runner`). Set to `0`, `false` or `no` to disable recursion.
 - `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
 - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable recursion for self tests
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`

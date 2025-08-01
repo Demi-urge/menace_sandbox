@@ -207,7 +207,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    # recursion is always enabled, env var should not matter
+    # disable recursion via environment variable
     monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "0")
 
     _update_orphan_modules(eng)
@@ -224,4 +224,4 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     assert map_file.exists()
     data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
-    assert called.get("recursive") is True
+    assert called.get("recursive") is False
