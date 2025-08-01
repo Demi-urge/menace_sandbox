@@ -367,3 +367,58 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     assert "b.py" in joined
     assert "c.py" in joined
 
+
+def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+
+    calls = []
+    discover_calls = []
+
+    async def fake_exec(*cmd, **kwargs):
+        calls.append(" ".join(map(str, cmd)))
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    import types
+
+    def discover(repo, recursive=False):
+        discover_calls.append(True)
+        if len(discover_calls) == 1:
+            return ["a"]
+        return ["a", "b"]
+
+    helper = types.ModuleType("sandbox_runner")
+    helper.discover_orphan_modules = discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+
+    svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
+    asyncio.run(svc._run_once(refresh_orphans=True))
+
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert sorted(data) == ["a.py", "b.py"]
+    joined = "\n".join(calls)
+    assert "a.py" in joined
+    assert "b.py" in joined
+    assert len(discover_calls) >= 2
+

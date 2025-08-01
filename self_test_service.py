@@ -523,10 +523,16 @@ class SelfTestService:
             else:
                 try:
                     from sandbox_runner import discover_orphan_modules as _discover
-                    names = _discover(str(Path.cwd()), recursive=self.recursive_orphans)
-                    orphan_list = [
-                        str(Path(*n.split(".")).with_suffix(".py")) for n in names
-                    ]
+                    depth_limit = int(os.getenv("SELF_TEST_ORPHAN_DEPTH", "5"))
+                    discovered: set[str] = set()
+                    for _ in range(max(1, depth_limit)):
+                        names = _discover(str(Path.cwd()), recursive=self.recursive_orphans)
+                        files = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+                        new = set(files) - discovered
+                        discovered.update(files)
+                        if not new:
+                            break
+                    orphan_list = sorted(discovered)
                 except Exception:
                     self.logger.exception("failed to discover orphan modules")
                 if orphan_list:
