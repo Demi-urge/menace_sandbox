@@ -92,7 +92,8 @@ file path with `SELF_TEST_LOCK_FILE` (default `sandbox_data/self_test.lock`).
 Run `scripts/find_orphan_modules.py` to locate Python files that are not
 referenced by any tests. The script writes the list to
 `sandbox_data/orphan_modules.json` which the service can load when started with
-`--include-orphans`.
+`--include-orphans` or when `SELF_TEST_INCLUDE_ORPHANS=1` is set (the legacy
+`SANDBOX_INCLUDE_ORPHANS` variable is still recognised).
 
 Set `SELF_TEST_DISCOVER_ORPHANS=1` or pass `--discover-orphans` to scan the
 repository automatically. The discovered modules are saved to the same file and
@@ -120,7 +121,7 @@ If a discovered module fits an existing workflow group, the sandbox tries to mer
 ## Automatic Orphan Detection
 
 When the service is launched with `--include-orphans` or the environment
-variable `SANDBOX_INCLUDE_ORPHANS=1`, it searches for
+variable `SELF_TEST_INCLUDE_ORPHANS=1` (alias `SANDBOX_INCLUDE_ORPHANS=1`), it searches for
 `sandbox_data/orphan_modules.json` and runs each listed module alongside the
 regular test suite. If the file does not exist, the service attempts to locate
 orphan modules automatically using `sandbox_runner.discover_recursive_orphans`

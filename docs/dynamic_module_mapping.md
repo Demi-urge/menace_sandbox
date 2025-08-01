@@ -76,7 +76,7 @@ stored in `workflows.db`.
 ### Automatic orphan detection
 
 Running `sandbox_runner` with `--include-orphans` or setting
-`SANDBOX_INCLUDE_ORPHANS=1` enables automatic discovery of modules that are not
+`SELF_TEST_INCLUDE_ORPHANS=1` (alias `SANDBOX_INCLUDE_ORPHANS=1`) enables automatic discovery of modules that are not
 referenced by any tests. The self‑test service loads
 `sandbox_data/orphan_modules.json` or generates it using
 `discover_orphan_modules` when missing. Modules that pass their tests are
