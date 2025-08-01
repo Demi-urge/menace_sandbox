@@ -95,7 +95,7 @@ def test_env_dashboard(monkeypatch, tmp_path):
     _setup_dashboard(monkeypatch, started)
     monkeypatch.setenv("AUTO_DASHBOARD_PORT", "1234")
 
-    mod.main([])
+    mod.main(["--recursive-orphans"])
 
     assert started.get("port") == 1234
 
@@ -112,7 +112,7 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     _setup_dashboard(monkeypatch, started)
     monkeypatch.setenv("AUTO_DASHBOARD_PORT", "1111")
 
-    mod.main(["--dashboard-port", "9999"])
+    mod.main(["--dashboard-port", "9999", "--recursive-orphans"])
 
     assert started.get("port") == 9999
 
@@ -128,6 +128,6 @@ def test_no_dashboard(monkeypatch, tmp_path):
     started = {}
     _setup_dashboard(monkeypatch, started)
 
-    mod.main([])
+    mod.main(["--recursive-orphans"])
 
     assert started == {}

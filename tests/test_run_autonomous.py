@@ -14,6 +14,6 @@ def test_metrics_server_started(monkeypatch, tmp_path):
     called = {}
     monkeypatch.setattr(mod, "start_metrics_server", lambda port: called.setdefault("port", port))
 
-    mod.main(["--check-settings", "--metrics-port", "9999"])
+    mod.main(["--check-settings", "--metrics-port", "9999", "--recursive-orphans"])
 
     assert called.get("port") == 9999

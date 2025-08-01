@@ -84,6 +84,7 @@ def test_run_autonomous_end_to_end(monkeypatch, tmp_path: Path):
         "--runs", "3",
         "--preset-count", "1",
         "--sandbox-data-dir", str(tmp_path),
+        "--recursive-orphans",
     ])
 
     import time
