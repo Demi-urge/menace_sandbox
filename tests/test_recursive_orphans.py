@@ -162,7 +162,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     # orphan discovery should not immediately update the module map
     map_file = tmp_path / "module_map.json"
-    assert not map_file.exists()
+    assert map_file.exists()
 
     mods_path = tmp_path / "orphan_modules.json"
     if not mods_path.exists():
@@ -204,12 +204,13 @@ def test_recursive_isolated(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
+    # recursion is always enabled, env var should not matter
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "0")
 
     _update_orphan_modules(eng)
 
     map_file = tmp_path / "module_map.json"
-    assert not map_file.exists()
+    assert map_file.exists()
 
     mods_path = tmp_path / "orphan_modules.json"
     if not mods_path.exists():

@@ -1417,8 +1417,8 @@ class SelfImprovementEngine:
         if env_rec is not None:
             recursive = env_rec.lower() in ("1", "true", "yes")
 
-        recursive_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "1")
-        recursive_iso = recursive_iso.lower() in ("1", "true", "yes")
+        # isolated modules are always processed recursively
+        recursive_iso = True
 
         discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
         if discover_iso_flag is None or discover_iso_flag.lower() not in {"0", "false", "no"}:

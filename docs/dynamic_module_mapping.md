@@ -96,11 +96,13 @@ The command scans for orphan modules (following their dependencies when
 `sandbox_runner.discover_recursive_orphans`, runs them with the standard unit
 tests and updates the module map once they succeed.
 Isolated modules returned by `discover_isolated_modules` are loaded
-automatically. Pass `--discover-isolated` or set `SANDBOX_DISCOVER_ISOLATED=0` to skip them before falling back to the
-recursive discovery. These isolated modules are recursively tested just like
-regular orphans and merged into `module_map.json` once they pass so later runs
-treat them as normal members of their assigned groups. Use `--recursive-isolated`
-or set `SELF_TEST_RECURSIVE_ISOLATED=1` (or `SANDBOX_RECURSIVE_ISOLATED=1` when
-running via `sandbox_runner`) to also traverse their dependencies when
-generating the list.
+automatically and always processed recursively. Pass `--discover-isolated` or
+set `SANDBOX_DISCOVER_ISOLATED=0` to skip them before falling back to the
+recursive discovery. These isolated modules are tested along with any
+dependencies and merged into `module_map.json` once they pass so later runs
+treat them as normal members of their assigned groups. Simple workflows are
+generated for the new modules and existing flows are updated via
+`try_integrate_into_workflows`. Use `--recursive-isolated` or set
+`SELF_TEST_RECURSIVE_ISOLATED=1` when running the self tests manually to mirror
+this behaviour.
 
