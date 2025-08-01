@@ -2,23 +2,21 @@ import ast
 from pathlib import Path
 
 def _load_func():
-    path = Path(__file__).resolve().parents[1] / "sandbox_runner.py"
+    path = Path(__file__).resolve().parents[1] / "sandbox_runner" / "orphan_discovery.py"
     src = path.read_text()
     tree = ast.parse(src)
-    funcs = []
+    func = None
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in {
-            "discover_orphan_modules",
-            "_discover_orphans_once",
-        }:
-            funcs.append(node)
-    if not funcs:
+        if isinstance(node, ast.FunctionDef) and node.name == "discover_orphan_modules":
+            func = node
+            break
+    if func is None:
         raise AssertionError("function not found")
-    from typing import List, Iterable
+    from typing import List
     import os
-    mod = {"ast": ast, "os": os, "List": List, "Iterable": Iterable}
-    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
-    code = ast.Module(body=funcs, type_ignores=[])
+    mod = {"ast": ast, "os": os, "List": List}
+    ast.fix_missing_locations(func)
+    code = ast.Module(body=[func], type_ignores=[])
     exec(compile(code, str(path), "exec"), mod)
     return mod["discover_orphan_modules"]
 
