@@ -157,7 +157,7 @@ def _sandbox_cycle_runner(
             extra=log_record(cycle=idx, roi=result.roi.roi if result.roi else 0.0),
         )
         logger.info("tester run", extra=log_record(cycle=idx))
-        ctx.tester._run_once()
+        ctx.tester.run_once()
         passed_modules: list[str] = []
         if getattr(ctx.tester, "results", None):
             passed_modules = ctx.tester.results.get("orphan_passed", [])

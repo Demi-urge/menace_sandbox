@@ -184,7 +184,7 @@ def test_container_retries(monkeypatch):
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', fake_exec)
 
     svc = sts.SelfTestService(use_container=True, container_retries=1)
-    asyncio.run(svc._run_once())
+    svc.run_once()
     assert calls.count('run') == 2
 
 
@@ -258,7 +258,7 @@ def _proc_run_once(root: str, lock_path: str, q):
 
     mod.asyncio.create_subprocess_exec = fake_exec
     svc = mod.SelfTestService(use_container=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
 
 def test_file_lock_across_processes(tmp_path):

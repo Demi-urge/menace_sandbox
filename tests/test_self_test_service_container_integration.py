@@ -44,7 +44,7 @@ def test_container_env_vars(monkeypatch):
     monkeypatch.setenv("TEST_ENV_VAR", "42")
 
     svc = sts.SelfTestService(use_container=True, container_image="img")
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     cmd = recorded["cmd"]
     assert cmd[0] == "docker"
@@ -81,7 +81,7 @@ def test_podman_offline_load(monkeypatch, tmp_path):
         container_runtime="podman",
         docker_host="ssh://host",
     )
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     load_call = next((c for c in calls if "load" in c), None)
     assert load_call and load_call[0] == "podman"
