@@ -977,6 +977,31 @@ class SelfTestService:
             return []
 
     # ------------------------------------------------------------------
+    def run_once(self, *, refresh_orphans: bool = False) -> dict[str, Any]:
+        """Execute the self tests once and return the results.
+
+        Any exception raised by :meth:`_run_once` is logged and swallowed.
+        """
+
+        if self.metrics_port is not None and not self._metrics_started:
+            try:
+                _me.start_metrics_server(int(self.metrics_port))
+                self._metrics_started = True
+            except Exception:
+                self.logger.exception("failed to start metrics server")
+
+        try:
+            asyncio.run(self._run_once(refresh_orphans=refresh_orphans))
+        except Exception:
+            self.logger.exception("self test run failed")
+        finally:
+            if self._metrics_started:
+                _me.stop_metrics_server()
+                self._metrics_started = False
+
+        return self.results or {}
+
+    # ------------------------------------------------------------------
     def run_continuous(
         self,
         interval: float = 86400.0,

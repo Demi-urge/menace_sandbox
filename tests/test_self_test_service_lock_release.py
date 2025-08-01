@@ -17,6 +17,7 @@ primitives.serialization = serialization
 sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
 import asyncio
 import json
+import logging
 import pytest
 import menace.self_test_service as sts
 
@@ -75,7 +76,7 @@ def test_container_worker_distribution(monkeypatch):
     monkeypatch.setattr(SelfTestService, "_docker_available", avail)
 
     svc = SelfTestService(pytest_args="a b c", workers=5, use_container=True, container_image="img")
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     assert not _container_lock.locked()
     assert len(calls) == 3
@@ -85,7 +86,7 @@ def test_container_worker_distribution(monkeypatch):
 
 # ---------------------------------------------------------------------------
 
-def test_lock_released_on_docker_error(monkeypatch):
+def test_lock_released_on_docker_error(monkeypatch, caplog):
     states = []
 
     async def fail_avail(self):
@@ -98,8 +99,9 @@ def test_lock_released_on_docker_error(monkeypatch):
     monkeypatch.setattr(sts, "ErrorLogger", DummyLogger)
 
     svc = SelfTestService(use_container=True)
-    with pytest.raises(RuntimeError):
-        asyncio.run(svc._run_once())
+    caplog.set_level(logging.ERROR)
+    svc.run_once()
+    assert "self test run failed" in caplog.text
 
     assert states == [True]
     assert not _container_lock.locked()
@@ -107,7 +109,7 @@ def test_lock_released_on_docker_error(monkeypatch):
 
 # ---------------------------------------------------------------------------
 
-def test_lock_released_on_test_failure(monkeypatch):
+def test_lock_released_on_test_failure(monkeypatch, caplog):
     async def avail(self):
         await _container_lock.acquire()
         self._lock_acquired = True
@@ -132,7 +134,8 @@ def test_lock_released_on_test_failure(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_exec)
 
     svc = SelfTestService(use_container=True, container_image="img")
-    with pytest.raises(RuntimeError):
-        asyncio.run(svc._run_once())
+    caplog.set_level(logging.ERROR)
+    svc.run_once()
+    assert "self test run failed" in caplog.text
 
     assert not _container_lock.locked()

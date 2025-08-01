@@ -52,7 +52,7 @@ def test_include_orphans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     svc = mod.SelfTestService(include_orphans=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     joined = [" ".join(map(str, c)) for c in calls]
     assert any("foo.py" in c for c in joined)
@@ -98,7 +98,7 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", mod_find)
 
     svc = mod.SelfTestService(include_orphans=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py", "bar.py"]
@@ -145,7 +145,7 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", helper)
 
     svc = mod.SelfTestService(discover_orphans=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py", "bar.py"]
@@ -195,7 +195,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts", pkg)
 
     svc = mod.SelfTestService(discover_isolated=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py", "bar.py"]
@@ -248,7 +248,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
-    asyncio.run(svc._run_once(refresh_orphans=True))
+    svc.run_once(refresh_orphans=True)
 
     assert calls.get("used") is True
     assert Path(calls["repo"]) == tmp_path
@@ -298,11 +298,11 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(discover_orphans=True, recursive_orphans=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py"]
 
-    asyncio.run(svc._run_once())
+    svc.run_once()
     data2 = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data2) == ["bar.py", "foo.py"]
     assert len(calls) == 2
@@ -359,7 +359,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data) == ["a.py", "b.py", "c.py"]
@@ -414,7 +414,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
-    asyncio.run(svc._run_once(refresh_orphans=True))
+    svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data) == ["a.py", "b.py"]
@@ -477,7 +477,7 @@ def test_recursive_isolated_env(tmp_path, monkeypatch):
 
     called = _setup_isolated(monkeypatch)
     svc = mod.SelfTestService(discover_isolated=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     assert called.get("recursive") is True
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -490,7 +490,7 @@ def test_recursive_isolated_arg(tmp_path, monkeypatch):
 
     called = _setup_isolated(monkeypatch)
     svc = mod.SelfTestService(discover_isolated=True, recursive_isolated=True)
-    asyncio.run(svc._run_once())
+    svc.run_once()
 
     assert called.get("recursive") is True
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
