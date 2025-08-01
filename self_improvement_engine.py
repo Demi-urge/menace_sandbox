@@ -1459,10 +1459,8 @@ class SelfImprovementEngine:
                 self.logger.info(
                     "orphan modules updated", extra=log_record(count=len(combined))
                 )
-                try:
-                    self._refresh_module_map(combined)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("module map refresh failed: %s", exc)
+                # Module map refresh now occurs after successful testing of
+                # discovered orphans so avoid integrating them here
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
 
