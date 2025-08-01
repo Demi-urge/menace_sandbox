@@ -725,6 +725,7 @@ def full_autonomous_run(
                 no_workflow_run=False,
                 max_prompt_length=None,
                 summary_depth=None,
+                include_orphans=getattr(args, "include_orphans", False),
                 discover_orphans=getattr(args, "discover_orphans", False),
                 recursive_orphans=getattr(args, "recursive_orphans", False),
             )
@@ -1043,6 +1044,11 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-orphans",
         action="store_true",
         help="recursively integrate orphan dependency chains (or SANDBOX_RECURSIVE_ORPHANS=1)",
+    )
+    parser.add_argument(
+        "--include-orphans",
+        action="store_true",
+        help="run modules listed in sandbox_data/orphan_modules.json",
     )
     parser.add_argument(
         "--offline-suggestions",
