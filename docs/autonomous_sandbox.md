@@ -140,10 +140,12 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_INCLUDE_ORPHANS=1` – same as above when launched via `sandbox_runner`
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recursively integrate orphan dependency
   chains when refreshing the module map
- - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
-    building the module map (same as `--recursive-isolated` when running
-    `sandbox_runner`)
+- `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
+   building the module map (same as `--recursive-isolated` when running
+   `sandbox_runner`)
 - `SANDBOX_DISCOVER_ISOLATED=1` – extend orphan discovery with isolated modules
+- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable isolated discovery
+  and recursion for self tests
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)

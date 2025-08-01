@@ -1101,6 +1101,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "discover_orphans", False)
         or os.getenv("SANDBOX_DISCOVER_ORPHANS", "0") in {"1", "true", "yes"}
     )
+    if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
+        os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
+        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
     discover_isolated = bool(
         getattr(args, "discover_isolated", False)
         or os.getenv("SANDBOX_DISCOVER_ISOLATED", "0") in {"1", "true", "yes"}

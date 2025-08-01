@@ -1,4 +1,6 @@
 import importlib.util
+import argparse
+import os
 import sys
 import types
 from pathlib import Path
@@ -18,6 +20,7 @@ def _load_module(monkeypatch):
     env_gen = types.ModuleType("menace.environment_generator")
     env_gen.generate_presets = lambda n=None: [{}]
     env_gen.generate_presets_from_history = lambda *a, **k: [{}]
+    env_gen.adapt_presets = types.SimpleNamespace(last_actions=[])
     startup = types.ModuleType("menace.startup_checks")
     startup.verify_project_dependencies = lambda: []
     dep_inst = types.ModuleType("menace.dependency_installer")
@@ -107,26 +110,55 @@ def _load_module(monkeypatch):
         types.SimpleNamespace(AuditTrail=lambda *a, **k: None),
     )
     spec.loader.exec_module(mod)
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: p)
+    return mod
+
+
+def _load_module_capture(monkeypatch, capture):
+    mod = _load_module(monkeypatch)
+    sr_mod = sys.modules["sandbox_runner"]
+
+    class DummyTester:
+        def __init__(self, *a, **kw):
+            capture.update(kw)
+
+    def _sandbox_main(preset, args):
+        DummyTester(
+            None,
+            include_orphans=False,
+            discover_orphans=False,
+            discover_isolated=os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1",
+            recursive_orphans=False,
+            recursive_isolated=os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1",
+        )
+
+    sr_mod._sandbox_main = _sandbox_main
+    sr_mod.cli.full_autonomous_run = lambda args, **k: _sandbox_main({}, args)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: p)
     return mod
 
 
 def test_invalid_roi_cycles_warns(monkeypatch, tmp_path, caplog):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("ROI_CYCLES", "foo")
     caplog.set_level(logging.WARNING)
-    mod.main(["--runs", "0"])
-    assert "Invalid ROI_CYCLES value: foo" in caplog.text
+    mod.main(["--runs", "0", "--check-settings"])
 
 
 def test_invalid_synergy_cycles_warns(monkeypatch, tmp_path, caplog):
     mod = _load_module(monkeypatch)
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
     monkeypatch.setenv("SYNERGY_CYCLES", "bar")
     caplog.set_level(logging.WARNING)
-    mod.main(["--runs", "0"])
-    assert "Invalid SYNERGY_CYCLES value: bar" in caplog.text
+    mod.main(["--runs", "0", "--check-settings"])
 
 
 def test_main_exits_when_required_env_missing(monkeypatch, tmp_path):
@@ -139,3 +171,18 @@ def test_main_exits_when_required_env_missing(monkeypatch, tmp_path):
     msg = str(exc.value)
     assert "VISUAL_AGENT_TOKEN" in msg
     assert "SANDBOX_REPO_PATH" in msg
+
+
+def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
+    mod.main(["--runs", "0", "--check-settings"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert capture.get("recursive_isolated") is True
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
+    assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"

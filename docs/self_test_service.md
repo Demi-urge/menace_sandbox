@@ -122,6 +122,7 @@ When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
 are merged into `module_map.json` and may be incorporated into existing
 workflows automatically on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
+Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies both flags for convenience.
 
 ## Automatic Orphan Detection
 
