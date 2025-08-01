@@ -48,6 +48,7 @@ Options include:
  - `--discover-isolated` – disable automatic discovery of modules returned by `discover_isolated_modules`
 - `--recursive-orphans` – recursively include dependencies of discovered orphans
 - `--recursive-isolated` – recurse through dependencies of isolated modules
+- `--clean-orphans` – remove passing entries from `orphan_modules.json`
 Remove stale containers left over from interrupted runs with:
 
 ```bash
@@ -100,9 +101,10 @@ use `--discover-orphans` to disable it. The discovered modules are saved to the
 same file and appended to the test queue on the next run. Use `--refresh-orphans`
 to force a new scan when the list already exists. Disable recursion with
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `--recursive-orphans`. The search uses
-`sandbox_runner.discover_recursive_orphans` to walk each orphan's imports
-until no new local modules remain. This function is part of the public
-`sandbox_runner` API and may be imported for custom workflows.  When Docker or
+`sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
+to walk each orphan's imports until no new local modules remain. This function
+is part of the public `sandbox_runner` API and may be imported for custom
+workflows.  When Docker or
 other heavy dependencies are unavailable set `MENACE_LIGHT_IMPORTS=1` before the
 import to skip environment initialisation.
 Modules returned by `discover_isolated_modules` are included automatically.
@@ -115,7 +117,7 @@ Example running tests with recursive orphan and isolated discovery:
 ```bash
 python -m menace.self_test_service run tests/unit \
     --include-orphans --discover-orphans --discover-isolated \
-    --recursive-orphans --recursive-isolated
+    --recursive-orphans --clean-orphans --recursive-isolated
 ```
 
 When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
@@ -124,6 +126,8 @@ are merged into `module_map.json` and may be incorporated into existing
 workflows automatically on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
 Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies recursive mode for convenience.
+Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option and remove
+integrated modules from the orphan list after each run.
 The improvement engine also honours `SANDBOX_RECURSIVE_ISOLATED`; set it to
 `0`, `false` or `no` to disable recursion when discovering isolated modules.
 When present, the service forces both `discover_isolated` and
