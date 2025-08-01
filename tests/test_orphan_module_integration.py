@@ -161,6 +161,62 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     assert generated and generated[0] == ["foo.py"]
 
 
+def test_orphan_cleanup(tmp_path, monkeypatch):
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["foo.py"]))
+    (tmp_path / "foo.py").write_text("def foo():\n    return 1\n")
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    env_mod = types.ModuleType("environment")
+    env_mod.generate_workflows_for_modules = lambda mods, workflows_db="workflows.db": [1]
+    pkg = types.ModuleType("sandbox_runner")
+    pkg.environment = env_mod
+    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+
+    map_path = tmp_path / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+    index = mod_db.ModuleIndexDB(map_path)
+    engine = DummyEngine(index)
+
+    monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", lambda self, modules=None, force=False: None)
+
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        integration_callback=engine._refresh_module_map,
+        clean_orphans=True,
+    )
+    svc.run_once()
+
+    data = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert data == []
+
+
 def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
