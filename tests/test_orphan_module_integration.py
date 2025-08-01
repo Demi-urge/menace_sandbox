@@ -124,8 +124,13 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
         generated.append(list(mods))
         return [1]
 
+    env_mod = types.ModuleType("environment")
+    env_mod.generate_workflows_for_modules = fake_generate
+    pkg = types.ModuleType("sandbox_runner")
+    pkg.environment = env_mod
+    monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
-    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
 
     svc = sts.SelfTestService(include_orphans=True)
     svc.run_once()
@@ -212,8 +217,11 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
         generated.append(list(mods))
         return [1]
 
+    env_mod = types.ModuleType("environment")
+    env_mod.generate_workflows_for_modules = fake_generate
+    helper.environment = env_mod
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
-    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
 
     svc = sts.SelfTestService(include_orphans=True, recursive_orphans=True)
     svc.run_once()

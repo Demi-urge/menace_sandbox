@@ -1480,7 +1480,8 @@ class SelfImprovementEngine:
                 self.logger.info(
                     "orphan modules updated", extra=log_record(count=len(combined))
                 )
-                self._integrate_orphans(new_mods)
+                # integration now occurs once modules pass testing via
+                # ``_refresh_module_map``
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
 

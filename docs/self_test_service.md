@@ -141,6 +141,7 @@ to disable this step. Use `SELF_TEST_RECURSIVE_ISOLATED=1` or `--recursive-isola
 to follow their dependencies when generating the test list.
 
 Results for these files are summarised under the `orphan_total`,
-`orphan_failed` and `orphan_passed` fields of the returned statistics. When
-triggered from `sandbox_runner` any successfully tested orphans are merged into
-the module map so subsequent cycles treat them like normal modules.
+`orphan_failed` and `orphan_passed` fields of the returned statistics. The
+update step only records new modules in `orphan_modules.json`. They are merged
+into `module_map.json` when `_refresh_module_map()` runs with the list of
+passing modules so subsequent cycles treat them like normal modules.
