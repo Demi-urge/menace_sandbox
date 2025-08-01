@@ -83,46 +83,7 @@ from .stub_providers import (
     load_stub_providers,
 )
 
-from pathlib import Path
-import ast
-import json
-from typing import Iterable, List, Dict, Any, Optional
-
-
-def _load_discover_func(name: str):
-    """Return the sandbox_runner discovery function ``name`` if available."""
-
-    path = Path(__file__).resolve().parent.parent / "sandbox_runner.py"
-    try:
-        src = path.read_text(encoding="utf-8")
-    except Exception:
-        return None
-
-    try:
-        tree = ast.parse(src)
-        future = ast.parse("from __future__ import annotations").body[0]
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name == name:
-                mod: Dict[str, Any] = {
-                    "ast": ast,
-                    "os": os,
-                    "json": json,
-                    "List": List,
-                    "Iterable": Iterable,
-                    "Path": Path,
-                }
-                if name == "discover_recursive_orphans" and "discover_orphan_modules" in globals():
-                    mod["discover_orphan_modules"] = globals()["discover_orphan_modules"]
-                ast.fix_missing_locations(node)
-                code = ast.Module(body=[future, node], type_ignores=[])
-                exec(compile(code, str(path), "exec"), mod)
-                return mod.get(name)
-    except Exception:
-        return None
-    return None
-
-discover_orphan_modules = _load_discover_func("discover_orphan_modules")
-discover_recursive_orphans = _load_discover_func("discover_recursive_orphans")
+from .orphan_discovery import discover_orphan_modules, discover_recursive_orphans
 
 __all__ = [
     "simulate_execution_environment",

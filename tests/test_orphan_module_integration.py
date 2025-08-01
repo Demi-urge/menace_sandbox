@@ -193,20 +193,25 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import ast, os
-    path = ROOT / "sandbox_runner.py"
-    src = path.read_text()
+    orphan_path = ROOT / "sandbox_runner" / "orphan_discovery.py"
+    src = orphan_path.read_text()
     tree = ast.parse(src)
-    funcs = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name in {"discover_orphan_modules", "_discover_orphans_once"}
-    ]
+    funcs = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "discover_orphan_modules"]
+
+    runner_path = ROOT / "sandbox_runner.py"
+    src2 = runner_path.read_text()
+    tree2 = ast.parse(src2)
+    for node in tree2.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "_discover_orphans_once":
+            funcs.append(node)
+            break
+
     from typing import List, Iterable
     mod_dict = {"ast": ast, "os": os, "json": json, "Path": Path, "List": List, "Iterable": Iterable}
-    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
+    for f in funcs:
+        ast.fix_missing_locations(f)
     code = ast.Module(body=funcs, type_ignores=[])
-    exec(compile(code, str(path), "exec"), mod_dict)
+    exec(compile(code, str(orphan_path), "exec"), mod_dict)
     helper = types.ModuleType("sandbox_runner")
     helper.discover_orphan_modules = mod_dict["discover_orphan_modules"]
     helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
