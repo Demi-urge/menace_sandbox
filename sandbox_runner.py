@@ -997,6 +997,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         discover_isolated=discover_isolated,
         recursive_orphans=recursive_orphans,
         recursive_isolated=recursive_isolated,
+        integration_callback=improver._refresh_module_map,
     )
     from menace.roi_tracker import ROITracker
 

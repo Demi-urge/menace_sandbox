@@ -158,14 +158,6 @@ def _sandbox_cycle_runner(
         )
         logger.info("tester run", extra=log_record(cycle=idx))
         ctx.tester.run_once()
-        passed_modules: list[str] = []
-        if getattr(ctx.tester, "results", None):
-            passed_modules = ctx.tester.results.get("orphan_passed", [])
-        if passed_modules:
-            try:
-                ctx.improver._refresh_module_map(passed_modules)
-            except Exception:
-                logger.exception("orphan integration failed")
         logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))

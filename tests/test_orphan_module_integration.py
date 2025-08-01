@@ -132,13 +132,6 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
 
-    svc = sts.SelfTestService(include_orphans=True)
-    svc.run_once()
-
-    orphans = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert svc.results.get("orphan_failed") == 0
-    passed = list(orphans)
-
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
     index = mod_db.ModuleIndexDB(map_path)
@@ -152,7 +145,15 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", fake_refresh)
 
-    engine._refresh_module_map(passed)
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        integration_callback=engine._refresh_module_map,
+    )
+    svc.run_once()
+
+    orphans = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert svc.results.get("orphan_failed") == 0
+    passed = list(orphans)
 
     assert engine.module_clusters.get("foo.py") == 1
     data = json.loads(map_path.read_text())
@@ -223,13 +224,6 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
 
-    svc = sts.SelfTestService(include_orphans=True, recursive_orphans=True)
-    svc.run_once()
-
-    orphans = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert sorted(orphans) == ["a.py", "b.py"]
-    passed = list(orphans)
-
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
     index = mod_db.ModuleIndexDB(map_path)
@@ -243,7 +237,16 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", fake_refresh)
 
-    engine._refresh_module_map(passed)
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        recursive_orphans=True,
+        integration_callback=engine._refresh_module_map,
+    )
+    svc.run_once()
+
+    orphans = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert sorted(orphans) == ["a.py", "b.py"]
+    passed = list(orphans)
 
     data = json.loads(map_path.read_text())
     assert "a.py" in data.get("modules", {})
@@ -305,11 +308,13 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.chdir(tmp_path)
 
-    svc = sts.SelfTestService(include_orphans=True)
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        integration_callback=engine._refresh_module_map,
+    )
     svc.run_once()
 
     passed = svc.results.get("orphan_passed") or []
-    engine._refresh_module_map(passed)
 
     data = json.loads(map_path.read_text())
     assert "foo.py" not in data.get("modules", {})
