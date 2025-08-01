@@ -27,7 +27,10 @@ import math
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
-from sandbox_runner.environment import generate_workflows_for_modules
+from sandbox_runner.environment import (
+    generate_workflows_for_modules,
+    try_integrate_into_workflows,
+)
 
 import numpy as np
 import socket
@@ -1371,6 +1374,12 @@ class SelfImprovementEngine:
                 self.module_clusters[m] = idx
             self.module_index.save()
             self._last_map_refresh = time.time()
+            try:
+                try_integrate_into_workflows(sorted(mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "workflow integration failed: %s", exc
+                )
             try:
                 generate_workflows_for_modules(sorted(mods))
             except Exception as exc:  # pragma: no cover - best effort
