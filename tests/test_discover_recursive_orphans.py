@@ -1,35 +1,35 @@
-import ast
+import importlib
 import json
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def _load_func():
-    path = ROOT / "sandbox_runner.py"
-    src = path.read_text()
-    tree = ast.parse(src)
-    funcs = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name in {
-            "discover_recursive_orphans",
-            "discover_orphan_modules",
-            "_discover_orphans_once",
-        }:
-            funcs.append(node)
-    from typing import List, Iterable
-    import os, json as js
-    mod = {"ast": ast, "os": os, "json": js, "List": List, "Iterable": Iterable, "Path": Path}
-    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
-    code = ast.Module(body=funcs, type_ignores=[])
-    exec(compile(code, str(path), "exec"), mod)
-    return mod["discover_recursive_orphans"]
+import sys
+import types
 
 
-discover_recursive_orphans = _load_func()
+def _import_recursive(monkeypatch):
+    env = types.ModuleType("env")
+    env.simulate_execution_environment = lambda *_a, **_k: None
+    env.generate_sandbox_report = lambda *_a, **_k: None
+    env.run_repo_section_simulations = lambda *_a, **_k: None
+    env.run_workflow_simulations = lambda *_a, **_k: None
+    env.simulate_full_environment = lambda *_a, **_k: None
+    env.generate_input_stubs = lambda *_a, **_k: None
+    env.SANDBOX_INPUT_STUBS = {}
+    env.SANDBOX_EXTRA_METRICS = {}
+    env.SANDBOX_ENV_PRESETS = {}
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env)
+    men = types.ModuleType("menace")
+    env_gen = types.ModuleType("menace.environment_generator")
+    env_gen._CPU_LIMITS = [1]
+    env_gen._MEMORY_LIMITS = [1]
+    men.environment_generator = env_gen
+    monkeypatch.setitem(sys.modules, "menace", men)
+    monkeypatch.setitem(sys.modules, "menace.environment_generator", env_gen)
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    mod = importlib.reload(importlib.import_module("sandbox_runner"))
+    return mod.discover_recursive_orphans
 
 
-def test_recursive_import_includes_dependencies(tmp_path):
+def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
+    discover_recursive_orphans = _import_recursive(monkeypatch)
     (tmp_path / "a.py").write_text("import b\n")
     (tmp_path / "b.py").write_text("x = 1\n")
     data_dir = tmp_path / "sandbox_data"
@@ -38,3 +38,9 @@ def test_recursive_import_includes_dependencies(tmp_path):
 
     res = discover_recursive_orphans(str(tmp_path), module_map=data_dir / "module_map.json")
     assert sorted(res) == ["a", "b"]
+
+
+def test_public_import(monkeypatch):
+    func = _import_recursive(monkeypatch)
+    assert callable(func)
+    assert "sandbox_runner.sandbox_runner" not in sys.modules

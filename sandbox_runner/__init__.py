@@ -36,21 +36,24 @@ from .stub_providers import (
 
 from pathlib import Path
 import ast
+import json
+from typing import List, Iterable
 
 
 def _load_discover_func():
-    path = Path(__file__).with_name("sandbox_runner.py")
+    path = Path(__file__).resolve().parent.parent / "sandbox_runner.py"
     try:
         src = path.read_text(encoding="utf-8")
     except Exception:
         return None
     try:
         tree = ast.parse(src)
+        future = ast.parse("from __future__ import annotations").body[0]
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name == "discover_orphan_modules":
-                mod: dict[str, object] = {}
+                mod = {"ast": ast, "os": os, "json": json, "List": List, "Iterable": Iterable, "Path": Path}
                 ast.fix_missing_locations(node)
-                code = ast.Module(body=[node], type_ignores=[])
+                code = ast.Module(body=[future, node], type_ignores=[])
                 exec(compile(code, str(path), "exec"), mod)
                 return mod.get("discover_orphan_modules")
     except Exception:
@@ -58,7 +61,29 @@ def _load_discover_func():
     return None
 
 
+def _load_recursive_func():
+    path = Path(__file__).resolve().parent.parent / "sandbox_runner.py"
+    try:
+        src = path.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        tree = ast.parse(src)
+        future = ast.parse("from __future__ import annotations").body[0]
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "discover_recursive_orphans":
+                mod = {"ast": ast, "os": os, "json": json, "List": List, "Iterable": Iterable, "Path": Path,
+                       "discover_orphan_modules": discover_orphan_modules}
+                ast.fix_missing_locations(node)
+                code = ast.Module(body=[future, node], type_ignores=[])
+                exec(compile(code, str(path), "exec"), mod)
+                return mod.get("discover_recursive_orphans")
+    except Exception:
+        return None
+    return None
+
 discover_orphan_modules = _load_discover_func()
+discover_recursive_orphans = _load_recursive_func()
 
 __all__ = [
     "simulate_execution_environment",
@@ -66,6 +91,7 @@ __all__ = [
     "run_repo_section_simulations",
     "run_workflow_simulations",
     "discover_orphan_modules",
+    "discover_recursive_orphans",
     "simulate_full_environment",
     "generate_input_stubs",
     "SANDBOX_INPUT_STUBS",
