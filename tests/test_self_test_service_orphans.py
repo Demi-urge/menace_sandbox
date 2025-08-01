@@ -3,6 +3,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -408,4 +409,15 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     assert "a.py" in joined
     assert "b.py" in joined
     assert len(discover_calls) == 1
+
+
+@pytest.mark.parametrize("var", ["SELF_TEST_INCLUDE_ORPHANS", "SANDBOX_INCLUDE_ORPHANS"])
+def test_env_orphans_enabled(tmp_path, monkeypatch, var):
+    (tmp_path / "sandbox_data").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(var, "1")
+
+    svc = mod.SelfTestService()
+
+    assert svc.include_orphans is True
 
