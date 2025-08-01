@@ -126,7 +126,9 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
 
     _refresh_module_map(eng, ["foo.py"])
 
-    assert calls["update"] == 1
+    # integration should occur via ``_integrate_orphans`` but orphan discovery
+    # is postponed until explicitly triggered
+    assert calls["update"] == 0
 
 
 def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
@@ -162,7 +164,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     # orphan discovery should not immediately update the module map
     map_file = tmp_path / "module_map.json"
-    assert map_file.exists()
+    assert not map_file.exists()
 
     mods_path = tmp_path / "orphan_modules.json"
     if not mods_path.exists():
@@ -170,6 +172,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
     mods = json.loads(mods_path.read_text())
     eng._refresh_module_map(mods)
 
+    assert map_file.exists()
     data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
 
@@ -210,7 +213,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     _update_orphan_modules(eng)
 
     map_file = tmp_path / "module_map.json"
-    assert map_file.exists()
+    assert not map_file.exists()
 
     mods_path = tmp_path / "orphan_modules.json"
     if not mods_path.exists():
@@ -218,6 +221,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     mods = json.loads(mods_path.read_text())
     eng._refresh_module_map(mods)
 
+    assert map_file.exists()
     data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
     assert called.get("recursive") is True
