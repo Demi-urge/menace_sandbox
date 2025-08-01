@@ -83,7 +83,8 @@ referenced by any tests. The self‑test service loads
 merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.
-Use `--recursive-orphans` or set `SANDBOX_RECURSIVE_ORPHANS=1` to follow
+If a discovered module belongs to an existing workflow, the sandbox will attempt to merge it into that sequence automatically.
+Use `--recursive-orphans` or set `SELF_TEST_RECURSIVE_ORPHANS=1` (or `SANDBOX_RECURSIVE_ORPHANS=1` when running via `sandbox_runner`) to recursively scan
 dependencies of each orphan when building the list.
 
 Example workflow:
