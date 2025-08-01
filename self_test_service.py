@@ -91,7 +91,7 @@ class SelfTestService:
         metrics_port: int | None = None,
         include_orphans: bool = True,
         discover_orphans: bool = True,
-        discover_isolated: bool = False,
+        discover_isolated: bool = True,
         recursive_orphans: bool = True,
         recursive_isolated: bool = False,
     ) -> None:
@@ -203,11 +203,10 @@ class SelfTestService:
             if env_recursive is not None:
                 self.recursive_orphans = env_recursive.lower() in ("1", "true", "yes")
 
+        self.discover_isolated = bool(discover_isolated)
         env_isolated = os.getenv("SELF_TEST_DISCOVER_ISOLATED")
-        if discover_isolated or (env_isolated and env_isolated.lower() in ("1", "true", "yes")):
-            self.discover_isolated = True
-        else:
-            self.discover_isolated = False
+        if env_isolated is not None:
+            self.discover_isolated = env_isolated.lower() in ("1", "true", "yes")
 
         env_recursive_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
         if recursive_isolated or (

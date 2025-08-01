@@ -131,7 +131,7 @@ After the system tools are in place install the Python requirements via
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISABLE_ORPHANS=1` – skip orphan module discovery and execution
 - `SELF_TEST_DISCOVER_ORPHANS=0` – disable automatic orphan scans
-- `SELF_TEST_DISCOVER_ISOLATED=0` – ignore modules returned by
+- `SELF_TEST_DISCOVER_ISOLATED=0` – disable automatic processing of
   `discover_isolated_modules`
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
   (equivalent to `--recursive-isolated`)
@@ -142,9 +142,8 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
    building the module map (same as `--recursive-isolated` when running
    `sandbox_runner`)
-- `SANDBOX_DISCOVER_ISOLATED=1` – extend orphan discovery with isolated modules
-- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable isolated discovery
-  and recursion for self tests
+- `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
+- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable recursion for self tests
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)

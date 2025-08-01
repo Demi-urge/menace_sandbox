@@ -1092,6 +1092,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "offline_suggestions", False)
         or os.getenv("SANDBOX_OFFLINE_SUGGESTIONS", "0") == "1"
     )
+    os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
     include_orphans = True
     if os.getenv("SANDBOX_DISABLE_ORPHANS") == "1":
         include_orphans = False

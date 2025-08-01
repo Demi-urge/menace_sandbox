@@ -1086,6 +1086,8 @@ def main(argv: List[str] | None = None) -> None:
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
+    os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
+
     if getattr(args, "recursive_orphans") is False:
         os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "0"
         os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "0"
