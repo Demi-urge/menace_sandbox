@@ -104,8 +104,9 @@ modules separately when started with `--include-orphans`. Pass
 `--discover-orphans` or set `SELF_TEST_DISCOVER_ORPHANS=1` to scan the
 repository automatically and update the file before running. Use
 `--recursive-orphans` or `SELF_TEST_RECURSIVE_ORPHANS=1` to follow dependency
-chains so related modules are included as well. When launched via
-`run_autonomous.py` the same flag also sets `SANDBOX_RECURSIVE_ORPHANS=1` so the
+chains so related modules are included as well. When enabled the service uses
+`sandbox_runner.discover_recursive_orphans` to walk imports for each orphan.
+When launched via `run_autonomous.py` the same flag also sets `SANDBOX_RECURSIVE_ORPHANS=1` so the
 module map refresh integrates the additional files. Successful integrations
 also create one-step workflows for the passing orphan modules so they become
 immediately available for benchmarking.
