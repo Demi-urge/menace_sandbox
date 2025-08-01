@@ -1065,6 +1065,11 @@ def main(argv: List[str] | None = None) -> None:
         help="automatically run discover_isolated_modules",
     )
     parser.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        help="recursively process modules from discover_isolated_modules",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -1085,6 +1090,9 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "discover_isolated", False):
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+    if getattr(args, "recursive_isolated", False):
+        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"

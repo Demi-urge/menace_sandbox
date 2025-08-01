@@ -101,5 +101,8 @@ Pass `--discover-isolated` or set `SANDBOX_DISCOVER_ISOLATED=1` to also load
 modules returned by `discover_isolated_modules` before falling back to the
 recursive discovery. These isolated modules are recursively tested just like
 regular orphans and merged into `module_map.json` once they pass so later runs
-treat them as normal members of their assigned groups.
+treat them as normal members of their assigned groups. Use `--recursive-isolated`
+or set `SELF_TEST_RECURSIVE_ISOLATED=1` (or `SANDBOX_RECURSIVE_ISOLATED=1` when
+running via `sandbox_runner`) to also traverse their dependencies when
+generating the list.
 

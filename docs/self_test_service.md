@@ -47,6 +47,7 @@ Options include:
 - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
 - `--discover-isolated` – load modules returned by `discover_isolated_modules` before scanning for orphans
 - `--recursive-orphans` – recursively include dependencies of discovered orphans
+- `--recursive-isolated` – recurse through dependencies of isolated modules
 Remove stale containers left over from interrupted runs with:
 
 ```bash
@@ -105,6 +106,8 @@ modules are added when an orphan imports other files. The search uses
 until no new local modules remain.
 Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=1` to include
 modules returned by `discover_isolated_modules` before searching for orphans.
+Enable dependency traversal for these modules with `SELF_TEST_RECURSIVE_ISOLATED=1`
+or the `--recursive-isolated` option.
 
 Example running tests with recursive orphan discovery:
 
@@ -116,6 +119,8 @@ python -m menace.self_test_service run tests/unit \
 When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` to
 achieve the same behaviour. Passing modules are added to `module_map.json`
 and simple one-step workflows are generated automatically on the next run.
+Set `SANDBOX_RECURSIVE_ISOLATED=1` to recurse through isolated module
+dependencies during these runs.
 If a discovered module fits an existing workflow group, the sandbox tries to merge it into those flows automatically.
 
 ## Automatic Orphan Detection
@@ -131,7 +136,8 @@ The generated list is
 saved for future runs and the new modules are tested immediately.
 Setting `SELF_TEST_DISCOVER_ISOLATED=1` or passing `--discover-isolated` tells
 the service to include modules returned by `discover_isolated_modules` during
-these automatic scans.
+these automatic scans. Use `SELF_TEST_RECURSIVE_ISOLATED=1` or `--recursive-isolated`
+to follow their dependencies when generating the test list.
 
 Results for these files are summarised under the `orphan_total`,
 `orphan_failed` and `orphan_passed` fields of the returned statistics. When

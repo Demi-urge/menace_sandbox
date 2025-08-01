@@ -996,6 +996,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         discover_orphans=discover_orphans,
         discover_isolated=discover_isolated,
         recursive_orphans=recursive_orphans,
+        recursive_isolated=recursive_isolated,
     )
     from menace.roi_tracker import ROITracker
 
@@ -1104,11 +1105,16 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "discover_isolated", False)
         or os.getenv("SANDBOX_DISCOVER_ISOLATED", "0") in {"1", "true", "yes"}
     )
+    recursive_isolated = bool(
+        getattr(args, "recursive_isolated", False)
+        or os.getenv("SANDBOX_RECURSIVE_ISOLATED", "0") in {"1", "true", "yes"}
+    )
     recursive_orphans = bool(
         getattr(args, "recursive_orphans", False)
         or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "0") in {"1", "true", "yes"}
     )
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1" if recursive_orphans else "0"
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1" if recursive_isolated else "0"
     os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1" if discover_isolated else "0"
     adapt_env = os.getenv("SANDBOX_ADAPT_PRESETS")
     if adapt_env is not None:
