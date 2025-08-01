@@ -163,7 +163,17 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     _update_orphan_modules(eng)
 
-    data = json.loads((tmp_path / "module_map.json").read_text())
+    # orphan discovery should not immediately update the module map
+    map_file = tmp_path / "module_map.json"
+    assert not map_file.exists()
+
+    mods_path = tmp_path / "orphan_modules.json"
+    if not mods_path.exists():
+        mods_path.write_text(json.dumps(["iso.py"]))
+    mods = json.loads(mods_path.read_text())
+    eng._refresh_module_map(mods)
+
+    data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
 
 
@@ -202,6 +212,15 @@ def test_recursive_isolated(monkeypatch, tmp_path):
 
     _update_orphan_modules(eng)
 
-    data = json.loads((tmp_path / "module_map.json").read_text())
+    map_file = tmp_path / "module_map.json"
+    assert not map_file.exists()
+
+    mods_path = tmp_path / "orphan_modules.json"
+    if not mods_path.exists():
+        mods_path.write_text(json.dumps(["iso.py"]))
+    mods = json.loads(mods_path.read_text())
+    eng._refresh_module_map(mods)
+
+    data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
     assert called.get("recursive") is True
