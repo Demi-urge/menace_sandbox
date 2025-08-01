@@ -238,6 +238,8 @@ def test_recursive_option_used(tmp_path, monkeypatch):
 
     def discover(repo, module_map=None):
         calls["used"] = True
+        calls["repo"] = repo
+        calls["map"] = module_map
         return ["foo"]
 
     helper = types.ModuleType("sandbox_runner")
@@ -249,6 +251,8 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     asyncio.run(svc._run_once(refresh_orphans=True))
 
     assert calls.get("used") is True
+    assert Path(calls["repo"]) == tmp_path
+    assert Path(calls["map"]).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
 
 def test_discover_orphans_append(tmp_path, monkeypatch):
@@ -285,7 +289,7 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     calls = []
 
     def discover(repo, module_map=None):
-        calls.append(True)
+        calls.append((repo, module_map))
         return seq.pop(0)
 
     helper = types.ModuleType("sandbox_runner")
@@ -302,6 +306,9 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     data2 = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data2) == ["bar.py", "foo.py"]
     assert len(calls) == 2
+    for repo, m in calls:
+        assert Path(repo) == tmp_path
+        assert Path(m).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
 
 def test_recursive_chain_modules(tmp_path, monkeypatch):
@@ -340,7 +347,11 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
 
     import types
 
+    params = {}
+
     def discover(repo, module_map=None):
+        params.setdefault("repo", repo)
+        params.setdefault("map", module_map)
         return ["a", "b", "c"]
 
     helper = types.ModuleType("sandbox_runner")
@@ -356,6 +367,8 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     assert "a.py" in joined
     assert "b.py" in joined
     assert "c.py" in joined
+    assert Path(params["repo"]) == tmp_path
+    assert Path(params["map"]).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
 
 def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
@@ -393,7 +406,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     import types
 
     def discover(repo, module_map=None):
-        discover_calls.append(True)
+        discover_calls.append((repo, module_map))
         return ["a", "b"]
 
     helper = types.ModuleType("sandbox_runner")
@@ -409,6 +422,9 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     assert "a.py" in joined
     assert "b.py" in joined
     assert len(discover_calls) == 1
+    repo, m = discover_calls[0]
+    assert Path(repo) == tmp_path
+    assert Path(m).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
 
 
 @pytest.mark.parametrize("var", ["SELF_TEST_INCLUDE_ORPHANS", "SANDBOX_INCLUDE_ORPHANS"])

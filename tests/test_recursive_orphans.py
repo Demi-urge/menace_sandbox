@@ -81,6 +81,8 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
 
     def discover(repo_path: str, module_map=None):
         called["used"] = True
+        called["repo"] = repo_path
+        called["map"] = module_map
         return ["foo.bar"]
 
     sr.discover_recursive_orphans = discover
@@ -95,6 +97,8 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     _update_orphan_modules(eng)
 
     assert called.get("used") is True
+    assert Path(called["repo"]) == tmp_path
+    assert Path(called["map"]).resolve() == (tmp_path / "module_map.json").resolve()
     data = json.loads((tmp_path / "orphan_modules.json").read_text())
     assert "foo/bar.py" in data
 

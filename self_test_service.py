@@ -465,7 +465,9 @@ class SelfTestService:
         if self.recursive_orphans:
             from sandbox_runner import discover_recursive_orphans as _discover
 
-            names = _discover(str(Path.cwd()))
+            names = _discover(
+                str(Path.cwd()), module_map=Path("sandbox_data") / "module_map.json"
+            )
             modules = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
         else:
             from scripts.find_orphan_modules import find_orphan_modules

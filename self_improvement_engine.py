@@ -1428,7 +1428,7 @@ class SelfImprovementEngine:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan discovery failed: %s", exc)
 
-        if not modules:
+        if not modules and not recursive:
             try:
                 from scripts.find_orphan_modules import find_orphan_modules
 
