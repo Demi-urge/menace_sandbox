@@ -459,9 +459,16 @@ class SelfTestService:
     # ------------------------------------------------------------------
     def _discover_orphans(self) -> list[str]:
         """Run find_orphan_modules and save results."""
-        from scripts.find_orphan_modules import find_orphan_modules
+        modules: list[str]
+        if self.recursive_orphans:
+            from sandbox_runner import discover_recursive_orphans as _discover
 
-        modules = [str(p) for p in find_orphan_modules(Path.cwd(), recursive=self.recursive_orphans)]
+            names = _discover(str(Path.cwd()))
+            modules = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+        else:
+            from scripts.find_orphan_modules import find_orphan_modules
+
+            modules = [str(p) for p in find_orphan_modules(Path.cwd())]
         path = Path("sandbox_data") / "orphan_modules.json"
         try:
             path.parent.mkdir(exist_ok=True)
@@ -524,35 +531,9 @@ class SelfTestService:
                     self.logger.exception("failed to load orphan modules")
             else:
                 try:
-                    from sandbox_runner import discover_orphan_modules as _discover
-                    depth_limit = int(os.getenv("SELF_TEST_ORPHAN_DEPTH", "5"))
-                    discovered: set[str] = set()
-                    for _ in range(max(1, depth_limit)):
-                        names = _discover(str(Path.cwd()), recursive=self.recursive_orphans)
-                        files = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
-                        new = set(files) - discovered
-                        discovered.update(files)
-                        if not new:
-                            break
-                    orphan_list = sorted(discovered)
+                    orphan_list = self._discover_orphans()
                 except Exception:
                     self.logger.exception("failed to discover orphan modules")
-                if orphan_list:
-                    try:
-                        path.parent.mkdir(exist_ok=True)
-                        existing: list[str] = []
-                        if path.exists():
-                            try:
-                                with open(path, "r", encoding="utf-8") as fh:
-                                    data = json.load(fh) or []
-                                    if isinstance(data, list):
-                                        existing = [str(p) for p in data]
-                            except Exception:
-                                self.logger.exception("failed to load orphan modules")
-                        combined = list(dict.fromkeys(existing + orphan_list))
-                        path.write_text(json.dumps(combined, indent=2))
-                    except Exception:
-                        self.logger.exception("failed to write orphan modules")
 
         if self.discover_orphans:
             try:

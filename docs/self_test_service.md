@@ -123,8 +123,10 @@ When the service is launched with `--include-orphans` or the environment
 variable `SANDBOX_INCLUDE_ORPHANS=1`, it searches for
 `sandbox_data/orphan_modules.json` and runs each listed module alongside the
 regular test suite. If the file does not exist, the service attempts to locate
-orphan modules automatically using `sandbox_runner.discover_orphan_modules` or
-the fallback `scripts/find_orphan_modules.py` helper. The generated list is
+orphan modules automatically using `sandbox_runner.discover_recursive_orphans`
+when `SELF_TEST_RECURSIVE_ORPHANS=1` or falling back to
+`sandbox_runner.discover_orphan_modules` and the helper `scripts/find_orphan_modules.py`.
+The generated list is
 saved for future runs and the new modules are tested immediately.
 Setting `SELF_TEST_DISCOVER_ISOLATED=1` or passing `--discover-isolated` tells
 the service to include modules returned by `discover_isolated_modules` during

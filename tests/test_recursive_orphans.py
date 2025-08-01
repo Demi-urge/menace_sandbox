@@ -79,12 +79,11 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     called = {}
     sr = types.ModuleType("sandbox_runner")
 
-    def discover(repo_path: str, recursive=False):
+    def discover(repo_path: str, module_map=None):
         called["used"] = True
-        assert recursive is True
         return ["foo.bar"]
 
-    sr.discover_orphan_modules = discover
+    sr.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))

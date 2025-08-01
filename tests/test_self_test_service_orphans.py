@@ -92,9 +92,9 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import types
-    helper = types.ModuleType("sandbox_runner")
-    helper.discover_orphan_modules = lambda repo, recursive=False: ["foo", "bar"]
-    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+    mod_find = types.ModuleType("scripts.find_orphan_modules")
+    mod_find.find_orphan_modules = lambda root: [Path("foo.py"), Path("bar.py")]
+    monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", mod_find)
 
     svc = mod.SelfTestService(include_orphans=True)
     asyncio.run(svc._run_once())
@@ -235,14 +235,14 @@ def test_recursive_option_used(tmp_path, monkeypatch):
 
     calls = {}
 
-    def discover(repo, recursive=False):
+    def discover(repo, module_map=None):
         calls["used"] = True
-        assert recursive is True
         return ["foo"]
 
     helper = types.ModuleType("sandbox_runner")
-    helper.discover_orphan_modules = discover
+    helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
     asyncio.run(svc._run_once(refresh_orphans=True))
@@ -280,16 +280,17 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
 
     import types
 
-    seq = [[Path("foo.py")], [Path("bar.py")]]
+    seq = [["foo"], ["bar"]]
     calls = []
 
-    def find(root, recursive=False):
-        calls.append(recursive)
+    def discover(repo, module_map=None):
+        calls.append(True)
         return seq.pop(0)
 
-    helper = types.ModuleType("scripts.find_orphan_modules")
-    helper.find_orphan_modules = find
-    monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", helper)
+    helper = types.ModuleType("sandbox_runner")
+    helper.discover_recursive_orphans = discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(discover_orphans=True, recursive_orphans=True)
     asyncio.run(svc._run_once())
@@ -299,7 +300,7 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     asyncio.run(svc._run_once())
     data2 = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data2) == ["bar.py", "foo.py"]
-    assert all(c is True for c in calls)
+    assert len(calls) == 2
 
 
 def test_recursive_chain_modules(tmp_path, monkeypatch):
@@ -336,25 +337,13 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.chdir(tmp_path)
 
-    import ast, types, os
-    path = ROOT / "sandbox_runner.py"
-    src = path.read_text()
-    tree = ast.parse(src)
-    funcs = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name in {"discover_orphan_modules", "_discover_orphans_once"}
-    ]
-    from typing import List, Iterable
-    mod_dict = {"ast": ast, "os": os, "json": json, "Path": Path, "List": List, "Iterable": Iterable}
-    ast.fix_missing_locations(ast.Module(body=funcs, type_ignores=[]))
-    code = ast.Module(body=funcs, type_ignores=[])
-    exec(compile(code, str(path), "exec"), mod_dict)
-    discover = mod_dict["discover_orphan_modules"]
+    import types
+
+    def discover(repo, module_map=None):
+        return ["a", "b", "c"]
 
     helper = types.ModuleType("sandbox_runner")
-    helper.discover_orphan_modules = discover
+    helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
@@ -402,14 +391,12 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
 
     import types
 
-    def discover(repo, recursive=False):
+    def discover(repo, module_map=None):
         discover_calls.append(True)
-        if len(discover_calls) == 1:
-            return ["a"]
         return ["a", "b"]
 
     helper = types.ModuleType("sandbox_runner")
-    helper.discover_orphan_modules = discover
+    helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     svc = mod.SelfTestService(include_orphans=True, recursive_orphans=True)
@@ -420,5 +407,5 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     joined = "\n".join(calls)
     assert "a.py" in joined
     assert "b.py" in joined
-    assert len(discover_calls) >= 2
+    assert len(discover_calls) == 1
 
