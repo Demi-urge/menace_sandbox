@@ -1045,6 +1045,11 @@ def main(argv: List[str] | None = None) -> None:
         help="reload last ROI and synergy histories before running",
     )
     parser.add_argument(
+        "--recursive-orphans",
+        action="store_true",
+        help="recursively integrate orphan dependency chains",
+    )
+    parser.add_argument(
         "--check-settings",
         action="store_true",
         help="validate environment settings and exit",
@@ -1052,6 +1057,9 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    if getattr(args, "recursive_orphans", False):
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1"
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"

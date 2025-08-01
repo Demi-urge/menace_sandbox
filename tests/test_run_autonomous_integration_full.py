@@ -238,6 +238,7 @@ def test_run_autonomous_integration_full(monkeypatch, tmp_path: Path):
         "--runs", "3",
         "--preset-count", "1",
         "--sandbox-data-dir", str(tmp_path),
+        "--recursive-orphans",
     ])
 
     conn = sqlite3.connect(tmp_path / "synergy_history.db")

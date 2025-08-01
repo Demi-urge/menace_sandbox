@@ -47,6 +47,7 @@ def test_minimal_autonomous_run(monkeypatch, tmp_path):
         dashboard_port=None,
         roi_cycles=1,
         synergy_cycles=1,
+        recursive_orphans=True,
     )
 
     cli.full_autonomous_run(args)

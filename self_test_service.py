@@ -190,6 +190,8 @@ class SelfTestService:
             self.discover_isolated = False
 
         env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+        if env_recursive is None:
+            env_recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
         if recursive_orphans or (env_recursive and env_recursive.lower() in ("1", "true", "yes")):
             self.recursive_orphans = True
         else:
