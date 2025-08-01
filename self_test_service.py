@@ -172,6 +172,8 @@ class SelfTestService:
         except ValueError:
             self.workers = 1
         env_orphans = os.getenv("SELF_TEST_INCLUDE_ORPHANS")
+        if env_orphans is None:
+            env_orphans = os.getenv("SANDBOX_INCLUDE_ORPHANS")
         if include_orphans or (env_orphans and env_orphans.lower() in ("1", "true", "yes")):
             self.include_orphans = True
         else:
