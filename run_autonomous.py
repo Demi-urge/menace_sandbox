@@ -1093,6 +1093,9 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "recursive_isolated", False):
         os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
         os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
+    if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
+        os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
+        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
