@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Dict, Iterable
 
+from orphan_analyzer import analyze_redundancy
+
 from module_graph_analyzer import build_import_graph, cluster_modules
 
 
@@ -16,15 +18,22 @@ def discover_module_groups(
     use_semantic: bool = False,
 ) -> dict[str, list[str]]:
     """Return groups of related modules under ``repo_path``."""
+    root = Path(repo_path)
     mapping = cluster_modules(
-        build_import_graph(repo_path),
+        build_import_graph(root),
         algorithm=algorithm,
         threshold=threshold,
         use_semantic=use_semantic,
-        root=Path(repo_path),
+        root=root,
     )
     groups: Dict[int, list[str]] = {}
     for mod, cid in mapping.items():
+        path = root / f"{mod}.py"
+        try:
+            if analyze_redundancy(path):
+                continue
+        except Exception:
+            pass
         groups.setdefault(cid, []).append(mod)
     return {str(k): sorted(v) for k, v in groups.items()}
 
@@ -51,6 +60,17 @@ def build_module_map(
         use_semantic=use_semantic,
         root=root,
     )
+    if mapping:
+        filtered: Dict[str, int] = {}
+        for mod, grp in mapping.items():
+            path = root / f"{mod}.py"
+            try:
+                if analyze_redundancy(path):
+                    continue
+            except Exception:
+                pass
+            filtered[mod] = grp
+        mapping = filtered
     out = root / "sandbox_data" / "module_map.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w", encoding="utf-8") as fh:

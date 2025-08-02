@@ -117,11 +117,8 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
 
     _, update, _ = _load_methods()
 
-    def fake_discover(repo: str):
-        return ["foo"]
-
     sr = types.ModuleType("sandbox_runner")
-    sr.discover_orphan_modules = fake_discover
+    sr.discover_recursive_orphans = lambda repo, module_map=None: ["foo"]
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
