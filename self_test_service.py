@@ -522,7 +522,8 @@ class SelfTestService:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             names = _discover(
-                str(Path.cwd()), module_map=Path("sandbox_data") / "module_map.json"
+                str(Path.cwd()),
+                module_map=str(Path("sandbox_data") / "module_map.json"),
             )
             modules = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
         else:
@@ -961,7 +962,11 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("result callback failed")
 
-            if self.integration_callback and passed_set:
+            if (
+                not any_failed
+                and self.integration_callback
+                and passed_set
+            ):
                 try:
                     self.integration_callback(passed_set)
                 except Exception:
