@@ -94,7 +94,7 @@ class SelfTestService:
         discover_orphans: bool = True,
         discover_isolated: bool = True,
         recursive_orphans: bool = True,
-        recursive_isolated: bool = False,
+        recursive_isolated: bool = True,
         clean_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
@@ -221,12 +221,14 @@ class SelfTestService:
             self.discover_isolated = env_isolated.lower() in ("1", "true", "yes")
 
         env_recursive_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-        if recursive_isolated or (
-            env_recursive_iso and env_recursive_iso.lower() in ("1", "true", "yes")
-        ):
-            self.recursive_isolated = True
+        if env_recursive_iso is not None:
+            self.recursive_isolated = env_recursive_iso.lower() in (
+                "1",
+                "true",
+                "yes",
+            )
         else:
-            self.recursive_isolated = False
+            self.recursive_isolated = bool(recursive_isolated)
 
         auto_inc = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
         if auto_inc and auto_inc.lower() in ("1", "true", "yes"):
@@ -537,9 +539,10 @@ class SelfTestService:
 
         if recursive is None:
             env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-            recursive = self.recursive_isolated or (
-                env_val and env_val.lower() in ("1", "true", "yes")
-            )
+            if env_val is not None:
+                recursive = env_val.lower() in ("1", "true", "yes")
+            else:
+                recursive = self.recursive_isolated
 
         modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
         path = Path("sandbox_data") / "orphan_modules.json"
