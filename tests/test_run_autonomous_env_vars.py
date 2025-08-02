@@ -129,7 +129,7 @@ def _load_module_capture(monkeypatch, capture):
             include_orphans=False,
             discover_orphans=False,
             discover_isolated=os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1",
-            recursive_orphans=False,
+            recursive_orphans=os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1",
             recursive_isolated=os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1",
         )
 
@@ -171,6 +171,23 @@ def test_main_exits_when_required_env_missing(monkeypatch, tmp_path):
     msg = str(exc.value)
     assert "VISUAL_AGENT_TOKEN" in msg
     assert "SANDBOX_REPO_PATH" in msg
+
+
+def test_recursion_defaults_enabled(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    mod.main(["--runs", "0", "--check-settings"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert capture.get("recursive_orphans") is True
+    assert capture.get("recursive_isolated") is True
+    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "1"
+    assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
 
 
 def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):

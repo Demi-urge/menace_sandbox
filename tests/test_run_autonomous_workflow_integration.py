@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
@@ -7,9 +8,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_module():
+def load_module(monkeypatch):
     path = ROOT / "run_autonomous.py"
     sys.modules.pop("menace", None)
+    monkeypatch.setattr(shutil, "which", lambda *_a, **_k: "/usr/bin/true")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     spec = importlib.util.spec_from_file_location("run_autonomous", str(path))
     mod = importlib.util.module_from_spec(spec)
     sys.modules["run_autonomous"] = mod
@@ -103,9 +106,33 @@ def setup_stubs(monkeypatch, tmp_path):
 def run_single(monkeypatch, tmp_path):
     call_state = setup_stubs(monkeypatch, tmp_path)
     monkeypatch.chdir(tmp_path)
-    mod = load_module()
-    monkeypatch.setattr(mod, "_check_dependencies", lambda: True)
+    mod = load_module(monkeypatch)
+    monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
+    monkeypatch.setattr(mod, "validate_presets", lambda p: p)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "tok")
+    class DummySettings:
+        def __init__(self):
+            self.sandbox_data_dir = str(tmp_path)
+            self.sandbox_env_presets = None
+            self.auto_dashboard_port = None
+            self.save_synergy_history = True
+            self.visual_agent_autostart = False
+            self.visual_agent_urls = ""
+            self.roi_cycles = None
+            self.synergy_cycles = None
+            self.roi_threshold = None
+            self.synergy_threshold = None
+            self.roi_confidence = None
+            self.synergy_confidence = None
+            self.synergy_threshold_window = None
+            self.synergy_threshold_weight = None
+            self.synergy_ma_window = None
+            self.synergy_stationarity_confidence = None
+            self.synergy_std_threshold = None
+            self.synergy_variance_confidence = None
+    monkeypatch.setattr(mod, "SandboxSettings", DummySettings)
 
     mod.main([
         "--max-iterations",
@@ -116,7 +143,8 @@ def run_single(monkeypatch, tmp_path):
         "1",
         "--sandbox-data-dir",
         str(tmp_path),
-        "--recursive-orphans",
+        "--no-recursive-orphans",
+        "--no-recursive-isolated",
         "--include-orphans",
         "--discover-orphans",
         "--discover-isolated",
