@@ -165,6 +165,43 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     assert generated and generated[0] == ["foo.py"]
 
 
+def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
+    from tests.test_recursive_orphans import _load_methods
+
+    _, _, _refresh_module_map = _load_methods()
+
+    generated: list[list[str]] = []
+    ran: list[bool] = []
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        generated.append(list(mods))
+        return [1]
+
+    def fake_run(workflows_db="workflows.db", env_presets=None, **kwargs):
+        ran.append(True)
+        return None
+
+    _refresh_module_map.__globals__["generate_workflows_for_modules"] = fake_generate
+    _refresh_module_map.__globals__["run_workflow_simulations"] = fake_run
+
+    eng = types.SimpleNamespace(
+        module_index=object(),
+        module_clusters={},
+        logger=DummyLogger(),
+    )
+
+    def fake_integrate(self, modules):
+        pass
+
+    eng._integrate_orphans = types.MethodType(fake_integrate, eng)
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    _refresh_module_map(eng, ["foo.py"])
+
+    assert generated and generated[0] == ["foo.py"]
+    assert ran
+
+
 def test_orphan_cleanup(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()

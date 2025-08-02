@@ -29,6 +29,7 @@ from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 from sandbox_runner.environment import (
     generate_workflows_for_modules,
+    run_workflow_simulations,
     try_integrate_into_workflows,
 )
 from orphan_analyzer import analyze_redundancy
@@ -1538,11 +1539,20 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to clean orphan modules")
             if modules and self.module_index:
                 try:
-                    generate_workflows_for_modules(sorted({Path(m).name for m in modules}))
+                    generate_workflows_for_modules(
+                        sorted({Path(m).name for m in modules})
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "workflow generation failed: %s", exc
                     )
+                else:
+                    try:
+                        run_workflow_simulations()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "workflow simulation failed: %s", exc
+                        )
             if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                 try:
                     self._update_orphan_modules()
@@ -1596,6 +1606,13 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "workflow generation failed: %s", exc
                 )
+            else:
+                try:
+                    run_workflow_simulations()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "workflow simulation failed: %s", exc
+                    )
             if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                 try:
                     self._update_orphan_modules()
