@@ -114,7 +114,8 @@ class SelfTestService:
             map.
         recursive_orphans:
             When ``True``, follow orphan modules' import chains to include local
-            dependencies. Defaults to ``True``.
+            dependencies. Defaults to ``True``. Set ``SELF_TEST_RECURSIVE_ORPHANS=0``
+            or pass ``--no-recursive-orphans`` to disable.
         clean_orphans:
             When ``True``, remove successfully integrated modules from
             ``sandbox_data/orphan_modules.json`` after ``integration_callback``
@@ -1240,8 +1241,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     run.add_argument(
         "--recursive-orphans",
+        dest="recursive_orphans",
         action="store_true",
-        help="Recursively discover dependent orphan chains",
+        default=True,
+        help="Recursively discover dependent orphan chains (default)",
+    )
+    run.add_argument(
+        "--no-recursive-orphans",
+        dest="recursive_orphans",
+        action="store_false",
+        help="Do not recurse through orphan dependencies",
     )
     run.add_argument(
         "--recursive-isolated",
@@ -1324,8 +1333,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     sched.add_argument(
         "--recursive-orphans",
+        dest="recursive_orphans",
         action="store_true",
-        help="Recursively discover dependent orphan chains",
+        default=True,
+        help="Recursively discover dependent orphan chains (default)",
+    )
+    sched.add_argument(
+        "--no-recursive-orphans",
+        dest="recursive_orphans",
+        action="store_false",
+        help="Do not recurse through orphan dependencies",
     )
     sched.add_argument(
         "--recursive-isolated",
