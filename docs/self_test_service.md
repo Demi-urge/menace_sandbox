@@ -94,11 +94,12 @@ file path with `SELF_TEST_LOCK_FILE` (default `sandbox_data/self_test.lock`).
 
 Run `scripts/find_orphan_modules.py` to locate Python files that are not
 referenced by any tests. The script writes the list to
-`sandbox_data/orphan_modules.json` which the service loads automatically. Set
+`sandbox_data/orphan_modules.json` which the service loads automatically. Orphan
+modules are processed by default (`SELF_TEST_DISABLE_ORPHANS=0`); set
 `SELF_TEST_DISABLE_ORPHANS=1` or pass `--include-orphans` to skip the file.
 
-Automatic scanning is enabled by default. Set `SELF_TEST_DISCOVER_ORPHANS=0`
-to disable it. The discovered modules are saved to the
+Automatic scanning is enabled by default (`SELF_TEST_DISCOVER_ORPHANS=1`). Set
+`SELF_TEST_DISCOVER_ORPHANS=0` to disable it. The discovered modules are saved to the
 same file and appended to the test queue on the next run. Use `--refresh-orphans`
 to force a new scan when the list already exists. Recursion through orphan
 dependencies is enabled by default via `SELF_TEST_RECURSIVE_ORPHANS=1` and
@@ -146,9 +147,9 @@ the provided arguments or environment variables.
 
 By default the service scans `sandbox_data/orphan_modules.json` and runs any
 listed modules. If the file does not exist it automatically searches for orphans
-using `sandbox_runner.discover_recursive_orphans`. Set `SELF_TEST_DISABLE_ORPHANS=1`
-or pass `--include-orphans` to skip the feature. Disable the search with
-`SELF_TEST_DISCOVER_ORPHANS=0` and turn off recursion with
+using `sandbox_runner.discover_recursive_orphans`. Orphans are processed unless
+`SELF_TEST_DISABLE_ORPHANS=1` or `--include-orphans` is supplied. Disable the
+search with `SELF_TEST_DISCOVER_ORPHANS=0` and turn off recursion with
 `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0` or
 `--no-recursive-orphans`. The generated list is saved for future runs and the
 new modules are tested immediately. Isolated modules discovered by

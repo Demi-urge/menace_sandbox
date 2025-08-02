@@ -103,11 +103,13 @@ Orphaned modules listed in `sandbox_data/orphan_modules.json` are flagged as
 automatically. Orphan discovery utilities now live in
 `sandbox_runner.orphan_discovery`, and the service follows dependencies via
 `sandbox_runner.discover_recursive_orphans`. The helper is exported from the
-package and can be imported directly. Set `SELF_TEST_DISABLE_ORPHANS=1`
-or pass `--include-orphans` to skip them. Recursion through orphan dependencies
-is enabled by default; set `SELF_TEST_RECURSIVE_ORPHANS=0` or use
-`--no-recursive-orphans` to turn off dependency scanning. Discovery can be
-disabled entirely with `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
+package and can be imported directly. By default orphan modules are processed
+(`SELF_TEST_DISABLE_ORPHANS=0`, `SELF_TEST_DISCOVER_ORPHANS=1`). Set
+`SELF_TEST_DISABLE_ORPHANS=1` or pass `--include-orphans` to skip them.
+Recursion through orphan dependencies is enabled by default; set
+`SELF_TEST_RECURSIVE_ORPHANS=0` or use `--no-recursive-orphans` to turn off
+dependency scanning. Disable automatic discovery with
+`SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
 When launched via `run_autonomous.py` newly discovered files are written to
 `orphan_modules.json` unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Passing orphan
 modules are merged into `module_map.json` automatically after the tests run,
