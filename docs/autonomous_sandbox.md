@@ -647,22 +647,44 @@ the learner adjusts the metrics.
 
 ## Orphan and isolated module discovery
 
-The sandbox automatically scans for orphan and isolated modules before each
-run. `sandbox_runner.discover_recursive_orphans` walks the import tree of every
-listed orphan and collects local dependencies, while
-`scripts.discover_isolated_modules` locates files with no inbound references.
-Each candidate module is executed in an ephemeral sandbox via
-`SelfTestService`. Passing modules are appended to `sandbox_data/module_map.json`
-and `environment.generate_workflows_for_modules` generates one‑step workflows so
-they can be scheduled in subsequent simulations.
+Orphan discovery surfaces modules that are not referenced anywhere else so the
+sandbox can test and integrate them instead of leaving potentially useful code
+behind. Before each run `sandbox_runner.discover_recursive_orphans` walks the
+import tree of known orphans and collects their local dependencies, while
+`scripts.discover_isolated_modules` locates standalone files with no inbound
+references. The resulting paths are passed to
+`run_repo_section_simulations(..., modules=modules)` for sandbox execution. A
+`SelfTestService` instance exercises each module and, when the module passes, it
+is appended to `sandbox_data/module_map.json`. `environment.generate_workflows_for_modules`
+then creates one‑step workflows so later simulations include the newly
+discovered functionality.
 
 Control this behaviour with the CLI flags `--discover-orphans`,
 `--auto-include-isolated`, `--recursive-orphans`, `--recursive-isolated` and
 `--clean-orphans`. Equivalent environment variables are
 `SELF_TEST_DISCOVER_ORPHANS`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
 `SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED` and
-`SANDBOX_CLEAN_ORPHANS`. Set `SELF_TEST_DISABLE_ORPHANS=1` or
-`SANDBOX_DISABLE_ORPHAN_SCAN=1` to skip the discovery step entirely.
+`SANDBOX_CLEAN_ORPHANS`. Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` merges
+passing modules into the module map automatically. Use
+`SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1` to pull in
+dependencies of discovered files. Set `SELF_TEST_DISABLE_ORPHANS=1` or
+`SANDBOX_DISABLE_ORPHAN_SCAN=1` to skip discovery entirely.
+
+### Minimal example
+
+```bash
+# create a standalone module with no references
+echo 'def greet():\n    return "hi"' > demo_orphan.py
+
+# discover potential orphans in the repository
+python scripts/discover_isolated_modules.py .
+
+# sandbox-test and integrate the module
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 python -m sandbox_runner.cli --discover-orphans
+
+# demo_orphan.py is now listed in sandbox_data/module_map.json and future runs
+# will schedule a one-step workflow for it
+```
 
 ## Docker usage
 
