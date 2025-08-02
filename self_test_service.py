@@ -505,7 +505,7 @@ class SelfTestService:
 
     # ------------------------------------------------------------------
     def _discover_orphans(self) -> list[str]:
-        """Run find_orphan_modules and save results."""
+        """Run orphan discovery and append results."""
         modules: list[str]
         if self.recursive_orphans:
             from sandbox_runner import discover_recursive_orphans as _discover
@@ -518,6 +518,7 @@ class SelfTestService:
             from scripts.find_orphan_modules import find_orphan_modules
 
             modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+
         path = Path("sandbox_data") / "orphan_modules.json"
         try:
             path.parent.mkdir(exist_ok=True)
@@ -530,8 +531,15 @@ class SelfTestService:
                             existing = [str(p) for p in data]
                 except Exception:
                     self.logger.exception("failed to load orphan modules")
+            new_modules = [m for m in modules if m not in existing]
             combined = list(dict.fromkeys(existing + modules))
             path.write_text(json.dumps(combined, indent=2))
+            if new_modules:
+                self.logger.info(
+                    "Added %d new orphan modules: %s",
+                    len(new_modules),
+                    ", ".join(sorted(new_modules)),
+                )
         except Exception:
             self.logger.exception("failed to write orphan modules")
         return modules
