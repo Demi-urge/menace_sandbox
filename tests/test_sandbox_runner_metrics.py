@@ -268,7 +268,7 @@ def test_repo_section_metrics(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
         raising=False,
     )
 
@@ -422,7 +422,7 @@ def test_section_loop_gpt_trigger(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     sandbox_runner._run_sandbox(argparse.Namespace(sandbox_data_dir=str(tmp_path)))
@@ -493,7 +493,7 @@ def test_metrics_db_records(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     sandbox_runner._run_sandbox(argparse.Namespace(sandbox_data_dir=str(tmp_path)))
@@ -597,7 +597,7 @@ def test_metric_predictions_recorded(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -1122,7 +1122,7 @@ def test_preset_adaptation(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     sandbox_runner.SANDBOX_ENV_PRESETS = [{"foo": "bar"}]
@@ -1208,7 +1208,7 @@ def test_preset_persistence_across_runs(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     def fake_cycle(ctx, sec, snip, tracker, scenario=None):
@@ -1308,7 +1308,7 @@ def test_no_preset_adapt_flag(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     def fake_cycle(ctx, sec, snip, tracker, scenario=None):
@@ -1463,7 +1463,7 @@ def test_brainstorm_trigger_on_low_roi(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -1554,7 +1554,7 @@ def test_brainstorm_trigger_on_resilience_drop(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda path: {"mod.py": {"sec": ["pass"]}},
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
     )
 
     ctx = sandbox_runner._sandbox_init(
@@ -1623,7 +1623,9 @@ def test_sandbox_prediction_mae_and_reliability(monkeypatch, tmp_path):
     monkeypatch.setattr(sandbox_runner, "MenaceOrchestrator", DummyOrch)
     monkeypatch.setattr(sandbox_runner, "_SandboxMetaLogger", DummyMetaLogger)
     monkeypatch.setattr(
-        sandbox_runner, "scan_repo_sections", lambda path: {"m.py": {"sec": ["pass"]}}
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda path, modules=None: {"m.py": {"sec": ["pass"]}},
     )
     monkeypatch.setattr(rt.ROITracker, "forecast", lambda self: (0.15, (0.0, 0.0)))
 

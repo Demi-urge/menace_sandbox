@@ -89,7 +89,7 @@ def test_run_repo_section_synergy(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
         raising=False,
     )
 

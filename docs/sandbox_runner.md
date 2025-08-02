@@ -142,7 +142,7 @@ entry describing the problem.
 
 ## Section Targeting
 
-`run_repo_section_simulations(repo_path, input_stubs=None, env_presets=None)` analyses each Python file with `_extract_sections` and simulates execution for every section. A `ROITracker` records risk flags per module and section so trends can be ranked. Pass custom input stubs to exercise different code paths and provide multiple environment presets to compare behaviour across configurations. Set `return_details=True` to receive raw results grouped by preset.
+`run_repo_section_simulations(repo_path, input_stubs=None, env_presets=None, modules=None)` analyses each Python file with `_extract_sections` and simulates execution for every section. A `ROITracker` records risk flags per module and section so trends can be ranked. Pass custom input stubs to exercise different code paths and provide multiple environment presets to compare behaviour across configurations. Provide a list of relative `modules` to restrict analysis to specific paths. Set `return_details=True` to receive raw results grouped by preset.
 
 When no `input_stubs` argument is supplied the function calls `generate_input_stubs()` from `environment.py`. This helper first inspects the target function signature (when available) and derives argument dictionaries from defaults and type hints. The `SANDBOX_INPUT_STUBS` variable overrides this behaviour. When unset, history or template files are consulted before falling back to the signature, a smart faker-based strategy, a synthetic language-model strategy or a random strategy. Plugins discovered via `SANDBOX_STUB_PLUGINS` may augment or override the generated stubs.
 
