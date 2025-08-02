@@ -1676,14 +1676,43 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - database issues
             self.logger.exception("module refresh query failed: %s", exc)
             return
-        new_mods = {Path(r[0]).name for r in rows if Path(r[0]).name not in self.module_clusters}
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        pending: dict[str, Path] = {}
+        for r in rows:
+            p = Path(r[0])
+            name = p.name
+            if name in self.module_clusters or name in pending:
+                continue
+            pending[name] = p if p.is_absolute() else repo / p
+        new_mods: set[str] = set()
+        skipped: set[str] = set()
+        for name, path in pending.items():
+            try:
+                if analyze_redundancy(path):
+                    skipped.add(name)
+                    self.logger.info(
+                        "redundant module skipped", extra=log_record(module=name)
+                    )
+                    continue
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundancy analysis failed for %s: %s", path, exc
+                )
+            new_mods.add(name)
+        if skipped:
+            self.logger.info(
+                "redundant modules skipped", extra=log_record(modules=sorted(skipped))
+            )
         if not new_mods:
             return
         try:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
             exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = build_module_map(repo, ignore=exclude)
+            if skipped:
+                for key in list(mapping.keys()):
+                    if f"{Path(key).name}.py" in skipped or key in skipped:
+                        mapping.pop(key, None)
             self.module_index.merge_groups(mapping)
             self.module_clusters.update(mapping)
             data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))

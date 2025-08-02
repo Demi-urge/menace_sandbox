@@ -111,6 +111,16 @@ def test_semantic_tfidf_similarity(tmp_path):
     assert mapping["a"] == mapping["b"]
 
 
+def test_redundant_module_excluded(tmp_path):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import a\n")
+    (tmp_path / "c.py").write_text("pass\n")
+
+    mapping = dmm.build_module_map(tmp_path)
+    assert "c" not in mapping
+    assert "a" in mapping and "b" in mapping
+
+
 def test_cli_option_parsing(monkeypatch):
     calls = {}
 
