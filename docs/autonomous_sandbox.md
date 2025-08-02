@@ -162,6 +162,10 @@ After the system tools are in place install the Python requirements via
 - `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state
 - `SANDBOX_ADAPTIVE_AGENT_STRATEGY` – algorithm for the adaptive agent
 
+Recursion through orphan dependencies is enabled by default. Disable it by
+setting `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or
+pass `--no-recursive-orphans` to the relevant commands.
+
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
 ## Launch sequence

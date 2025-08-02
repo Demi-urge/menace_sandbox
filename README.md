@@ -107,8 +107,9 @@ package and can be imported directly. By default orphan modules are processed
 (`SELF_TEST_DISABLE_ORPHANS=0`, `SELF_TEST_DISCOVER_ORPHANS=1`). Set
 `SELF_TEST_DISABLE_ORPHANS=1` or pass `--include-orphans` to skip them.
 Recursion through orphan dependencies is enabled by default; set
-`SELF_TEST_RECURSIVE_ORPHANS=0` or use `--no-recursive-orphans` to turn off
-dependency scanning. Disable automatic discovery with
+`SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass
+`--no-recursive-orphans` to turn off dependency scanning. Disable automatic
+discovery with
 `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
 When launched via `run_autonomous.py` newly discovered files are written to
 `orphan_modules.json` unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Passing orphan
@@ -135,7 +136,8 @@ python run_autonomous.py --discover-orphans --clean-orphans \
 ```
 Use `--no-recursive-orphans` or `--no-recursive-isolated` to disable dependency
 traversal. Recursion through orphan dependencies is enabled by default; set
-`SANDBOX_RECURSIVE_ORPHANS=0` or pass `--no-recursive-orphans` to disable. Passing
+`SANDBOX_RECURSIVE_ORPHANS=0` or `SELF_TEST_RECURSIVE_ORPHANS=0`, or pass
+`--no-recursive-orphans` to disable. Passing
 modules update the module map and spawn one-step workflows automatically.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option.
 The sandbox can also group modules automatically by analysing imports,

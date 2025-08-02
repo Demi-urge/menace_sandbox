@@ -52,7 +52,8 @@ Options include:
 - `--clean-orphans` – remove passing entries from `orphan_modules.json`
 
 Recursion through orphan dependencies is enabled by default; use
-`--no-recursive-orphans` to limit the search to top-level modules.
+`--no-recursive-orphans` to limit the search to top-level modules or set
+`SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`.
 Remove stale containers left over from interrupted runs with:
 
 ```bash
