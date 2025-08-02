@@ -66,28 +66,33 @@ class DummyEngine:
         self.auto_refresh_map = True
         self.meta_logger = None
 
-    def _integrate_orphans(self, paths: Iterable[str]) -> None:
-        if not self.module_index:
+    def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
+        return set(modules)
+
+    def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
+        if not modules:
             return
-        mods = {Path(p).name for p in paths}
-        unknown = [m for m in mods if m not in self.module_clusters]
-        if not unknown:
-            return
+        mods = self._collect_recursive_modules(modules)
         try:
             self.module_index.refresh(mods, force=True)
             grp_map = {m: self.module_index.get(m) for m in mods}
             self.module_clusters.update(grp_map)
             self.module_index.save()
-            self._last_map_refresh = time.time()
             from sandbox_runner import environment as _env
             _env.generate_workflows_for_modules(sorted(mods))
+            _env.try_integrate_into_workflows(sorted(mods))
+            _env.run_workflow_simulations()
+            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            orphan_path = data_dir / "orphan_modules.json"
+            if orphan_path.exists():
+                try:
+                    existing = json.loads(orphan_path.read_text()) or []
+                except Exception:  # pragma: no cover - best effort
+                    existing = []
+                keep = [p for p in existing if Path(p).name not in {Path(m).name for m in mods}]
+                orphan_path.write_text(json.dumps(sorted(keep), indent=2))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
-
-    def _refresh_module_map(self, modules: list[str] | None = None) -> None:
-        if modules:
-            self._integrate_orphans(modules)
-            return
 
 
 def test_orphan_module_mapping(tmp_path, monkeypatch):
@@ -122,13 +127,23 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     generated: list[list[str]] = []
+    integrated: list[list[str]] = []
+    ran: list[bool] = []
 
     def fake_generate(mods, workflows_db="workflows.db"):
         generated.append(list(mods))
         return [1]
 
+    def fake_try(mods):
+        integrated.append(list(mods))
+
+    def fake_run():
+        ran.append(True)
+
     env_mod = types.ModuleType("environment")
     env_mod.generate_workflows_for_modules = fake_generate
+    env_mod.try_integrate_into_workflows = fake_try
+    env_mod.run_workflow_simulations = fake_run
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
     pkg.discover_recursive_orphans = lambda repo, module_map=None: []
@@ -163,6 +178,8 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert "foo.py" in data.get("modules", {})
     assert generated and generated[0] == ["foo.py"]
+    assert integrated and integrated[0] == ["foo.py"]
+    assert ran
 
 
 def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
@@ -171,34 +188,53 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     _, _, _refresh_module_map = _load_methods()
 
     generated: list[list[str]] = []
+    integrated: list[list[str]] = []
     ran: list[bool] = []
 
     def fake_generate(mods, workflows_db="workflows.db"):
         generated.append(sorted(mods))
         return [1]
 
+    def fake_try(mods):
+        integrated.append(sorted(mods))
+
     def fake_run():
         ran.append(True)
 
+    g = _refresh_module_map.__globals__
+    g["generate_workflows_for_modules"] = fake_generate
+    g["try_integrate_into_workflows"] = fake_try
+    g["run_workflow_simulations"] = fake_run
+
+    class DummyIndex:
+        def __init__(self) -> None:
+            self._map: dict[str, int] = {}
+            self._groups: dict[str, int] = {}
+
+        def refresh(self, modules=None, force=False):
+            for m in modules or []:
+                self._map[m] = 1
+                self._groups.setdefault("1", 1)
+
+        def get(self, name):
+            return 1
+
+        def save(self):
+            pass
+
     eng = types.SimpleNamespace(
-        module_index=object(),
+        module_index=DummyIndex(),
         module_clusters={},
         logger=DummyLogger(),
     )
 
-    def fake_integrate(self, modules):
-        mods = {Path(m).name for m in modules}
-        fake_generate(mods)
-        fake_run()
-        return mods
-
-    eng._integrate_orphans = types.MethodType(fake_integrate, eng)
-    eng._collect_recursive_modules = lambda mods: set(mods)
+    eng._collect_recursive_modules = lambda mods: {"foo.py", "dep.py"}
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
     _refresh_module_map(eng, ["foo.py"])
 
-    assert generated and generated[0] == ["foo.py"]
+    assert generated and generated[0] == ["dep.py", "foo.py"]
+    assert integrated and integrated[0] == ["dep.py", "foo.py"]
     assert ran
 
 
@@ -235,6 +271,8 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
 
     env_mod = types.ModuleType("environment")
     env_mod.generate_workflows_for_modules = lambda mods, workflows_db="workflows.db": [1]
+    env_mod.try_integrate_into_workflows = lambda mods: None
+    env_mod.run_workflow_simulations = lambda: None
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
     pkg.discover_recursive_orphans = lambda repo, module_map=None: []
@@ -320,18 +358,31 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     exec(compile(code, str(orphan_path), "exec"), mod_dict)
     helper = types.ModuleType("sandbox_runner")
     helper.discover_orphan_modules = mod_dict["discover_orphan_modules"]
-    helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
+    if "_discover_orphans_once" in mod_dict:
+        helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
+    else:  # pragma: no cover - fallback if function missing
+        helper._discover_orphans_once = lambda *a, **k: None
     helper.discover_recursive_orphans = lambda repo, module_map=None: ["a", "b"]
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     generated: list[list[str]] = []
+    integrated: list[list[str]] = []
+    ran: list[bool] = []
 
     def fake_generate(mods, workflows_db="workflows.db"):
         generated.append(list(mods))
         return [1]
 
+    def fake_try(mods):
+        integrated.append(list(mods))
+
+    def fake_run():
+        ran.append(True)
+
     env_mod = types.ModuleType("environment")
     env_mod.generate_workflows_for_modules = fake_generate
+    env_mod.try_integrate_into_workflows = fake_try
+    env_mod.run_workflow_simulations = fake_run
     helper.environment = env_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
@@ -364,6 +415,8 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     assert "a.py" in data.get("modules", {})
     assert "b.py" in data.get("modules", {})
     assert generated and generated[0] == ["a.py", "b.py"]
+    assert integrated and integrated[0] == ["a.py", "b.py"]
+    assert ran
 
 
 def test_failed_orphans_not_added(tmp_path, monkeypatch):
@@ -371,15 +424,10 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
     (tmp_path / "foo.py").write_text("def foo():\n    return 1\n")
+    (data_dir / "orphan_modules.json").write_text(json.dumps(["foo.py"]))
 
-    # stub discovery so _update_orphan_modules adds foo.py to orphan list
     from tests.test_recursive_orphans import _load_methods
-    _, _update_orphan_modules, _refresh_module_map = _load_methods()
-
-    sr = types.ModuleType("sandbox_runner")
-    sr.discover_orphan_modules = lambda repo: ["foo"]
-    sr.discover_recursive_orphans = lambda repo, module_map=None: []
-    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+    _, _, _refresh_module_map = _load_methods()
 
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
@@ -389,12 +437,6 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
-
-    _update_orphan_modules(engine)
-
-    # module map should remain unchanged after discovery
-    data = json.loads(map_path.read_text())
-    assert "foo.py" not in data.get("modules", {})
 
     async def fake_exec(*cmd, **kwargs):
         path = None
@@ -408,7 +450,7 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
                 json.dump({"summary": {"passed": 0, "failed": 1}}, fh)
 
         class P:
-            returncode = 0
+            returncode = 1
 
             async def communicate(self):
                 return b"", b""

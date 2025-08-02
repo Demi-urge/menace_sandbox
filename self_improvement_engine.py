@@ -1478,12 +1478,26 @@ class SelfImprovementEngine:
                     else:
                         base_prefix = pkg_parts
                     if node.module:
-                        name = ".".join(base_prefix + node.module.split("."))
-                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                        parts = base_prefix + node.module.split(".")
+                        name = ".".join(parts)
+                        mod_path = repo / Path(*parts).with_suffix(".py")
+                        pkg_init = repo / Path(*parts) / "__init__.py"
                         dep = mod_path if mod_path.exists() else pkg_init if pkg_init.exists() else None
                         if dep is not None:
                             queue.append(dep)
+                        for alias in node.names:
+                            if alias.name == "*":
+                                continue
+                            sub_parts = parts + alias.name.split(".")
+                            mod_path = repo / Path(*sub_parts).with_suffix(".py")
+                            pkg_init = repo / Path(*sub_parts) / "__init__.py"
+                            dep = (
+                                mod_path
+                                if mod_path.exists()
+                                else pkg_init if pkg_init.exists() else None
+                            )
+                            if dep is not None:
+                                queue.append(dep)
                     elif node.names:
                         for alias in node.names:
                             name = ".".join(base_prefix + alias.name.split("."))
@@ -1653,7 +1667,52 @@ class SelfImprovementEngine:
         """Refresh module grouping when new modules appear."""
         if modules:
             all_mods = self._collect_recursive_modules(modules)
-            self._integrate_orphans(all_mods)
+            repo_mods = set(all_mods)
+            if self.module_index:
+                try:
+                    self.module_index.refresh(repo_mods, force=True)
+                    grp_map = {m: self.module_index.get(m) for m in repo_mods}
+                    self.module_clusters.update(grp_map)
+                    self.module_index.save()
+                    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                    out = data_dir / "module_map.json"
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    with open(out, "w", encoding="utf-8") as fh:
+                        json.dump(
+                            {
+                                "modules": self.module_index._map,
+                                "groups": self.module_index._groups,
+                            },
+                            fh,
+                            indent=2,
+                        )
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("orphan integration failed: %s", exc)
+            try:
+                generate_workflows_for_modules(sorted(repo_mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("workflow generation failed: %s", exc)
+            try:
+                try_integrate_into_workflows(sorted(repo_mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("workflow integration failed: %s", exc)
+            try:
+                run_workflow_simulations()
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("workflow simulation failed: %s", exc)
+            try:
+                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                orphan_path = data_dir / "orphan_modules.json"
+                if orphan_path.exists():
+                    try:
+                        existing = json.loads(orphan_path.read_text()) or []
+                    except Exception:  # pragma: no cover - best effort
+                        existing = []
+                    keep = [p for p in existing if Path(p).name not in {Path(m).name for m in repo_mods}]
+                    if len(keep) != len(existing):
+                        orphan_path.write_text(json.dumps(sorted(keep), indent=2))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to clean orphan modules")
             if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                 try:
                     self._update_orphan_modules()
