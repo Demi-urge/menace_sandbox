@@ -1122,12 +1122,13 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         getattr(args, "recursive_isolated", False)
         or os.getenv("SANDBOX_RECURSIVE_ISOLATED", "0") in {"1", "true", "yes"}
     )
-    recursive_orphans = True
+    recursive_orphans = False
     env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
     if env_rec is not None:
         recursive_orphans = env_rec.lower() in {"1", "true", "yes"}
-    if getattr(args, "recursive_orphans") is False:
-        recursive_orphans = False
+    arg_rec = getattr(args, "recursive_orphans", None)
+    if arg_rec is not None:
+        recursive_orphans = arg_rec
     os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1" if not discover_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1" if recursive_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1" if recursive_isolated else "0"

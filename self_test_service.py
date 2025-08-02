@@ -93,7 +93,7 @@ class SelfTestService:
         include_orphans: bool = True,
         discover_orphans: bool = True,
         discover_isolated: bool = True,
-        recursive_orphans: bool = True,
+        recursive_orphans: bool = False,
         recursive_isolated: bool = True,
         clean_orphans: bool = False,
     ) -> None:

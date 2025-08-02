@@ -247,7 +247,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(recursive_orphans=True)
     svc.run_once(refresh_orphans=True)
 
     assert calls.get("used") is True
@@ -297,7 +297,9 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
-    svc = mod.SelfTestService(discover_orphans=True, recursive_orphans=True)
+    svc = mod.SelfTestService(
+        include_orphans=False, discover_orphans=True, recursive_orphans=True
+    )
     svc.run_once()
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py"]
@@ -358,7 +360,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(recursive_orphans=True, discover_orphans=False)
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -413,7 +415,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService()
+    svc = mod.SelfTestService(discover_orphans=False, recursive_orphans=True)
     svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
