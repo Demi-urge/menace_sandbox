@@ -172,4 +172,4 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                             if name not in seen:
                                 queue.append(name)
 
-    return sorted(orphans | (found - known))
+    return sorted(found - known)
