@@ -77,7 +77,8 @@ def test_redundant_module_skipped(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sys.modules[__name__], "analyze_redundancy", fake_analyze)
     env_mod = types.ModuleType("env")
-    env_mod.generate_workflows_for_modules = lambda mods: None
+    wf_calls: list[list[str]] = []
+    env_mod.generate_workflows_for_modules = lambda mods: wf_calls.append(mods)
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
@@ -88,6 +89,7 @@ def test_redundant_module_skipped(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert "dup.py" not in data.get("modules", {})
     assert "redundant module skipped" in engine.logger.info_msgs
+    assert not wf_calls
 
 
 def test_module_integrated(tmp_path, monkeypatch):
@@ -142,4 +144,6 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     data = json.loads(mod_file.read_text()) if mod_file.exists() else []
     assert "foo.py" not in data
     assert calls and calls[0].name == "foo.py"
+    assert "redundant module skipped" in eng.logger.info_msgs
+    assert "redundant modules skipped" in eng.logger.info_msgs
 
