@@ -143,7 +143,7 @@ After the system tools are in place install the Python requirements via
   building the module map (same as `--recursive-isolated` when running
   `sandbox_runner`). Set to `0`, `false` or `no` to disable recursion.
 - `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
- - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically enable recursion for self tests (same as `--auto-include-isolated`)
+- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
@@ -216,12 +216,12 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
    Set `SELF_TEST_INCLUDE_ORPHANS=1` together with `SELF_TEST_RECURSIVE_ORPHANS=1`
    and `SELF_TEST_RECURSIVE_ISOLATED=1` (or `SANDBOX_INCLUDE_ORPHANS=1`,
    `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1` when
-   launching via `sandbox_runner`) to achieve the same behaviour via environment
-    variables. Modules that pass their
-     tests are merged into `module_map.json` and may be incorporated into
-     existing workflows automatically on the next run so the new code can be
-     benchmarked immediately. Modules flagged as redundant by
-     `orphan_analyzer.analyze_redundancy` are skipped during this integration.
+  launching via `sandbox_runner`) to achieve the same behaviour via environment
+   variables. Modules that pass their
+    tests are merged into `module_map.json` and existing flows are updated via
+    `try_integrate_into_workflows` so the new code can be benchmarked
+    immediately. Modules flagged as redundant by
+    `orphan_analyzer.analyze_redundancy` are skipped during this integration.
 
 ## Visual agent queueing
 
