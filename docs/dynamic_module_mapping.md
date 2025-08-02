@@ -96,15 +96,19 @@ using `sandbox_runner.discover_recursive_orphans`, runs them with the standard
 unit tests and updates the module map once they succeed.  Disable dependency
 traversal with `--no-recursive-orphans` or by setting
 `SANDBOX_RECURSIVE_ORPHANS=0`.
+
+### Recursive isolated modules
+
 Isolated modules returned by `discover_isolated_modules` are loaded when
-`--auto-include-isolated` is supplied or `SANDBOX_AUTO_INCLUDE_ISOLATED=1` is set and
-are processed recursively by default. These isolated modules are tested along
-with any dependencies and merged into `module_map.json` once they pass so later
-runs treat them as normal members of their assigned groups. Simple workflows are
-generated for the new modules and existing flows are updated via
+`--auto-include-isolated` is supplied or `SANDBOX_AUTO_INCLUDE_ISOLATED=1` is
+set and are processed recursively by default. These isolated modules are tested
+along with any dependencies and merged into `module_map.json` once they pass so
+later runs treat them as normal members of their assigned groups. Simple
+workflows are generated for the new modules and existing flows are updated via
 `try_integrate_into_workflows`. Dependency traversal is enabled by default
 through `SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; set
 `SELF_TEST_RECURSIVE_ISOLATED=0`, `SANDBOX_RECURSIVE_ISOLATED=0` or use
 `--no-recursive-isolated` when running the self tests manually to disable this
-behaviour.
+behaviour. Redundant modules flagged by `orphan_analyzer.analyze_redundancy`
+are skipped during integration.
 
