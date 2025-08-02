@@ -35,6 +35,26 @@ Use `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to forc
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
 
+### Environment variables controlling recursion
+
+- `SANDBOX_RECURSIVE_ORPHANS` / `SELF_TEST_RECURSIVE_ORPHANS` – follow orphan
+  modules and their imports.
+- `SANDBOX_RECURSIVE_ISOLATED` / `SELF_TEST_RECURSIVE_ISOLATED` – traverse
+  dependencies of isolated modules.
+- `SANDBOX_AUTO_INCLUDE_ISOLATED` – force discovery of modules returned by
+  `discover_isolated_modules`.
+- `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
+  `orphan_modules.json` after integration.
+
+`run_autonomous.py` mirrors the `SANDBOX_*` values to the corresponding
+`SELF_TEST_*` variables so the improvement engine and `SelfTestService` apply the
+same recursion rules. Passing modules are appended to `module_map.json`, and
+`try_integrate_into_workflows` updates existing flows so subsequent cycles
+exercise the new code. Tests like `tests/test_run_autonomous_env_vars.py` and
+`tests/test_self_test_service_recursive_integration.py` assert this recursive
+integration. For a concrete walkthrough see the
+[isolated module example](autonomous_sandbox.md#example-isolated-module-discovery-and-integration).
+
 ## Reinforcement-learning policy
 
 `SelfImprovementEngine` can optionally be initialised with a `SelfImprovementPolicy`.

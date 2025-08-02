@@ -48,6 +48,26 @@ environment variables to `0`. The complementary flags `--recursive-orphans` and
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json`.
 
+### Environment variables controlling recursion
+
+- `SELF_TEST_RECURSIVE_ORPHANS` / `SANDBOX_RECURSIVE_ORPHANS` – recurse through
+  orphan modules and their imports.
+- `SELF_TEST_RECURSIVE_ISOLATED` / `SANDBOX_RECURSIVE_ISOLATED` – include
+  dependencies of isolated modules.
+- `SANDBOX_AUTO_INCLUDE_ISOLATED` – force inclusion of modules returned by
+  `discover_isolated_modules`.
+- `SANDBOX_CLEAN_ORPHANS` – remove passing entries from `orphan_modules.json`
+  after integration.
+
+These flags drive the workflow integration stage: passing modules and their
+helpers are written to `module_map.json` and merged into existing flows via
+`try_integrate_into_workflows`. Tests such as `tests/test_recursive_isolated.py`
+and `tests/test_self_test_service_recursive_integration.py` verify that
+recursive discovery executes supporting files and integrates them into the
+module map. See the
+[isolated module example](autonomous_sandbox.md#example-isolated-module-discovery-and-integration)
+for a step-by-step walkthrough.
+
 ## Command Line Interface
 
 Run the tests manually via the CLI:
