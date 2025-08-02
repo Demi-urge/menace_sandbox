@@ -174,14 +174,13 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     ran: list[bool] = []
 
     def fake_generate(mods, workflows_db="workflows.db"):
-        generated.append(list(mods))
+        generated.append(sorted(mods))
         return [1]
 
     def fake_run(workflows_db="workflows.db", env_presets=None, **kwargs):
         ran.append(True)
         return None
 
-    _refresh_module_map.__globals__["generate_workflows_for_modules"] = fake_generate
     _refresh_module_map.__globals__["run_workflow_simulations"] = fake_run
 
     eng = types.SimpleNamespace(
@@ -191,9 +190,12 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     )
 
     def fake_integrate(self, modules):
-        pass
+        mods = {Path(m).name for m in modules}
+        fake_generate(mods)
+        return mods
 
     eng._integrate_orphans = types.MethodType(fake_integrate, eng)
+    eng._collect_recursive_modules = lambda mods: set(mods)
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
     _refresh_module_map(eng, ["foo.py"])
