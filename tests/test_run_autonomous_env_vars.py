@@ -180,6 +180,8 @@ def test_recursion_defaults_enabled(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ISOLATED", raising=False)
     mod.main(["--runs", "0", "--check-settings"])
     sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
     assert capture.get("discover_isolated") is True
@@ -216,6 +218,22 @@ def test_no_recursive_flags_disable_recursion(monkeypatch, tmp_path):
     assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "0"
 
 
+def test_recursive_isolated_flag_enables_recursion(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "0")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "0")
+    mod.main(["--runs", "0", "--check-settings", "--recursive-isolated"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert capture.get("recursive_isolated") is True
+    assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
+
+
 def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):
     capture = {}
     mod = _load_module_capture(monkeypatch, capture)
@@ -223,6 +241,8 @@ def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ISOLATED", raising=False)
     monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
     mod.main(["--runs", "0", "--check-settings"])
     sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
@@ -238,6 +258,8 @@ def test_auto_include_isolated_flag(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ISOLATED", raising=False)
     mod.main(["--runs", "0", "--check-settings", "--auto-include-isolated"])
     sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
     assert os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") == "1"
