@@ -234,6 +234,16 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
+    sr = types.ModuleType("sandbox_runner")
+    sr.run_repo_section_simulations = (
+        lambda repo_path, modules=None, return_details=False, **k: (
+            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []})
+            if return_details
+            else None
+        )
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
     _refresh_module_map(eng, ["foo.py"])
 
     assert generated and generated[0] == ["dep.py", "foo.py"]

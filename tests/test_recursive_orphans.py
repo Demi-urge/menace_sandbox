@@ -101,21 +101,24 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
-    refreshed: dict[str, list[str]] = {}
+    integrated: dict[str, list[str]] = {}
 
-    def fake_refresh(mods: list[str]) -> None:
-        refreshed["mods"] = list(mods)
+    def fake_integrate(paths: list[str]) -> set[str]:
+        integrated["paths"] = list(paths)
+        return {Path(p).name for p in paths}
 
-    eng = types.SimpleNamespace(logger=DummyLogger(), _refresh_module_map=fake_refresh)
+    eng = types.SimpleNamespace(logger=DummyLogger())
+    eng._integrate_orphans = fake_integrate
+    eng._test_orphan_modules = lambda mods: set(mods)
 
     _update_orphan_modules(eng)
 
     assert called.get("used") is True
     assert Path(called["repo"]) == tmp_path
     assert Path(called["map"]).resolve() == (tmp_path / "module_map.json").resolve()
-    assert refreshed.get("mods") == ["foo/bar.py"]
+    assert integrated.get("paths") == [str(tmp_path / "foo/bar.py")]
     data = json.loads((tmp_path / "orphan_modules.json").read_text())
-    assert "foo/bar.py" in data
+    assert data == []
 
 
 def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
@@ -156,7 +159,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(path):
+    def discover(path, *, recursive=False):
         assert Path(path) == repo
         return ["iso.py"]
 
@@ -178,6 +181,16 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.run_repo_section_simulations = (
+        lambda repo_path, modules=None, return_details=False, **k: (
+            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []})
+            if return_details
+            else None
+        )
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     _update_orphan_modules(eng)
 
@@ -223,6 +236,16 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     # disable recursion via environment variable
     monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "0")
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.run_repo_section_simulations = (
+        lambda repo_path, modules=None, return_details=False, **k: (
+            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []})
+            if return_details
+            else None
+        )
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     _update_orphan_modules(eng)
 
