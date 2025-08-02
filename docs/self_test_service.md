@@ -45,8 +45,8 @@ Options include:
 - `--metrics-port` – expose Prometheus gauges on this port
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
 - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
- - `--discover-isolated` – disable automatic discovery of modules returned by `discover_isolated_modules`
-- `--recursive-orphans` – recursively include dependencies of discovered orphans
+- `--discover-isolated` – disable automatic discovery of modules returned by `discover_isolated_modules`
+- `--recursive-orphans` – disable recursion through orphan dependencies
 - `--recursive-isolated` – recurse through dependencies of isolated modules
 - `--auto-include-isolated` – automatically discover isolated modules and enable recursion (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`)
 - `--clean-orphans` – remove passing entries from `orphan_modules.json`
@@ -101,7 +101,8 @@ Automatic scanning is enabled by default. Set `SELF_TEST_DISCOVER_ORPHANS=0` or
 use `--discover-orphans` to disable it. The discovered modules are saved to the
 same file and appended to the test queue on the next run. Use `--refresh-orphans`
 to force a new scan when the list already exists. Disable recursion with
-`SELF_TEST_RECURSIVE_ORPHANS=0` or `--recursive-orphans`. The search uses
+`SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0` or the
+`--recursive-orphans` option. The search uses
 `sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
 to walk each orphan's imports until no new local modules remain. This function
 is part of the public `sandbox_runner` API and may be imported for custom
@@ -118,11 +119,13 @@ Example running tests with recursive orphan and isolated discovery:
 ```bash
 python -m menace.self_test_service run tests/unit \
     --include-orphans --discover-orphans --discover-isolated \
-    --recursive-orphans --clean-orphans --recursive-isolated
+    --clean-orphans --recursive-isolated
 ```
 
-When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
-`SANDBOX_RECURSIVE_ISOLATED=1` to achieve the same behaviour. Passing modules
+When launched from `sandbox_runner`, recursion through orphan dependencies is
+enabled by default. Set `SANDBOX_RECURSIVE_ORPHANS=0` to skip their dependency
+chains and `SANDBOX_RECURSIVE_ISOLATED=1` to mirror `--recursive-isolated`.
+Passing modules
 are merged into `module_map.json` and existing workflows are updated via
 `try_integrate_into_workflows` on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
@@ -145,7 +148,8 @@ listed modules. If the file does not exist it automatically searches for orphans
 using `sandbox_runner.discover_recursive_orphans`. Set `SELF_TEST_DISABLE_ORPHANS=1`
 or pass `--include-orphans` to skip the feature. Disable the search with
 `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans` and turn off recursion
-with `SELF_TEST_RECURSIVE_ORPHANS=0` or `--recursive-orphans`.
+with `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0` or
+`--recursive-orphans`.
 The generated list is
 saved for future runs and the new modules are tested immediately.
 Isolated modules discovered by `discover_isolated_modules` are processed
