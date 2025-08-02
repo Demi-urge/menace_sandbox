@@ -90,7 +90,7 @@ from logging_utils import log_record, get_logger, setup_logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING, Iterable
 
 from menace.unified_event_bus import UnifiedEventBus
 from menace.menace_orchestrator import MenaceOrchestrator
@@ -178,24 +178,49 @@ def load_modified_code(code_path: str) -> str:
 
 
 # ----------------------------------------------------------------------
-def scan_repo_sections(repo_path: str) -> Dict[str, Dict[str, List[str]]]:
+def scan_repo_sections(
+    repo_path: str, modules: Iterable[str] | None = None
+) -> Dict[str, Dict[str, List[str]]]:
+    """Return mapping of module -> section name -> lines.
+
+    When ``modules`` is provided only those relative paths within ``repo_path``
+    are traversed. Each entry may be a directory or a specific file path.
+    """
     from menace.codebase_diff_checker import _extract_sections
 
     sections: Dict[str, Dict[str, List[str]]] = {}
-    for base, _, files in os.walk(repo_path):
-        for name in files:
-            if not name.endswith(".py"):
-                continue
-            path = os.path.join(base, name)
-            rel = os.path.relpath(path, repo_path)
+    targets: List[str] = []
+
+    if modules:
+        for mod in modules:
+            root = os.path.join(repo_path, mod)
+            if os.path.isdir(root):
+                for base, _, files in os.walk(root):
+                    for name in files:
+                        if name.endswith(".py"):
+                            rel = os.path.relpath(os.path.join(base, name), repo_path)
+                            targets.append(rel)
+            else:
+                if root.endswith(".py") and os.path.isfile(root):
+                    targets.append(os.path.relpath(root, repo_path))
+    else:
+        for base, _, files in os.walk(repo_path):
+            for name in files:
+                if name.endswith(".py"):
+                    rel = os.path.relpath(os.path.join(base, name), repo_path)
+                    targets.append(rel)
+
+    for rel in targets:
+        path = os.path.join(repo_path, rel)
+        try:
+            sections[rel] = _extract_sections(path)
+        except Exception:
             try:
-                sections[rel] = _extract_sections(path)
+                with open(path, "r", encoding="utf-8") as fh:
+                    sections[rel] = {"__file__": fh.read().splitlines()}
             except Exception:
-                try:
-                    with open(path, "r", encoding="utf-8") as fh:
-                        sections[rel] = {"__file__": fh.read().splitlines()}
-                except Exception:
-                    sections[rel] = {}
+                sections[rel] = {}
+
     return sections
 
 

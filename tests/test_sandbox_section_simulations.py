@@ -190,7 +190,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
     monkeypatch.setattr(
         sandbox_runner,
         "scan_repo_sections",
-        lambda p: {"m.py": {"sec": ["pass"]}},
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
         raising=False,
     )
     monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda *a, **k: {"risk_flags_triggered": []})

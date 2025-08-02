@@ -4556,10 +4556,20 @@ def run_repo_section_simulations(
     repo_path: str,
     input_stubs: List[Dict[str, Any]] | None = None,
     env_presets: List[Dict[str, Any]] | None = None,
+    modules: Iterable[str] | None = None,
     *,
     return_details: bool = False,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, Dict[str, list[Dict[str, Any]]]]]:
-    """Analyse sections and simulate execution environment per section."""
+    """Analyse sections and simulate execution environment per section.
+
+    Parameters
+    ----------
+    repo_path:
+        Root of repository to analyse.
+    modules:
+        Optional iterable of relative module paths. When provided, only these
+        paths are scanned for sections.
+    """
     from menace.roi_tracker import ROITracker
     from menace.self_debugger_sandbox import SelfDebuggerSandbox
     from menace.self_coding_engine import SelfCodingEngine
@@ -4589,7 +4599,7 @@ def run_repo_section_simulations(
         from sandbox_runner import scan_repo_sections
 
         logger.info("scanning repository sections in %s", repo_path)
-        sections = scan_repo_sections(repo_path)
+        sections = scan_repo_sections(repo_path, modules=modules)
         tracker = ROITracker()
         plugins = discover_metrics_plugins(os.environ)
         scenario_names = []

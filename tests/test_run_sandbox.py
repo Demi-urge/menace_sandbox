@@ -471,7 +471,11 @@ def test_section_short_circuit(monkeypatch, tmp_path):
             TrackLogger.instance = self
 
     monkeypatch.setattr(sandbox_runner, "_SandboxMetaLogger", TrackLogger)
-    monkeypatch.setattr(sandbox_runner, "scan_repo_sections", lambda path: {"mod.py": {"sec": ["pass"]}})
+    monkeypatch.setattr(
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda path, modules=None: {"mod.py": {"sec": ["pass"]}},
+    )
 
     monkeypatch.setenv("SANDBOX_CYCLES", "5")
     ctx = sandbox_runner._sandbox_init({}, argparse.Namespace(sandbox_data_dir=str(tmp_path)))

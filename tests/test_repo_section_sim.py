@@ -274,7 +274,11 @@ def test_section_worker_concurrency(monkeypatch, tmp_path):
     monkeypatch.setattr(env.multiprocessing, "cpu_count", lambda: 2)
 
     sections = {f"m{i}.py": {f"s{j}": ["pass"]} for i in range(5) for j in range(2)}
-    monkeypatch.setattr(sandbox_runner, "scan_repo_sections", lambda p: sections)
+    monkeypatch.setattr(
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda p, modules=None: sections,
+    )
 
     running = 0
     peak = 0
