@@ -150,6 +150,19 @@ Sections with declining ROI trigger dedicated improvement cycles. Only the flagg
 
 `_SandboxMetaLogger.diminishing()` evaluates these ROI deltas using a rolling mean and standard deviation over the last `consecutive` cycles. A module is flagged when the mean is within the given threshold and the standard deviation falls below a small epsilon, preventing sporadic fluctuations from triggering improvements.
 
+### Orphan discovery and integration
+
+Isolated modules that lack inbound references may still contain useful logic.
+`discover_recursive_orphans` and `scripts.discover_isolated_modules` surface
+these files before each run and pass their paths to
+`run_repo_section_simulations(..., modules=modules)` so only the candidates are
+executed. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox adds modules that
+pass to `sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`
+creates one‑step workflows for them. Enable `SANDBOX_RECURSIVE_ORPHANS=1` or
+`SANDBOX_RECURSIVE_ISOLATED=1` to pull in dependencies of discovered files.
+Disable the scan with `SANDBOX_DISABLE_ORPHAN_SCAN=1` or
+`SELF_TEST_DISABLE_ORPHANS=1`.
+
 ## Workflow Simulations
 
 `run_workflow_simulations(workflows_db, env_presets=None)` replays stored
