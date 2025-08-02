@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 import threading
 
+from orphan_analyzer import analyze_redundancy
+
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
 
@@ -530,8 +532,23 @@ class SelfTestService:
             from scripts.find_orphan_modules import find_orphan_modules
 
             modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+        filtered: list[str] = []
+        for m in modules:
+            p = Path(m)
+            try:
+                if analyze_redundancy(p):
+                    self.logger.info(
+                        "redundant module skipped", extra={"module": p.name}
+                    )
+                    continue
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundancy analysis failed for %s: %s", p, exc
+                )
+                continue
+            filtered.append(m)
 
-        return modules
+        return filtered
 
     # ------------------------------------------------------------------
     def _discover_isolated(self, recursive: bool | None = None) -> list[str]:

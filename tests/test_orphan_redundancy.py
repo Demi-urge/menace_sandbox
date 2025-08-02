@@ -7,6 +7,17 @@ from typing import Iterable
 
 from module_index_db import ModuleIndexDB
 from orphan_analyzer import analyze_redundancy
+import importlib.util
+
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location(
+    "menace.self_test_service", ROOT / "self_test_service.py"
+)
+sts = importlib.util.module_from_spec(spec)
+pkg = sys.modules.get("menace")
+if pkg is not None:
+    pkg.__path__ = [str(ROOT)]
+spec.loader.exec_module(sts)
 
 
 class DummyLogger:
@@ -143,4 +154,55 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     assert calls and calls[0].name == "foo.py"
     assert "redundant module skipped" in eng.logger.info_msgs
     assert "redundant modules skipped" in eng.logger.info_msgs
+
+
+def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    svc = sts.SelfTestService(discover_isolated=False)
+    svc.logger = DummyLogger()
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "dup"]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    calls: list[Path] = []
+
+    def fake_analyze(p: Path) -> bool:
+        calls.append(p)
+        return p.stem == "dup"
+
+    monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
+
+    mods = svc._discover_orphans()
+
+    assert mods == [str(Path("foo.py"))]
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert "redundant module skipped" in svc.logger.info_msgs
+
+
+def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    svc = sts.SelfTestService(discover_isolated=False, recursive_orphans=False)
+    svc.logger = DummyLogger()
+
+    def fake_find(root: Path):
+        return [Path("foo.py"), Path("dup.py")]
+
+    monkeypatch.setattr(
+        "scripts.find_orphan_modules.find_orphan_modules", fake_find
+    )
+
+    calls: list[Path] = []
+
+    def fake_analyze(p: Path) -> bool:
+        calls.append(p)
+        return p.stem == "dup"
+
+    monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
+
+    mods = svc._discover_orphans()
+
+    assert mods == [str(Path("foo.py"))]
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert "redundant module skipped" in svc.logger.info_msgs
 
