@@ -1107,6 +1107,7 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "auto_include_isolated", False):
         os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
+        os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1"
 
     os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
 
