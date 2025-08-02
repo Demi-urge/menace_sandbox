@@ -512,7 +512,11 @@ class SelfTestService:
 
     # ------------------------------------------------------------------
     def _discover_orphans(self) -> list[str]:
-        """Run orphan discovery and append results."""
+        """Return orphan modules detected in the repository.
+
+        This helper performs discovery only; persisting the results is handled
+        by :meth:`_run_once` after combining orphan and isolated modules.
+        """
         modules: list[str]
         if self.recursive_orphans:
             from sandbox_runner import discover_recursive_orphans as _discover
@@ -526,34 +530,14 @@ class SelfTestService:
 
             modules = [str(p) for p in find_orphan_modules(Path.cwd())]
 
-        path = Path("sandbox_data") / "orphan_modules.json"
-        try:
-            path.parent.mkdir(exist_ok=True)
-            existing: list[str] = []
-            if path.exists():
-                try:
-                    with open(path, "r", encoding="utf-8") as fh:
-                        data = json.load(fh) or []
-                        if isinstance(data, list):
-                            existing = [str(p) for p in data]
-                except Exception:
-                    self.logger.exception("failed to load orphan modules")
-            new_modules = [m for m in modules if m not in existing]
-            combined = list(dict.fromkeys(existing + modules))
-            path.write_text(json.dumps(combined, indent=2))
-            if new_modules:
-                self.logger.info(
-                    "Added %d new orphan modules: %s",
-                    len(new_modules),
-                    ", ".join(sorted(new_modules)),
-                )
-        except Exception:
-            self.logger.exception("failed to write orphan modules")
         return modules
 
     # ------------------------------------------------------------------
     def _discover_isolated(self, recursive: bool | None = None) -> list[str]:
-        """Run discover_isolated_modules and append results."""
+        """Return modules discovered by ``discover_isolated_modules``.
+
+        Persistence of the results is handled by the caller.
+        """
         from scripts.discover_isolated_modules import discover_isolated_modules
 
         if recursive is None:
@@ -563,25 +547,8 @@ class SelfTestService:
             else:
                 recursive = self.recursive_isolated
 
-        path = Path("sandbox_data") / "orphan_modules.json"
-        existing: list[str] = []
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh) or []
-                    if isinstance(data, list):
-                        existing = [str(p) for p in data]
-            except Exception:
-                self.logger.exception("failed to load orphan modules")
-
         modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
-        combined = list(dict.fromkeys(existing + list(modules)))
-        try:
-            path.parent.mkdir(exist_ok=True)
-            path.write_text(json.dumps(combined, indent=2))
-        except Exception:
-            self.logger.exception("failed to write orphan modules")
-        return combined
+        return [str(m) for m in modules]
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
@@ -607,26 +574,32 @@ class SelfTestService:
         if not paths:
             paths = [None]
 
-        orphan_list: list[str] = []
-        if self.include_orphans:
-            path = Path("sandbox_data") / "orphan_modules.json"
-            if path.exists() and not refresh_orphans:
-                try:
-                    with open(path, "r", encoding="utf-8") as fh:
-                        data = json.load(fh) or []
-                        if isinstance(data, list):
-                            orphan_list = [str(p) for p in data]
-                except Exception:
-                    self.logger.exception("failed to load orphan modules")
-            else:
-                try:
-                    orphan_list = self._discover_orphans()
-                except Exception:
-                    self.logger.exception("failed to discover orphan modules")
+        path = Path("sandbox_data") / "orphan_modules.json"
+        existing: list[str] = []
+        if path.exists() and not refresh_orphans:
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh) or []
+                    if isinstance(data, list):
+                        existing = [str(p) for p in data]
+            except Exception:
+                self.logger.exception("failed to load orphan modules")
+
+        orphan_list: list[str] = existing if self.include_orphans else []
+        discovered: list[str] = []
+
+        if self.include_orphans and (refresh_orphans or not path.exists()):
+            try:
+                found = self._discover_orphans()
+                discovered.extend(found)
+                orphan_list.extend(found)
+            except Exception:
+                self.logger.exception("failed to discover orphan modules")
 
         if self.discover_orphans:
             try:
                 found = self._discover_orphans()
+                discovered.extend(found)
                 orphan_list.extend(found)
             except Exception:
                 self.logger.exception("failed to auto-discover orphan modules")
@@ -634,12 +607,28 @@ class SelfTestService:
         if self.discover_isolated:
             try:
                 found = self._discover_isolated()
+                discovered.extend(found)
                 orphan_list.extend(found)
             except Exception:
                 self.logger.exception("failed to auto-discover isolated modules")
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
+
+        combined_file = list(dict.fromkeys(existing + discovered))
+        if combined_file or path.exists():
+            try:
+                path.parent.mkdir(exist_ok=True)
+                path.write_text(json.dumps(sorted(combined_file), indent=2))
+                new_modules = [m for m in combined_file if m not in existing]
+                if new_modules:
+                    self.logger.info(
+                        "Added %d new orphan modules: %s",
+                        len(new_modules),
+                        ", ".join(sorted(new_modules)),
+                    )
+            except Exception:
+                self.logger.exception("failed to write orphan modules")
 
         if self._state:
             saved_queue = self._state.get("queue")

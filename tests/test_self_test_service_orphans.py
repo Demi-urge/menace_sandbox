@@ -541,3 +541,58 @@ def test_recursive_isolated_arg(tmp_path, monkeypatch):
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py"]
 
+
+def test_isolated_cleanup_passed(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    (tmp_path / "foo.py").write_text("x = 1\n")
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    import types
+
+    mod_iso = types.ModuleType("scripts.discover_isolated_modules")
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=False: ["foo.py"]
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod_iso
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
+
+    calls: list[list[str]] = []
+
+    def integration(mods: list[str]) -> None:
+        calls.append(list(mods))
+
+    svc = mod.SelfTestService(integration_callback=integration, clean_orphans=True)
+    svc.run_once()
+
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert data == []
+    assert calls == [["foo.py"]]
+    assert svc.results.get("orphan_passed") == ["foo.py"]
+

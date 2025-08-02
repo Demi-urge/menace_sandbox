@@ -250,15 +250,23 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", lambda self, modules=None, force=False: None)
 
+    calls: list[list[str]] = []
+
+    def integration(mods: list[str]) -> None:
+        calls.append(list(mods))
+        engine._refresh_module_map(mods)
+
     svc = sts.SelfTestService(
         include_orphans=True,
-        integration_callback=engine._refresh_module_map,
+        integration_callback=integration,
         clean_orphans=True,
     )
     svc.run_once()
 
     data = json.loads((data_dir / "orphan_modules.json").read_text())
     assert data == []
+    assert calls == [["foo.py"]]
+    assert svc.results.get("orphan_passed") == ["foo.py"]
 
 
 def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
