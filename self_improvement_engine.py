@@ -1613,7 +1613,11 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "redundancy analysis failed for %s: %s", p, exc
                 )
-                redundant = False
+                skipped.append(p.name)
+                self.logger.info(
+                    "redundant module skipped", extra=log_record(module=p.name)
+                )
+                continue
             if redundant:
                 skipped.append(p.name)
                 self.logger.info(
