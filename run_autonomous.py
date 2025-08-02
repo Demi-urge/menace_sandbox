@@ -1048,7 +1048,7 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-orphans",
         action="store_true",
         dest="recursive_orphans",
-        default=True,
+        default=None,
         help="enable recursive integration of orphan dependency chains",
     )
     parser.add_argument(
@@ -1104,12 +1104,14 @@ def main(argv: List[str] | None = None) -> None:
 
     os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
 
-    if getattr(args, "recursive_orphans"):
-        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1"
-        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "1"
+    rec_arg = getattr(args, "recursive_orphans")
+    if rec_arg is None:
+        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
+        os.environ.setdefault("SELF_TEST_RECURSIVE_ORPHANS", "1")
     else:
-        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "0"
-        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "0"
+        val = "1" if rec_arg else "0"
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
+        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
 
     if getattr(args, "include_orphans") is False:
         os.environ["SANDBOX_DISABLE_ORPHANS"] = "1"

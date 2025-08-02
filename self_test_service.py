@@ -1251,7 +1251,7 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-orphans",
         dest="recursive_orphans",
         action="store_true",
-        default=True,
+        default=None,
         help="Recursively discover dependent orphan chains (default)",
     )
     run.add_argument(
@@ -1343,7 +1343,7 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-orphans",
         dest="recursive_orphans",
         action="store_true",
-        default=True,
+        default=None,
         help="Recursively discover dependent orphan chains (default)",
     )
     sched.add_argument(
@@ -1389,6 +1389,20 @@ def cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    rec_arg = getattr(args, "recursive_orphans", None)
+    if rec_arg is None:
+        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
+        os.environ.setdefault("SELF_TEST_RECURSIVE_ORPHANS", "1")
+        recursive_orphans = os.getenv("SELF_TEST_RECURSIVE_ORPHANS", "1").lower() not in {
+            "0",
+            "false",
+        }
+    else:
+        val = "1" if rec_arg else "0"
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
+        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
+        recursive_orphans = rec_arg
+
     if args.cmd == "run":
         pytest_args = []
         if args.pytest_args:
@@ -1410,7 +1424,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
             discover_isolated=args.discover_isolated,
-            recursive_orphans=args.recursive_orphans,
+            recursive_orphans=recursive_orphans,
             recursive_isolated=args.recursive_isolated,
             clean_orphans=args.clean_orphans,
         )
@@ -1449,7 +1463,7 @@ def cli(argv: list[str] | None = None) -> int:
             include_orphans=args.include_orphans,
             discover_orphans=args.discover_orphans,
             discover_isolated=args.discover_isolated,
-            recursive_orphans=args.recursive_orphans,
+            recursive_orphans=recursive_orphans,
             recursive_isolated=args.recursive_isolated,
             clean_orphans=args.clean_orphans,
         )
