@@ -1721,6 +1721,18 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to write orphan modules")
 
     # ------------------------------------------------------------------
+    def _load_orphan_candidates(self) -> list[str]:
+        """Read orphan module candidates from the tracking file."""
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        path = data_dir / "orphan_modules.json"
+        try:
+            if path.exists():
+                return json.loads(path.read_text()) or []
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to load orphan candidates")
+        return []
+
+    # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
         if modules:
@@ -1839,7 +1851,8 @@ class SelfImprovementEngine:
         set_correlation_id(cid)
         try:
             self._update_orphan_modules()
-            self._refresh_module_map()
+            orphans = self._load_orphan_candidates()
+            self._refresh_module_map(orphans)
             state = (
                 self._policy_state()
                 if self.policy
