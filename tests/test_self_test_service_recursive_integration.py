@@ -61,7 +61,10 @@ else:
     pkg.__path__ = [str(ROOT)]
     pkg.__spec__ = importlib.machinery.ModuleSpec("menace", loader=None, is_package=True)
     sys.modules["menace"] = pkg
+from prometheus_client import REGISTRY
+REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(self_test_mod)
+self_test_mod.analyze_redundancy = lambda p: False
 
 # dynamically load ModuleIndexDB
 spec_db = importlib.util.spec_from_file_location("module_index_db", ROOT / "module_index_db.py")
@@ -247,7 +250,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
 
     def fake_discover(root, *, module_map=None):
         called.append({"root": root, "module_map": module_map})
-        return ["orphan", "helper"]
+        return {"orphan": [], "helper": ["orphan"]}
 
     import sandbox_runner
 

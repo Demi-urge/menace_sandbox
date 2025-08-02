@@ -123,7 +123,8 @@ After the system tools are in place install the Python requirements via
 ### Recursive inclusion flow
 
 Orphan and isolated modules are now discovered recursively. The helper
-`sandbox_runner.discover_recursive_orphans` walks import chains and the
+`sandbox_runner.discover_recursive_orphans` walks import chains and returns a
+mapping from each discovered module to the module(s) that imported it. The
 sandbox merges passing modules into `module_map.json` so they can join existing
 workflows automatically. `auto_env_setup.ensure_env()` enables this behaviour by
 default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,

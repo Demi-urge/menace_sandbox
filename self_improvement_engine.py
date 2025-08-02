@@ -644,6 +644,9 @@ class SelfImprovementEngine:
             except Exception:
                 module_clusters = None
         self.module_clusters: dict[str, int] = module_clusters or {}
+        # Filled by ``_update_orphan_modules`` when recursive orphan discovery
+        # finds new modules. Maps module names to the modules that imported them.
+        self.orphan_traces: dict[str, list[str]] = {}
 
         if module_groups is None:
             try:
@@ -1637,9 +1640,10 @@ class SelfImprovementEngine:
         try:
             from sandbox_runner import discover_recursive_orphans as _discover
 
-            names = _discover(str(repo), module_map=data_dir / "module_map.json")
+            trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+            self.orphan_traces = trace
             modules.extend(
-                [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+                [str(Path(*n.split(".")).with_suffix(".py")) for n in trace]
             )
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan discovery failed: %s", exc)

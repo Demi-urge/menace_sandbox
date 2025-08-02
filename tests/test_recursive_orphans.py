@@ -93,7 +93,7 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
         called["used"] = True
         called["repo"] = repo_path
         called["map"] = module_map
-        return ["foo.bar"]
+        return {"foo.bar": []}
 
     sr.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)

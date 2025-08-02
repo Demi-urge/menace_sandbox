@@ -34,10 +34,12 @@ def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
     (tmp_path / "b.py").write_text("x = 1\n")
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
-    (data_dir / "module_map.json").write_text(json.dumps({"a.py": 0}))
+    (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
 
-    res = discover_recursive_orphans(str(tmp_path), module_map=data_dir / "module_map.json")
-    assert sorted(res) == ["a", "b"]
+    res = discover_recursive_orphans(
+        str(tmp_path), module_map=data_dir / "module_map.json"
+    )
+    assert res == {"a": [], "b": ["a"]}
 
 
 def test_public_import(monkeypatch):

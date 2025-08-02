@@ -154,7 +154,10 @@ Sections with declining ROI trigger dedicated improvement cycles. Only the flagg
 
 Isolated modules that lack inbound references may still contain useful logic.
 `discover_recursive_orphans` and `scripts.discover_isolated_modules` surface
-these files before each run and pass their paths to
+these files before each run. `discover_recursive_orphans` returns a mapping from
+each orphan module to the module(s) that imported it, allowing downstream tools
+to construct workflow segments per dependency chain. The collected paths are
+then passed to
 `run_repo_section_simulations(..., modules=modules)` so only the candidates are
 executed. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox adds modules that
 pass to `sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`

@@ -96,8 +96,15 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
 
 
-def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = None) -> List[str]:
-    """Return orphan modules along with local dependencies not tracked in the module map."""
+def discover_recursive_orphans(
+    repo_path: str, module_map: str | Path | None = None
+) -> dict[str, list[str]]:
+    """Return orphan modules and their local dependencies.
+
+    The result maps each newly discovered module to the module(s) that imported
+    it. Top level orphans will have an empty list of parents. Modules already
+    present in ``module_map`` are ignored in the output.
+    """
 
     repo = Path(repo_path)
     if module_map is None:
@@ -122,6 +129,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
     found: set[str] = set()
     queue = list(orphans)
     seen: set[str] = set()
+    parents: dict[str, set[str]] = {m: set() for m in orphans}
 
     while queue:
         mod = queue.pop(0)
@@ -146,6 +154,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     if not (mod_path.exists() or pkg_init.exists()):
                         continue
+                    parents.setdefault(name, set()).add(mod)
                     if name not in seen:
                         queue.append(name)
             elif isinstance(node, ast.ImportFrom):
@@ -161,6 +170,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     if mod_path.exists() or pkg_init.exists():
+                        parents.setdefault(name, set()).add(mod)
                         if name not in seen:
                             queue.append(name)
                 elif node.names:
@@ -169,7 +179,11 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                         mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                         pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                         if mod_path.exists() or pkg_init.exists():
+                            parents.setdefault(name, set()).add(mod)
                             if name not in seen:
                                 queue.append(name)
 
-    return sorted(found - known)
+    return {
+        m: sorted(parents.get(m, []))
+        for m in sorted(found - known)
+    }

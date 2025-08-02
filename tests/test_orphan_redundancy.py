@@ -17,6 +17,8 @@ sts = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
+from prometheus_client import REGISTRY
+REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(sts)
 
 
@@ -129,7 +131,7 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     _, update, _, _ = _load_methods()
 
     sr = types.ModuleType("sandbox_runner")
-    sr.discover_recursive_orphans = lambda repo, module_map=None: ["foo"]
+    sr.discover_recursive_orphans = lambda repo, module_map=None: {"foo": []}
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
@@ -162,7 +164,9 @@ def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
     svc.logger = DummyLogger()
 
     sr = types.ModuleType("sandbox_runner")
-    sr.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "dup"]
+    sr.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"foo": [], "dup": []}
+    )
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     calls: list[Path] = []

@@ -67,7 +67,7 @@ def test_recursive_import_includes_dependencies(tmp_path):
 
     def recursive_orphans(root):
         calls["rec"] += 1
-        return ["a", "b"]
+        return {"a": [], "b": ["a"]}
 
     discover = _load_discover(find_orphans, import_orphans, recursive_orphans)
     res = discover(str(tmp_path), recursive=True)

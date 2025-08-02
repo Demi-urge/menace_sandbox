@@ -131,7 +131,9 @@ def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
     env_mod = types.ModuleType("environment")
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
-    pkg.discover_recursive_orphans = lambda repo, module_map=None: ["a", "b"]
+    pkg.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"a": [], "b": []}
+    )
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
 

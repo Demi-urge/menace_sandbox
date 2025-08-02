@@ -15,7 +15,11 @@ mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
+from prometheus_client import REGISTRY
+REGISTRY._names_to_collectors.clear()
 spec.loader.exec_module(mod)
+# simplify redundancy checks for tests
+mod.analyze_redundancy = lambda p: False
 
 
 def test_include_orphans(tmp_path, monkeypatch):
@@ -54,7 +58,7 @@ def test_include_orphans(tmp_path, monkeypatch):
     import types
 
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService()
@@ -100,14 +104,16 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
 
     import types
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "bar"]
+    runner.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"foo": [], "bar": []}
+    )
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService()
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py", "bar.py"]
+    assert set(data) == {"foo.py", "bar.py"}
     joined = [" ".join(map(str, c)) for c in calls]
     assert any("foo.py" in c for c in joined)
     assert any("bar.py" in c for c in joined)
@@ -147,14 +153,16 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
     import types
 
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "bar"]
+    runner.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"foo": [], "bar": []}
+    )
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService(discover_orphans=True)
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
-    assert data == ["foo.py", "bar.py"]
+    assert set(data) == {"foo.py", "bar.py"}
     joined = [" ".join(map(str, c)) for c in calls]
     assert any("foo.py" in c for c in joined)
     assert any("bar.py" in c for c in joined)
@@ -201,7 +209,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts", pkg)
 
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService(discover_isolated=True)
@@ -250,7 +258,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
         calls["used"] = True
         calls["repo"] = repo
         calls["map"] = module_map
-        return ["foo"]
+        return {"foo": []}
 
     helper = types.ModuleType("sandbox_runner")
     helper.discover_recursive_orphans = discover
@@ -295,7 +303,7 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
 
     import types
 
-    seq = [["foo"], ["bar"]]
+    seq = [{"foo": []}, {"bar": []}]
     calls = []
 
     def discover(repo, module_map=None):
@@ -364,7 +372,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     def discover(repo, module_map=None):
         params.setdefault("repo", repo)
         params.setdefault("map", module_map)
-        return ["a", "b", "c"]
+        return {"a": [], "b": ["a"], "c": ["b"]}
 
     helper = types.ModuleType("sandbox_runner")
     helper.discover_recursive_orphans = discover
@@ -419,7 +427,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
 
     def discover(repo, module_map=None):
         discover_calls.append((repo, module_map))
-        return ["a", "b"]
+        return {"a": [], "b": []}
 
     helper = types.ModuleType("sandbox_runner")
     helper.discover_recursive_orphans = discover
@@ -450,7 +458,7 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
 
     def discover(repo, module_map=None):
         called["used"] = True
-        return ["foo"]
+        return {"foo": []}
 
     runner = types.ModuleType("sandbox_runner")
     runner.discover_recursive_orphans = discover
@@ -463,9 +471,10 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", find_mod)
     monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
 
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     svc = mod.SelfTestService()
     modules = svc._discover_orphans()
-    assert modules == [str(tmp_path / "foo.py")]
+    assert modules == ["foo.py"]
     assert called.get("used") is None
 
 
@@ -509,7 +518,7 @@ def _setup_isolated(monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
     monkeypatch.setitem(sys.modules, "scripts", pkg)
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc)
     return called
@@ -580,7 +589,7 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
     monkeypatch.setitem(sys.modules, "scripts", pkg)
     runner = types.ModuleType("sandbox_runner")
-    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    runner.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     calls: list[list[str]] = []

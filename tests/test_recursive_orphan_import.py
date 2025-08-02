@@ -13,7 +13,7 @@ def test_recursive_orphan_import(tmp_path, monkeypatch):
     (tmp_path / "b.py").write_text("x = 1\n")
 
     res = sr.discover_recursive_orphans(str(tmp_path))
-    assert sorted(res) == ["a", "b"]
+    assert res == {"a": [], "b": ["a"]}
 
 
 def test_recursive_orphan_import_chain(tmp_path, monkeypatch):
@@ -28,7 +28,7 @@ def test_recursive_orphan_import_chain(tmp_path, monkeypatch):
     (tmp_path / "c.py").write_text("x = 1\n")
 
     res = sr.discover_recursive_orphans(str(tmp_path))
-    assert sorted(res) == ["a", "b", "c"]
+    assert res == {"a": [], "b": ["a"], "c": ["b"]}
 
 
 def test_recursive_orphan_import_skips_known(tmp_path, monkeypatch):
@@ -47,4 +47,4 @@ def test_recursive_orphan_import_skips_known(tmp_path, monkeypatch):
 
     res = sr.discover_recursive_orphans(str(tmp_path))
     # 'b' is tracked in the module map but its dependency 'c' should still be discovered
-    assert sorted(res) == ["a", "c"]
+    assert res == {"a": [], "c": ["b"]}

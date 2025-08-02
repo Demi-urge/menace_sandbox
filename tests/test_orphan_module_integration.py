@@ -146,7 +146,7 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.run_workflow_simulations = fake_run
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
-    pkg.discover_recursive_orphans = lambda repo, module_map=None: []
+    pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
@@ -288,7 +288,7 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
     env_mod.run_workflow_simulations = lambda: None
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
-    pkg.discover_recursive_orphans = lambda repo, module_map=None: []
+    pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
 
@@ -375,7 +375,9 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
         helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
     else:  # pragma: no cover - fallback if function missing
         helper._discover_orphans_once = lambda *a, **k: None
-    helper.discover_recursive_orphans = lambda repo, module_map=None: ["a", "b"]
+    helper.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"a": [], "b": []}
+    )
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     generated: list[list[str]] = []
