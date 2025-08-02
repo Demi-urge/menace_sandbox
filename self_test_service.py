@@ -8,6 +8,7 @@ from asyncio import Lock
 from filelock import FileLock
 import json
 import logging
+import ast
 import os
 import shlex
 import sqlite3
@@ -532,6 +533,102 @@ class SelfTestService:
             from scripts.find_orphan_modules import find_orphan_modules
 
             modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+
+        def _collect_recursive(mods: Iterable[str]) -> set[str]:
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            queue: list[Path] = []
+            seen: set[str] = set()
+            for m in mods:
+                p = Path(m)
+                if not p.is_absolute():
+                    p = repo / p
+                queue.append(p)
+            while queue:
+                path = queue.pop()
+                try:
+                    rel = path.relative_to(repo).as_posix()
+                except Exception:
+                    continue
+                if rel in seen:
+                    continue
+                seen.add(rel)
+                if not path.exists():
+                    continue
+                try:
+                    src = path.read_text(encoding="utf-8")
+                    tree = ast.parse(src)
+                except Exception:
+                    continue
+                pkg_parts = rel.split("/")[:-1]
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            name = alias.name
+                            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                            dep = (
+                                mod_path
+                                if mod_path.exists()
+                                else pkg_init
+                                if pkg_init.exists()
+                                else None
+                            )
+                            if dep is not None:
+                                queue.append(dep)
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.level:
+                            if node.level - 1 <= len(pkg_parts):
+                                base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                            else:
+                                base_prefix = []
+                        else:
+                            base_prefix = pkg_parts
+                        if node.module:
+                            parts = base_prefix + node.module.split(".")
+                            mod_path = repo / Path(*parts).with_suffix(".py")
+                            pkg_init = repo / Path(*parts) / "__init__.py"
+                            dep = (
+                                mod_path
+                                if mod_path.exists()
+                                else pkg_init
+                                if pkg_init.exists()
+                                else None
+                            )
+                            if dep is not None:
+                                queue.append(dep)
+                            for alias in node.names:
+                                if alias.name == "*":
+                                    continue
+                                sub_parts = parts + alias.name.split(".")
+                                mod_path = repo / Path(*sub_parts).with_suffix(".py")
+                                pkg_init = repo / Path(*sub_parts) / "__init__.py"
+                                dep = (
+                                    mod_path
+                                    if mod_path.exists()
+                                    else pkg_init
+                                    if pkg_init.exists()
+                                    else None
+                                )
+                                if dep is not None:
+                                    queue.append(dep)
+                        elif node.names:
+                            for alias in node.names:
+                                name = ".".join(base_prefix + alias.name.split("."))
+                                mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                                pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                                dep = (
+                                    mod_path
+                                    if mod_path.exists()
+                                    else pkg_init
+                                    if pkg_init.exists()
+                                    else None
+                                )
+                                if dep is not None:
+                                    queue.append(dep)
+            return seen
+
+        modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
+
         filtered: list[str] = []
         for m in modules:
             p = Path(m)
