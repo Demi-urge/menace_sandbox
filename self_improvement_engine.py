@@ -1552,13 +1552,9 @@ class SelfImprovementEngine:
                 self.logger.exception("isolated module discovery failed: %s", exc)
 
         try:
-            if recursive:
-                from sandbox_runner import discover_recursive_orphans as _discover
-                names = _discover(str(repo), module_map=data_dir / "module_map.json")
-            else:
-                from sandbox_runner import discover_orphan_modules as _discover
-                names = _discover(str(repo))
+            from sandbox_runner import discover_recursive_orphans as _discover
 
+            names = _discover(str(repo), module_map=data_dir / "module_map.json")
             modules.extend(
                 [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
             )
@@ -1611,6 +1607,35 @@ class SelfImprovementEngine:
         if not filtered:
             return
 
+        passing: list[str] = []
+        for m in filtered:
+            try:
+                generate_workflows_for_modules([m])
+                run_workflow_simulations()
+                try_integrate_into_workflows([m])
+                passing.append(m)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "orphan module validation failed for %s: %s", m, exc
+                )
+
+        if passing:
+            try:
+                idx = self.module_index
+                if idx is None:
+                    from .module_index_db import ModuleIndexDB
+
+                    idx = ModuleIndexDB(data_dir / "module_map.json")
+                idx.refresh([Path(p).name for p in passing], force=True)
+                for p in passing:
+                    self.module_clusters[Path(p).name] = idx.get(Path(p).name)
+                idx.save()
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("failed to update module map: %s", exc)
+            try:
+                self._refresh_module_map(passing)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("module map refresh failed: %s", exc)
         combined = sorted(set(existing).union(filtered))
         new_mods = [m for m in filtered if m not in existing]
         if new_mods:
@@ -1622,12 +1647,6 @@ class SelfImprovementEngine:
                 )
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
-
-        # integrate any discovered modules immediately
-        try:
-            self._refresh_module_map(filtered)
-        except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
