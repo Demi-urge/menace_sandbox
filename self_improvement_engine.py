@@ -1445,18 +1445,33 @@ class SelfImprovementEngine:
                 self.module_clusters[m] = idx
             self.module_index.save()
             self._last_map_refresh = time.time()
+            workflow_ids: list[int] = []
             try:
-                generate_workflows_for_modules(sorted(mods))
+                workflow_ids.extend(generate_workflows_for_modules(sorted(mods)))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "workflow generation failed: %s", exc
                 )
             try:
-                try_integrate_into_workflows(sorted(mods))
+                workflow_ids.extend(try_integrate_into_workflows(sorted(mods)))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "workflow integration failed: %s", exc
                 )
+            if workflow_ids:
+                try:
+                    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                    wf_file = data_dir / "workflow_ids.json"
+                    if wf_file.exists():
+                        existing_ids = json.loads(wf_file.read_text()) or []
+                    else:
+                        existing_ids = []
+                    merged = sorted(set(existing_ids).union(workflow_ids))
+                    wf_file.write_text(json.dumps(merged, indent=2))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "failed to persist workflow ids: %s", exc
+                    )
             try:
                 run_workflow_simulations()
             except Exception as exc:  # pragma: no cover - best effort
@@ -1640,15 +1655,6 @@ class SelfImprovementEngine:
         if not modules:
             return
 
-        try:
-            if path.exists():
-                existing = json.loads(path.read_text()) or []
-            else:
-                existing = []
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to load orphan modules")
-            existing = []
-
         filtered: list[str] = []
         skipped: list[str] = []
         for m in modules:
@@ -1679,46 +1685,31 @@ class SelfImprovementEngine:
         if not filtered:
             return
 
-        passing: list[str] = []
-        for m in filtered:
-            try:
-                generate_workflows_for_modules([m])
-                run_workflow_simulations()
-                try_integrate_into_workflows([m])
-                passing.append(m)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "orphan module validation failed for %s: %s", m, exc
-                )
-
+        passing = self._test_orphan_modules(filtered)
+        integrated: set[str] = set()
         if passing:
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            abs_paths = [str(repo / p) if not Path(p).is_absolute() else str(Path(p)) for p in passing]
             try:
-                idx = self.module_index
-                if idx is None:
-                    from .module_index_db import ModuleIndexDB
+                integrated = self._integrate_orphans(abs_paths)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("orphan integration failed: %s", exc)
 
-                    idx = ModuleIndexDB(data_dir / "module_map.json")
-                idx.refresh([Path(p).name for p in passing], force=True)
-                for p in passing:
-                    self.module_clusters[Path(p).name] = idx.get(Path(p).name)
-                idx.save()
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("failed to update module map: %s", exc)
-            try:
-                self._refresh_module_map(passing)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("module map refresh failed: %s", exc)
-        combined = sorted(set(existing).union(filtered))
-        new_mods = [m for m in filtered if m not in existing]
-        if new_mods:
-            try:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(json.dumps(combined, indent=2))
-                self.logger.info(
-                    "orphan modules updated", extra=log_record(count=len(combined))
-                )
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to write orphan modules")
+        try:
+            existing = json.loads(path.read_text()) if path.exists() else []
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to load orphan modules")
+            existing = []
+        remaining = [m for m in filtered if Path(m).name not in integrated]
+        combined = sorted(set(existing).union(remaining))
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(combined, indent=2))
+            self.logger.info(
+                "orphan modules updated", extra=log_record(count=len(combined))
+            )
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to write orphan modules")
 
     # ------------------------------------------------------------------
     def _load_orphan_candidates(self) -> list[str]:
