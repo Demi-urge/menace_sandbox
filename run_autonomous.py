@@ -1079,10 +1079,17 @@ def main(argv: List[str] | None = None) -> None:
         help="disable discover_isolated_modules during orphan scan",
     )
     parser.add_argument(
+        "--recursive-isolated",
+        action="store_true",
+        dest="recursive_isolated",
+        default=None,
+        help="recurse through dependencies of isolated modules",
+    )
+    parser.add_argument(
         "--no-recursive-isolated",
         action="store_false",
         dest="recursive_isolated",
-        default=True,
+        default=None,
         help="disable recursively processing modules from discover_isolated_modules",
     )
     parser.add_argument(
@@ -1122,12 +1129,15 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "discover_isolated") is False:
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
-    if getattr(args, "recursive_isolated"):
-        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
-        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
+
+    rec_iso = getattr(args, "recursive_isolated")
+    if rec_iso is None:
+        os.environ.setdefault("SELF_TEST_RECURSIVE_ISOLATED", "1")
+        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
     else:
-        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "0"
-        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "0"
+        val = "1" if rec_iso else "0"
+        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
     if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")

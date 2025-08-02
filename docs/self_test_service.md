@@ -35,10 +35,12 @@ default `auto_env_setup.ensure_env` sets `SELF_TEST_RECURSIVE_ORPHANS=1` and
 through their import chains and, when tests pass, are merged into
 `sandbox_data/module_map.json` for future workflows. Disable recursion with the
 CLI flags `--no-recursive-orphans` or `--no-recursive-isolated`, or set the
-corresponding environment variables to `0`. Use `--auto-include-isolated`
-(or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force isolated discovery and
-`--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop passing entries from
-`orphan_modules.json`.
+corresponding environment variables to `0`. The complementary flags
+`--recursive-orphans` and `--recursive-isolated` explicitly enable this behaviour
+and set `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED`
+respectively. Use `--auto-include-isolated` (or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`)
+to force isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to
+drop passing entries from `orphan_modules.json`.
 
 ## Command Line Interface
 
@@ -57,11 +59,13 @@ Options include:
 - `--docker-host` – Docker/Podman host or URL for remote engines
 - `--metrics-port` – expose Prometheus gauges on this port
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
-- `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
-- `--auto-include-isolated` – automatically run `discover_isolated_modules` and append results (use `--no-auto-include-isolated` to disable)
-- `--no-recursive-orphans` – do not recurse through orphan dependencies
-- `--no-recursive-isolated` – do not recurse through dependencies of isolated modules
-- `--clean-orphans` – remove passing entries from `orphan_modules.json`
+ - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
+ - `--auto-include-isolated` – automatically run `discover_isolated_modules` and append results (use `--no-auto-include-isolated` to disable)
+ - `--recursive-orphans` – recurse through orphan dependencies (`--no-recursive-orphans` to disable)
+ - `--recursive-isolated` – recurse through dependencies of isolated modules (`--no-recursive-isolated` to disable)
+ - `--no-recursive-orphans` – do not recurse through orphan dependencies
+ - `--no-recursive-isolated` – do not recurse through dependencies of isolated modules
+ - `--clean-orphans` – remove passing entries from `orphan_modules.json`
 
 Recursion through orphan dependencies is enabled by default; use
 `--no-recursive-orphans` to limit the search to top-level modules or set

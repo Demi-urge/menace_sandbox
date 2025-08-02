@@ -729,7 +729,7 @@ def full_autonomous_run(
                 discover_orphans=getattr(args, "discover_orphans", None),
                 discover_isolated=getattr(args, "discover_isolated", None),
                 recursive_orphans=getattr(args, "recursive_orphans", None),
-                recursive_isolated=getattr(args, "recursive_isolated", False),
+                recursive_isolated=getattr(args, "recursive_isolated", None),
             )
             tracker = _capture_run(preset, run_args)
             if not tracker:
@@ -1049,6 +1049,8 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--recursive-isolated",
         action="store_true",
+        dest="recursive_isolated",
+        default=None,
         help="recurse through dependencies of isolated modules",
     )
     parser.add_argument(
@@ -1321,6 +1323,14 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "auto_include_isolated", False):
         os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
+    if getattr(args, "recursive_orphans", None) is not None:
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = (
+            "1" if args.recursive_orphans else "0"
+        )
+    if getattr(args, "recursive_isolated", None) is not None:
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = (
+            "1" if args.recursive_isolated else "0"
+        )
 
     level_str = str(getattr(args, "log_level", "INFO"))
     try:
