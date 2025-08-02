@@ -51,6 +51,12 @@ def test_include_orphans(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     monkeypatch.chdir(tmp_path)
 
+    import types
+
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
+
     svc = mod.SelfTestService()
     svc.run_once()
 
@@ -93,9 +99,9 @@ def test_auto_discover_orphans(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     import types
-    mod_find = types.ModuleType("scripts.find_orphan_modules")
-    mod_find.find_orphan_modules = lambda root: [Path("foo.py"), Path("bar.py")]
-    monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", mod_find)
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "bar"]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService()
     svc.run_once()
@@ -140,9 +146,9 @@ def test_discover_orphans_option(tmp_path, monkeypatch):
 
     import types
 
-    helper = types.ModuleType("scripts.find_orphan_modules")
-    helper.find_orphan_modules = lambda root, recursive=False: [Path("foo.py"), Path("bar.py")]
-    monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", helper)
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: ["foo", "bar"]
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService(discover_orphans=True)
     svc.run_once()
@@ -193,6 +199,10 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
     monkeypatch.setitem(sys.modules, "scripts", pkg)
+
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
 
     svc = mod.SelfTestService(discover_isolated=True)
     svc.run_once()
@@ -468,6 +478,9 @@ def _setup_isolated(monkeypatch):
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
     monkeypatch.setitem(sys.modules, "scripts", pkg)
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: []
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_proc)
     return called
 

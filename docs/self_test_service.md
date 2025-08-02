@@ -50,6 +50,9 @@ Options include:
 - `--no-recursive-isolated` – do not recurse through dependencies of isolated modules
 - `--auto-include-isolated` – automatically discover isolated modules (recursion enabled by default; equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`)
 - `--clean-orphans` – remove passing entries from `orphan_modules.json`
+
+Recursion through orphan dependencies is enabled by default; use
+`--no-recursive-orphans` to limit the search to top-level modules.
 Remove stale containers left over from interrupted runs with:
 
 ```bash
@@ -102,10 +105,10 @@ Automatic scanning is enabled by default (`SELF_TEST_DISCOVER_ORPHANS=1`). Set
 `SELF_TEST_DISCOVER_ORPHANS=0` to disable it. The discovered modules are saved to the
 same file and appended to the test queue on the next run. Use `--refresh-orphans`
 to force a new scan when the list already exists. Recursion through orphan
-dependencies is enabled by default via `SELF_TEST_RECURSIVE_ORPHANS=1` and
-`SANDBOX_RECURSIVE_ORPHANS=1`. Disable recursion with
-`SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0` or the
-`--no-recursive-orphans` option. The search uses
+dependencies is enabled by default, mirroring the effect of setting
+`SELF_TEST_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1`. Disable
+recursion with `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0`
+or the `--no-recursive-orphans` option. The search uses
 `sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
 to walk each orphan's imports until no new local modules remain. This function
 is part of the public `sandbox_runner` API and may be imported for custom

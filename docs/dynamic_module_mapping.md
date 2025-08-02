@@ -77,8 +77,8 @@ stored in `workflows.db`.
 
 `sandbox_runner` automatically discovers modules that are not referenced by any
 tests. The self‑test service loads `sandbox_data/orphan_modules.json` or
-generates it using `discover_recursive_orphans` when missing. Modules that pass
-their tests are
+generates it using `discover_recursive_orphans` when missing and follows orphan
+dependencies by default. Modules that pass their tests are
 merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.

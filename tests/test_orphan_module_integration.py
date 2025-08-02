@@ -6,6 +6,7 @@ import types
 import time
 from pathlib import Path
 from typing import Iterable
+from prometheus_client import REGISTRY
 
 ROOT = Path(__file__).resolve().parents[1]
 # provide minimal pydantic stub for optional dependencies
@@ -28,6 +29,8 @@ sys.modules.setdefault("yaml", yaml_mod)
 sys.modules.setdefault("pydantic", pyd_mod)
 sys.modules.setdefault("pydantic.dataclasses", sub)
 
+# reset prometheus registry to avoid duplicate metric errors when importing
+REGISTRY._names_to_collectors.clear()
 
 # load SelfTestService from source
 spec = importlib.util.spec_from_file_location(
@@ -128,6 +131,7 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = fake_generate
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
+    pkg.discover_recursive_orphans = lambda repo, module_map=None: []
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
@@ -196,6 +200,7 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = lambda mods, workflows_db="workflows.db": [1]
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
+    pkg.discover_recursive_orphans = lambda repo, module_map=None: []
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
 
@@ -271,6 +276,7 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     helper = types.ModuleType("sandbox_runner")
     helper.discover_orphan_modules = mod_dict["discover_orphan_modules"]
     helper._discover_orphans_once = mod_dict["_discover_orphans_once"]
+    helper.discover_recursive_orphans = lambda repo, module_map=None: ["a", "b"]
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
     generated: list[list[str]] = []
@@ -327,6 +333,7 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
 
     sr = types.ModuleType("sandbox_runner")
     sr.discover_orphan_modules = lambda repo: ["foo"]
+    sr.discover_recursive_orphans = lambda repo, module_map=None: []
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
 
     map_path = tmp_path / "module_map.json"
