@@ -31,7 +31,8 @@ container issues:
 
 The service participates in the sandbox's recursive module discovery. During
 discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
-orphan's imports and collects any local dependencies. Every candidate is then
+orphan's imports, collects any local dependencies and returns a mapping from
+each discovered module to the module(s) that required it. Every candidate is then
 executed in an ephemeral sandbox via `pytest` so side effects are contained.
 Modules that pass are appended to `sandbox_data/module_map.json` and
 `environment.generate_workflows_for_modules` is invoked to build temporary
@@ -133,7 +134,8 @@ are written to the generated `.env` by `auto_env_setup.ensure_env`. Disable
 recursion with `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0`
 or the `--no-recursive-orphans` option. The search uses
 `sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
-to walk each orphan's imports until no new local modules remain. This function
+to walk each orphan's imports until no new local modules remain, returning a
+mapping from each module to the module(s) that imported it. This function
 is part of the public `sandbox_runner` API and may be imported for custom
 workflows. When Docker or other heavy dependencies are unavailable set
 `MENACE_LIGHT_IMPORTS=1` before the import to skip environment

@@ -254,6 +254,10 @@ class SelfTestService:
         if env_clean is not None:
             self.clean_orphans = env_clean.lower() in ("1", "true", "yes")
 
+        # populated by ``_discover_orphans`` when recursive orphan discovery is
+        # enabled; maps module paths to the modules that imported them
+        self.orphan_traces: dict[str, list[str]] = {}
+
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
             return
@@ -524,11 +528,17 @@ class SelfTestService:
         if self.recursive_orphans:
             from sandbox_runner import discover_recursive_orphans as _discover
 
-            names = _discover(
+            trace = _discover(
                 str(Path.cwd()),
                 module_map=str(Path("sandbox_data") / "module_map.json"),
             )
-            modules = [str(Path(*n.split(".")).with_suffix(".py")) for n in names]
+            self.orphan_traces = {
+                str(Path(*k.split(".")).with_suffix(".py")): [
+                    str(Path(*p.split(".")).with_suffix(".py")) for p in v
+                ]
+                for k, v in trace.items()
+            }
+            modules = list(self.orphan_traces.keys())
         else:
             from scripts.find_orphan_modules import find_orphan_modules
 

@@ -48,7 +48,11 @@ def test_recursive_orphan_integration(tmp_path, monkeypatch):
 
     # verify full dependency chain is discovered
     sr = importlib.import_module("sandbox_runner")
-    assert sorted(sr.discover_recursive_orphans(str(tmp_path))) == ["a", "b", "c"]
+    assert sr.discover_recursive_orphans(str(tmp_path)) == {
+        "a": [],
+        "b": ["a"],
+        "c": ["b"],
+    }
 
     data_dir = tmp_path / "sandbox_data"
     data_dir.mkdir()
