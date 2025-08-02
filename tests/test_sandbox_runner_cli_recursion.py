@@ -18,8 +18,8 @@ def _capture_run(monkeypatch, cli, capture):
     def fake_run(args):
         recursive_orphans = True
         env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-        if env_rec is not None:
-            recursive_orphans = env_rec.lower() in {"1", "true", "yes"}
+        if env_rec is not None and env_rec.lower() in {"0", "false"}:
+            recursive_orphans = False
         arg_rec = getattr(args, "recursive_orphans", None)
         if arg_rec is not None:
             recursive_orphans = arg_rec
@@ -35,6 +35,7 @@ def test_cli_recursion_default(monkeypatch):
     monkeypatch.delenv("SANDBOX_RECURSIVE_ORPHANS", raising=False)
     cli.main([])
     assert capture.get("recursive_orphans") is True
+    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
 
 
 def test_cli_recursion_flag_overrides_env(monkeypatch):
