@@ -129,8 +129,8 @@ After the system tools are in place install the Python requirements via
 - `EXPORT_SYNERGY_METRICS=1` – enable the Synergy Prometheus exporter
 - `SYNERGY_METRICS_PORT=8003` – port for the exporter
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
-- `SELF_TEST_DISABLE_ORPHANS=1` – skip orphan module discovery and execution
-- `SELF_TEST_DISCOVER_ORPHANS=0` – disable automatic orphan scans
+- `SELF_TEST_DISABLE_ORPHANS=0` – include orphan module discovery and execution (set to `1` to skip)
+- `SELF_TEST_DISCOVER_ORPHANS=1` – automatically scan for orphan modules (set to `0` to disable)
 - `SELF_TEST_DISCOVER_ISOLATED=0` – disable automatic processing of
   `discover_isolated_modules`
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
@@ -316,8 +316,14 @@ DATABASE_URL=sqlite:///menace.db
 BOT_DB_PATH=bots.db
 BOT_PERFORMANCE_DB=bot_performance_history.db
 MAINTENANCE_DB=maintenance.db
+SELF_TEST_DISABLE_ORPHANS=0
+SELF_TEST_DISCOVER_ORPHANS=1
+SANDBOX_RECURSIVE_ORPHANS=1
+SANDBOX_RECURSIVE_ISOLATED=1
 OPENAI_API_KEY=sk-xxxxx
 ```
+
+Edit the resulting `.env` to override any defaults as needed.
 
 ## Running locally step by step
 

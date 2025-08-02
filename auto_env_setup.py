@@ -33,6 +33,10 @@ DEFAULT_VARS: Dict[str, str] = {
     "SANDBOX_DATA_DIR": "sandbox_data",
     "VISUAL_AGENT_TOKEN": "tombalolosvisualagent123",
     "VISUAL_AGENT_URLS": "http://127.0.0.1:8001",
+    "SELF_TEST_DISABLE_ORPHANS": "0",
+    "SELF_TEST_DISCOVER_ORPHANS": "1",
+    "SANDBOX_RECURSIVE_ORPHANS": "1",
+    "SANDBOX_RECURSIVE_ISOLATED": "1",
 }
 
 
