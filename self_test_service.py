@@ -673,7 +673,30 @@ class SelfTestService:
                 recursive = self.recursive_isolated
 
         modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
-        return [str(m) for m in modules]
+
+        seen: set[str] = set()
+        filtered: list[str] = []
+
+        for m in modules:
+            p = Path(m)
+            key = str(p)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if analyze_redundancy(p):
+                    self.logger.info(
+                        "redundant module skipped", extra={"module": p.name}
+                    )
+                    continue
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundancy analysis failed for %s: %s", p, exc
+                )
+                continue
+            filtered.append(key)
+
+        return filtered
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
