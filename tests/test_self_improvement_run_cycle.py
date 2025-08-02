@@ -41,6 +41,16 @@ def _load_modules():
     primitives.serialization = serialization
     sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
 
+    # stub sandbox_runner.environment to avoid heavy side effects
+    pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
+    pkg.__path__ = []
+    env = types.ModuleType("sandbox_runner.environment")
+    env.generate_workflows_for_modules = lambda *a, **k: None
+    env.run_workflow_simulations = lambda *a, **k: None
+    env.try_integrate_into_workflows = lambda *a, **k: None
+    pkg.environment = env
+    sys.modules["sandbox_runner.environment"] = env
+
     mods = {}
     for name in [
         "logging_utils",
@@ -216,3 +226,27 @@ def test_auto_refresh_module_map(monkeypatch, tmp_path):
     data = json.loads(map_path.read_text())
     assert "new.py" in data.get("modules", {})
     assert meta.events and meta.events[0]["event"] == "module_map_refreshed"
+
+
+def test_run_cycle_processes_orphans(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    orphan_path = tmp_path / "orphan_modules.json"
+    orphan_path.write_text(json.dumps(["foo.py"]))
+    (tmp_path / "foo.py").write_text("def foo():\n    return 1\n")
+
+    engine, _ = _make_engine(tmp_path)
+
+    called: dict[str, list[str]] = {}
+
+    def fake_refresh(self, modules=None):
+        called["mods"] = list(modules or [])
+        orphan_path.write_text("[]")
+
+    engine._refresh_module_map = types.MethodType(fake_refresh, engine)
+    engine._update_orphan_modules = lambda modules=None: None
+
+    engine.run_cycle()
+
+    assert called["mods"] == ["foo.py"]
+    assert json.loads(orphan_path.read_text()) == []
