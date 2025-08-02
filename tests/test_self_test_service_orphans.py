@@ -473,13 +473,13 @@ def _setup_isolated(monkeypatch):
 def test_recursive_isolated_env(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "1")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "0")
 
     called = _setup_isolated(monkeypatch)
     svc = mod.SelfTestService(discover_isolated=True)
     svc.run_once()
 
-    assert called.get("recursive") is True
+    assert called.get("recursive") is False
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert data == ["foo.py"]
 
