@@ -122,3 +122,20 @@ def test_service_recursive_isolated_updates_file(tmp_path, monkeypatch):
     assert Path(called.get("root")) == tmp_path
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
     assert sorted(data) == ["bar.py", "foo.py"]
+
+
+def test_env_enables_isolated_processing(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    called = _setup_isolated(monkeypatch, ["one.py"])
+    monkeypatch.setenv("SELF_TEST_DISCOVER_ORPHANS", "0")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+    monkeypatch.setenv("SELF_TEST_DISCOVER_ISOLATED", "1")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "1")
+    svc = svc_mod.SelfTestService(discover_isolated=False, recursive_isolated=False)
+    asyncio.run(svc._run_once())
+
+    assert called.get("recursive") is True
+    assert Path(called.get("root")) == tmp_path
