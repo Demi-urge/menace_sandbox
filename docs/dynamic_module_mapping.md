@@ -83,7 +83,7 @@ merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.
 If a discovered module belongs to an existing workflow, the sandbox will attempt to merge it into that sequence automatically.
-Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass `--recursive-orphans`, to disable dependency scanning when building the list.
+Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-orphans`, to disable dependency scanning when building the list.
 
 Example workflow:
 
@@ -94,16 +94,17 @@ python run_autonomous.py --discover-orphans --include-orphans
 The command scans for orphan modules and follows their dependencies by default
 using `sandbox_runner.discover_recursive_orphans`, runs them with the standard
 unit tests and updates the module map once they succeed.  Disable dependency
-traversal with `--recursive-orphans` or by setting
+traversal with `--no-recursive-orphans` or by setting
 `SANDBOX_RECURSIVE_ORPHANS=0`.
-Isolated modules returned by `discover_isolated_modules` are loaded
-automatically and always processed recursively. Pass `--discover-isolated` or
-set `SANDBOX_DISCOVER_ISOLATED=0` to skip them before falling back to the
-recursive discovery. These isolated modules are tested along with any
-dependencies and merged into `module_map.json` once they pass so later runs
-treat them as normal members of their assigned groups. Simple workflows are
+Isolated modules returned by `discover_isolated_modules` are loaded when
+`--discover-isolated` is supplied or `SANDBOX_DISCOVER_ISOLATED=1` is set and
+are processed recursively by default. These isolated modules are tested along
+with any dependencies and merged into `module_map.json` once they pass so later
+runs treat them as normal members of their assigned groups. Simple workflows are
 generated for the new modules and existing flows are updated via
-`try_integrate_into_workflows`. Use `--recursive-isolated` or set
-`SELF_TEST_RECURSIVE_ISOLATED=1` when running the self tests manually to mirror
-this behaviour.
+`try_integrate_into_workflows`. Dependency traversal is enabled by default
+through `SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; set
+`SELF_TEST_RECURSIVE_ISOLATED=0`, `SANDBOX_RECURSIVE_ISOLATED=0` or use
+`--no-recursive-isolated` when running the self tests manually to disable this
+behaviour.
 

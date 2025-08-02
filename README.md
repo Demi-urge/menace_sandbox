@@ -104,8 +104,9 @@ automatically. Orphan discovery utilities now live in
 `sandbox_runner.orphan_discovery`, and the service follows dependencies via
 `sandbox_runner.discover_recursive_orphans`. The helper is exported from the
 package and can be imported directly. Set `SELF_TEST_DISABLE_ORPHANS=1`
-or pass `--include-orphans` to skip them. Use `SELF_TEST_RECURSIVE_ORPHANS=0`
-or `--recursive-orphans` to turn off dependency scanning. Discovery can be
+or pass `--include-orphans` to skip them. Recursion through orphan dependencies
+is enabled by default; set `SELF_TEST_RECURSIVE_ORPHANS=0` or use
+`--no-recursive-orphans` to turn off dependency scanning. Discovery can be
 disabled entirely with `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
 When launched via `run_autonomous.py` newly discovered files are written to
 `orphan_modules.json` unless `SANDBOX_DISABLE_ORPHAN_SCAN=1`. Passing orphan
@@ -114,19 +115,26 @@ creating one-step workflows so they become immediately available for
 benchmarking.  Use `--clean-orphans` or set `SANDBOX_CLEAN_ORPHANS=1` to remove
 successful modules from the orphan list after integration.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
-Isolated modules discovered by `discover_isolated_modules` are scanned automatically. Pass `--discover-isolated` or set `SELF_TEST_DISCOVER_ISOLATED=0` to skip them. When launched via `run_autonomous.py` this behaviour also sets `SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map.
-Use `--recursive-isolated` or `SELF_TEST_RECURSIVE_ISOLATED=1` to follow dependencies of isolated modules as well.
-Use `--auto-include-isolated` to enable discovery and recursion automatically (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`).
+Isolated modules returned by `discover_isolated_modules` are included when
+`--discover-isolated` is supplied or `SELF_TEST_DISCOVER_ISOLATED=1` is set.
+When launched via `run_autonomous.py` this behaviour also sets
+`SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map. Recursion
+through their dependencies is enabled by default
+(`SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`); set
+`SELF_TEST_RECURSIVE_ISOLATED=0` or `SANDBOX_RECURSIVE_ISOLATED=0` or use
+`--no-recursive-isolated` to disable. Use `--auto-include-isolated` to enable
+discovery automatically (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`).
 
-Example discovering orphans recursively:
+Example discovering orphans:
 
 ```bash
-python run_autonomous.py --discover-orphans --recursive-orphans --clean-orphans \
+python run_autonomous.py --discover-orphans --clean-orphans \
     --include-orphans
 ```
-The same behaviour can be enabled via `SELF_TEST_RECURSIVE_ORPHANS=1` and
-`SANDBOX_RECURSIVE_ORPHANS=1`. Passing modules update the module map and spawn
-one-step workflows automatically.
+Use `--no-recursive-orphans` or `--no-recursive-isolated` to disable dependency
+traversal. Recursion is enabled by default via `SELF_TEST_RECURSIVE_ORPHANS=1`
+and `SANDBOX_RECURSIVE_ORPHANS=1`. Passing modules update the module map and
+spawn one-step workflows automatically.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be

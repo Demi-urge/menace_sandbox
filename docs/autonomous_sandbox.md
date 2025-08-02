@@ -134,14 +134,14 @@ After the system tools are in place install the Python requirements via
 - `SELF_TEST_DISCOVER_ISOLATED=0` – disable automatic processing of
   `discover_isolated_modules`
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
-  (equivalent to `--recursive-isolated`)
-- `SELF_TEST_RECURSIVE_ORPHANS=0` – do not follow dependencies when scanning
+  (set to `0` or use `--no-recursive-isolated` to disable)
+- `SELF_TEST_RECURSIVE_ORPHANS=1` – recursively follow orphan dependencies
+  (`--no-recursive-orphans` to disable)
 - `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
-- `SANDBOX_RECURSIVE_ORPHANS=0` – disable dependency integration when refreshing the module map
+- `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (set to `0` or use `--no-recursive-orphans` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
-  building the module map (same as `--recursive-isolated` when running
-  `sandbox_runner`). Set to `0`, `false` or `no` to disable recursion.
+  building the module map (set to `0` or use `--no-recursive-isolated` to disable)
 - `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
 - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
@@ -210,14 +210,18 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
 
     ```bash
      python run_autonomous.py --discover-orphans --discover-isolated \
-       --recursive-orphans --recursive-isolated --include-orphans
+       --include-orphans
     ```
 
-   Set `SELF_TEST_INCLUDE_ORPHANS=1` together with `SELF_TEST_RECURSIVE_ORPHANS=1`
-   and `SELF_TEST_RECURSIVE_ISOLATED=1` (or `SANDBOX_INCLUDE_ORPHANS=1`,
+   Use `--no-recursive-orphans` or `--no-recursive-isolated` to skip dependency
+   traversal.
+
+   Set `SELF_TEST_INCLUDE_ORPHANS=1` to achieve the same behaviour via
+   environment variables. Recursion is enabled by default via
+   `SELF_TEST_RECURSIVE_ORPHANS=1` and `SELF_TEST_RECURSIVE_ISOLATED=1` (or
    `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1` when
-  launching via `sandbox_runner`) to achieve the same behaviour via environment
-   variables. Modules that pass their
+   launching via `sandbox_runner`); set them to `0` or use the corresponding
+   `--no-recursive-*` options to disable recursion. Modules that pass their
     tests are merged into `module_map.json` and existing flows are updated via
     `try_integrate_into_workflows` so the new code can be benchmarked
     immediately. Modules flagged as redundant by
