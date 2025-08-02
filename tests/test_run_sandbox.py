@@ -774,3 +774,15 @@ def test_dynamic_workflows_build_from_repo(monkeypatch, tmp_path):
     assert any("import simple_functions" in s for s in snippets)
     assert any("import sandbox_runner.cli" in s for s in snippets)
     assert any("import sandbox_runner.environment" in s for s in snippets)
+
+
+def test_run_sandbox_cli_recursion_default(monkeypatch):
+    from .test_sandbox_runner_cli_recursion import _load_cli, _capture_run
+
+    capture = {}
+    cli = _load_cli(monkeypatch)
+    _capture_run(monkeypatch, cli, capture)
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ORPHANS", raising=False)
+    cli.main([])
+    assert capture.get("recursive_orphans") is True
+    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
