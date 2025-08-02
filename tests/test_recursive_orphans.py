@@ -32,6 +32,7 @@ def _load_methods():
         "Iterable": __import__("typing").Iterable,
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": lambda mods: None,
+        "try_integrate_into_workflows": lambda mods: None,
         "log_record": lambda **k: {},
         "analyze_redundancy": lambda p: False,
     }
