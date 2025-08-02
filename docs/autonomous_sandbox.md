@@ -632,6 +632,25 @@ This variant relies on PyTorch and persists the Q‑network weights alongside th
 JSON file. See [synergy_learning.md](synergy_learning.md) for background on how
 the learner adjusts the metrics.
 
+## Orphan and isolated module discovery
+
+The sandbox automatically scans for orphan and isolated modules before each
+run. `sandbox_runner.discover_recursive_orphans` walks the import tree of every
+listed orphan and collects local dependencies, while
+`scripts.discover_isolated_modules` locates files with no inbound references.
+Each candidate module is executed in an ephemeral sandbox via
+`SelfTestService`. Passing modules are appended to `sandbox_data/module_map.json`
+and `environment.generate_workflows_for_modules` generates one‑step workflows so
+they can be scheduled in subsequent simulations.
+
+Control this behaviour with the CLI flags `--discover-orphans`,
+`--auto-include-isolated`, `--recursive-orphans`, `--recursive-isolated` and
+`--clean-orphans`. Equivalent environment variables are
+`SELF_TEST_DISCOVER_ORPHANS`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
+`SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED` and
+`SANDBOX_CLEAN_ORPHANS`. Set `SELF_TEST_DISABLE_ORPHANS=1` or
+`SANDBOX_DISABLE_ORPHAN_SCAN=1` to skip the discovery step entirely.
+
 ## Docker usage
 
 Build the sandbox image and run it inside a container using the helper scripts:

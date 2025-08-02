@@ -29,18 +29,23 @@ container issues:
 
 ## Recursive inclusion flow
 
-The service participates in the sandbox's recursive module discovery. By
-default `auto_env_setup.ensure_env` sets `SELF_TEST_RECURSIVE_ORPHANS=1` and
+The service participates in the sandbox's recursive module discovery. During
+discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
+orphan's imports and collects any local dependencies. Every candidate is then
+executed in an ephemeral sandbox via `pytest` so side effects are contained.
+Modules that pass are appended to `sandbox_data/module_map.json` and
+`environment.generate_workflows_for_modules` is invoked to build temporary
+workflows so they can be scheduled in later runs. By default
+`auto_env_setup.ensure_env` sets `SELF_TEST_RECURSIVE_ORPHANS=1` and
 `SELF_TEST_RECURSIVE_ISOLATED=1` so orphan and isolated modules are followed
-through their import chains and, when tests pass, are merged into
-`sandbox_data/module_map.json` for future workflows. Disable recursion with the
-CLI flags `--no-recursive-orphans` or `--no-recursive-isolated`, or set the
-corresponding environment variables to `0`. The complementary flags
-`--recursive-orphans` and `--recursive-isolated` explicitly enable this behaviour
-and set `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED`
-respectively. Use `--auto-include-isolated` (or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`)
-to force isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to
-drop passing entries from `orphan_modules.json`.
+through their import chains. Disable recursion with the CLI flags
+`--no-recursive-orphans` or `--no-recursive-isolated`, or set the corresponding
+environment variables to `0`. The complementary flags `--recursive-orphans` and
+`--recursive-isolated` explicitly enable this behaviour and set
+`SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED` respectively. Use
+`--auto-include-isolated` (or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
+isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
+passing entries from `orphan_modules.json`.
 
 ## Command Line Interface
 

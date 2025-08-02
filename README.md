@@ -122,6 +122,11 @@ modules are merged into `module_map.json` automatically after the tests run,
 creating one-step workflows so they become immediately available for
 benchmarking.  Use `--clean-orphans` or set `SANDBOX_CLEAN_ORPHANS=1` to remove
 successful modules from the orphan list after integration.
+During evaluation each candidate is executed inside an ephemeral sandbox via
+`SelfTestService` which runs `pytest` for the module and its discovered
+dependencies. Passing modules are appended to `sandbox_data/module_map.json` and
+`sandbox_runner.environment.generate_workflows_for_modules` creates trivial
+workflows so the new code participates in later simulations.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
 Isolated modules returned by `discover_isolated_modules` are included when
 `--auto-include-isolated` is supplied or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` is set.
