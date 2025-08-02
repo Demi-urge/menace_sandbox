@@ -69,7 +69,7 @@ module_index_db = importlib.util.module_from_spec(spec_db)
 spec_db.loader.exec_module(module_index_db)
 
 
-def _load_refresh_methods(fake_generate, fake_try):
+def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None):
     """Extract refresh helpers from self_improvement_engine with hooks."""
     path = ROOT / "self_improvement_engine.py"
     src = path.read_text()
@@ -93,7 +93,7 @@ def _load_refresh_methods(fake_generate, fake_try):
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": fake_generate,
         "try_integrate_into_workflows": fake_try,
-        "run_workflow_simulations": lambda *a, **k: None,
+        "run_workflow_simulations": fake_run,
         "log_record": lambda **k: {},
         "analyze_redundancy": lambda p: False,
     }
@@ -170,6 +170,7 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
 
     generated: list[list[str]] = []
     integrated: list[list[str]] = []
+    simulated: list[bool] = []
 
     def fake_generate(mods):
         generated.append(list(mods))
@@ -179,8 +180,11 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
         integrated.append(list(mods))
         return [1]
 
+    def fake_run(*_a, **_k):
+        simulated.append(True)
+
     _integrate_orphans, _refresh_module_map = _load_refresh_methods(
-        fake_generate, fake_try
+        fake_generate, fake_try, fake_run
     )
 
     class DummyLogger:
@@ -224,4 +228,8 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     assert {"helper.py", "isolated.py"}.issubset(data.keys())
     assert generated and sorted(generated[0]) == ["helper.py", "isolated.py"]
     assert integrated and sorted(integrated[0]) == ["helper.py", "isolated.py"]
+    assert simulated
+    mods_path = tmp_path / "orphan_modules.json"
+    if mods_path.exists():
+        assert json.loads(mods_path.read_text()) == []
 

@@ -1400,17 +1400,36 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
+                generate_workflows_for_modules(sorted(mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "workflow generation failed: %s", exc
+                )
+            try:
                 try_integrate_into_workflows(sorted(mods))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "workflow integration failed: %s", exc
                 )
             try:
-                generate_workflows_for_modules(sorted(mods))
+                run_workflow_simulations()
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "workflow generation failed: %s", exc
+                    "workflow simulation failed: %s", exc
                 )
+            try:
+                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                orphan_path = data_dir / "orphan_modules.json"
+                if orphan_path.exists():
+                    try:
+                        existing = json.loads(orphan_path.read_text()) or []
+                    except Exception:  # pragma: no cover - best effort
+                        existing = []
+                    keep = [p for p in existing if Path(p).name not in mods]
+                    if len(keep) != len(existing):
+                        orphan_path.write_text(json.dumps(sorted(keep), indent=2))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to clean orphan modules")
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
@@ -1591,38 +1610,21 @@ class SelfImprovementEngine:
                 self.logger.info(
                     "orphan modules updated", extra=log_record(count=len(combined))
                 )
-                # integration now occurs once modules pass testing via
-                # ``_refresh_module_map``
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to write orphan modules")
+
+        # integrate any discovered modules immediately
+        try:
+            self._refresh_module_map(filtered)
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
         if modules:
             all_mods = self._collect_recursive_modules(modules)
-            integrated = self._integrate_orphans(all_mods)
-            if integrated:
-                try:
-                    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-                    orphan_path = data_dir / "orphan_modules.json"
-                    if orphan_path.exists():
-                        try:
-                            existing = json.loads(orphan_path.read_text()) or []
-                        except Exception:  # pragma: no cover - best effort
-                            existing = []
-                        keep = [p for p in existing if p not in integrated]
-                        if len(keep) != len(existing):
-                            orphan_path.write_text(json.dumps(sorted(keep), indent=2))
-                except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("failed to clean orphan modules")
-                if self.module_index:
-                    try:
-                        run_workflow_simulations()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "workflow simulation failed: %s", exc
-                        )
+            self._integrate_orphans(all_mods)
             if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                 try:
                     self._update_orphan_modules()
