@@ -1058,9 +1058,15 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--recursive-orphans",
-        action="store_false",
+        action="store_true",
         dest="recursive_orphans",
         default=None,
+        help="enable recursive orphan dependency integration",
+    )
+    parser.add_argument(
+        "--no-recursive-orphans",
+        action="store_false",
+        dest="recursive_orphans",
         help="disable recursive orphan dependency integration",
     )
     parser.add_argument(

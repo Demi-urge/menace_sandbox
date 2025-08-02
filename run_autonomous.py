@@ -1045,10 +1045,16 @@ def main(argv: List[str] | None = None) -> None:
         help="reload last ROI and synergy histories before running",
     )
     parser.add_argument(
+        "--recursive-orphans",
+        action="store_true",
+        dest="recursive_orphans",
+        default=False,
+        help="enable recursive integration of orphan dependency chains",
+    )
+    parser.add_argument(
         "--no-recursive-orphans",
         action="store_false",
         dest="recursive_orphans",
-        default=True,
         help="disable recursive integration of orphan dependency chains",
     )
     parser.add_argument(
