@@ -1586,6 +1586,7 @@ class SelfImprovementEngine:
             existing = []
 
         filtered: list[str] = []
+        skipped: list[str] = []
         for m in modules:
             p = Path(m)
             try:
@@ -1595,9 +1596,18 @@ class SelfImprovementEngine:
                     "redundancy analysis failed for %s: %s", p, exc
                 )
                 redundant = False
-            if not redundant:
-                filtered.append(m)
+            if redundant:
+                skipped.append(p.name)
+                self.logger.info(
+                    "redundant module skipped", extra=log_record(module=p.name)
+                )
+                continue
+            filtered.append(m)
 
+        if skipped:
+            self.logger.info(
+                "redundant modules skipped", extra=log_record(modules=sorted(skipped))
+            )
         if not filtered:
             return
 
