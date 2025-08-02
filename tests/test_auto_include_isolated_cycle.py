@@ -11,7 +11,7 @@ from tests.test_recursive_orphans import (
 
 ROOT = Path(__file__).resolve().parents[1]
 
-_integrate_orphans, _update_orphan_modules, _refresh_module_map = _load_methods()
+_integrate_orphans, _update_orphan_modules, _refresh_module_map, _test_orphan_modules = _load_methods()
 
 def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     repo = tmp_path / "repo"
@@ -49,6 +49,7 @@ def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     )
     engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
     engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._test_orphan_modules = types.MethodType(_test_orphan_modules, engine)
     engine._collect_recursive_modules = lambda mods: set(mods)
 
     _update_orphan_modules(engine)

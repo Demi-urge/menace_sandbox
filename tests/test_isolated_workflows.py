@@ -24,7 +24,7 @@ def _load_thb():
 
 from tests.test_recursive_orphans import _load_methods
 
-_integrate_orphans, _update_orphan_modules, _refresh_module_map = _load_methods()
+_integrate_orphans, _update_orphan_modules, _refresh_module_map, _test_orphan_modules = _load_methods()
 
 
 class DummyIndex:

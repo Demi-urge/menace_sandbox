@@ -145,6 +145,7 @@ def _make_engine(tmp_path):
     )
     engine.tracker = rt.ROITracker()
     sie.bootstrap = lambda: 0
+    engine._test_orphan_modules = lambda paths: set(paths)
     return engine, policy
 
 
