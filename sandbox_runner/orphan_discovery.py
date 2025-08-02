@@ -119,11 +119,15 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
         except Exception:
             known = set()
 
-    found = set(discover_orphan_modules(repo_path))
+    # initial orphan set excluding modules already tracked in the module map
+    found = {m for m in discover_orphan_modules(repo_path) if m not in known}
     queue = list(found)
 
     while queue:
         mod = queue.pop(0)
+        if mod in known:
+            # skip traversal for modules that are already known
+            continue
         path = repo / Path(*mod.split(".")).with_suffix(".py")
         if not path.exists():
             continue
@@ -169,5 +173,6 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                             if name not in found and name not in known:
                                 found.add(name)
                                 queue.append(name)
-
-    return sorted(found)
+    # ensure returned identifiers are relative to the repository root
+    result = sorted(found - known)
+    return result
