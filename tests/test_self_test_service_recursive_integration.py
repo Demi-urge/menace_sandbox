@@ -233,3 +233,130 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     if mods_path.exists():
         assert json.loads(mods_path.read_text()) == []
 
+
+def test_recursive_orphan_integration(monkeypatch, tmp_path):
+    # prepare small repo tree
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (tmp_path / "helper.py").write_text("VALUE = 2\n")
+    (tmp_path / "orphan.py").write_text("import helper\n")
+
+    # stub recursive orphan discovery
+    called: list[dict[str, object]] = []
+
+    def fake_discover(root, *, module_map=None):
+        called.append({"root": root, "module_map": module_map})
+        return ["orphan", "helper"]
+
+    import sandbox_runner
+
+    monkeypatch.setattr(sandbox_runner, "discover_recursive_orphans", fake_discover)
+
+    # capture executed paths
+    executed: list[str] = []
+
+    async def fake_exec(*cmd, **kwargs):
+        mod_arg = None
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.endswith(".py") and mod_arg is None:
+                mod_arg = s
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+        if mod_arg:
+            executed.append(mod_arg)
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+        class P:
+            returncode = 0
+            async def communicate(self):
+                return b"", b""
+            async def wait(self):
+                return None
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    # setup self-improvement engine stubs
+    map_path = data_dir / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+    index = module_index_db.ModuleIndexDB(map_path)
+
+    def fake_refresh(self, modules=None, force=False):
+        for m in modules or []:
+            self._map[m] = 1
+            self._groups.setdefault("1", 1)
+        self.save()
+
+    monkeypatch.setattr(module_index_db.ModuleIndexDB, "refresh", fake_refresh)
+
+    generated: list[list[str]] = []
+    integrated: list[list[str]] = []
+    simulated: list[bool] = []
+
+    def fake_generate(mods):
+        generated.append(list(mods))
+        return [1]
+
+    def fake_try(mods):
+        integrated.append(list(mods))
+        return [1]
+
+    def fake_run(*_a, **_k):
+        simulated.append(True)
+
+    _integrate_orphans, _refresh_module_map = _load_refresh_methods(
+        fake_generate, fake_try, fake_run
+    )
+
+    class DummyLogger:
+        def exception(self, *a, **k):
+            pass
+
+        def info(self, *a, **k):
+            pass
+
+    engine = types.SimpleNamespace(
+        module_index=index,
+        module_clusters={},
+        logger=DummyLogger(),
+        _last_map_refresh=0.0,
+        auto_refresh_map=True,
+        meta_logger=None,
+    )
+    engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
+    engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._collect_recursive_modules = lambda mods: set(mods)
+
+    passed: list[str] = []
+
+    def integration(mods: list[str]) -> None:
+        passed.extend(mods)
+        engine._refresh_module_map(mods)
+
+    svc = self_test_mod.SelfTestService(
+        include_orphans=False,
+        discover_orphans=True,
+        recursive_orphans=True,
+        clean_orphans=True,
+        integration_callback=integration,
+    )
+    asyncio.run(svc._run_once())
+
+    assert called and called[0]["root"] == str(tmp_path)
+    assert Path(str(called[0]["module_map"])).resolve() == map_path
+    assert set(executed) == {"helper.py", "orphan.py"}
+    assert set(passed) == {"helper.py", "orphan.py"}
+    data = json.loads(map_path.read_text()).get("modules", {})
+    assert {"helper.py", "orphan.py"}.issubset(data.keys())
+    assert generated and sorted(generated[0]) == ["helper.py", "orphan.py"]
+    assert integrated and sorted(integrated[0]) == ["helper.py", "orphan.py"]
+    assert simulated
+    mods_path = data_dir / "orphan_modules.json"
+    assert json.loads(mods_path.read_text()) == []
+
