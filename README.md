@@ -459,6 +459,10 @@ missing. Notable defaults include:
 - `OPENAI_FALLBACK_ATTEMPTS=3`
 - `OPENAI_RETRY_DELAY=1.0`
 - `AD_API_URL=` (unset or empty disables ad network integration)
+- `SELF_TEST_DISABLE_ORPHANS=0`
+- `SELF_TEST_DISCOVER_ORPHANS=1`
+- `SELF_TEST_RECURSIVE_ORPHANS=1`
+- `SELF_TEST_RECURSIVE_ISOLATED=1`
 
 The sentinel file used to detect the initial launch defaults to `.menace_first_run` and can be overridden with the `MENACE_FIRST_RUN_FILE` environment variable.
 The models repository defaults to `https://github.com/Demi-urge/models` and can be overridden with the `MODELS_REPO_URL` environment variable.

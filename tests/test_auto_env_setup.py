@@ -25,6 +25,10 @@ def test_generate_defaults(tmp_path, monkeypatch):
     for var in cd._DEFAULT_VARS + list(DEFAULT_VARS):
         assert f"{var}=" in data
         assert os.environ.get(var)
+    assert "SELF_TEST_RECURSIVE_ORPHANS=1" in data
+    assert os.environ.get("SELF_TEST_RECURSIVE_ORPHANS") == "1"
+    assert "SELF_TEST_RECURSIVE_ISOLATED=1" in data
+    assert os.environ.get("SELF_TEST_RECURSIVE_ISOLATED") == "1"
 
 
 def test_vault_usage(tmp_path, monkeypatch):

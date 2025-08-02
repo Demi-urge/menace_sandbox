@@ -106,7 +106,8 @@ Automatic scanning is enabled by default (`SELF_TEST_DISCOVER_ORPHANS=1`). Set
 same file and appended to the test queue on the next run. Use `--refresh-orphans`
 to force a new scan when the list already exists. Recursion through orphan
 dependencies is enabled by default, mirroring the effect of setting
-`SELF_TEST_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1`. Disable
+`SELF_TEST_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1`. These defaults
+are written to the generated `.env` by `auto_env_setup.ensure_env`. Disable
 recursion with `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0`
 or the `--no-recursive-orphans` option. The search uses
 `sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
@@ -117,7 +118,8 @@ workflows. When Docker or other heavy dependencies are unavailable set
 initialisation. Modules returned by `discover_isolated_modules` are not included
 unless `--discover-isolated` is used or `SELF_TEST_DISCOVER_ISOLATED=1` is set.
 Dependency traversal for these modules is enabled by default through `SELF_TEST_RECURSIVE_ISOLATED=1` and
-`SANDBOX_RECURSIVE_ISOLATED=1`. Disable it with `SELF_TEST_RECURSIVE_ISOLATED=0`,
+`SANDBOX_RECURSIVE_ISOLATED=1`; these values are also persisted to `.env` by
+`auto_env_setup.ensure_env`. Disable it with `SELF_TEST_RECURSIVE_ISOLATED=0`,
 `SANDBOX_RECURSIVE_ISOLATED=0` or the `--no-recursive-isolated` option.
 
 Example running tests with orphan and isolated discovery:
