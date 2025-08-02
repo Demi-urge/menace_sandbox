@@ -26,27 +26,26 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
 
     modules = {str(p) for p in find_orphan_modules(root, recursive=False)}
 
-    if recursive:
-        names: Iterable[str] = []
-        if _discover_recursive_orphans is not None:
-            try:
-                names = _discover_recursive_orphans(str(root))
-            except Exception:  # pragma: no cover - best effort
-                names = []
+    names: Iterable[str] = []
+    if _discover_import_orphans is not None:
+        try:
+            names = _discover_import_orphans(str(root), recursive=False)
+        except Exception:  # pragma: no cover - best effort
+            names = []
         for name in names:
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
                 modules.add(str(path.relative_to(root)))
-    else:
-        if _discover_import_orphans is not None:
-            try:
-                names = _discover_import_orphans(str(root), recursive=False)
-            except Exception:  # pragma: no cover - best effort
-                names = []
-            for name in names:
-                path = root / (name.replace(".", os.sep) + ".py")
-                if path.exists():
-                    modules.add(str(path.relative_to(root)))
+
+    if recursive and _discover_recursive_orphans is not None:
+        try:
+            names = _discover_recursive_orphans(str(root))
+        except Exception:  # pragma: no cover - best effort
+            names = []
+        for name in names:
+            path = root / (name.replace(".", os.sep) + ".py")
+            if path.exists():
+                modules.add(str(path.relative_to(root)))
 
     cache = root / "sandbox_data" / "orphan_modules.json"
     try:

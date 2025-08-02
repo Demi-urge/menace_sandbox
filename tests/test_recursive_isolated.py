@@ -62,6 +62,7 @@ def test_recursive_import_includes_dependencies(tmp_path):
 
     def import_orphans(root, recursive=False):
         calls["imp"] += 1
+        assert recursive is False
         return ["a"]
 
     def recursive_orphans(root):
@@ -71,7 +72,7 @@ def test_recursive_import_includes_dependencies(tmp_path):
     discover = _load_discover(find_orphans, import_orphans, recursive_orphans)
     res = discover(str(tmp_path), recursive=True)
     assert calls["rec"] == 1
-    assert calls["imp"] == 0
+    assert calls["imp"] == 1
     assert sorted(res) == ["a.py", "b.py"]
 
 
