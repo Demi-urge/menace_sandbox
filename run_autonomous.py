@@ -1045,10 +1045,10 @@ def main(argv: List[str] | None = None) -> None:
         help="reload last ROI and synergy histories before running",
     )
     parser.add_argument(
-        "--recursive-orphans",
+        "--no-recursive-orphans",
         action="store_false",
         dest="recursive_orphans",
-        default=None,
+        default=True,
         help="disable recursive integration of orphan dependency chains",
     )
     parser.add_argument(
@@ -1073,9 +1073,11 @@ def main(argv: List[str] | None = None) -> None:
         help="disable discover_isolated_modules during orphan scan",
     )
     parser.add_argument(
-        "--recursive-isolated",
-        action="store_true",
-        help="recursively process modules from discover_isolated_modules",
+        "--no-recursive-isolated",
+        action="store_false",
+        dest="recursive_isolated",
+        default=True,
+        help="disable recursively processing modules from discover_isolated_modules",
     )
     parser.add_argument(
         "--auto-include-isolated",
@@ -1096,7 +1098,10 @@ def main(argv: List[str] | None = None) -> None:
 
     os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
 
-    if getattr(args, "recursive_orphans") is False:
+    if getattr(args, "recursive_orphans"):
+        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "1"
+        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "1"
+    else:
         os.environ["SANDBOX_RECURSIVE_ORPHANS"] = "0"
         os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = "0"
 
@@ -1109,9 +1114,12 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "discover_isolated") is False:
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
-    if getattr(args, "recursive_isolated", False):
+    if getattr(args, "recursive_isolated"):
         os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
         os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
+    else:
+        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "0"
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "0"
     if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")

@@ -131,6 +131,34 @@ def setup_full_stubs(monkeypatch, tmp_path: Path, captured: dict) -> None:
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
     monkeypatch.setitem(sys.modules, "docker", types.ModuleType("docker"))
 
+    import metrics_exporter
+
+    class DummyGauge:
+        def __init__(self, *a, **k):
+            self.value = 0.0
+
+        def labels(self, *a, **k):
+            return self
+
+        def set(self, v):
+            self.value = float(v)
+
+        def inc(self, a=1.0):
+            self.value += a
+
+        def dec(self, a=1.0):
+            self.value -= a
+
+        def get(self):
+            return self.value
+
+    monkeypatch.setattr(metrics_exporter, "Gauge", DummyGauge, raising=False)
+    metrics_exporter.roi_forecast_gauge = DummyGauge()
+    metrics_exporter.synergy_forecast_gauge = DummyGauge()
+    metrics_exporter.roi_threshold_gauge = DummyGauge()
+    metrics_exporter.synergy_threshold_gauge = DummyGauge()
+    metrics_exporter.synergy_adaptation_actions_total = DummyGauge()
+
     sat_mod = importlib.import_module("menace.synergy_auto_trainer")
     sw_mod = importlib.import_module("menace.synergy_weight_cli")
     def fake_train(history, path):
@@ -238,7 +266,8 @@ def test_run_autonomous_integration_full(monkeypatch, tmp_path: Path):
         "--runs", "3",
         "--preset-count", "1",
         "--sandbox-data-dir", str(tmp_path),
-        "--recursive-orphans",
+        "--no-recursive-orphans",
+        "--no-recursive-isolated",
         "--include-orphans",
         "--discover-orphans",
         "--discover-isolated",
