@@ -192,6 +192,30 @@ export SANDBOX_AUTO_INCLUDE_ISOLATED=1
 - `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state
 - `SANDBOX_ADAPTIVE_AGENT_STRATEGY` – algorithm for the adaptive agent
 
+### Recursion environment variables
+
+The sandbox and the self‑test service share a set of flags that control how
+deeply orphaned or isolated modules are followed and merged into the workflow
+database:
+
+- `SELF_TEST_RECURSIVE_ORPHANS` / `SANDBOX_RECURSIVE_ORPHANS` – recurse through
+  orphan modules and their imports.
+- `SELF_TEST_RECURSIVE_ISOLATED` / `SANDBOX_RECURSIVE_ISOLATED` – include
+  dependencies of isolated modules.
+- `SANDBOX_AUTO_INCLUDE_ISOLATED` – force inclusion of modules returned by
+  `discover_isolated_modules`.
+- `SANDBOX_CLEAN_ORPHANS` – drop passing entries from `orphan_modules.json`
+  after integration.
+
+`run_autonomous.py` mirrors the `SANDBOX_*` values to the matching
+`SELF_TEST_*` variables so that `SelfTestService` honours the same recursion
+strategy. Passing modules and their helpers are written to
+`module_map.json` and existing flows via `try_integrate_into_workflows`. Tests
+such as `tests/test_recursive_isolated.py` and
+`tests/test_self_test_service_recursive_integration.py` exercise this path and
+assert that both isolated modules and their dependencies are executed and
+integrated.
+
 ### Automatic recursion for isolated modules
 
 The sandbox can automatically pick up modules that are otherwise disconnected
@@ -207,6 +231,25 @@ duplicating functionality.
 Recursion through orphan dependencies is enabled by default. Disable it by
 setting `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or
 pass `--no-recursive-orphans` to the relevant commands.
+
+### Example: isolated module discovery and integration
+
+```bash
+# create a trivial isolated module and its helper
+echo 'import helper\n' > isolated.py
+echo 'VALUE = 1\n' > helper.py
+
+# test the isolated module inside the sandbox
+python -m menace.self_test_service run isolated.py --auto-include-isolated --recursive-isolated
+
+# integrate the module during the next autonomous cycle
+python run_autonomous.py --discover-isolated --include-orphans
+```
+
+After the cycle both `isolated.py` and `helper.py` appear in `module_map.json`
+and are scheduled automatically via `try_integrate_into_workflows`. See
+`tests/test_self_test_service_recursive_integration.py::test_recursive_isolated_integration`
+for an automated assertion of this workflow.
 
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
