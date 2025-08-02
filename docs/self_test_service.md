@@ -48,6 +48,7 @@ Options include:
  - `--discover-isolated` – disable automatic discovery of modules returned by `discover_isolated_modules`
 - `--recursive-orphans` – recursively include dependencies of discovered orphans
 - `--recursive-isolated` – recurse through dependencies of isolated modules
+- `--auto-include-isolated` – automatically discover isolated modules and enable recursion (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`)
 - `--clean-orphans` – remove passing entries from `orphan_modules.json`
 Remove stale containers left over from interrupted runs with:
 
@@ -122,10 +123,13 @@ python -m menace.self_test_service run tests/unit \
 
 When launched from `sandbox_runner`, set `SANDBOX_RECURSIVE_ORPHANS=1` and
 `SANDBOX_RECURSIVE_ISOLATED=1` to achieve the same behaviour. Passing modules
-are merged into `module_map.json` and may be incorporated into existing
-workflows automatically on the next run. If a discovered module fits an existing
+are merged into `module_map.json` and existing workflows are updated via
+`try_integrate_into_workflows` on the next run. If a discovered module fits an existing
 workflow group, the sandbox tries to merge it into those flows automatically.
-Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies recursive mode for convenience.
+Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` applies recursive mode for convenience
+and forces discovery of isolated modules so their dependencies are scanned.
+Modules flagged as redundant by `orphan_analyzer.analyze_redundancy` are skipped
+during this integration step.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option and remove
 integrated modules from the orphan list after each run.
 The improvement engine also honours `SANDBOX_RECURSIVE_ISOLATED`; set it to
