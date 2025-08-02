@@ -46,5 +46,5 @@ def test_recursive_orphan_import_skips_known(tmp_path, monkeypatch):
     (sd / "module_map.json").write_text(json.dumps({"modules": {"b.py": 1}}))
 
     res = sr.discover_recursive_orphans(str(tmp_path))
-    # 'b' is already tracked in module_map so traversal stops before reaching 'c'
-    assert sorted(res) == ["a"]
+    # 'b' is tracked in the module map but its dependency 'c' should still be discovered
+    assert sorted(res) == ["a", "c"]

@@ -8,12 +8,12 @@ from typing import List
 
 
 
-def discover_orphan_modules(repo_path: str, recursive: bool = False) -> List[str]:
+def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]:
     """Return module names that are never imported by other modules.
 
-    When ``recursive`` is ``True`` any modules imported exclusively by the
-    discovered orphans are also included. The dependency walk continues until no
-    new modules are found.
+    By default this walks the import graph recursively and includes any modules
+    whose importers are exclusively within the orphan set. Set ``recursive`` to
+    ``False`` to return only top-level orphans.
     """
 
     repo_path = os.path.abspath(repo_path)
@@ -107,27 +107,26 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
     if module_map and Path(module_map).exists():
         try:
             data = json.loads(Path(module_map).read_text())
-            if isinstance(data, dict):
-                if "modules" in data:
-                    keys = data.get("modules", {}).keys()
-                else:
-                    keys = data.keys()
-                for k in keys:
+            if isinstance(data, dict) and "modules" in data:
+                for k in data.get("modules", {}).keys():
                     p = Path(str(k))
                     name = p.with_suffix("").as_posix().replace("/", ".")
                     known.add(name)
         except Exception:
             known = set()
 
-    # initial orphan set excluding modules already tracked in the module map
-    found = {m for m in discover_orphan_modules(repo_path) if m not in known}
-    queue = list(found)
+    # seed traversal with all orphans to follow their local dependencies
+    orphans = set(discover_orphan_modules(repo_path))
+    found: set[str] = set()
+    queue = list(orphans)
+    seen: set[str] = set()
 
     while queue:
         mod = queue.pop(0)
-        if mod in known:
-            # skip traversal for modules that are already known
+        if mod in seen:
             continue
+        seen.add(mod)
+        found.add(mod)
         path = repo / Path(*mod.split(".")).with_suffix(".py")
         if not path.exists():
             continue
@@ -145,8 +144,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     if not (mod_path.exists() or pkg_init.exists()):
                         continue
-                    if name not in found and name not in known:
-                        found.add(name)
+                    if name not in seen:
                         queue.append(name)
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
@@ -161,8 +159,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     if mod_path.exists() or pkg_init.exists():
-                        if name not in found and name not in known:
-                            found.add(name)
+                        if name not in seen:
                             queue.append(name)
                 elif node.names:
                     for alias in node.names:
@@ -170,9 +167,7 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                         mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                         pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                         if mod_path.exists() or pkg_init.exists():
-                            if name not in found and name not in known:
-                                found.add(name)
+                            if name not in seen:
                                 queue.append(name)
-    # ensure returned identifiers are relative to the repository root
-    result = sorted(found - known)
-    return result
+
+    return sorted(found - known)
