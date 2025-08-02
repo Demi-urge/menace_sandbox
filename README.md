@@ -124,9 +124,9 @@ benchmarking.  Use `--clean-orphans` or set `SANDBOX_CLEAN_ORPHANS=1` to remove
 successful modules from the orphan list after integration.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
 Isolated modules returned by `discover_isolated_modules` are included when
-`--discover-isolated` is supplied or `SELF_TEST_DISCOVER_ISOLATED=1` is set.
+`--auto-include-isolated` is supplied or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` is set.
 When launched via `run_autonomous.py` this behaviour also sets
-`SANDBOX_DISCOVER_ISOLATED=1` so passing modules update the map. Recursion
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1` so passing modules update the map. Recursion
 through their dependencies is enabled by default
 (`SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`); set
 `SELF_TEST_RECURSIVE_ISOLATED=0` or `SANDBOX_RECURSIVE_ISOLATED=0` or use

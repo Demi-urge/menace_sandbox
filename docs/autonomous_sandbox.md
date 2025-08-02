@@ -145,7 +145,7 @@ from `orphan_modules.json`.
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISABLE_ORPHANS=0` – include orphan module discovery and execution (set to `1` to skip)
 - `SELF_TEST_DISCOVER_ORPHANS=1` – automatically scan for orphan modules (set to `0` to disable)
-- `SELF_TEST_DISCOVER_ISOLATED=0` – disable automatic processing of
+ - `SELF_TEST_AUTO_INCLUDE_ISOLATED=0` – disable automatic processing of
   `discover_isolated_modules`
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
   (set to `0` or use `--no-recursive-isolated` to disable)
@@ -156,8 +156,8 @@ from `orphan_modules.json`.
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-orphans` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)
-- `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery
-- `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
+ - `SANDBOX_AUTO_INCLUDE_ISOLATED=0` – disable isolated module discovery
+ - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
@@ -227,7 +227,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
     Example scanning for orphan modules:
 
     ```bash
-     python run_autonomous.py --discover-orphans --discover-isolated \
+     python run_autonomous.py --discover-orphans --auto-include-isolated \
        --include-orphans
     ```
 
