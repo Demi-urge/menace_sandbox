@@ -33,6 +33,7 @@ def _load_methods():
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": lambda mods: None,
         "try_integrate_into_workflows": lambda mods: None,
+        "run_workflow_simulations": lambda *a, **k: None,
         "log_record": lambda **k: {},
         "analyze_redundancy": lambda p: False,
     }
@@ -93,13 +94,19 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
-    eng = types.SimpleNamespace(logger=DummyLogger())
+    refreshed: dict[str, list[str]] = {}
+
+    def fake_refresh(mods: list[str]) -> None:
+        refreshed["mods"] = list(mods)
+
+    eng = types.SimpleNamespace(logger=DummyLogger(), _refresh_module_map=fake_refresh)
 
     _update_orphan_modules(eng)
 
     assert called.get("used") is True
     assert Path(called["repo"]) == tmp_path
     assert Path(called["map"]).resolve() == (tmp_path / "module_map.json").resolve()
+    assert refreshed.get("mods") == ["foo/bar.py"]
     data = json.loads((tmp_path / "orphan_modules.json").read_text())
     assert "foo/bar.py" in data
 
@@ -165,19 +172,12 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     _update_orphan_modules(eng)
 
-    # orphan discovery should not immediately update the module map
     map_file = tmp_path / "module_map.json"
-    assert not map_file.exists()
-
-    mods_path = tmp_path / "orphan_modules.json"
-    if not mods_path.exists():
-        mods_path.write_text(json.dumps(["iso.py"]))
-    mods = json.loads(mods_path.read_text())
-    eng._refresh_module_map(mods)
-
     assert map_file.exists()
     data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
+    mods_path = tmp_path / "orphan_modules.json"
+    assert json.loads(mods_path.read_text()) == []
 
 
 def test_recursive_isolated(monkeypatch, tmp_path):
@@ -217,15 +217,9 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     _update_orphan_modules(eng)
 
     map_file = tmp_path / "module_map.json"
-    assert not map_file.exists()
-
-    mods_path = tmp_path / "orphan_modules.json"
-    if not mods_path.exists():
-        mods_path.write_text(json.dumps(["iso.py"]))
-    mods = json.loads(mods_path.read_text())
-    eng._refresh_module_map(mods)
-
     assert map_file.exists()
     data = json.loads(map_file.read_text())
     assert data["modules"].get("iso.py") == 1
+    mods_path = tmp_path / "orphan_modules.json"
+    assert json.loads(mods_path.read_text()) == []
     assert called.get("recursive") is False

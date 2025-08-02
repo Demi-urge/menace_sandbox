@@ -177,11 +177,8 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
         generated.append(sorted(mods))
         return [1]
 
-    def fake_run(workflows_db="workflows.db", env_presets=None, **kwargs):
+    def fake_run():
         ran.append(True)
-        return None
-
-    _refresh_module_map.__globals__["run_workflow_simulations"] = fake_run
 
     eng = types.SimpleNamespace(
         module_index=object(),
@@ -192,6 +189,7 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     def fake_integrate(self, modules):
         mods = {Path(m).name for m in modules}
         fake_generate(mods)
+        fake_run()
         return mods
 
     eng._integrate_orphans = types.MethodType(fake_integrate, eng)
