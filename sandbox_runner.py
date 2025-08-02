@@ -1124,8 +1124,8 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     recursive_orphans = True
     env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-    if env_rec is not None:
-        recursive_orphans = env_rec.lower() in {"1", "true", "yes"}
+    if env_rec is not None and env_rec.lower() in {"0", "false"}:
+        recursive_orphans = False
     arg_rec = getattr(args, "recursive_orphans", None)
     if arg_rec is not None:
         recursive_orphans = arg_rec
