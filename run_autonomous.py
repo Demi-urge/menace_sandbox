@@ -1048,8 +1048,8 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-orphans",
         action="store_true",
         dest="recursive_orphans",
-        default=None,
-        help="enable recursive integration of orphan dependency chains",
+        default=True,
+        help="enable recursive integration of orphan dependency chains (default)",
     )
     parser.add_argument(
         "--no-recursive-orphans",
@@ -1082,14 +1082,13 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-isolated",
         action="store_true",
         dest="recursive_isolated",
-        default=None,
-        help="recurse through dependencies of isolated modules",
+        default=True,
+        help="recurse through dependencies of isolated modules (default)",
     )
     parser.add_argument(
         "--no-recursive-isolated",
         action="store_false",
         dest="recursive_isolated",
-        default=None,
         help="disable recursively processing modules from discover_isolated_modules",
     )
     parser.add_argument(
@@ -1111,14 +1110,9 @@ def main(argv: List[str] | None = None) -> None:
 
     os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
 
-    rec_arg = getattr(args, "recursive_orphans")
-    if rec_arg is None:
-        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
-        os.environ.setdefault("SELF_TEST_RECURSIVE_ORPHANS", "1")
-    else:
-        val = "1" if rec_arg else "0"
-        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
-        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
+    val = "1" if args.recursive_orphans else "0"
+    os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
+    os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
 
     if getattr(args, "include_orphans") is False:
         os.environ["SANDBOX_DISABLE_ORPHANS"] = "1"
@@ -1130,14 +1124,9 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
 
-    rec_iso = getattr(args, "recursive_isolated")
-    if rec_iso is None:
-        os.environ.setdefault("SELF_TEST_RECURSIVE_ISOLATED", "1")
-        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
-    else:
-        val = "1" if rec_iso else "0"
-        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
-        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
+    val = "1" if args.recursive_isolated else "0"
+    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
     if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")

@@ -619,7 +619,7 @@ class SelfTestService:
         if combined_file or path.exists():
             try:
                 path.parent.mkdir(exist_ok=True)
-                path.write_text(json.dumps(sorted(combined_file), indent=2))
+                path.write_text(json.dumps(combined_file, indent=2))
                 new_modules = [m for m in combined_file if m not in existing]
                 if new_modules:
                     self.logger.info(
@@ -1250,8 +1250,8 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-orphans",
         dest="recursive_orphans",
         action="store_true",
-        default=None,
-        help="Recursively discover dependent orphan chains (default)",
+        default=True,
+        help="Recursively discover dependent orphan chains (default: enabled)",
     )
     run.add_argument(
         "--no-recursive-orphans",
@@ -1261,8 +1261,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     run.add_argument(
         "--recursive-isolated",
+        dest="recursive_isolated",
         action="store_true",
-        help="Recursively discover dependencies of isolated modules",
+        default=True,
+        help="Recursively discover dependencies of isolated modules (default: enabled)",
+    )
+    run.add_argument(
+        "--no-recursive-isolated",
+        dest="recursive_isolated",
+        action="store_false",
+        help="Do not recurse through isolated module dependencies",
     )
     run.add_argument(
         "--clean-orphans",
@@ -1344,8 +1352,8 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-orphans",
         dest="recursive_orphans",
         action="store_true",
-        default=None,
-        help="Recursively discover dependent orphan chains (default)",
+        default=True,
+        help="Recursively discover dependent orphan chains (default: enabled)",
     )
     sched.add_argument(
         "--no-recursive-orphans",
@@ -1355,8 +1363,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     sched.add_argument(
         "--recursive-isolated",
+        dest="recursive_isolated",
         action="store_true",
-        help="Recursively discover dependencies of isolated modules",
+        default=True,
+        help="Recursively discover dependencies of isolated modules (default: enabled)",
+    )
+    sched.add_argument(
+        "--no-recursive-isolated",
+        dest="recursive_isolated",
+        action="store_false",
+        help="Do not recurse through isolated module dependencies",
     )
     sched.add_argument(
         "--clean-orphans",
@@ -1390,19 +1406,13 @@ def cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    rec_arg = getattr(args, "recursive_orphans", None)
-    if rec_arg is None:
-        os.environ.setdefault("SANDBOX_RECURSIVE_ORPHANS", "1")
-        os.environ.setdefault("SELF_TEST_RECURSIVE_ORPHANS", "1")
-        recursive_orphans = os.getenv("SELF_TEST_RECURSIVE_ORPHANS", "1").lower() not in {
-            "0",
-            "false",
-        }
-    else:
-        val = "1" if rec_arg else "0"
-        os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
-        os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
-        recursive_orphans = rec_arg
+    val = "1" if args.recursive_orphans else "0"
+    os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
+    os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
+    recursive_orphans = args.recursive_orphans
+    val = "1" if args.recursive_isolated else "0"
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
+    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
 
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
