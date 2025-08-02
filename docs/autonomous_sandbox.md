@@ -139,7 +139,7 @@ After the system tools are in place install the Python requirements via
   (`--no-recursive-orphans` to disable)
 - `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
-- `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (set to `0` or use `--no-recursive-orphans` to disable)
+- `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-orphans` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)
 - `SANDBOX_DISCOVER_ISOLATED=0` – disable isolated module discovery

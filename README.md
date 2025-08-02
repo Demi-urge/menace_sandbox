@@ -134,9 +134,9 @@ python run_autonomous.py --discover-orphans --clean-orphans \
     --include-orphans
 ```
 Use `--no-recursive-orphans` or `--no-recursive-isolated` to disable dependency
-traversal. Recursion is enabled by default via `SELF_TEST_RECURSIVE_ORPHANS=1`
-and `SANDBOX_RECURSIVE_ORPHANS=1`. Passing modules update the module map and
-spawn one-step workflows automatically.
+traversal. Recursion through orphan dependencies is enabled by default; set
+`SANDBOX_RECURSIVE_ORPHANS=0` or pass `--no-recursive-orphans` to disable. Passing
+modules update the module map and spawn one-step workflows automatically.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be
