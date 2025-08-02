@@ -169,3 +169,67 @@ def test_recursive_inclusion_cleanup(tmp_path, monkeypatch):
 
     cleaned = json.loads((data_dir / "orphan_modules.json").read_text())
     assert cleaned == []
+
+
+def test_local_import_inclusion_non_recursive(tmp_path, monkeypatch):
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n")
+    (tmp_path / "c.py").write_text("x = 1\n")
+
+    commands: list[str] = []
+
+    async def fake_exec(*cmd, **kwargs):
+        commands.append(" ".join(map(str, cmd)))
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.chdir(tmp_path)
+
+    def fake_find(root: Path):
+        assert root == Path.cwd()
+        return [Path("a.py")]
+
+    monkeypatch.setattr(
+        "scripts.find_orphan_modules.find_orphan_modules", fake_find
+    )
+    monkeypatch.setattr(sts, "analyze_redundancy", lambda p: False)
+
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        discover_orphans=False,
+        discover_isolated=False,
+        recursive_orphans=False,
+    )
+    svc.run_once()
+
+    assert any("a.py" in c for c in commands)
+    assert any("b.py" in c for c in commands)
+    assert any("c.py" in c for c in commands)
+    assert svc.results.get("orphan_total") == 3
+    assert svc.results.get("orphan_failed") == 0
+    assert sorted(svc.results.get("orphan_passed", [])) == [
+        "a.py",
+        "b.py",
+        "c.py",
+    ]
