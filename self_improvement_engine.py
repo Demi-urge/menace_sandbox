@@ -8,6 +8,7 @@ import time
 import threading
 import asyncio
 import os
+import ast
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     setup_logging()
@@ -1403,11 +1404,74 @@ class SelfImprovementEngine:
             self.logger.exception("orphan integration failed: %s", exc)
 
     # ------------------------------------------------------------------
-    def _update_orphan_modules(self) -> None:
-        """Discover orphan modules and update the tracking file."""
+    def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
+        """Return ``modules`` plus any local imports they depend on recursively."""
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        queue: list[Path] = []
+        for m in modules:
+            p = Path(m)
+            if not p.is_absolute():
+                p = repo / p
+            queue.append(p)
+        seen: set[str] = set()
+        while queue:
+            path = queue.pop()
+            if not path.exists():
+                continue
+            rel = path.relative_to(repo).as_posix()
+            if rel in seen:
+                continue
+            seen.add(rel)
+            try:
+                src = path.read_text(encoding="utf-8")
+                tree = ast.parse(src)
+            except Exception:
+                continue
+            pkg_parts = rel.split("/")[:-1]
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        name = alias.name
+                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                        dep = mod_path if mod_path.exists() else pkg_init if pkg_init.exists() else None
+                        if dep is not None:
+                            queue.append(dep)
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        if node.level - 1 <= len(pkg_parts):
+                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                        else:
+                            base_prefix = []
+                    else:
+                        base_prefix = pkg_parts
+                    if node.module:
+                        name = ".".join(base_prefix + node.module.split("."))
+                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                        dep = mod_path if mod_path.exists() else pkg_init if pkg_init.exists() else None
+                        if dep is not None:
+                            queue.append(dep)
+                    elif node.names:
+                        for alias in node.names:
+                            name = ".".join(base_prefix + alias.name.split("."))
+                            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                            dep = mod_path if mod_path.exists() else pkg_init if pkg_init.exists() else None
+                            if dep is not None:
+                                queue.append(dep)
+        return seen
+
+    # ------------------------------------------------------------------
+    def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
+        """Discover orphan modules and update the tracking file or integrate ``modules``."""
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
         path = data_dir / "orphan_modules.json"
+
+        if modules:
+            self._refresh_module_map(modules)
+            return
 
         if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
             return
@@ -1523,7 +1587,8 @@ class SelfImprovementEngine:
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear."""
         if modules:
-            self._integrate_orphans(modules)
+            all_mods = self._collect_recursive_modules(modules)
+            self._integrate_orphans(all_mods)
             try:
                 data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
                 orphan_path = data_dir / "orphan_modules.json"
@@ -1532,15 +1597,15 @@ class SelfImprovementEngine:
                         existing = json.loads(orphan_path.read_text()) or []
                     except Exception:  # pragma: no cover - best effort
                         existing = []
-                    keep = [p for p in existing if p not in modules]
+                    keep = [p for p in existing if p not in all_mods]
                     if len(keep) != len(existing):
                         orphan_path.write_text(json.dumps(sorted(keep), indent=2))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan modules")
-            if modules and self.module_index:
+            if all_mods and self.module_index:
                 try:
                     generate_workflows_for_modules(
-                        sorted({Path(m).name for m in modules})
+                        sorted({Path(m).name for m in all_mods})
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
