@@ -21,6 +21,20 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Recursive inclusion flow
+
+When invoked by the autonomous sandbox the improvement engine participates in
+the recursive module discovery used by `SelfTestService`. The sandbox follows
+orphan and isolated modules through their import chains and merges passing files
+into `module_map.json`, making them available for future cycles. The generated
+`.env` enables this behaviour by default via `SANDBOX_RECURSIVE_ORPHANS=1`,
+`SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Disable
+recursion with `SANDBOX_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ISOLATED=0`
+or by passing the CLI flags `--no-recursive-orphans` or `--no-recursive-isolated`.
+Use `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
+isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
+passing entries from `orphan_modules.json` after integration.
+
 ## Reinforcement-learning policy
 
 `SelfImprovementEngine` can optionally be initialised with a `SelfImprovementPolicy`.

@@ -120,6 +120,20 @@ After the system tools are in place install the Python requirements via
 
 `auto_env_setup.ensure_env()` generates a `.env` file with sensible defaults. The following variables are particularly relevant for the autonomous workflow:
 
+### Recursive inclusion flow
+
+Orphan and isolated modules are now discovered recursively. The helper
+`sandbox_runner.discover_recursive_orphans` walks import chains and the
+sandbox merges passing modules into `module_map.json` so they can join existing
+workflows automatically. `auto_env_setup.ensure_env()` enables this behaviour by
+default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
+`SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1` and
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Disable recursion with the CLI flags
+`--no-recursive-orphans` or `--no-recursive-isolated`, or set the respective
+variables to `0`. `--auto-include-isolated` forces discovery of isolated modules
+while `--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries
+from `orphan_modules.json`.
+
 - `AUTO_SANDBOX=1` – run the sandbox on first launch
 - `SANDBOX_CYCLES=5` – number of self‑improvement iterations
 - `SANDBOX_ROI_TOLERANCE=0.01` – ROI delta required to stop early

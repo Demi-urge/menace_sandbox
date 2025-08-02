@@ -73,6 +73,11 @@
 - Running `menace_master.py` as root installs the service automatically
 - Background updates handled by `UnifiedUpdateService` even without the supervisor
 - Automatic first-run sandbox improving the codebase before live execution
+- Recursive inclusion flow discovers orphan and isolated modules, tests them
+  and integrates passing ones into existing workflows. Defaults set
+  `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
+  `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; disable with
+  `--no-recursive-orphans` or `--no-recursive-isolated`.
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
 Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.
@@ -134,11 +139,13 @@ Example discovering orphans:
 python run_autonomous.py --discover-orphans --clean-orphans \
     --include-orphans
 ```
-Use `--no-recursive-orphans` or `--no-recursive-isolated` to disable dependency
-traversal. Recursion through orphan dependencies is enabled by default; set
-`SANDBOX_RECURSIVE_ORPHANS=0` or `SELF_TEST_RECURSIVE_ORPHANS=0`, or pass
-`--no-recursive-orphans` to disable. Passing
-modules update the module map and spawn one-step workflows automatically.
+After the run, passing modules are appended to `sandbox_data/module_map.json`
+and any matching entries are dropped from `orphan_modules.json`. The next
+autonomous cycle can schedule the new modules alongside existing workflows,
+so they become part of broader flows automatically. Use `--no-recursive-orphans`
+or `--no-recursive-isolated` to disable dependency traversal. Recursion through
+orphan dependencies is enabled by default; set `SANDBOX_RECURSIVE_ORPHANS=0` or
+`SELF_TEST_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-orphans` to disable.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be

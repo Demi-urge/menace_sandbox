@@ -25,7 +25,20 @@ container issues:
 - `self_test_container_failures_total` counts cleanup or listing failures
   (for example when a container cannot be removed).
 - `self_test_container_timeouts_total` increments whenever a test container
-  exceeds the configured timeout and is terminated.
+    exceeds the configured timeout and is terminated.
+
+## Recursive inclusion flow
+
+The service participates in the sandbox's recursive module discovery. By
+default `auto_env_setup.ensure_env` sets `SELF_TEST_RECURSIVE_ORPHANS=1` and
+`SELF_TEST_RECURSIVE_ISOLATED=1` so orphan and isolated modules are followed
+through their import chains and, when tests pass, are merged into
+`sandbox_data/module_map.json` for future workflows. Disable recursion with the
+CLI flags `--no-recursive-orphans` or `--no-recursive-isolated`, or set the
+corresponding environment variables to `0`. Use `--auto-include-isolated`
+(or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force isolated discovery and
+`--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop passing entries from
+`orphan_modules.json`.
 
 ## Command Line Interface
 
@@ -130,6 +143,9 @@ python -m menace.self_test_service run tests/unit \
     --include-orphans --discover-orphans --discover-isolated \
     --clean-orphans
 ```
+
+Passing orphan modules are merged into `module_map.json` so subsequent sandbox
+runs can schedule them alongside existing workflows.
 
 When launched from `sandbox_runner`, recursion through orphan and isolated
 dependencies is enabled by default. Set `SANDBOX_RECURSIVE_ORPHANS=0` to skip
