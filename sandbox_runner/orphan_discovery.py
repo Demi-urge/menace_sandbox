@@ -107,16 +107,18 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
     if module_map and Path(module_map).exists():
         try:
             data = json.loads(Path(module_map).read_text())
-            if isinstance(data, dict) and "modules" in data:
-                for k in data.get("modules", {}).keys():
-                    p = Path(str(k))
-                    name = p.with_suffix("").as_posix().replace("/", ".")
-                    known.add(name)
+            if isinstance(data, dict):
+                modules_dict = data.get("modules", data)
+                if isinstance(modules_dict, dict):
+                    for k in modules_dict.keys():
+                        p = Path(str(k))
+                        name = p.with_suffix("").as_posix().replace("/", ".")
+                        known.add(name)
         except Exception:
             known = set()
 
-    # seed traversal with all orphans to follow their local dependencies
-    orphans = set(discover_orphan_modules(repo_path))
+    # seed traversal with top-level orphans to follow their local dependencies
+    orphans = set(discover_orphan_modules(repo_path, recursive=False))
     found: set[str] = set()
     queue = list(orphans)
     seen: set[str] = set()
@@ -170,4 +172,4 @@ def discover_recursive_orphans(repo_path: str, module_map: str | Path | None = N
                             if name not in seen:
                                 queue.append(name)
 
-    return sorted(found - known)
+    return sorted(orphans | (found - known))
