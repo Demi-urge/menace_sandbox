@@ -21,6 +21,7 @@ def _load_methods():
                     "_integrate_orphans",
                     "_update_orphan_modules",
                     "_refresh_module_map",
+                    "_test_orphan_modules",
                 }:
                     methods.append(item)
     mod_dict = {
@@ -34,7 +35,12 @@ def _load_methods():
         "generate_workflows_for_modules": lambda mods: None,
         "try_integrate_into_workflows": lambda mods: None,
         "run_workflow_simulations": lambda *a, **k: None,
-        "log_record": lambda **k: {},
+        "run_repo_section_simulations": lambda repo_path, modules=None, return_details=False, **k: (
+            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in (modules or [])})
+            if return_details
+            else None
+        ),
+        "log_record": lambda **k: k,
         "analyze_redundancy": lambda p: False,
     }
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
@@ -44,10 +50,11 @@ def _load_methods():
         mod_dict["_integrate_orphans"],
         mod_dict["_update_orphan_modules"],
         mod_dict["_refresh_module_map"],
+        mod_dict["_test_orphan_modules"],
     )
 
 
-_integrate_orphans, _update_orphan_modules, _refresh_module_map = _load_methods()
+_integrate_orphans, _update_orphan_modules, _refresh_module_map, _test_orphan_modules = _load_methods()
 
 
 class DummyIndex:
@@ -131,6 +138,7 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
 
     eng._update_orphan_modules = types.MethodType(fake_update, eng)
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
     eng._collect_recursive_modules = lambda mods: set(mods)
 
     _refresh_module_map(eng, ["foo.py"])
@@ -165,6 +173,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
     )
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
     eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+    eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
     eng._collect_recursive_modules = lambda mods: set(mods)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
@@ -207,6 +216,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     )
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
     eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+    eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
     eng._collect_recursive_modules = lambda mods: set(mods)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
@@ -223,3 +233,50 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     mods_path = tmp_path / "orphan_modules.json"
     assert json.loads(mods_path.read_text()) == []
     assert called.get("recursive") is False
+
+
+def test_refresh_map_skips_failing_modules(monkeypatch, tmp_path):
+    index = DummyIndex()
+
+    class LogLogger(DummyLogger):
+        def __init__(self):
+            self.info_calls: list[tuple[str, dict | None]] = []
+
+        def info(self, msg, extra=None):
+            self.info_calls.append((msg, extra))
+
+    logger = LogLogger()
+    eng = types.SimpleNamespace(
+        module_index=index,
+        module_clusters={},
+        logger=logger,
+        _last_map_refresh=0.0,
+        auto_refresh_map=True,
+        meta_logger=None,
+        patch_db=None,
+        data_bot=None,
+    )
+    eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._collect_recursive_modules = lambda mods: set(mods)
+    eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
+
+    sr = types.ModuleType("sandbox_runner")
+
+    def fake_run(repo_path, modules=None, return_details=False, **k):
+        details = {
+            m: {"sec": [{"result": {"exit_code": 1 if m == "bad.py" else 0}}]}
+            for m in modules or []
+        }
+        return (None, details) if return_details else None
+
+    sr.run_repo_section_simulations = fake_run
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    _refresh_module_map(eng, ["good.py", "bad.py"])
+
+    # only good.py should be integrated
+    assert "good.py" in eng.module_clusters
+    assert "bad.py" not in eng.module_clusters
+    assert any("bad.py" in (extra or {}).get("module", "") for _, extra in logger.info_calls)

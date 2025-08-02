@@ -203,6 +203,7 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     )
     engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
     engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._test_orphan_modules = types.MethodType(lambda self, paths: set(paths), engine)
     engine._collect_recursive_modules = lambda mods: set(mods)
 
     # track modules passed to integration callback
@@ -331,6 +332,7 @@ def test_recursive_orphan_integration(monkeypatch, tmp_path):
     )
     engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
     engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._test_orphan_modules = types.MethodType(lambda self, paths: set(paths), engine)
     engine._collect_recursive_modules = lambda mods: set(mods)
 
     passed: list[str] = []

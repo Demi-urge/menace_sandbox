@@ -185,7 +185,7 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
 def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     from tests.test_recursive_orphans import _load_methods
 
-    _, _, _refresh_module_map = _load_methods()
+    _integrate_orphans, _, _refresh_module_map, _test_orphan_modules = _load_methods()
 
     generated: list[list[str]] = []
     integrated: list[list[str]] = []
@@ -201,7 +201,7 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     def fake_run():
         ran.append(True)
 
-    g = _refresh_module_map.__globals__
+    g = _integrate_orphans.__globals__
     g["generate_workflows_for_modules"] = fake_generate
     g["try_integrate_into_workflows"] = fake_try
     g["run_workflow_simulations"] = fake_run
@@ -229,6 +229,9 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     )
 
     eng._collect_recursive_modules = lambda mods: {"foo.py", "dep.py"}
+    eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
     _refresh_module_map(eng, ["foo.py"])
@@ -427,40 +430,29 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
     (data_dir / "orphan_modules.json").write_text(json.dumps(["foo.py"]))
 
     from tests.test_recursive_orphans import _load_methods
-    _, _, _refresh_module_map = _load_methods()
+    _integrate_orphans, _, _refresh_module_map, _test_orphan_modules = _load_methods()
 
     map_path = tmp_path / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
     index = mod_db.ModuleIndexDB(map_path)
     engine = DummyEngine(index)
     engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
+    engine._test_orphan_modules = types.MethodType(_test_orphan_modules, engine)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
-    async def fake_exec(*cmd, **kwargs):
-        path = None
-        for i, a in enumerate(cmd):
-            s = str(a)
-            if s.startswith("--json-report-file"):
-                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
-                break
-        if path:
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"summary": {"passed": 0, "failed": 1}}, fh)
+    sr = types.ModuleType("sandbox_runner")
 
-        class P:
-            returncode = 1
+    def fake_run(repo_path, modules=None, return_details=False, **k):
+        details = {
+            m: {"sec": [{"result": {"exit_code": 1}}]} for m in modules or []
+        }
+        return (None, details) if return_details else None
 
-            async def communicate(self):
-                return b"", b""
-
-            async def wait(self):
-                return None
-
-        return P()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    sr.run_repo_section_simulations = fake_run
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
     monkeypatch.chdir(tmp_path)
 
     svc = sts.SelfTestService(
@@ -473,3 +465,4 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
 
     data = json.loads(map_path.read_text())
     assert "foo.py" not in data.get("modules", {})
+    assert passed == []

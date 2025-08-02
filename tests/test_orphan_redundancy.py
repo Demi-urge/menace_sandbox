@@ -126,7 +126,7 @@ def test_module_integrated(tmp_path, monkeypatch):
 def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     from tests.test_recursive_orphans import _load_methods
 
-    _, update, _ = _load_methods()
+    _, update, _, _ = _load_methods()
 
     sr = types.ModuleType("sandbox_runner")
     sr.discover_recursive_orphans = lambda repo, module_map=None: ["foo"]
