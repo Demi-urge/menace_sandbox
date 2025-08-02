@@ -1423,7 +1423,21 @@ class SelfImprovementEngine:
         if env_iso is not None and env_iso.lower() in ("0", "false", "no"):
             recursive_iso = False
 
+        auto_include = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+        recur_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
         discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
+        if (
+            (auto_include and auto_include.lower() in ("1", "true", "yes"))
+            or (recur_env and recur_env.lower() in ("1", "true", "yes"))
+        ):
+            try:
+                from scripts.discover_isolated_modules import discover_isolated_modules
+
+                iso_mods = discover_isolated_modules(str(repo), recursive=True)
+                modules.extend(sorted(iso_mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("isolated module discovery failed: %s", exc)
+
         if discover_iso_flag is None or discover_iso_flag.lower() not in {"0", "false", "no"}:
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules
