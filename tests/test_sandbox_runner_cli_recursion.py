@@ -50,9 +50,11 @@ def test_cli_recursion_default(monkeypatch):
     cli = _load_cli(monkeypatch)
     _capture_run(monkeypatch, cli, capture)
     monkeypatch.delenv("SANDBOX_RECURSIVE_ORPHANS", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ORPHANS", raising=False)
     cli.main([])
     assert capture.get("recursive_orphans") is True
     assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "1"
 
 
 def test_cli_recursion_flag_overrides_env(monkeypatch):
@@ -60,11 +62,15 @@ def test_cli_recursion_flag_overrides_env(monkeypatch):
     cli = _load_cli(monkeypatch)
     _capture_run(monkeypatch, cli, capture)
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "1")
     cli.main(["--no-recursive-orphans"])
     assert capture.get("recursive_orphans") is False
+    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "0"
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
     cli.main(["--recursive-orphans"])
     assert capture.get("recursive_orphans") is True
+    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "1"
 
 
 def test_cli_recursive_isolated_sets_env(monkeypatch):
@@ -72,9 +78,11 @@ def test_cli_recursive_isolated_sets_env(monkeypatch):
     cli = _load_cli(monkeypatch)
     _capture_run(monkeypatch, cli, capture)
     monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ISOLATED", raising=False)
     cli.main(["--recursive-isolated"])
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
 
 
 def test_cli_auto_include_isolated_enables_recursion(monkeypatch):
@@ -84,8 +92,12 @@ def test_cli_auto_include_isolated_enables_recursion(monkeypatch):
     monkeypatch.delenv("SANDBOX_AUTO_INCLUDE_ISOLATED", raising=False)
     monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
     monkeypatch.delenv("SANDBOX_DISCOVER_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_AUTO_INCLUDE_ISOLATED", raising=False)
+    monkeypatch.delenv("SELF_TEST_RECURSIVE_ISOLATED", raising=False)
     cli.main(["--auto-include-isolated"])
     assert os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED") == "1"
     assert capture.get("discover_isolated") is True
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"

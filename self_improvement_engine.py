@@ -1525,17 +1525,25 @@ class SelfImprovementEngine:
         modules: list[str] = []
         recursive = True
         env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+        if env_rec is None:
+            env_rec = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
         if env_rec is not None:
             recursive = env_rec.lower() in ("1", "true", "yes")
 
         # isolated modules are processed recursively by default
         recursive_iso = True
         env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+        if env_iso is None:
+            env_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
         if env_iso is not None and env_iso.lower() in ("0", "false", "no"):
             recursive_iso = False
 
         auto_include = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-        recur_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+        if auto_include is None:
+            auto_include = os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
+        recur_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
+            "SELF_TEST_RECURSIVE_ISOLATED"
+        )
         discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
         if (
             (auto_include and auto_include.lower() in ("1", "true", "yes"))

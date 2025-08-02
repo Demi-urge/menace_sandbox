@@ -136,6 +136,19 @@ variables. `--auto-include-isolated` forces discovery of isolated modules while
 `--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
 `orphan_modules.json`.
 
+To toggle recursion via the environment instead of CLI flags:
+
+```bash
+# skip orphan and isolated recursion
+export SANDBOX_RECURSIVE_ORPHANS=0
+export SANDBOX_RECURSIVE_ISOLATED=0
+# force isolated modules to be included recursively
+export SANDBOX_AUTO_INCLUDE_ISOLATED=1
+```
+
+`run_autonomous` and `sandbox_runner` mirror these values to the matching
+`SELF_TEST_*` variables so that `SelfTestService` observes the same behaviour.
+
 - `AUTO_SANDBOX=1` – run the sandbox on first launch
 - `SANDBOX_CYCLES=5` – number of self‑improvement iterations
 - `SANDBOX_ROI_TOLERANCE=0.01` – ROI delta required to stop early

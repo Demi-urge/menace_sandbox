@@ -1329,12 +1329,13 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "auto_include_isolated", False):
         os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
-    os.environ["SANDBOX_RECURSIVE_ORPHANS"] = (
-        "1" if args.recursive_orphans else "0"
-    )
-    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = (
-        "1" if args.recursive_isolated else "0"
-    )
+        os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1"
+    val = "1" if args.recursive_orphans else "0"
+    os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
+    os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
+    val = "1" if args.recursive_isolated else "0"
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
+    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
 
     level_str = str(getattr(args, "log_level", "INFO"))
     try:
