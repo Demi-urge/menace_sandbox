@@ -109,3 +109,37 @@ def test_module_integrated(tmp_path, monkeypatch):
 
     assert engine.module_clusters.get("ok.py") == 1
 
+
+def test_update_orphan_modules_filters(monkeypatch, tmp_path):
+    from tests.test_recursive_orphans import _load_methods
+
+    _, update, _ = _load_methods()
+
+    def fake_discover(repo: str):
+        return ["foo"]
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.discover_orphan_modules = fake_discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+
+    calls: list[Path] = []
+
+    def fake_analyze(path: Path) -> bool:
+        calls.append(path)
+        return True
+
+    update.__globals__["analyze_redundancy"] = fake_analyze
+
+    eng = types.SimpleNamespace(logger=DummyLogger())
+
+    update(eng)
+
+    mod_file = tmp_path / "orphan_modules.json"
+    data = json.loads(mod_file.read_text()) if mod_file.exists() else []
+    assert "foo.py" not in data
+    assert calls and calls[0].name == "foo.py"
+

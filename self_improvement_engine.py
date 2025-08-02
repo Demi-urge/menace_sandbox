@@ -1474,8 +1474,24 @@ class SelfImprovementEngine:
             self.logger.exception("failed to load orphan modules")
             existing = []
 
-        combined = sorted(set(existing).union(modules))
-        new_mods = [m for m in modules if m not in existing]
+        filtered: list[str] = []
+        for m in modules:
+            p = Path(m)
+            try:
+                redundant = analyze_redundancy(p)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundancy analysis failed for %s: %s", p, exc
+                )
+                redundant = False
+            if not redundant:
+                filtered.append(m)
+
+        if not filtered:
+            return
+
+        combined = sorted(set(existing).union(filtered))
+        new_mods = [m for m in filtered if m not in existing]
         if new_mods:
             try:
                 path.parent.mkdir(parents=True, exist_ok=True)
