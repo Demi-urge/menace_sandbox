@@ -93,7 +93,7 @@ class SelfTestService:
         include_orphans: bool = True,
         discover_orphans: bool = True,
         discover_isolated: bool = True,
-        recursive_orphans: bool = False,
+        recursive_orphans: bool = True,
         recursive_isolated: bool = True,
         clean_orphans: bool = False,
     ) -> None:
@@ -112,6 +112,9 @@ class SelfTestService:
             Callable invoked with a list of successfully tested orphan modules
             after each run. Can be used to merge them into the sandbox's module
             map.
+        recursive_orphans:
+            When ``True``, follow orphan modules' import chains to include local
+            dependencies. Defaults to ``True``.
         clean_orphans:
             When ``True``, remove successfully integrated modules from
             ``sandbox_data/orphan_modules.json`` after ``integration_callback``
