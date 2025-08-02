@@ -184,6 +184,37 @@ def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
     assert "redundant module skipped" in svc.logger.info_msgs
 
 
+def test_discover_isolated_filters(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    svc = sts.SelfTestService(discover_isolated=True, discover_orphans=False)
+    svc.logger = DummyLogger()
+
+    mod = types.ModuleType("scripts.discover_isolated_modules")
+
+    def discover(path, *, recursive=False):
+        return [Path("foo.py"), Path("foo.py"), Path("dup.py")]
+
+    mod.discover_isolated_modules = discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
+
+    calls: list[Path] = []
+
+    def fake_analyze(p: Path) -> bool:
+        calls.append(p)
+        return p.stem == "dup"
+
+    monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
+
+    mods = svc._discover_isolated()
+
+    assert mods == [str(Path("foo.py"))]
+    assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
+    assert "redundant module skipped" in svc.logger.info_msgs
+
+
 def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     svc = sts.SelfTestService(discover_isolated=False, recursive_orphans=False)
