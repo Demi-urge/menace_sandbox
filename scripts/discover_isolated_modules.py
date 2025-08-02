@@ -20,23 +20,41 @@ except Exception:  # pragma: no cover - sandbox_runner may not be available
 
 def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) -> List[str]:
     """Return relative paths of isolated Python modules under *base_dir*."""
+    import json
+
     root = Path(base_dir).resolve()
 
     modules = {str(p) for p in find_orphan_modules(root, recursive=False)}
 
-    discover_func = _discover_recursive_orphans if recursive else _discover_import_orphans
-    if discover_func is not None:
-        try:
-            if recursive:
-                names = discover_func(str(root))
-            else:
-                names = discover_func(str(root), recursive=False)
-        except Exception:  # pragma: no cover - best effort
-            names = []
+    if recursive:
+        names: Iterable[str] = []
+        if _discover_recursive_orphans is not None:
+            try:
+                names = _discover_recursive_orphans(str(root))
+            except Exception:  # pragma: no cover - best effort
+                names = []
         for name in names:
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
                 modules.add(str(path.relative_to(root)))
+    else:
+        if _discover_import_orphans is not None:
+            try:
+                names = _discover_import_orphans(str(root), recursive=False)
+            except Exception:  # pragma: no cover - best effort
+                names = []
+            for name in names:
+                path = root / (name.replace(".", os.sep) + ".py")
+                if path.exists():
+                    modules.add(str(path.relative_to(root)))
+
+    cache = root / "sandbox_data" / "orphan_modules.json"
+    try:
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_text(json.dumps(sorted(modules), indent=2))
+    except Exception:  # pragma: no cover - best effort
+        pass
+
     return sorted(modules)
 
 
