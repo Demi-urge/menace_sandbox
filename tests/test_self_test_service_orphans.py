@@ -257,7 +257,7 @@ def test_recursive_option_used(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
-    svc = mod.SelfTestService(recursive_orphans=True)
+    svc = mod.SelfTestService()
     svc.run_once(refresh_orphans=True)
 
     assert calls.get("used") is True
@@ -308,7 +308,7 @@ def test_discover_orphans_append(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", types.ModuleType("env"))
 
     svc = mod.SelfTestService(
-        include_orphans=False, discover_orphans=True, recursive_orphans=True
+        include_orphans=False, discover_orphans=True
     )
     svc.run_once()
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -370,7 +370,7 @@ def test_recursive_chain_modules(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(recursive_orphans=True, discover_orphans=False)
+    svc = mod.SelfTestService(discover_orphans=False)
     svc.run_once()
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -425,7 +425,7 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     helper.discover_recursive_orphans = discover
     monkeypatch.setitem(sys.modules, "sandbox_runner", helper)
 
-    svc = mod.SelfTestService(discover_orphans=False, recursive_orphans=True)
+    svc = mod.SelfTestService(discover_orphans=False)
     svc.run_once(refresh_orphans=True)
 
     data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
@@ -437,6 +437,36 @@ def test_recursive_orphan_multi_scan(tmp_path, monkeypatch):
     repo, m = discover_calls[0]
     assert Path(repo) == tmp_path
     assert Path(m).resolve() == (tmp_path / "sandbox_data" / "module_map.json").resolve()
+
+
+def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
+
+    import types
+
+    called = {}
+
+    def discover(repo, module_map=None):
+        called["used"] = True
+        return ["foo"]
+
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
+
+    find_mod = types.ModuleType("scripts.find_orphan_modules")
+    find_mod.find_orphan_modules = lambda root: [tmp_path / "foo.py"]
+    scripts_pkg = types.ModuleType("scripts")
+    scripts_pkg.find_orphan_modules = find_mod.find_orphan_modules
+    monkeypatch.setitem(sys.modules, "scripts.find_orphan_modules", find_mod)
+    monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
+
+    svc = mod.SelfTestService()
+    modules = svc._discover_orphans()
+    assert modules == [str(tmp_path / "foo.py")]
+    assert called.get("used") is None
 
 
 @pytest.mark.parametrize("var", ["SELF_TEST_DISABLE_ORPHANS", "SANDBOX_DISABLE_ORPHANS"])
