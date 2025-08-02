@@ -58,6 +58,7 @@ def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     )
     engine._integrate_orphans = types.MethodType(_integrate_orphans, engine)
     engine._refresh_module_map = types.MethodType(_refresh_module_map, engine)
+    engine._collect_recursive_modules = lambda mods: set(mods)
 
     _update_orphan_modules(engine)
 

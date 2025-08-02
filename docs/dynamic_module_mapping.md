@@ -97,7 +97,7 @@ unit tests and updates the module map once they succeed.  Disable dependency
 traversal with `--no-recursive-orphans` or by setting
 `SANDBOX_RECURSIVE_ORPHANS=0`.
 Isolated modules returned by `discover_isolated_modules` are loaded when
-`--discover-isolated` is supplied or `SANDBOX_DISCOVER_ISOLATED=1` is set and
+`--auto-include-isolated` is supplied or `SANDBOX_AUTO_INCLUDE_ISOLATED=1` is set and
 are processed recursively by default. These isolated modules are tested along
 with any dependencies and merged into `module_map.json` once they pass so later
 runs treat them as normal members of their assigned groups. Simple workflows are

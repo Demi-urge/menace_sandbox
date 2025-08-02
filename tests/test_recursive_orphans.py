@@ -123,6 +123,7 @@ def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
 
     eng._update_orphan_modules = types.MethodType(fake_update, eng)
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
+    eng._collect_recursive_modules = lambda mods: set(mods)
 
     _refresh_module_map(eng, ["foo.py"])
 
@@ -156,6 +157,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
     )
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
     eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+    eng._collect_recursive_modules = lambda mods: set(mods)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
@@ -204,6 +206,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     )
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
     eng._refresh_module_map = types.MethodType(_refresh_module_map, eng)
+    eng._collect_recursive_modules = lambda mods: set(mods)
 
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))

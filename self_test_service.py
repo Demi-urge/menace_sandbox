@@ -220,7 +220,12 @@ class SelfTestService:
                 self.recursive_orphans = env_recursive.lower() in ("1", "true", "yes")
 
         self.discover_isolated = bool(discover_isolated)
-        env_isolated = os.getenv("SELF_TEST_DISCOVER_ISOLATED")
+        env_isolated = (
+            os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
+            or os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+            or os.getenv("SELF_TEST_DISCOVER_ISOLATED")
+            or os.getenv("SANDBOX_DISCOVER_ISOLATED")
+        )
         if env_isolated is not None:
             self.discover_isolated = env_isolated.lower() in ("1", "true", "yes")
 
@@ -233,8 +238,10 @@ class SelfTestService:
             )
         else:
             self.recursive_isolated = bool(recursive_isolated)
-
-        auto_inc = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+        auto_inc = (
+            os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
+            or os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+        )
         if auto_inc and auto_inc.lower() in ("1", "true", "yes"):
             self.discover_isolated = True
             self.recursive_isolated = True
@@ -556,24 +563,25 @@ class SelfTestService:
             else:
                 recursive = self.recursive_isolated
 
-        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
         path = Path("sandbox_data") / "orphan_modules.json"
+        existing: list[str] = []
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh) or []
+                    if isinstance(data, list):
+                        existing = [str(p) for p in data]
+            except Exception:
+                self.logger.exception("failed to load orphan modules")
+
+        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
+        combined = list(dict.fromkeys(existing + list(modules)))
         try:
             path.parent.mkdir(exist_ok=True)
-            existing: list[str] = []
-            if path.exists():
-                try:
-                    with open(path, "r", encoding="utf-8") as fh:
-                        data = json.load(fh) or []
-                        if isinstance(data, list):
-                            existing = [str(p) for p in data]
-                except Exception:
-                    self.logger.exception("failed to load orphan modules")
-            combined = list(dict.fromkeys(existing + list(modules)))
             path.write_text(json.dumps(combined, indent=2))
         except Exception:
             self.logger.exception("failed to write orphan modules")
-        return list(modules)
+        return combined
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
@@ -1238,8 +1246,10 @@ def cli(argv: list[str] | None = None) -> int:
         help="Automatically run find_orphan_modules and include results",
     )
     run.add_argument(
-        "--discover-isolated",
-        action="store_true",
+        "--auto-include-isolated",
+        dest="discover_isolated",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Automatically run discover_isolated_modules and append results",
     )
     run.add_argument(
@@ -1330,8 +1340,10 @@ def cli(argv: list[str] | None = None) -> int:
         help="Automatically run find_orphan_modules and include results",
     )
     sched.add_argument(
-        "--discover-isolated",
-        action="store_true",
+        "--auto-include-isolated",
+        dest="discover_isolated",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="Automatically run discover_isolated_modules and append results",
     )
     sched.add_argument(
@@ -1402,6 +1414,9 @@ def cli(argv: list[str] | None = None) -> int:
         os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
         os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
         recursive_orphans = rec_arg
+
+    os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
+    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
 
     if args.cmd == "run":
         pytest_args = []
