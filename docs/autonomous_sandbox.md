@@ -176,6 +176,18 @@ from `orphan_modules.json`.
 - `SANDBOX_ADAPTIVE_AGENT_PATH` – path to the adaptive RL agent state
 - `SANDBOX_ADAPTIVE_AGENT_STRATEGY` – algorithm for the adaptive agent
 
+### Automatic recursion for isolated modules
+
+The sandbox can automatically pick up modules that are otherwise disconnected
+from the rest of the codebase. Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1`
+or passing `--auto-include-isolated` loads candidates returned by
+`discover_isolated_modules`. With `SANDBOX_RECURSIVE_ISOLATED=1` their import
+chains are traversed so supporting files are executed alongside the target
+module. Once the tests succeed, the modules are merged into
+`module_map.json` and existing flows through `try_integrate_into_workflows`.
+Entries flagged by `orphan_analyzer.analyze_redundancy` are skipped to avoid
+duplicating functionality.
+
 Recursion through orphan dependencies is enabled by default. Disable it by
 setting `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or
 pass `--no-recursive-orphans` to the relevant commands.
