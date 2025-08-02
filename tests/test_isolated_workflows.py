@@ -5,6 +5,7 @@ import types
 import asyncio
 import subprocess
 from pathlib import Path
+import json
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -157,3 +158,6 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
     names = {step for wf in recs for step in wf.workflow}
     assert "iso" in names
     assert "dep" in names
+    data = json.loads(map_path.read_text())
+    assert "iso.py" in data.get("modules", {})
+    assert "dep.py" in data.get("modules", {})
