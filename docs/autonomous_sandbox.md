@@ -124,17 +124,23 @@ After the system tools are in place install the Python requirements via
 
 Orphan and isolated modules are now discovered recursively. The helper
 `sandbox_runner.discover_recursive_orphans` walks import chains and returns a
-mapping from each discovered module to the module(s) that imported it. Passing
-modules are integrated into `module_map.json` and existing workflows by default;
-set `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` to opt out. `auto_env_setup.ensure_env()` enables this behaviour by
-default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
-`SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1` and
-`SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the CLI flags `--recursive-include` or
-`--no-recursive-include` and `--recursive-isolated` or `--no-recursive-isolated`
-to override these defaults, which set the corresponding
-`SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED` environment
-variables. Use `--discover-isolated` or `--no-discover-isolated` to toggle isolated module discovery. `--auto-include-isolated` forces discovery of isolated modules while
-`--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
+mapping from each discovered module to the module(s) that imported it. Setting
+`SANDBOX_RECURSIVE_ORPHANS=1` lets the walker follow each orphan's import chain
+so new modules are discovered recursively. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1`
+isolated modules are pulled into this scan and their dependencies are traversed
+in the same recursive manner. Passing modules are integrated into
+`module_map.json` and existing workflows by default; set
+`SELF_TEST_DISABLE_AUTO_INTEGRATION=1` to opt out. `auto_env_setup.ensure_env()`
+enables this behaviour by default through `SELF_TEST_RECURSIVE_ORPHANS=1`,
+`SELF_TEST_RECURSIVE_ISOLATED=1`, `SANDBOX_RECURSIVE_ORPHANS=1`,
+`SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the
+CLI flags `--recursive-include` or `--no-recursive-include` and
+`--recursive-isolated` or `--no-recursive-isolated` to override these defaults,
+which set the corresponding `SANDBOX_RECURSIVE_ORPHANS` and
+`SANDBOX_RECURSIVE_ISOLATED` environment variables. Use `--discover-isolated` or
+`--no-discover-isolated` to toggle isolated module discovery. `--auto-include-isolated`
+forces discovery of isolated modules while `--clean-orphans` (or
+`SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
 `orphan_modules.json`.
 
 To toggle recursion via the environment instead of CLI flags:
@@ -213,10 +219,10 @@ database:
 ### Redundant modules
 
 `sandbox_runner.discover_recursive_orphans` returns a mapping where each
-module includes the modules that imported it in `parents` and whether it is
-`redundant`. `SelfTestService` records this metadata and the improvement engine
-only integrates modules whose `redundant` flag is false. Modules marked as
-redundant are skipped automatically during execution.
+module includes the modules that imported it in `parents` and carries a
+`redundant` flag. `SelfTestService` records this metadata and the improvement
+engine only integrates modules whose `redundant` flag is false. Redundant
+modules are logged but skipped during automatic inclusion.
 
 `run_autonomous.py` mirrors the `SANDBOX_*` values to the matching
 `SELF_TEST_*` variables so that `SelfTestService` honours the same recursion
