@@ -571,14 +571,27 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
-    def _discover_orphans(self) -> list[str]:
+    def _discover_orphans(self, recursive: bool | None = None) -> list[str]:
         """Return orphan modules detected in the repository.
 
         This helper performs discovery only; persisting the results is handled
-        by :meth:`_run_once` after combining orphan and isolated modules.
+        by :meth:`_run_once` after combining orphan and isolated modules. The
+        ``recursive`` behaviour can be controlled via the
+        ``SELF_TEST_RECURSIVE_ORPHANS`` environment variable which, when set to
+        a truthy value, enables recursive dependency discovery regardless of the
+        instance configuration.
         """
+        if recursive is None:
+            env_val = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+            if env_val is None:
+                env_val = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+            if env_val is not None:
+                recursive = env_val.lower() in ("1", "true", "yes")
+            else:
+                recursive = self.recursive_orphans
+
         modules: list[str]
-        if self.recursive_orphans:
+        if recursive:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             trace = _discover(
@@ -708,7 +721,7 @@ class SelfTestService:
                                     queue.append(dep)
             return seen
 
-        if self.recursive_orphans:
+        if recursive:
             modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
 
         filtered: list[str] = []
@@ -1194,23 +1207,23 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("result callback failed")
 
-            if self.integration_callback and not any_failed and passed_set:
+            if passed_set:
                 integrate_mods = [
                     m for m in passed_set if not self.orphan_traces.get(m, {}).get("redundant")
                 ]
-                if integrate_mods:
+                cleaned = False
+                if self.integration_callback and integrate_mods:
                     try:
                         self.integration_callback(integrate_mods)
                     except Exception:
                         self.logger.exception("orphan integration failed")
-                    if (
-                        self.clean_orphans
-                        and self.integration_callback is not self._default_integration
-                    ):
-                        try:
-                            self._clean_orphan_list(integrate_mods)
-                        except Exception:
-                            self.logger.exception("failed to clean orphan list")
+                    else:
+                        cleaned = self.integration_callback is self._default_integration
+                if self.clean_orphans and integrate_mods and not cleaned:
+                    try:
+                        self._clean_orphan_list(integrate_mods)
+                    except Exception:
+                        self.logger.exception("failed to clean orphan list")
 
             if not queue:
                 self._clear_state()
