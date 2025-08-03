@@ -5436,6 +5436,32 @@ def run_workflow_simulations(
 
 
 # ----------------------------------------------------------------------
+def auto_include_modules(
+    modules: Iterable[str],
+) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
+    """Automatically include ``modules`` into the workflow system.
+
+    The helper performs three steps:
+
+    #. Generate simple workflows for each provided module via
+       :func:`generate_workflows_for_modules`.
+    #. Attempt to integrate those modules into existing workflows using
+       :func:`try_integrate_into_workflows` so that related workflows gain the
+       new steps.
+    #. Execute :func:`run_workflow_simulations` to evaluate the newly
+       incorporated workflows.
+
+    The return value from :func:`run_workflow_simulations` is forwarded to the
+    caller.
+    """
+
+    mods = list(modules)
+    generate_workflows_for_modules(mods)
+    try_integrate_into_workflows(mods)
+    return run_workflow_simulations()
+
+
+# ----------------------------------------------------------------------
 def aggregate_synergy_metrics(
     paths: list[str], metric: str = "roi"
 ) -> list[tuple[str, float]]:
