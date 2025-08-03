@@ -1366,8 +1366,10 @@ class SelfImprovementEngine:
         """Execute sandbox simulations for ``paths`` and return those that pass.
 
         Modules are considered successful when all recorded executions exit with
-        status code ``0``. Any failures are logged and the corresponding modules
-        are excluded from the returned set.
+        status code ``0`` **and** the collected ROI or synergy metrics exceed
+        ``SELF_TEST_ROI_THRESHOLD`` or ``SELF_TEST_SYNERGY_THRESHOLD``. Metrics
+        are logged for each module and any failures or low scores are excluded
+        from the returned set.
         """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -1375,10 +1377,13 @@ class SelfImprovementEngine:
         if not modules:
             return set()
 
+        roi_threshold = float(os.getenv("SELF_TEST_ROI_THRESHOLD", "0") or 0.0)
+        syn_threshold = float(os.getenv("SELF_TEST_SYNERGY_THRESHOLD", "0") or 0.0)
+
         try:
             from sandbox_runner import run_repo_section_simulations
 
-            _tracker, details = run_repo_section_simulations(
+            tracker, details = run_repo_section_simulations(
                 str(repo), modules=modules, return_details=True
             )
         except Exception as exc:  # pragma: no cover - best effort
@@ -1386,6 +1391,7 @@ class SelfImprovementEngine:
             return set()
 
         passing: set[str] = set()
+        module_deltas = getattr(tracker, "module_deltas", {}) if tracker else {}
         for mod in modules:
             sec_map = details.get(mod, {}) if isinstance(details, dict) else {}
             failed = False
@@ -1402,8 +1408,22 @@ class SelfImprovementEngine:
                     "sandbox tests failed",
                     extra=log_record(module=Path(mod).name),
                 )
-            else:
+                continue
+
+            sec_roi = sum(
+                sum(vals)
+                for key, vals in module_deltas.items()
+                if key.startswith(f"{mod}:")
+            )
+            syn_roi = sum(module_deltas.get(mod, []))
+            total_roi = sec_roi + syn_roi
+
+            metrics = log_record(module=Path(mod).name, roi=total_roi, synergy_roi=syn_roi)
+            if total_roi > roi_threshold or syn_roi > syn_threshold:
+                self.logger.info("sandbox metrics", extra=metrics)
                 passing.add(mod)
+            else:
+                self.logger.info("sandbox metrics below thresholds", extra=metrics)
 
         return passing
 
