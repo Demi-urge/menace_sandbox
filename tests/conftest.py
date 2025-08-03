@@ -13,6 +13,7 @@ os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 # Add project root to import path
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("SANDBOX_REPO_PATH", str(ROOT))
 # Ensure the parent of the project directory is on ``sys.path`` so that the
 # ``menace`` package can be imported without installation.  Using the project
 # root itself would pick up the ``menace`` subpackage instead of the actual
