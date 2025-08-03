@@ -33,7 +33,11 @@ The service participates in the sandbox's recursive module discovery. During
 discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
 orphan's imports, collects any local dependencies and returns a mapping where
 each module lists its importing `parents` and whether it was deemed
-`redundant`. Every candidate is then executed in an ephemeral sandbox via
+`redundant`. Setting `SANDBOX_RECURSIVE_ORPHANS=1` causes the walk to follow an
+orphan's entire import chain so new modules are discovered recursively. When
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1` is set, isolated modules are added to the scan
+and their dependencies are explored in the same recursive manner. Every
+candidate is then executed in an ephemeral sandbox via
 `pytest` so side effects are contained.
 Modules that pass are automatically appended to `sandbox_data/module_map.json`
 via `module_index_db.ModuleIndexDB` and merged into the sandbox's workflows
@@ -70,9 +74,9 @@ passing entries from `orphan_modules.json`.
 ### Redundant module handling
 
 `discover_recursive_orphans` annotates each entry with a `redundant` flag based
-on `orphan_analyzer.analyze_redundancy`. Modules flagged as redundant are
-skipped automatically, though their classification and `parents` information is
-still recorded. The `SelfImprovementEngine` consults the same metadata and
+on `orphan_analyzer.analyze_redundancy`. Modules flagged as redundant are logged
+but skipped during auto-inclusion; their classification and `parents` information
+is still recorded. The `SelfImprovementEngine` consults the same metadata and
 refuses to merge redundant modules into workflows even if they pass their
 tests.
 
