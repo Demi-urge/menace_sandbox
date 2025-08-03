@@ -1324,7 +1324,11 @@ def purge_leftovers() -> None:
     """Remove stale sandbox containers and leftover QEMU overlay files."""
     global _STALE_CONTAINERS_REMOVED
     with _PURGE_FILE_LOCK:
-        reconcile_active_containers()
+        try:
+            reconcile_active_containers()
+        except FileNotFoundError:
+            logger.debug("docker not available; skipping purge")
+            return
         removed_containers = 0
         try:
             ids = _read_active_containers()
