@@ -121,6 +121,34 @@ def test_update_orphan_modules_recursive(monkeypatch, tmp_path):
     assert data == []
 
 
+def test_clean_orphans_removes_passing(monkeypatch, tmp_path):
+    sr = types.ModuleType("sandbox_runner")
+    sr.discover_recursive_orphans = (
+        lambda repo, module_map=None: {"foo": [], "bar": []}
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_CLEAN_ORPHANS", "1")
+
+    mods_path = tmp_path / "orphan_modules.json"
+    mods_path.write_text(json.dumps(["foo.py", "bar.py"]))
+
+    eng = types.SimpleNamespace(logger=DummyLogger())
+    eng._integrate_orphans = lambda paths: {Path(p).name for p in paths}
+
+    def fake_test(mods: list[str]):
+        return [m for m in mods if Path(m).stem == "foo"]
+
+    eng._test_orphan_modules = fake_test
+
+    _update_orphan_modules(eng)
+
+    data = json.loads(mods_path.read_text())
+    assert data == ["bar.py"]
+
+
 def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
     index = DummyIndex()
     eng = types.SimpleNamespace(
