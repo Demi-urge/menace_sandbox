@@ -74,7 +74,11 @@
 - Background updates handled by `UnifiedUpdateService` even without the supervisor
 - Automatic first-run sandbox improving the codebase before live execution
 - Recursive inclusion flow discovers orphan and isolated modules, tests them
-  and integrates passing ones into existing workflows. Defaults set
+  and integrates passing ones into existing workflows. `sandbox_runner.discover_recursive_orphans`
+  returns a mapping for each module listing its importing `parents` and whether
+  it is `redundant`. The self-test service records this information and the
+  improvement engine integrates only modules whose `redundant` flag is false.
+  Set `SANDBOX_SKIP_REDUNDANT=1` to skip redundant modules entirely. Defaults set
   `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
   `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; disable with
   `--no-recursive-orphans` or `--no-recursive-isolated`. The `--auto-include-isolated`
@@ -86,6 +90,11 @@
   # Example: disable recursion but include isolated modules automatically
   SANDBOX_RECURSIVE_ORPHANS=0 SANDBOX_RECURSIVE_ISOLATED=0 \
   SANDBOX_AUTO_INCLUDE_ISOLATED=1 run_autonomous --check-settings
+  ```
+
+  ```bash
+  # Example: skip redundant modules during a recursive scan
+  SANDBOX_SKIP_REDUNDANT=1 run_autonomous --discover-orphans --recursive-orphans
   ```
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.

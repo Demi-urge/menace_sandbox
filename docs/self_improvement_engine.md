@@ -25,8 +25,10 @@ Each engine may use its own databases, event bus and automation pipeline allowin
 
 When invoked by the autonomous sandbox the improvement engine participates in
 the recursive module discovery used by `SelfTestService`. The sandbox follows
-orphan and isolated modules through their import chains and merges passing files
-into `module_map.json`, making them available for future cycles. The generated
+orphan and isolated modules through their import chains and
+`discover_recursive_orphans` returns a mapping where each entry records its
+importing `parents` and whether it is considered `redundant`. Passing files are
+merged into `module_map.json`, making them available for future cycles. The generated
 `.env` enables this behaviour by default via `SANDBOX_RECURSIVE_ORPHANS=1`,
 `SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Disable
 recursion with `SANDBOX_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ISOLATED=0`
@@ -45,6 +47,16 @@ passing entries from `orphan_modules.json` after integration.
   `discover_isolated_modules`.
 - `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
+- `SANDBOX_SKIP_REDUNDANT` – ignore modules flagged as redundant during
+  discovery.
+
+### Redundant module handling
+
+Modules returned by `discover_recursive_orphans` include a `redundant` flag
+derived from `orphan_analyzer.analyze_redundancy`. Unless
+`SANDBOX_SKIP_REDUNDANT=1` the engine still executes these modules during test
+runs so the classification and `parents` information is captured, but it refuses
+to merge them into `module_map.json`.
 
 Additional thresholds determine which modules `_test_orphan_modules`
 returns after sandbox simulations:
@@ -79,6 +91,12 @@ python -m menace.self_test_service run --recursive-orphans --clean-orphans
 
 # integrate automatically during the next autonomous cycle
 python run_autonomous.py --include-orphans --recursive-orphans --clean-orphans
+```
+
+To skip modules marked as redundant during this process:
+
+```bash
+SANDBOX_SKIP_REDUNDANT=1 python run_autonomous.py --include-orphans --recursive-orphans
 ```
 
 Passing files are merged into `module_map.json` and, with `--clean-orphans`
