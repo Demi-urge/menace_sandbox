@@ -5079,9 +5079,10 @@ def try_integrate_into_workflows(
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
-    Workflows already containing tasks from the same module group will receive
-    the orphan module as an additional step. The list of updated workflow IDs is
-    returned.
+    Modules are identified by their repository-relative paths to avoid
+    filename collisions. Workflows already containing tasks from the same
+    module group will receive the orphan module as an additional step. The list
+    of updated workflow IDs is returned.
     """
 
     from menace.task_handoff_bot import WorkflowDB
@@ -5089,12 +5090,20 @@ def try_integrate_into_workflows(
     import sqlite3
     import ast
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
-    names = {
-        Path(m).name: Path(m).with_suffix("").as_posix().replace("/", ".")
-        for m in modules
-    }
+    names: dict[str, str] = {}
+    for m in modules:
+        p = Path(m)
+        if p.is_absolute():
+            try:
+                rel = p.resolve().relative_to(repo)
+            except Exception:
+                rel = p.name
+        else:
+            rel = p
+        rel_str = rel.as_posix()
+        names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
         return []
 
@@ -5139,7 +5148,8 @@ def try_integrate_into_workflows(
             file = repo / (mod.replace(".", "/") + ".py")
             step_imports.update(_imports(file))
             try:
-                step_groups.add(idx.get(file.name))
+                rel = file.resolve().relative_to(repo)
+                step_groups.add(idx.get(rel.as_posix()))
             except Exception:
                 pass
         changed = False
@@ -5149,7 +5159,11 @@ def try_integrate_into_workflows(
             dotted = names[mod]
             if dotted in existing:
                 continue
-            if gid in step_groups or mod.split(".")[0] in step_imports or orphan_imports[mod] & imported:
+            if (
+                gid in step_groups
+                or dotted.split(".")[0] in step_imports
+                or orphan_imports[mod] & imported
+            ):
                 wf.workflow.append(dotted)
                 existing.add(dotted)
                 changed = True

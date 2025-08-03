@@ -1,4 +1,5 @@
 import importlib.util
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load_env():
+def _load_env(monkeypatch=None):
     pkg = sys.modules.setdefault("sandbox_runner", types.ModuleType("sandbox_runner"))
     pkg.__path__ = [str(ROOT / "sandbox_runner")]
     spec = importlib.util.spec_from_file_location(
@@ -15,7 +16,15 @@ def _load_env():
     env = importlib.util.module_from_spec(spec)
     sys.modules["sandbox_runner.environment"] = env
     assert spec and spec.loader
+    if monkeypatch is not None:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="", stderr=""),
+        )
     spec.loader.exec_module(env)  # type: ignore[attr-defined]
+    if monkeypatch is not None:
+        monkeypatch.setattr(env, "purge_leftovers", lambda: None)
     return env
 
 
@@ -41,7 +50,7 @@ class StubIndex:
 
 
 def test_try_integrate_into_workflows(tmp_path, monkeypatch):
-    env = _load_env()
+    env = _load_env(monkeypatch)
     thb = _load_thb()
     db_path = tmp_path / "wf.db"
     wf_db = thb.WorkflowDB(db_path)
@@ -62,7 +71,7 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
 
 
 def test_try_integrate_no_match(tmp_path, monkeypatch):
-    env = _load_env()
+    env = _load_env(monkeypatch)
     thb = _load_thb()
     db_path = tmp_path / "wf.db"
     wf_db = thb.WorkflowDB(db_path)
@@ -75,4 +84,34 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
     rec = wf_db.fetch(limit=10)[0]
     assert not updated
     assert rec.workflow == ["a"]
+
+
+def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
+    env = _load_env(monkeypatch)
+    thb = _load_thb()
+    db_path = tmp_path / "wf.db"
+    wf_db = thb.WorkflowDB(db_path)
+    wf = thb.WorkflowRecord(workflow=["existing"], title="w")
+    wid = wf_db.add(wf)
+
+    class StubDupIndex:
+        def __init__(self, *a, **k):
+            self._map = {
+                "existing.py": 1,
+                "pkg1/orphan.py": 1,
+                "pkg2/orphan.py": 1,
+            }
+
+        def get(self, name):
+            return self._map.get(name, 0)
+
+    stub = types.ModuleType("module_index_db")
+    stub.ModuleIndexDB = StubDupIndex
+    monkeypatch.setitem(sys.modules, "module_index_db", stub)
+
+    mods = ["pkg1/orphan.py", "pkg2/orphan.py"]
+    updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)
+    rec = {r.wid: r for r in wf_db.fetch(limit=10)}[wid]
+    assert wid in updated
+    assert set(rec.workflow) == {"existing", "pkg1.orphan", "pkg2.orphan"}
 
