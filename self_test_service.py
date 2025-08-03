@@ -712,7 +712,6 @@ class SelfTestService:
             modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
 
         filtered: list[str] = []
-        skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
         for m in modules:
             p = Path(m)
             info = self.orphan_traces.setdefault(m, {"parents": [], "redundant": False})
@@ -724,7 +723,7 @@ class SelfTestService:
                         "redundancy analysis failed for %s: %s", p, exc
                     )
                     info["redundant"] = False
-            if skip_red and info["redundant"]:
+            if info["redundant"]:
                 self.logger.info(
                     "redundant module skipped", extra={"module": p.name}
                 )
@@ -752,7 +751,6 @@ class SelfTestService:
 
         seen: set[str] = set()
         filtered: list[str] = []
-        skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
 
         for m in modules:
             p = Path(m)
@@ -768,7 +766,7 @@ class SelfTestService:
                     "redundancy analysis failed for %s: %s", p, exc
                 )
                 info["redundant"] = False
-            if skip_red and info["redundant"]:
+            if info["redundant"]:
                 self.logger.info(
                     "redundant module skipped", extra={"module": p.name}
                 )
@@ -841,11 +839,9 @@ class SelfTestService:
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
-            skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
-            if skip_red:
-                orphan_list = [
-                    m for m in orphan_list if not self.orphan_traces.get(m, {}).get("redundant")
-                ]
+            orphan_list = [
+                m for m in orphan_list if not self.orphan_traces.get(m, {}).get("redundant")
+            ]
 
         combined_file = list(dict.fromkeys(existing + discovered))
         if combined_file or path.exists():
@@ -1199,13 +1195,8 @@ class SelfTestService:
                     self.logger.exception("result callback failed")
 
             if self.integration_callback and not any_failed and passed_set:
-                skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
                 integrate_mods = [
-                    m
-                    for m in passed_set
-                    if not (
-                        skip_red and self.orphan_traces.get(m, {}).get("redundant")
-                    )
+                    m for m in passed_set if not self.orphan_traces.get(m, {}).get("redundant")
                 ]
                 if integrate_mods:
                     try:
