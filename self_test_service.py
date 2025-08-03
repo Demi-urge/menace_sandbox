@@ -598,20 +598,19 @@ class SelfTestService:
                 str(Path.cwd()),
                 module_map=str(Path("sandbox_data") / "module_map.json"),
             )
-            self.orphan_traces = {
-                str(Path(*k.split(".")).with_suffix(".py")): {
+            self.orphan_traces = {}
+            for k, v in trace.items():
+                info: dict[str, Any] = {
                     "parents": [
                         str(Path(*p.split(".")).with_suffix(".py"))
                         for p in (
                             v.get("parents") if isinstance(v, dict) else v
                         )
-                    ],
-                    "redundant": bool(v.get("redundant", False))
-                    if isinstance(v, dict)
-                    else False,
+                    ]
                 }
-                for k, v in trace.items()
-            }
+                if isinstance(v, dict) and "redundant" in v:
+                    info["redundant"] = bool(v["redundant"])
+                self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
             modules = list(self.orphan_traces.keys())
         else:
             from scripts.find_orphan_modules import find_orphan_modules
@@ -624,9 +623,7 @@ class SelfTestService:
                 except Exception:
                     rel = str(p)
                 modules.append(rel)
-            self.orphan_traces.update(
-                {m: {"parents": [], "redundant": False} for m in modules}
-            )
+            self.orphan_traces.update({m: {"parents": []} for m in modules})
 
         def _collect_recursive(mods: Iterable[str]) -> set[str]:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -727,16 +724,18 @@ class SelfTestService:
         filtered: list[str] = []
         for m in modules:
             p = Path(m)
-            info = self.orphan_traces.setdefault(m, {"parents": [], "redundant": False})
-            if "redundant" not in info or info["redundant"] is False:
+            info = self.orphan_traces.setdefault(m, {"parents": []})
+            redundant_flag = info.get("redundant")
+            if redundant_flag is None:
                 try:
-                    info["redundant"] = bool(analyze_redundancy(p))
+                    redundant_flag = bool(analyze_redundancy(p))
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "redundancy analysis failed for %s: %s", p, exc
                     )
-                    info["redundant"] = False
-            if info["redundant"]:
+                    redundant_flag = False
+                info["redundant"] = redundant_flag
+            if redundant_flag:
                 self.logger.info(
                     "redundant module skipped", extra={"module": p.name}
                 )
