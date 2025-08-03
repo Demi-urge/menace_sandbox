@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 import threading
+import inspect
 
 from orphan_analyzer import analyze_redundancy
 
@@ -297,7 +298,10 @@ class SelfTestService:
                 env_recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
             if env_recursive is not None:
                 recursive = env_recursive.lower() in ("1", "true", "yes")
-            auto_include_modules(list(names), recursive=recursive)
+
+            sig = inspect.signature(auto_include_modules)
+            kwargs = {"recursive": recursive} if "recursive" in sig.parameters else {}
+            auto_include_modules(list(names), **kwargs)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
 
