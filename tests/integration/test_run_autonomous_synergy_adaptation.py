@@ -299,7 +299,7 @@ def test_synergy_adaptation_metrics(monkeypatch, tmp_path: Path) -> None:
         str(tmp_path),
         "--include-orphans",
         "--discover-orphans",
-        "--discover-isolated",
+        "--no-discover-isolated",
     ])
 
     assert metrics_exporter.synergy_forecast_gauge.labels().get() != 0.0

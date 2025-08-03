@@ -147,7 +147,7 @@ def run_single(monkeypatch, tmp_path):
         "--no-recursive-isolated",
         "--include-orphans",
         "--discover-orphans",
-        "--discover-isolated",
+        "--no-discover-isolated",
     ])
 
     return call_state["count"]

@@ -270,7 +270,7 @@ def test_run_autonomous_integration_full(monkeypatch, tmp_path: Path):
         "--no-recursive-isolated",
         "--include-orphans",
         "--discover-orphans",
-        "--discover-isolated",
+        "--no-discover-isolated",
     ])
 
     conn = sqlite3.connect(tmp_path / "synergy_history.db")

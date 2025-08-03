@@ -29,6 +29,16 @@ def _capture_run(monkeypatch, cli, capture):
         if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") == "1":
             os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
             os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+        discover_isolated = True
+        env_di = os.getenv("SANDBOX_DISCOVER_ISOLATED")
+        if env_di is not None:
+            discover_isolated = env_di.lower() in {"1", "true"}
+        arg_di = getattr(args, "discover_isolated", None)
+        if arg_di is not None:
+            discover_isolated = arg_di
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = (
+            "1" if discover_isolated else "0"
+        )
         recursive_isolated = False
         env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
         if env_iso is not None and env_iso.lower() in {"1", "true"}:
@@ -40,7 +50,7 @@ def _capture_run(monkeypatch, cli, capture):
             "1" if recursive_isolated else "0"
         )
         capture["recursive_isolated"] = recursive_isolated
-        capture["discover_isolated"] = os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
+        capture["discover_isolated"] = discover_isolated
 
     monkeypatch.setattr(cli, "_run_sandbox", fake_run)
 
@@ -101,3 +111,22 @@ def test_cli_auto_include_isolated_enables_recursion(monkeypatch):
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
     assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
+
+
+def test_cli_no_discover_isolated_disables(monkeypatch):
+    capture = {}
+    cli = _load_cli(monkeypatch)
+    _capture_run(monkeypatch, cli, capture)
+    cli.main(["--no-discover-isolated"])
+    assert capture.get("discover_isolated") is False
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "0"
+
+
+def test_cli_discover_isolated_overrides_env(monkeypatch):
+    capture = {}
+    cli = _load_cli(monkeypatch)
+    _capture_run(monkeypatch, cli, capture)
+    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "0")
+    cli.main(["--discover-isolated"])
+    assert capture.get("discover_isolated") is True
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"

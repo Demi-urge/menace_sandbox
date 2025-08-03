@@ -211,7 +211,7 @@ def test_autonomous_with_exporter(monkeypatch, tmp_path: Path):
         "--sandbox-data-dir", str(tmp_path),
         "--include-orphans",
         "--discover-orphans",
-        "--discover-isolated",
+        "--no-discover-isolated",
     ])
 
     db_mod = importlib.import_module("menace.synergy_history_db")

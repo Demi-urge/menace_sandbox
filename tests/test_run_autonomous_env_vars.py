@@ -266,3 +266,30 @@ def test_auto_include_isolated_flag(monkeypatch, tmp_path):
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+
+
+def test_no_discover_isolated_flag_disables(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    mod.main(["--runs", "0", "--check-settings", "--no-discover-isolated"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert capture.get("discover_isolated") is False
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "0"
+
+
+def test_discover_isolated_flag_overrides_env(monkeypatch, tmp_path):
+    capture = {}
+    mod = _load_module_capture(monkeypatch, capture)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("VISUAL_AGENT_TOKEN", "x")
+    monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("SANDBOX_DISCOVER_ISOLATED", "0")
+    mod.main(["--runs", "0", "--check-settings", "--discover-isolated"])
+    sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())
+    assert capture.get("discover_isolated") is True
+    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
