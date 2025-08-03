@@ -1428,6 +1428,11 @@ class SelfImprovementEngine:
     def _integrate_orphans(self, paths: Iterable[str]) -> set[str]:
         """Refresh module index and clusters for newly tested orphan modules.
 
+        ``auto_include_modules`` is invoked with ``recursive=True`` so that any
+        dependencies of ``paths`` are automatically included. When
+        ``SANDBOX_RECURSIVE_ORPHANS`` is enabled, newly discovered dependencies
+        trigger a rerun of :meth:`_update_orphan_modules` to continue traversal.
+
         Returns
         -------
         set[str]
@@ -1466,7 +1471,14 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
-                auto_include_modules(sorted(mods))
+                auto_include_modules(sorted(mods), recursive=True)
+                if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
+                    try:
+                        self._update_orphan_modules()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "recursive orphan update failed: %s", exc
+                        )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "auto inclusion failed: %s", exc
@@ -1568,6 +1580,9 @@ class SelfImprovementEngine:
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
         path = data_dir / "orphan_modules.json"
+
+        if not hasattr(self, "orphan_traces"):
+            self.orphan_traces = {}
 
         if modules:
             self._refresh_module_map(modules)
@@ -1789,7 +1804,14 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
-        """Refresh module grouping when new modules appear."""
+        """Refresh module grouping when new modules appear.
+
+        Modules accepted for integration are auto-included with recursive
+        dependency expansion. Redundant or legacy modules identified by
+        :func:`analyze_redundancy` are skipped. When
+        ``SANDBOX_RECURSIVE_ORPHANS`` is enabled, orphan discovery is executed
+        again after integration to traverse any newly uncovered dependencies.
+        """
         if modules:
             repo_mods = self._collect_recursive_modules(modules)
             passing = self._test_orphan_modules(repo_mods)
@@ -1797,14 +1819,13 @@ class SelfImprovementEngine:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 abs_paths = [str(repo / p) for p in passing]
                 try:
+                    auto_include_modules(sorted(passing), recursive=True)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed: %s", exc)
+                try:
                     self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
-            if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
-                try:
-                    self._update_orphan_modules()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("recursive orphan update failed: %s", exc)
             return
 
         if not self.auto_refresh_map or not self.module_index:
@@ -1880,16 +1901,15 @@ class SelfImprovementEngine:
                 abs_new = [str(pending[m]) for m in new_mods]
                 deps = self._collect_recursive_modules(abs_new)
                 abs_deps = [str(repo / p) for p in deps]
+                try:
+                    auto_include_modules(sorted(deps), recursive=True)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed: %s", exc)
                 self._integrate_orphans(abs_deps)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "orphan integration failed: %s", exc
                 )
-            if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
-                try:
-                    self._update_orphan_modules()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("recursive orphan update failed: %s", exc)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("module map refresh failed: %s", exc)
 
