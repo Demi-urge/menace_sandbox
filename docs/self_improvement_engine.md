@@ -46,6 +46,17 @@ passing entries from `orphan_modules.json` after integration.
 - `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
 
+Additional thresholds determine which modules `_test_orphan_modules`
+returns after sandbox simulations:
+
+- `SELF_TEST_ROI_THRESHOLD` – minimum total ROI required for a module to
+  be accepted (default `0.0`).
+- `SELF_TEST_SYNERGY_THRESHOLD` – minimum `synergy_roi` value for
+  inclusion when multiple modules run together (default `0.0`).
+
+The engine logs the measured ROI and synergy metrics for each candidate
+and only integrates modules exceeding at least one of these thresholds.
+
 `run_autonomous.py` mirrors the `SANDBOX_*` values to the corresponding
 `SELF_TEST_*` variables so the improvement engine and `SelfTestService` apply the
 same recursion rules. Passing modules are appended to `module_map.json`, and

@@ -56,9 +56,18 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     sr = types.ModuleType("sandbox_runner")
     sr.run_repo_section_simulations = (
         lambda repo_path, modules=None, return_details=False, **k: (
-            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []})
+            (
+                types.SimpleNamespace(
+                    module_deltas={m: [1.0] for m in (modules or [])},
+                    metrics_history={"synergy_roi": [0.0]},
+                ),
+                {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []},
+            )
             if return_details
-            else None
+            else types.SimpleNamespace(
+                module_deltas={m: [1.0] for m in (modules or [])},
+                metrics_history={"synergy_roi": [0.0]},
+            )
         )
     )
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)

@@ -237,9 +237,18 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
     sr = types.ModuleType("sandbox_runner")
     sr.run_repo_section_simulations = (
         lambda repo_path, modules=None, return_details=False, **k: (
-            (None, {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []})
+            (
+                types.SimpleNamespace(
+                    module_deltas={m: [1.0] for m in (modules or [])},
+                    metrics_history={"synergy_roi": [0.0]},
+                ),
+                {m: {"sec": [{"result": {"exit_code": 0}}]} for m in modules or []},
+            )
             if return_details
-            else None
+            else types.SimpleNamespace(
+                module_deltas={m: [1.0] for m in (modules or [])},
+                metrics_history={"synergy_roi": [0.0]},
+            )
         )
     )
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
@@ -461,7 +470,11 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
         details = {
             m: {"sec": [{"result": {"exit_code": 1}}]} for m in modules or []
         }
-        return (None, details) if return_details else None
+        tracker = types.SimpleNamespace(
+            module_deltas={m: [1.0] for m in (modules or [])},
+            metrics_history={"synergy_roi": [0.0]},
+        )
+        return (tracker, details) if return_details else tracker
 
     sr.run_repo_section_simulations = fake_run
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
