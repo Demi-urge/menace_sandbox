@@ -178,8 +178,10 @@ def _sandbox_cycle_runner(
                     path = Path(*name.split(".")).with_suffix(".py").as_posix()
                     if path in module_map or path in traces:
                         continue
-                    new_mods.append(path)
                     traces[path] = info
+                    if info.get("redundant") is True:
+                        continue
+                    new_mods.append(path)
                 if new_mods:
                     recursive = True
                     sig = inspect.signature(auto_include_modules)
