@@ -5438,6 +5438,7 @@ def run_workflow_simulations(
 # ----------------------------------------------------------------------
 def auto_include_modules(
     modules: Iterable[str],
+    recursive: bool = False,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Automatically include ``modules`` into the workflow system.
 
@@ -5451,11 +5452,41 @@ def auto_include_modules(
     #. Execute :func:`run_workflow_simulations` to evaluate the newly
        incorporated workflows.
 
+    When ``recursive`` is ``True`` (or the ``SANDBOX_RECURSIVE_ORPHANS``
+    environment variable is truthy) the initial module list is expanded using
+    :func:`sandbox_runner.orphan_discovery.discover_recursive_orphans`,
+    filtering out modules deemed redundant by
+    :func:`orphan_analyzer.analyze_redundancy`.
+
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller.
     """
 
-    mods = list(modules)
+    import os
+    from pathlib import Path
+    from sandbox_runner.orphan_discovery import discover_recursive_orphans
+    import orphan_analyzer
+
+    mod_set = {Path(m).as_posix() for m in modules}
+
+    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+    if recursive or (env_rec and env_rec.lower() in ("1", "true", "yes")):
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        try:
+            discovered = discover_recursive_orphans(str(repo))
+            for name, info in discovered.items():
+                path = Path(*name.split(".")).with_suffix(".py")
+                full = repo / path
+                try:
+                    if info.get("redundant") or orphan_analyzer.analyze_redundancy(full):
+                        continue
+                except Exception:
+                    continue
+                mod_set.add(path.as_posix())
+        except Exception:
+            pass
+
+    mods = sorted(mod_set)
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
     return run_workflow_simulations()
