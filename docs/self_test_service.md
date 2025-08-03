@@ -35,11 +35,11 @@ orphan's imports, collects any local dependencies and returns a mapping from
 each discovered module to the module(s) that required it. Every candidate is then
 executed in an ephemeral sandbox via `pytest` so side effects are contained.
 Modules that pass are automatically appended to `sandbox_data/module_map.json`
-and merged into the sandbox's workflows via
-`environment.generate_workflows_for_modules` and
-`try_integrate_into_workflows`. Opt out by setting
+via `module_index_db.ModuleIndexDB` and merged into the sandbox's workflows
+through `sandbox_runner.environment.auto_include_modules`. Opt out by setting
 `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` or by supplying a custom
-`integration_callback`. By default `auto_env_setup.ensure_env` sets
+`integration_callback`. When no callback is provided the service uses this
+behaviour by default. By default `auto_env_setup.ensure_env` sets
 `SELF_TEST_RECURSIVE_ORPHANS=1` and
 `SELF_TEST_RECURSIVE_ISOLATED=1` so orphan and isolated modules are followed
 through their import chains. Disable recursion with the CLI flags
