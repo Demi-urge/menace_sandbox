@@ -85,7 +85,8 @@ merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.
 If a discovered module belongs to an existing workflow, the sandbox will attempt to merge it into that sequence automatically.
-Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-include`, to disable dependency scanning when building the list.
+Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass
+`--no-recursive-include`, to disable dependency scanning when building the list.
 
 Example workflow:
 
@@ -113,4 +114,46 @@ through `SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; set
 `--no-recursive-isolated` when running the self tests manually to disable this
 behaviour. Redundant modules flagged by `orphan_analyzer.analyze_redundancy`
 are skipped during integration.
+
+#### Flags and environment variables
+
+The discovery helpers expose identical controls via CLI flags and environment
+variables:
+
+- `--discover-orphans` / `SELF_TEST_DISCOVER_ORPHANS=1` – enable orphan scans.
+- `--auto-include-isolated` / `SANDBOX_AUTO_INCLUDE_ISOLATED=1` /
+  `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` – add isolated modules returned by
+  `discover_isolated_modules`.
+- `--recursive-include` / `SANDBOX_RECURSIVE_ORPHANS=1` /
+  `SELF_TEST_RECURSIVE_ORPHANS=1` – traverse orphan dependencies.
+- `--recursive-isolated` / `SANDBOX_RECURSIVE_ISOLATED=1` /
+  `SELF_TEST_RECURSIVE_ISOLATED=1` – follow dependencies of isolated modules.
+
+When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox invokes
+`environment.auto_include_modules` so passing modules and their dependencies are
+persisted to `sandbox_data/module_map.json` and merged into existing workflows.
+
+#### Example: isolated module with dependencies
+
+```bash
+mkdir -p sample
+cat <<'PY' > sample/util.py
+def helper():
+    return 1
+PY
+
+cat <<'PY' > sample/main.py
+import sample.util
+
+def run():
+    return sample.util.helper()
+PY
+
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
+  python run_autonomous.py --discover-orphans --auto-include-isolated
+
+# SelfTestService exercises both modules, auto_include_modules writes them to
+# sandbox_data/module_map.json and the workflow database gains single-step
+# entries for future runs
+```
 

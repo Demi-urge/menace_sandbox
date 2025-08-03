@@ -736,31 +736,62 @@ is appended to `sandbox_data/module_map.json`. `environment.generate_workflows_f
 then creates one‑step workflows so later simulations include the newly
 discovered functionality.
 
-Control this behaviour with the CLI flags `--discover-orphans`,
-`--auto-include-isolated`, `--recursive-include`, `--recursive-isolated` and
-`--clean-orphans`. Equivalent environment variables are
-`SELF_TEST_DISCOVER_ORPHANS`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
-`SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED` and
-`SANDBOX_CLEAN_ORPHANS`. Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` merges
-passing modules into the module map automatically. Use
-`SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1` to pull in
-dependencies of discovered files. Set `SELF_TEST_DISABLE_ORPHANS=1` or
-`SANDBOX_DISABLE_ORPHAN_SCAN=1` to skip discovery entirely.
+### Flags and environment variables
 
-### Minimal example
+Discovery behaviour can be tuned through CLI flags or their environment
+variable counterparts:
+
+- `--discover-orphans` / `SELF_TEST_DISCOVER_ORPHANS=1` – scan for modules with
+  no inbound references.
+- `--auto-include-isolated` / `SANDBOX_AUTO_INCLUDE_ISOLATED=1` /
+  `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` – force inclusion of modules returned by
+  `discover_isolated_modules`.
+- `--recursive-include` / `SANDBOX_RECURSIVE_ORPHANS=1` /
+  `SELF_TEST_RECURSIVE_ORPHANS=1` – follow orphan dependencies.
+- `--recursive-isolated` / `SANDBOX_RECURSIVE_ISOLATED=1` /
+  `SELF_TEST_RECURSIVE_ISOLATED=1` – pull in dependencies of isolated modules.
+- `--clean-orphans` / `SANDBOX_CLEAN_ORPHANS=1` – drop entries for files that no
+  longer exist.
+
+Disable the scans entirely with `SELF_TEST_DISABLE_ORPHANS=1` or
+`SANDBOX_DISABLE_ORPHAN_SCAN=1`. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1`,
+`environment.auto_include_modules` merges passing modules into the module map
+and generates one‑step workflows for them automatically.
+
+### Walkthrough
+
+1. `sandbox_runner.discover_recursive_orphans` and
+   `scripts.discover_isolated_modules` identify unreferenced files.
+2. The resulting set is passed to `run_repo_section_simulations` and exercised by
+   `SelfTestService`.
+3. Passing modules are appended to `sandbox_data/module_map.json` via
+   `environment.auto_include_modules`.
+4. `environment.generate_workflows_for_modules` creates placeholder workflows so
+   future sandbox cycles can schedule the new functionality.
+
+### Example: integrating an isolated module with dependencies
 
 ```bash
-# create a standalone module with no references
-echo 'def greet():\n    return "hi"' > demo_orphan.py
+mkdir -p demo_pkg
+cat <<'PY' > demo_pkg/util.py
+def double(x):
+    return x * 2
+PY
 
-# discover potential orphans in the repository
-python scripts/discover_isolated_modules.py .
+cat <<'PY' > demo_pkg/main.py
+import demo_pkg.util
 
-# sandbox-test and integrate the module
-SANDBOX_AUTO_INCLUDE_ISOLATED=1 python -m sandbox_runner.cli --discover-orphans
+def run():
+    return demo_pkg.util.double(21)
+PY
 
-# demo_orphan.py is now listed in sandbox_data/module_map.json and future runs
-# will schedule a one-step workflow for it
+# discover and integrate the new module and its dependency
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
+  python -m sandbox_runner.cli --discover-orphans --auto-include-isolated
+
+# demo_pkg/main.py and demo_pkg/util.py are tested by SelfTestService,
+# auto_include_modules records them in sandbox_data/module_map.json and
+# single-step workflows are generated for future runs
 ```
 
 ## Docker usage
