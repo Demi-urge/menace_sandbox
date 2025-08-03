@@ -1921,9 +1921,9 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            # refresh orphan data so new modules are considered before policy evaluation
             self._update_orphan_modules()
-            orphans = self._load_orphan_candidates()
-            self._refresh_module_map(orphans)
+            self._refresh_module_map(self._load_orphan_candidates())
             state = (
                 self._policy_state()
                 if self.policy
