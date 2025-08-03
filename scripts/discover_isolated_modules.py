@@ -59,7 +59,7 @@ def discover_isolated_modules(
             redundant = analyze_redundancy(path)
         modules[rel] = bool(redundant)
 
-    for p in find_orphan_modules(root, recursive=False):
+    for p in find_orphan_modules(root, recursive=recursive):
         _add(root / p)
 
     names: Iterable[str] = []
@@ -75,7 +75,7 @@ def discover_isolated_modules(
 
     if recursive and _discover_recursive_orphans is not None:
         try:
-            trace = _discover_recursive_orphans(str(root), skip_redundant=False)
+            trace = _discover_recursive_orphans(str(root))
         except Exception:  # pragma: no cover - best effort
             trace = {}
         for name, info in trace.items():

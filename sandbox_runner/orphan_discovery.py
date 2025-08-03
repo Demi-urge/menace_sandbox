@@ -99,19 +99,14 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
 
 def discover_recursive_orphans(
-    repo_path: str,
-    module_map: str | Path | None = None,
-    *,
-    skip_redundant: bool = False,
+    repo_path: str, module_map: str | Path | None = None
 ) -> dict[str, dict[str, Any]]:
     """Return orphan modules and their local dependencies.
 
-    The result maps each newly discovered module to metadata containing the
-    modules that imported it and a ``redundant`` flag indicating whether the
-    module is considered redundant. Top level orphans will have an empty list of
-    parents. Modules already present in ``module_map`` are ignored in the
-    output. Set ``skip_redundant`` to ``True`` to omit modules marked as
-    redundant by :func:`orphan_analyzer.analyze_redundancy`.
+    Modules reported by this function are orphaned within *repo_path* and are
+    not known to the optional ``module_map``. Each result entry contains the
+    list of orphan modules importing it under ``parents``. Any module marked as
+    redundant by :func:`orphan_analyzer.analyze_redundancy` is skipped entirely.
     """
 
     repo = Path(repo_path)
@@ -132,99 +127,121 @@ def discover_recursive_orphans(
         except Exception:
             known = set()
 
-    # seed traversal with top-level orphans to follow their local dependencies
-    orphans = set(discover_orphan_modules(repo_path, recursive=False))
-    found: set[str] = set()
+    repo_path = os.path.abspath(repo_path)
+    modules: dict[str, str] = {}
+    imported_by: dict[str, set[str]] = {}
+    imports: dict[str, set[str]] = {}
+
+    for base, _, files in os.walk(repo_path):
+        rel_base = os.path.relpath(base, repo_path)
+        if rel_base.split(os.sep)[0] == "tests":
+            continue
+        for name in files:
+            if not name.endswith(".py") or name == "__init__.py":
+                continue
+            path = os.path.join(base, name)
+            rel = os.path.relpath(path, repo_path)
+            if rel.split(os.sep)[0] == "tests":
+                continue
+            module = os.path.splitext(rel)[0].replace(os.sep, ".")
+            try:
+                text = open(path, "r", encoding="utf-8").read()
+            except Exception:
+                continue
+            if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
+                continue
+
+            modules[module] = path
+
+            try:
+                tree = ast.parse(text)
+            except Exception:
+                continue
+
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.setdefault(module, set()).add(alias.name)
+                        imported_by.setdefault(alias.name, set()).add(module)
+                elif isinstance(node, ast.ImportFrom):
+                    pkg_parts = module.split(".")[:-1]
+                    if node.level:
+                        if node.level - 1 <= len(pkg_parts):
+                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                        else:
+                            base_prefix = []
+                    else:
+                        base_prefix = pkg_parts
+
+                    if node.module:
+                        name = ".".join(base_prefix + node.module.split("."))
+                        imports.setdefault(module, set()).add(name)
+                        imported_by.setdefault(name, set()).add(module)
+                    elif node.names:
+                        for alias in node.names:
+                            name = ".".join(base_prefix + alias.name.split("."))
+                            imports.setdefault(module, set()).add(name)
+                            imported_by.setdefault(name, set()).add(module)
+
+    orphans: set[str] = {m for m in modules if m not in imported_by}
     queue = list(orphans)
     seen: set[str] = set()
     parents: dict[str, set[str]] = {m: set() for m in orphans}
     redundant: dict[str, bool] = {}
+    found: set[str] = set()
 
     while queue:
         mod = queue.pop(0)
         if mod in seen:
             continue
         seen.add(mod)
+
         path = repo / Path(*mod.split(".")).with_suffix(".py")
         if not path.exists():
+            path = repo / Path(*mod.split(".")) / "__init__.py"
+        if not path.exists():
             continue
-        is_redundant = redundant.get(mod)
-        if is_redundant is None:
-            is_redundant = orphan_analyzer.analyze_redundancy(path)
-            redundant[mod] = is_redundant
-        if skip_redundant and is_redundant:
+
+        is_red = redundant.get(mod)
+        if is_red is None:
+            try:
+                is_red = orphan_analyzer.analyze_redundancy(path)
+            except Exception:
+                is_red = False
+            redundant[mod] = is_red
+        if is_red:
             continue
         found.add(mod)
-        try:
-            text = path.read_text()
-            tree = ast.parse(text)
-        except Exception:
-            continue
-        pkg_parts = mod.split(".")[:-1]
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    name = alias.name
-                    mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                    pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                    target = mod_path if mod_path.exists() else pkg_init
-                    if not target.exists():
-                        continue
-                    is_red = redundant.get(name)
-                    if is_red is None:
-                        is_red = orphan_analyzer.analyze_redundancy(target)
-                        redundant[name] = is_red
-                    if skip_redundant and is_red:
-                        continue
-                    parents.setdefault(name, set()).add(mod)
-                    if name not in seen:
-                        queue.append(name)
-            elif isinstance(node, ast.ImportFrom):
-                if node.level:
-                    if node.level - 1 <= len(pkg_parts):
-                        base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
-                    else:
-                        base_prefix = []
-                else:
-                    base_prefix = pkg_parts
-                if node.module:
-                    name = ".".join(base_prefix + node.module.split("."))
-                    mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                    pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                    target = mod_path if mod_path.exists() else pkg_init
-                    if not target.exists():
-                        continue
-                    is_red = redundant.get(name)
-                    if is_red is None:
-                        is_red = orphan_analyzer.analyze_redundancy(target)
-                        redundant[name] = is_red
-                    if skip_redundant and is_red:
-                        continue
-                    parents.setdefault(name, set()).add(mod)
-                    if name not in seen:
-                        queue.append(name)
-                elif node.names:
-                    for alias in node.names:
-                        name = ".".join(base_prefix + alias.name.split("."))
-                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                        target = mod_path if mod_path.exists() else pkg_init
-                        if not target.exists():
-                            continue
-                        is_red = redundant.get(name)
-                        if is_red is None:
-                            is_red = orphan_analyzer.analyze_redundancy(target)
-                            redundant[name] = is_red
-                        if skip_redundant and is_red:
-                            continue
-                        parents.setdefault(name, set()).add(mod)
-                        if name not in seen:
-                            queue.append(name)
+
+        for name in imports.get(mod, set()):
+            if name not in modules:
+                continue
+            importers = imported_by.get(name, set())
+            if importers and not importers.issubset(orphans):
+                continue
+
+            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+            target = mod_path if mod_path.exists() else pkg_init
+            if not target.exists():
+                continue
+
+            is_red = redundant.get(name)
+            if is_red is None:
+                try:
+                    is_red = orphan_analyzer.analyze_redundancy(target)
+                except Exception:
+                    is_red = False
+                redundant[name] = is_red
+            if is_red:
+                continue
+
+            parents.setdefault(name, set()).add(mod)
+            if name not in orphans:
+                orphans.add(name)
+                queue.append(name)
 
     return {
-        m: {
-            "parents": sorted(parents.get(m, [])),
-            "redundant": redundant.get(m, False),
-        }
+        m: {"parents": sorted(parents.get(m, [])), "redundant": False}
         for m in sorted(found - known)
     }
