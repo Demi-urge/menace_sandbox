@@ -591,6 +591,8 @@ class SandboxContext:
     synergy_needed: bool = False
     best_roi: float = 0.0
     best_synergy_metrics: Dict[str, float] = field(default_factory=dict)
+    module_map: set[str] = field(default_factory=set)
+    orphan_traces: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxContext:
@@ -964,6 +966,15 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         _SUGGESTION_DB = PatchSuggestionDB(suggestion_db_path)
     suggestion_db = _SUGGESTION_DB
 
+    module_map_set: set[str] = set()
+    try:
+        if getattr(improver, "module_index", None):
+            module_map_set = {
+                Path(str(k)).as_posix() for k in getattr(improver.module_index, "_map", {})
+            }
+    except Exception:
+        module_map_set = set()
+
     return SandboxContext(
         tmp=tmp,
         repo=repo,
@@ -1011,6 +1022,8 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         adapt_presets=adapt_presets_flag,
         suggestion_cache=suggestion_cache,
         suggestion_db=suggestion_db,
+        module_map=module_map_set,
+        orphan_traces={},
     )
 
 

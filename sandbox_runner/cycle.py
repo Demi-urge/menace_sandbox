@@ -11,6 +11,7 @@ import shutil
 import time
 import asyncio
 import sys
+import inspect
 from typing import Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
@@ -37,8 +38,9 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = get_logger(__name__)
 
-from .environment import SANDBOX_ENV_PRESETS
+from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
 from .resource_tuner import ResourceTuner
+from .orphan_discovery import discover_recursive_orphans
 
 
 def map_module_identifier(name: str, repo: Path) -> str:
@@ -163,6 +165,31 @@ def _sandbox_cycle_runner(
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
         except TypeError:
             ctx.sandbox.analyse_and_fix()
+        auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "").lower()
+        rec_env = os.getenv("SANDBOX_RECURSIVE_ORPHANS", "").lower()
+        if auto_iso in ("1", "true", "yes") and rec_env in ("1", "true", "yes"):
+            try:
+                module_map = set(getattr(ctx, "module_map", set()))
+                traces = getattr(ctx, "orphan_traces", {})
+                map_path = getattr(getattr(ctx.improver, "module_index", None), "path", None)
+                discovered = discover_recursive_orphans(str(ctx.repo), module_map=map_path)
+                new_mods: list[str] = []
+                for name, info in discovered.items():
+                    path = Path(*name.split(".")).with_suffix(".py").as_posix()
+                    if path in module_map or path in traces:
+                        continue
+                    new_mods.append(path)
+                    traces[path] = info
+                if new_mods:
+                    recursive = True
+                    sig = inspect.signature(auto_include_modules)
+                    kwargs = {"recursive": recursive} if "recursive" in sig.parameters else {}
+                    auto_include_modules(new_mods, **kwargs)
+                    module_map.update(new_mods)
+                ctx.module_map = module_map
+                ctx.orphan_traces = traces
+            except Exception:
+                logger.exception("recursive orphan auto-inclusion failed")
         logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(
