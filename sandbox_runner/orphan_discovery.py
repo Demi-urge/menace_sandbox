@@ -231,9 +231,9 @@ def discover_recursive_orphans(
             except Exception:
                 is_red = False
             redundant[mod] = is_red
+        found.add(mod)
         if is_red:
             continue
-        found.add(mod)
 
         for name in imports.get(mod, set()):
             if name not in modules:
@@ -255,15 +255,20 @@ def discover_recursive_orphans(
                 except Exception:
                     is_red = False
                 redundant[name] = is_red
+
+            parents.setdefault(name, set()).add(mod)
+            found.add(name)
             if is_red:
                 continue
 
-            parents.setdefault(name, set()).add(mod)
             if name not in orphans:
                 orphans.add(name)
                 queue.append(name)
 
     return {
-        m: {"parents": sorted(parents.get(m, [])), "redundant": False}
+        m: {
+            "parents": sorted(parents.get(m, [])),
+            "redundant": redundant.get(m, False),
+        }
         for m in sorted(found - known)
     }
