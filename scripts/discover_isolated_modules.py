@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable
 
 from orphan_analyzer import analyze_redundancy
 from scripts.find_orphan_modules import find_orphan_modules
@@ -19,8 +19,15 @@ except Exception:  # pragma: no cover - sandbox_runner may not be available
     _discover_recursive_orphans = None
 
 
-def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) -> List[str]:
-    """Return relative paths of isolated Python modules under *base_dir*."""
+def discover_isolated_modules(
+    base_dir: str | Path, *, recursive: bool = False
+) -> dict[str, bool]:
+    """Return mapping of isolated modules to redundancy flags.
+
+    The keys are relative paths of Python modules under *base_dir* and the values
+    indicate whether the module is considered redundant by
+    :func:`orphan_analyzer.analyze_redundancy`.
+    """
     import json
 
     root = Path(base_dir).resolve()
@@ -42,15 +49,15 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
                     p = p.with_suffix(".py")
                 known.add(p.as_posix())
 
-    modules: set[str] = set()
+    modules: dict[str, bool] = {}
 
-    def _add(path: Path) -> None:
+    def _add(path: Path, *, redundant: bool | None = None) -> None:
         rel = path.relative_to(root).as_posix()
         if rel in known:
             return
-        if analyze_redundancy(path):
-            return
-        modules.add(rel)
+        if redundant is None:
+            redundant = analyze_redundancy(path)
+        modules[rel] = bool(redundant)
 
     for p in find_orphan_modules(root, recursive=False):
         _add(root / p)
@@ -68,22 +75,23 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
 
     if recursive and _discover_recursive_orphans is not None:
         try:
-            trace = _discover_recursive_orphans(str(root))
+            trace = _discover_recursive_orphans(str(root), skip_redundant=False)
         except Exception:  # pragma: no cover - best effort
             trace = {}
-        for name in trace:
+        for name, info in trace.items():
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
-                _add(path)
+                _add(path, redundant=info.get("redundant"))
 
     cache = root / "sandbox_data" / "orphan_modules.json"
     try:
         cache.parent.mkdir(exist_ok=True)
-        cache.write_text(json.dumps(sorted(modules), indent=2))
+        result = {k: modules[k] for k in sorted(modules)}
+        cache.write_text(json.dumps(result, indent=2))
     except Exception:  # pragma: no cover - best effort
         pass
 
-    return sorted(modules)
+    return {k: modules[k] for k in sorted(modules)}
 
 
 if __name__ == "__main__":  # pragma: no cover - simple CLI
