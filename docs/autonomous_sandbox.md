@@ -133,7 +133,7 @@ default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1
 `--no-recursive-orphans` and `--recursive-isolated` or `--no-recursive-isolated`
 to override these defaults, which set the corresponding
 `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED` environment
-variables. `--auto-include-isolated` forces discovery of isolated modules while
+variables. Use `--discover-isolated` or `--no-discover-isolated` to toggle isolated module discovery. `--auto-include-isolated` forces discovery of isolated modules while
 `--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
 `orphan_modules.json`.
 
@@ -161,6 +161,7 @@ export SANDBOX_AUTO_INCLUDE_ISOLATED=1
 - `SELF_TEST_METRICS_PORT=8004` – port exposing self‑test metrics
 - `SELF_TEST_DISABLE_ORPHANS=0` – include orphan module discovery and execution (set to `1` to skip)
 - `SELF_TEST_DISCOVER_ORPHANS=1` – automatically scan for orphan modules (set to `0` to disable)
+ - `SELF_TEST_DISCOVER_ISOLATED=1` – automatically discover isolated modules (set to `0` or use `--no-discover-isolated` to disable)
  - `SELF_TEST_AUTO_INCLUDE_ISOLATED=0` – disable automatic processing of
   `discover_isolated_modules`
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
@@ -169,6 +170,7 @@ export SANDBOX_AUTO_INCLUDE_ISOLATED=1
   (`--no-recursive-orphans` to disable)
 - `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
+- `SANDBOX_DISCOVER_ISOLATED=1` – run `discover_isolated_modules` during orphan scans (set to `0` or use `--no-discover-isolated` to disable)
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-orphans` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)

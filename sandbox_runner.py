@@ -919,8 +919,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     env_isolated = os.getenv("SANDBOX_DISCOVER_ISOLATED")
     if env_isolated is not None:
         discover_isolated = env_isolated.lower() in {"1", "true", "yes"}
-    if getattr(args, "discover_isolated") is False:
-        discover_isolated = False
+    arg_iso = getattr(args, "discover_isolated", None)
+    if arg_iso is not None:
+        discover_isolated = arg_iso
     recursive_isolated = bool(
         getattr(args, "recursive_isolated", False)
         or os.getenv("SANDBOX_RECURSIVE_ISOLATED", "0") in {"1", "true", "yes"}

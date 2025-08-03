@@ -154,7 +154,7 @@ Sections with declining ROI trigger dedicated improvement cycles. Only the flagg
 
 Isolated modules that lack inbound references may still contain useful logic.
 `discover_recursive_orphans` and `scripts.discover_isolated_modules` surface
-these files before each run. `discover_recursive_orphans` returns a mapping from
+these files before each run. Use `--discover-isolated` or `--no-discover-isolated` to control the isolated scan. `discover_recursive_orphans` returns a mapping from
 each orphan module to the module(s) that imported it, allowing downstream tools
 to construct workflow segments per dependency chain. The collected paths are
 then passed to
@@ -164,7 +164,8 @@ pass to `sandbox_data/module_map.json` and `environment.generate_workflows_for_m
 creates one‑step workflows for them. Enable `SANDBOX_RECURSIVE_ORPHANS=1` or
 `SANDBOX_RECURSIVE_ISOLATED=1` to pull in dependencies of discovered files.
 Disable the scan with `SANDBOX_DISABLE_ORPHAN_SCAN=1` or
-`SELF_TEST_DISABLE_ORPHANS=1`.
+`SELF_TEST_DISABLE_ORPHANS=1`. Set `SANDBOX_DISCOVER_ISOLATED=0` or pass
+`--no-discover-isolated` to skip isolated module discovery.
 
 ## Workflow Simulations
 

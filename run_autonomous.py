@@ -1073,10 +1073,16 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--discover-isolated",
-        action="store_false",
+        action="store_true",
         dest="discover_isolated",
         default=None,
-        help="disable discover_isolated_modules during orphan scan",
+        help="automatically run discover_isolated_modules before the orphan scan",
+    )
+    parser.add_argument(
+        "--no-discover-isolated",
+        action="store_false",
+        dest="discover_isolated",
+        help="disable discover_isolated_modules during the orphan scan",
     )
     parser.add_argument(
         "--recursive-isolated",
@@ -1121,9 +1127,10 @@ def main(argv: List[str] | None = None) -> None:
     if getattr(args, "discover_orphans") is False:
         os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1"
         os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "0"
-    if getattr(args, "discover_isolated") is False:
-        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
-        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
+    if getattr(args, "discover_isolated") is not None:
+        val = "1" if args.discover_isolated else "0"
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = val
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = val
 
     val = "1" if args.recursive_isolated else "0"
     os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val

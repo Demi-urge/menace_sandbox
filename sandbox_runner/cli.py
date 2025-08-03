@@ -1041,10 +1041,16 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--discover-isolated",
-        action="store_false",
+        action="store_true",
         dest="discover_isolated",
         default=None,
-        help="disable discover_isolated_modules before orphan scan",
+        help="automatically run discover_isolated_modules before the orphan scan",
+    )
+    parser.add_argument(
+        "--no-discover-isolated",
+        action="store_false",
+        dest="discover_isolated",
+        help="disable discover_isolated_modules before the orphan scan",
     )
     parser.add_argument(
         "--recursive-isolated",

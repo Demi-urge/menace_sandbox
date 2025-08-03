@@ -241,7 +241,7 @@ def test_run_autonomous_metrics(monkeypatch, tmp_path: Path) -> None:
         "--no-save-synergy-history",
         "--include-orphans",
         "--discover-orphans",
-        "--discover-isolated",
+        "--no-discover-isolated",
     ])
 
     assert metrics_exporter.roi_forecast_gauge.labels().get() is not None
