@@ -122,3 +122,175 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
     assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
     assert orphan_list == []
+
+
+def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    # create chain with deprecated module: a -> b(deprecated) -> c
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n# deprecated\n")
+    (tmp_path / "c.py").write_text("VALUE = 1\n")
+
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    map_path = data_dir / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+
+    monkeypatch.chdir(tmp_path)
+
+    sr = importlib.import_module("sandbox_runner")
+    assert sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path)) == {
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": True},
+        "c": {"parents": ["b"], "redundant": False},
+    }
+
+    generated: list[list[str]] = []
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        generated.append(sorted(mods))
+        return [1]
+
+    env_mod = types.ModuleType("sandbox_runner.environment")
+    env_mod.generate_workflows_for_modules = fake_generate
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            Path(path).write_text(json.dumps({"summary": {"passed": 1, "failed": 0}}))
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setenv("SANDBOX_CLEAN_ORPHANS", "1")
+
+    integrated: list[str] = []
+
+    def integrate(mods: list[str]) -> None:
+        integrated.extend(sorted(Path(m).name for m in mods))
+        data = json.loads(map_path.read_text())
+        for m in mods:
+            data["modules"][Path(m).name] = 1
+        map_path.write_text(json.dumps(data))
+        env_mod.generate_workflows_for_modules([Path(m).name for m in mods])
+
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        recursive_orphans=True,
+        clean_orphans=True,
+        integration_callback=integrate,
+    )
+    svc.run_once()
+
+    assert generated and generated[0] == ["a.py", "b.py", "c.py"]
+    assert integrated == ["a.py", "b.py", "c.py"]
+    data = json.loads(map_path.read_text())
+    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
+    assert svc.results.get("orphan_redundant") == ["b.py"]
+    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert orphan_list == []
+
+
+def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("import c\n# deprecated\n")
+    (tmp_path / "c.py").write_text("VALUE = 1\n")
+
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    map_path = data_dir / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+
+    monkeypatch.chdir(tmp_path)
+
+    sr = importlib.import_module("sandbox_runner")
+    assert sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))["b"][
+        "redundant"
+    ]
+
+    generated: list[list[str]] = []
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        generated.append(sorted(mods))
+        return [1]
+
+    env_mod = types.ModuleType("sandbox_runner.environment")
+    env_mod.generate_workflows_for_modules = fake_generate
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        mod_path = ""
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+            if s.endswith(".py"):
+                mod_path = s
+        if path:
+            if mod_path.endswith("b.py"):
+                summary = {"summary": {"passed": 0, "failed": 1}}
+            else:
+                summary = {"summary": {"passed": 1, "failed": 0}}
+            Path(path).write_text(json.dumps(summary))
+
+        class P:
+            returncode = 0
+            if mod_path.endswith("b.py"):
+                returncode = 1
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setenv("SANDBOX_CLEAN_ORPHANS", "1")
+
+    integrated: list[str] = []
+
+    def integrate(mods: list[str]) -> None:
+        integrated.extend(sorted(Path(m).name for m in mods))
+        data = json.loads(map_path.read_text())
+        for m in mods:
+            data["modules"][Path(m).name] = 1
+        map_path.write_text(json.dumps(data))
+        env_mod.generate_workflows_for_modules([Path(m).name for m in mods])
+
+    svc = sts.SelfTestService(
+        include_orphans=True,
+        recursive_orphans=True,
+        clean_orphans=True,
+        integration_callback=integrate,
+    )
+    svc.run_once()
+
+    assert not generated
+    assert integrated == []
+    data = json.loads(map_path.read_text())
+    assert data["modules"] == {}
+    assert svc.results.get("orphan_redundant") == ["b.py"]
+    assert svc.results.get("orphan_passed") == ["a.py", "c.py"]
+    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert sorted(orphan_list) == ["a.py", "b.py", "c.py"]
