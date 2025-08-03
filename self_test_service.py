@@ -291,7 +291,13 @@ class SelfTestService:
         try:
             from sandbox_runner.environment import auto_include_modules
 
-            auto_include_modules(list(names))
+            recursive = self.recursive_orphans
+            env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+            if env_recursive is None:
+                env_recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+            if env_recursive is not None:
+                recursive = env_recursive.lower() in ("1", "true", "yes")
+            auto_include_modules(list(names), recursive=recursive)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
 

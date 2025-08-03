@@ -37,8 +37,10 @@ each module lists its importing `parents` and whether it was deemed
 `pytest` so side effects are contained.
 Modules that pass are automatically appended to `sandbox_data/module_map.json`
 via `module_index_db.ModuleIndexDB` and merged into the sandbox's workflows
-through `sandbox_runner.environment.auto_include_modules`. Opt out by setting
-`SELF_TEST_DISABLE_AUTO_INTEGRATION=1` or by supplying a custom
+through `sandbox_runner.environment.auto_include_modules` with
+`recursive=True` by default. Toggle recursion with
+`SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`. Opt out by
+setting `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` or by supplying a custom
 `integration_callback`. When no callback is provided the service uses this
 behaviour by default. By default `auto_env_setup.ensure_env` sets
 `SELF_TEST_RECURSIVE_ORPHANS=1` and
