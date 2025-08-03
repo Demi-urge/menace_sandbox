@@ -79,22 +79,44 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
     orphans: set[str] = {m for m in modules if m not in imported_by}
     if not recursive:
-        return sorted(orphans)
+        result = sorted(orphans)
+    else:
+        queue = list(orphans)
+        while queue:
+            mod = queue.pop(0)
+            for name in imports.get(mod, set()):
+                if name not in modules:
+                    continue
+                importers = imported_by.get(name, set())
+                if importers and not importers.issubset(orphans):
+                    continue
+                if name not in orphans:
+                    orphans.add(name)
+                    queue.append(name)
+        result = sorted(orphans)
 
-    queue = list(orphans)
-    while queue:
-        mod = queue.pop(0)
-        for name in imports.get(mod, set()):
-            if name not in modules:
-                continue
-            importers = imported_by.get(name, set())
-            if importers and not importers.issubset(orphans):
-                continue
-            if name not in orphans:
-                orphans.add(name)
-                queue.append(name)
+    try:
+        repo = Path(repo_path)
+        data_dir = repo / "sandbox_data"
+        cache = data_dir / "orphan_modules.json"
+        paths = [
+            Path(*name.split(".")).with_suffix(".py").as_posix() for name in result
+        ]
+        existing: list[str] = []
+        if cache.exists():
+            try:
+                existing = json.loads(cache.read_text()) or []
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:  # pragma: no cover - best effort
+                existing = []
+        combined = sorted(set(existing).union(paths))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(combined, indent=2))
+    except Exception:  # pragma: no cover - best effort
+        pass
 
-    return sorted(orphans)
+    return result
 
 
 

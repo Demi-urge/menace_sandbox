@@ -1,4 +1,5 @@
 import ast
+import json
 from pathlib import Path
 
 def _load_func():
@@ -13,8 +14,9 @@ def _load_func():
     if func is None:
         raise AssertionError("function not found")
     from typing import List
+    import json
     import os
-    mod = {"ast": ast, "os": os, "List": List}
+    mod = {"ast": ast, "os": os, "List": List, "Path": Path, "json": json}
     ast.fix_missing_locations(func)
     code = ast.Module(body=[func], type_ignores=[])
     exec(compile(code, str(path), "exec"), mod)
@@ -40,6 +42,12 @@ def test_orphan_detection(tmp_path):
     assert "pkg.helper" in orphans
     assert "pkg.util" not in orphans
     assert "cli" not in orphans
+
+    data = json.loads(
+        (tmp_path / "sandbox_data" / "orphan_modules.json").read_text()
+    )
+    assert "pkg/helper.py" in data
+    assert "pkg/util.py" not in data
 
 
 def test_recursive_chain_detection(tmp_path):
