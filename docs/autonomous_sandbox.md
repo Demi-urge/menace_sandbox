@@ -253,6 +253,27 @@ and are scheduled automatically via `try_integrate_into_workflows`. See
 `tests/test_self_test_service_recursive_integration.py::test_recursive_isolated_integration`
 for an automated assertion of this workflow.
 
+### Example: recursive orphan inclusion with cleanup
+
+```bash
+# create an orphan and its local helper
+echo 'import helper\n' > orphan.py
+echo 'VALUE = 1\n'   > helper.py
+
+# run the self tests recursively and prune passing entries
+python -m menace.self_test_service run --recursive-orphans --clean-orphans
+
+# merge the modules during the next autonomous cycle
+python run_autonomous.py --include-orphans --recursive-orphans --clean-orphans
+```
+
+After the run both `orphan.py` and `helper.py` are appended to
+`module_map.json`. Because `--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`)
+was used, the processed names are removed from
+`sandbox_data/orphan_modules.json`. Add `--auto-include-isolated` and
+`--recursive-isolated` when the starting file is not referenced anywhere
+else so the sandbox discovers isolated modules in the same manner.
+
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
 ## Launch sequence
