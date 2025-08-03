@@ -1646,20 +1646,20 @@ class SelfImprovementEngine:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-            discovered = {
-                str(Path(*k.split(".")).with_suffix(".py")): {
+            discovered: dict[str, dict[str, Any]] = {}
+            for k, v in trace.items():
+                info: dict[str, Any] = {
                     "parents": [
                         str(Path(*p.split(".")).with_suffix(".py"))
                         for p in (
                             v.get("parents") if isinstance(v, dict) else v
                         )
-                    ],
-                    "redundant": bool(v.get("redundant", False))
-                    if isinstance(v, dict)
-                    else False,
+                    ]
                 }
-                for k, v in trace.items()
-            }
+                if isinstance(v, dict) and "redundant" in v:
+                    info["redundant"] = bool(v["redundant"])
+                discovered[str(Path(*k.split(".")).with_suffix(".py"))] = info
+
             existing = getattr(self, "orphan_traces", {})
             for mod, info in discovered.items():
                 cur = existing.get(mod)
@@ -1667,9 +1667,8 @@ class SelfImprovementEngine:
                     parents = set(cur.get("parents", []))
                     parents.update(info.get("parents", []))
                     cur["parents"] = sorted(parents)
-                    cur["redundant"] = cur.get("redundant", False) or info.get(
-                        "redundant", False
-                    )
+                    if "redundant" in info:
+                        cur["redundant"] = cur.get("redundant", False) or info["redundant"]
                 else:
                     existing[mod] = info
             self.orphan_traces = existing
@@ -1682,7 +1681,7 @@ class SelfImprovementEngine:
                 from scripts.find_orphan_modules import find_orphan_modules
 
                 modules = [str(p) for p in find_orphan_modules(repo, recursive=recursive)]
-                self.orphan_traces.update({m: {"parents": [], "redundant": False} for m in modules})
+                self.orphan_traces.update({m: {"parents": []} for m in modules})
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan discovery failed: %s", exc)
 
@@ -1697,17 +1696,20 @@ class SelfImprovementEngine:
 
         for m in modules:
             p = Path(m)
-            info = self.orphan_traces.setdefault(m, {"parents": [], "redundant": False})
-            if "redundant" not in info or info["redundant"] is False:
+            info = self.orphan_traces.setdefault(m, {"parents": []})
+            redundant_flag = info.get("redundant")
+            if redundant_flag is None:
                 try:
-                    info["redundant"] = bool(analyze_redundancy(p))
+                    redundant_flag = bool(analyze_redundancy(p))
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
                         "redundancy analysis failed for %s: %s", p, exc
                     )
-                    info["redundant"] = False
-            classifications[p.name] = {"redundant": info["redundant"]}
-            if info["redundant"]:
+                    redundant_flag = False
+                info["redundant"] = redundant_flag
+
+            classifications[p.name] = {"redundant": redundant_flag}
+            if redundant_flag:
                 skipped.append(p.name)
                 self.logger.info(
                     "redundant module skipped", extra=log_record(module=p.name)
