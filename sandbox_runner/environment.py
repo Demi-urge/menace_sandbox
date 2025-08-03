@@ -5463,7 +5463,9 @@ def auto_include_modules(
     :func:`orphan_analyzer.analyze_redundancy`.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
-    caller.
+    caller and the resulting ROI metrics are saved to
+    ``SANDBOX_DATA_DIR/roi_history.json`` for later analysis by the self-
+    improvement engine.
     """
 
     import os
@@ -5493,7 +5495,15 @@ def auto_include_modules(
     mods = sorted(mod_set)
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
-    return run_workflow_simulations()
+    result = run_workflow_simulations()
+    tracker = result[0] if isinstance(result, tuple) else result
+    try:
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+        tracker.save_history(str(data_dir / "roi_history.json"))
+    except Exception:
+        pass
+    return result
 
 
 # ----------------------------------------------------------------------

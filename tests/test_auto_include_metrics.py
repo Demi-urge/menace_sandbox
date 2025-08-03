@@ -1,0 +1,41 @@
+import json
+from pathlib import Path
+
+import sandbox_runner.environment as env
+
+
+class DummyTracker:
+    def save_history(self, path: str) -> None:
+        Path(path).write_text(json.dumps({"roi_history": [1.0]}))
+
+
+def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    calls = {}
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        calls["generate"] = list(mods)
+        return [1]
+
+    def fake_integrate(mods):
+        calls["integrate"] = list(mods)
+        return [1]
+
+    tracker = DummyTracker()
+
+    def fake_run():
+        calls["run"] = True
+        return tracker
+
+    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
+    monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
+    monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
+
+    result = env.auto_include_modules(["mod.py"])
+
+    assert result is tracker
+    assert calls.get("run") is True
+    history = Path(tmp_path, "roi_history.json")
+    assert history.exists()
+    data = json.loads(history.read_text())
+    assert data["roi_history"] == [1.0]
