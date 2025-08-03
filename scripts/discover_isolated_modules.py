@@ -21,12 +21,11 @@ except Exception:  # pragma: no cover - sandbox_runner may not be available
 
 def discover_isolated_modules(
     base_dir: str | Path, *, recursive: bool = False
-) -> dict[str, bool]:
-    """Return mapping of isolated modules to redundancy flags.
+) -> list[str]:
+    """Return sorted paths of isolated modules under *base_dir*.
 
-    The keys are relative paths of Python modules under *base_dir* and the values
-    indicate whether the module is considered redundant by
-    :func:`orphan_analyzer.analyze_redundancy`.
+    ``analyze_redundancy`` is used internally to filter modules marked as
+    redundant but the returned list contains only the remaining module paths.
     """
     import json
 
@@ -83,15 +82,15 @@ def discover_isolated_modules(
             if path.exists():
                 _add(path, redundant=info.get("redundant"))
 
+    filtered = [k for k, v in modules.items() if not v]
     cache = root / "sandbox_data" / "orphan_modules.json"
     try:
         cache.parent.mkdir(exist_ok=True)
-        result = {k: modules[k] for k in sorted(modules)}
-        cache.write_text(json.dumps(result, indent=2))
+        cache.write_text(json.dumps(sorted(filtered), indent=2))
     except Exception:  # pragma: no cover - best effort
         pass
 
-    return {k: modules[k] for k in sorted(modules)}
+    return sorted(filtered)
 
 
 if __name__ == "__main__":  # pragma: no cover - simple CLI
