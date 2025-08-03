@@ -63,6 +63,11 @@ def test_default_auto_integration(monkeypatch, tmp_path):
     env_mod.generate_workflows_for_modules = fake_generate
     env_mod.try_integrate_into_workflows = fake_try
     env_mod.run_workflow_simulations = fake_run
+    def fake_auto(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    env_mod.auto_include_modules = fake_auto
 
     runner.environment = env_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner", runner)

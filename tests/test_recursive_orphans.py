@@ -51,6 +51,11 @@ def _load_methods():
         "log_record": lambda **k: k,
         "analyze_redundancy": lambda p: False,
     }
+    def auto_include_modules(mods):
+        generate_workflows_for_modules(mods)
+        try_integrate_into_workflows(mods)
+        run_workflow_simulations()
+    mod_dict["auto_include_modules"] = auto_include_modules
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     code = ast.Module(body=methods, type_ignores=[])
     exec(compile(code, str(path), "exec"), mod_dict)

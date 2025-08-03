@@ -97,6 +97,7 @@ def _setup(monkeypatch, tmp_path, chain_len):
 
     env_mod = types.ModuleType("environment")
     env_mod.generate_workflows_for_modules = fake_generate
+    env_mod.auto_include_modules = lambda mods: fake_generate(mods)
     sr = importlib.import_module("sandbox_runner")
     sr.environment = env_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)

@@ -48,6 +48,7 @@ def _load_modules():
     env.generate_workflows_for_modules = lambda *a, **k: None
     env.run_workflow_simulations = lambda *a, **k: None
     env.try_integrate_into_workflows = lambda *a, **k: None
+    env.auto_include_modules = lambda *a, **k: None
     pkg.environment = env
     sys.modules["sandbox_runner.environment"] = env
 

@@ -28,11 +28,7 @@ import math
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
-from sandbox_runner.environment import (
-    generate_workflows_for_modules,
-    run_workflow_simulations,
-    try_integrate_into_workflows,
-)
+from sandbox_runner.environment import auto_include_modules
 from orphan_analyzer import analyze_redundancy
 
 import numpy as np
@@ -1468,38 +1464,11 @@ class SelfImprovementEngine:
                 self.module_clusters[m] = idx
             self.module_index.save()
             self._last_map_refresh = time.time()
-            workflow_ids: list[int] = []
             try:
-                workflow_ids.extend(generate_workflows_for_modules(sorted(mods)))
+                auto_include_modules(sorted(mods))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "workflow generation failed: %s", exc
-                )
-            try:
-                workflow_ids.extend(try_integrate_into_workflows(sorted(mods)))
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "workflow integration failed: %s", exc
-                )
-            if workflow_ids:
-                try:
-                    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-                    wf_file = data_dir / "workflow_ids.json"
-                    if wf_file.exists():
-                        existing_ids = json.loads(wf_file.read_text()) or []
-                    else:
-                        existing_ids = []
-                    merged = sorted(set(existing_ids).union(workflow_ids))
-                    wf_file.write_text(json.dumps(merged, indent=2))
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "failed to persist workflow ids: %s", exc
-                    )
-            try:
-                run_workflow_simulations()
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "workflow simulation failed: %s", exc
+                    "auto inclusion failed: %s", exc
                 )
             try:
                 data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
@@ -1846,18 +1815,14 @@ class SelfImprovementEngine:
                 extra=log_record(modules=sorted(new_mods)),
             )
             try:
-                generate_workflows_for_modules(sorted(new_mods))
+                abs_new = [str(pending[m]) for m in new_mods]
+                deps = self._collect_recursive_modules(abs_new)
+                abs_deps = [str(repo / p) for p in deps]
+                self._integrate_orphans(abs_deps)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "workflow generation failed: %s", exc
+                    "orphan integration failed: %s", exc
                 )
-            else:
-                try:
-                    run_workflow_simulations()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "workflow simulation failed: %s", exc
-                    )
             if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                 try:
                     self._update_orphan_modules()
