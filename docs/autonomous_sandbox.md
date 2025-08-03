@@ -124,9 +124,9 @@ After the system tools are in place install the Python requirements via
 
 Orphan and isolated modules are now discovered recursively. The helper
 `sandbox_runner.discover_recursive_orphans` walks import chains and returns a
-mapping from each discovered module to the module(s) that imported it. The
-sandbox merges passing modules into `module_map.json` so they can join existing
-workflows automatically. `auto_env_setup.ensure_env()` enables this behaviour by
+mapping from each discovered module to the module(s) that imported it. Passing
+modules are integrated into `module_map.json` and existing workflows by default;
+set `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` to opt out. `auto_env_setup.ensure_env()` enables this behaviour by
 default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
 `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1` and
 `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the CLI flags `--recursive-orphans` or
@@ -168,6 +168,7 @@ export SANDBOX_AUTO_INCLUDE_ISOLATED=1
   (set to `0` or use `--no-recursive-isolated` to disable)
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – recursively follow orphan dependencies
   (`--no-recursive-orphans` to disable)
+- `SELF_TEST_DISABLE_AUTO_INTEGRATION=0` – enable automatic integration of passing modules (`1` to disable)
 - `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
 - `SANDBOX_DISCOVER_ISOLATED=1` – run `discover_isolated_modules` during orphan scans (set to `0` or use `--no-discover-isolated` to disable)

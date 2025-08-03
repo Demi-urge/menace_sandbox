@@ -84,6 +84,7 @@ class SelfTestService:
         data_bot: DataBot | None = None,
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
         integration_callback: Callable[[list[str]], None] | None = None,
+        disable_auto_integration: bool = False,
         container_image: str = "python:3.11-slim",
         use_container: bool = False,
         container_runtime: str = "docker",
@@ -130,7 +131,6 @@ class SelfTestService:
         self.error_logger = ErrorLogger(db)
         self.data_bot = data_bot
         self.result_callback = result_callback
-        self.integration_callback = integration_callback
         self.container_image = container_image
         self.use_container = use_container
         self.results: dict[str, Any] | None = None
@@ -254,9 +254,64 @@ class SelfTestService:
         if env_clean is not None:
             self.clean_orphans = env_clean.lower() in ("1", "true", "yes")
 
+        auto_disable_env = os.getenv("SELF_TEST_DISABLE_AUTO_INTEGRATION")
+        if auto_disable_env is not None:
+            disable_auto_integration = auto_disable_env.lower() in ("1", "true", "yes")
+
+        if integration_callback is not None:
+            self.integration_callback = integration_callback
+        elif disable_auto_integration:
+            self.integration_callback = None
+        else:
+            self.integration_callback = self._default_integration
+
         # populated by ``_discover_orphans`` when recursive orphan discovery is
         # enabled; maps module paths to the modules that imported them
         self.orphan_traces: dict[str, list[str]] = {}
+
+    def _default_integration(self, mods: list[str]) -> None:
+        """Integrate passing modules into the sandbox workflow."""
+        names = sorted({Path(m).name for m in mods})
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        map_file = data_dir / "module_map.json"
+        try:
+            from module_index_db import ModuleIndexDB
+
+            index = ModuleIndexDB(map_file)
+            index.refresh(names, force=True)
+            index.save()
+        except Exception:
+            self.logger.exception("module map refresh failed")
+
+        try:
+            from sandbox_runner.environment import (
+                generate_workflows_for_modules,
+                try_integrate_into_workflows,
+                run_workflow_simulations,
+            )
+
+            try:
+                generate_workflows_for_modules(list(names))
+            except Exception:
+                self.logger.exception("workflow generation failed")
+
+            try:
+                try_integrate_into_workflows(list(names))
+            except Exception:
+                self.logger.exception("workflow integration failed")
+
+            try:
+                run_workflow_simulations()
+            except Exception:
+                self.logger.exception("workflow simulation failed")
+        except Exception:
+            self.logger.exception("workflow integration setup failed")
+
+        if self.clean_orphans:
+            try:
+                self._clean_orphan_list(mods)
+            except Exception:
+                self.logger.exception("failed to clean orphan modules")
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -1118,7 +1173,7 @@ class SelfTestService:
                     self.integration_callback(passed_set)
                 except Exception:
                     self.logger.exception("orphan integration failed")
-                if self.clean_orphans:
+                if self.clean_orphans and self.integration_callback is not self._default_integration:
                     try:
                         self._clean_orphan_list(passed_set)
                     except Exception:
