@@ -19,6 +19,7 @@ pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 spec.loader.exec_module(svc_mod)
+svc_mod.analyze_redundancy = lambda p: False
 
 
 # ----------------------------------------------------------------------
@@ -41,6 +42,7 @@ def _load_discover(find_func, import_func, recursive_func):
         "_discover_import_orphans": import_func,
         "_discover_recursive_orphans": recursive_func,
         "List": __import__("typing").List,
+        "analyze_redundancy": lambda p: False,
     }
     ast.fix_missing_locations(func)
     code = ast.Module(body=[func], type_ignores=[])
@@ -79,6 +81,16 @@ def test_recursive_import_includes_dependencies(tmp_path):
 # ----------------------------------------------------------------------
 
 async def _fake_proc(*cmd, **kwargs):
+    path = None
+    for i, a in enumerate(cmd):
+        s = str(a)
+        if s.startswith("--json-report-file"):
+            path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+            break
+    if path:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"summary": {"passed": 0, "failed": 0}}, fh)
+
     class P:
         returncode = 0
 
