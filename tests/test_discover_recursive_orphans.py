@@ -49,3 +49,18 @@ def test_public_import(monkeypatch):
     func = _import_recursive(monkeypatch)
     assert callable(func)
     assert "sandbox_runner.sandbox_runner" not in sys.modules
+
+import orphan_analyzer
+from sandbox_runner.orphan_discovery import discover_recursive_orphans as _discover_inner
+
+
+def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
+    (tmp_path / "dup.py").write_text("pass\n")
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
+
+    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", lambda p: True)
+
+    res = _discover_inner(str(tmp_path), module_map=data_dir / "module_map.json")
+    assert res == {"dup": {"parents": [], "redundant": True}}
