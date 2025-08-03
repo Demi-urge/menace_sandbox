@@ -34,6 +34,7 @@ def _load_methods():
 
     sr_mod = types.ModuleType("sandbox_runner")
     sr_mod.run_repo_section_simulations = _run_repo_section_simulations
+    sr_mod.discover_recursive_orphans = lambda repo, module_map=None: {}
     sys.modules["sandbox_runner"] = sr_mod
 
     mod_dict = {
@@ -51,7 +52,7 @@ def _load_methods():
         "log_record": lambda **k: k,
         "analyze_redundancy": lambda p: False,
     }
-    def auto_include_modules(mods):
+    def auto_include_modules(mods, recursive=False):
         generate_workflows_for_modules(mods)
         try_integrate_into_workflows(mods)
         run_workflow_simulations()

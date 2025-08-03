@@ -142,7 +142,7 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = fake_generate
     env_mod.try_integrate_into_workflows = fake_try
     env_mod.run_workflow_simulations = fake_run
-    def fake_auto(mods):
+    def fake_auto(mods, recursive=False):
         fake_generate(mods)
         fake_try(mods)
         fake_run()
@@ -205,7 +205,7 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
         ran.append(True)
 
     g = _integrate_orphans.__globals__
-    def fake_auto(mods):
+    def fake_auto(mods, recursive=False):
         fake_generate(mods)
         fake_try(mods)
         fake_run()
@@ -301,7 +301,7 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
     env_mod.try_integrate_into_workflows = lambda mods: None
     env_mod.run_workflow_simulations = lambda: None
     env_mod.auto_include_modules = (
-        lambda mods: [
+        lambda mods, recursive=False: [
             env_mod.generate_workflows_for_modules(mods),
             env_mod.try_integrate_into_workflows(mods),
             env_mod.run_workflow_simulations(),
@@ -419,7 +419,7 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = fake_generate
     env_mod.try_integrate_into_workflows = fake_try
     env_mod.run_workflow_simulations = fake_run
-    def fake_auto(mods):
+    def fake_auto(mods, recursive=False):
         fake_generate(mods)
         fake_try(mods)
         fake_run()
