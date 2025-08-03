@@ -1679,7 +1679,6 @@ class SelfImprovementEngine:
         filtered: list[str] = []
         skipped: list[str] = []
         classifications: dict[str, dict[str, Any]] = {}
-        skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
 
         for m in modules:
             p = Path(m)
@@ -1693,7 +1692,7 @@ class SelfImprovementEngine:
                     )
                     info["redundant"] = False
             classifications[p.name] = {"redundant": info["redundant"]}
-            if skip_red and info["redundant"]:
+            if info["redundant"]:
                 skipped.append(p.name)
                 self.logger.info(
                     "redundant module skipped", extra=log_record(module=p.name)
@@ -1764,10 +1763,9 @@ class SelfImprovementEngine:
             remaining = [m for m in filtered if Path(m).name not in passing_names]
         else:
             remaining = [m for m in filtered if Path(m).name not in integrated]
-        if skip_red:
-            remaining = [
-                m for m in remaining if not self.orphan_traces.get(m, {}).get("redundant")
-            ]
+        remaining = [
+            m for m in remaining if not self.orphan_traces.get(m, {}).get("redundant")
+        ]
         combined = sorted(set(existing).union(remaining))
         try:
             path.parent.mkdir(parents=True, exist_ok=True)

@@ -209,21 +209,14 @@ database:
   `discover_isolated_modules`.
 - `SANDBOX_CLEAN_ORPHANS` – drop passing entries from `orphan_modules.json`
   after integration.
-- `SANDBOX_SKIP_REDUNDANT` – omit modules marked as redundant by
-  `orphan_analyzer.analyze_redundancy`.
 
 ### Redundant modules
 
 `sandbox_runner.discover_recursive_orphans` returns a mapping where each
 module includes the modules that imported it in `parents` and whether it is
 `redundant`. `SelfTestService` records this metadata and the improvement engine
-only integrates modules whose `redundant` flag is false. Set
-`SANDBOX_SKIP_REDUNDANT=1` to skip executing redundant modules entirely.
-
-```bash
-# avoid running modules that duplicate existing functionality
-SANDBOX_SKIP_REDUNDANT=1 python run_autonomous.py --discover-orphans
-```
+only integrates modules whose `redundant` flag is false. Modules marked as
+redundant are skipped automatically during execution.
 
 `run_autonomous.py` mirrors the `SANDBOX_*` values to the matching
 `SELF_TEST_*` variables so that `SelfTestService` honours the same recursion

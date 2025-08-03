@@ -47,16 +47,13 @@ passing entries from `orphan_modules.json` after integration.
   `discover_isolated_modules`.
 - `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
-- `SANDBOX_SKIP_REDUNDANT` – ignore modules flagged as redundant during
-  discovery.
 
 ### Redundant module handling
 
 Modules returned by `discover_recursive_orphans` include a `redundant` flag
-derived from `orphan_analyzer.analyze_redundancy`. Unless
-`SANDBOX_SKIP_REDUNDANT=1` the engine still executes these modules during test
-runs so the classification and `parents` information is captured, but it refuses
-to merge them into `module_map.json`.
+derived from `orphan_analyzer.analyze_redundancy`. These modules are skipped
+automatically during test runs so the classification and `parents` information
+is captured, but they are never merged into `module_map.json`.
 
 Additional thresholds determine which modules `_test_orphan_modules`
 returns after sandbox simulations:
@@ -93,14 +90,8 @@ python -m menace.self_test_service run --recursive-include --clean-orphans
 python run_autonomous.py --include-orphans --recursive-include --clean-orphans
 ```
 
-To skip modules marked as redundant during this process:
-
-```bash
-SANDBOX_SKIP_REDUNDANT=1 python run_autonomous.py --include-orphans --recursive-include
-```
-
-Passing files are merged into `module_map.json` and, with `--clean-orphans`
-or `SANDBOX_CLEAN_ORPHANS=1`, removed from `sandbox_data/orphan_modules.json`.
+  Passing files are merged into `module_map.json` and, with `--clean-orphans`
+  or `SANDBOX_CLEAN_ORPHANS=1`, removed from `sandbox_data/orphan_modules.json`.
 Include `--auto-include-isolated --recursive-isolated` to apply the same flow
 to modules that are not referenced anywhere else.
 
