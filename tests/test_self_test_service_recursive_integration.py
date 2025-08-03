@@ -100,6 +100,11 @@ def _load_refresh_methods(fake_generate, fake_try, fake_run=lambda *a, **k: None
         "log_record": lambda **k: {},
         "analyze_redundancy": lambda p: False,
     }
+    def auto_include_modules(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    mod_dict["auto_include_modules"] = auto_include_modules
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     code = ast.Module(body=methods, type_ignores=[])
     exec(compile(code, str(path), "exec"), mod_dict)

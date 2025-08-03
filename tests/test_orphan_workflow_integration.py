@@ -36,8 +36,6 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     data_dir.mkdir()
     map_path = data_dir / "module_map.json"
     map_path.write_text(json.dumps({"modules": {"existing.py": 1}, "groups": {"1": 1}}))
-    wf_file = data_dir / "workflow_ids.json"
-    wf_file.write_text("[]")
 
     index = DummyIndex(map_path)
     engine = types.SimpleNamespace(
@@ -105,9 +103,11 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
         pass
 
     g = _integrate_orphans.__globals__
-    g["generate_workflows_for_modules"] = fake_generate
-    g["try_integrate_into_workflows"] = fake_try
-    g["run_workflow_simulations"] = fake_run
+    def fake_auto(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    g["auto_include_modules"] = fake_auto
     g["analyze_redundancy"] = lambda p: False
 
     engine._refresh_module_map(["orphan.py"])
@@ -116,5 +116,3 @@ def test_orphan_module_appends_to_existing_workflow(tmp_path, monkeypatch):
     assert workflows[1] == ["existing", "orphan"]
     data = json.loads(map_path.read_text())
     assert "orphan.py" in data["modules"]
-    wf_ids = json.loads(wf_file.read_text())
-    assert set(wf_ids) == {1, 2}

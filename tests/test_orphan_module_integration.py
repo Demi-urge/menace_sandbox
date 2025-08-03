@@ -79,9 +79,7 @@ class DummyEngine:
             self.module_clusters.update(grp_map)
             self.module_index.save()
             from sandbox_runner import environment as _env
-            _env.generate_workflows_for_modules(sorted(mods))
-            _env.try_integrate_into_workflows(sorted(mods))
-            _env.run_workflow_simulations()
+            _env.auto_include_modules(sorted(mods))
             data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
             orphan_path = data_dir / "orphan_modules.json"
             if orphan_path.exists():
@@ -144,6 +142,11 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = fake_generate
     env_mod.try_integrate_into_workflows = fake_try
     env_mod.run_workflow_simulations = fake_run
+    def fake_auto(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    env_mod.auto_include_modules = fake_auto
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
     pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
@@ -202,9 +205,11 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
         ran.append(True)
 
     g = _integrate_orphans.__globals__
-    g["generate_workflows_for_modules"] = fake_generate
-    g["try_integrate_into_workflows"] = fake_try
-    g["run_workflow_simulations"] = fake_run
+    def fake_auto(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    g["auto_include_modules"] = fake_auto
 
     class DummyIndex:
         def __init__(self) -> None:
@@ -295,6 +300,13 @@ def test_orphan_cleanup(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = lambda mods, workflows_db="workflows.db": [1]
     env_mod.try_integrate_into_workflows = lambda mods: None
     env_mod.run_workflow_simulations = lambda: None
+    env_mod.auto_include_modules = (
+        lambda mods: [
+            env_mod.generate_workflows_for_modules(mods),
+            env_mod.try_integrate_into_workflows(mods),
+            env_mod.run_workflow_simulations(),
+        ]
+    )
     pkg = types.ModuleType("sandbox_runner")
     pkg.environment = env_mod
     pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
@@ -407,6 +419,11 @@ def test_recursive_orphan_module_mapping(tmp_path, monkeypatch):
     env_mod.generate_workflows_for_modules = fake_generate
     env_mod.try_integrate_into_workflows = fake_try
     env_mod.run_workflow_simulations = fake_run
+    def fake_auto(mods):
+        fake_generate(mods)
+        fake_try(mods)
+        fake_run()
+    env_mod.auto_include_modules = fake_auto
     helper.environment = env_mod
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
     from sandbox_runner import environment as env
