@@ -73,12 +73,12 @@ def test_cli_recursion_flag_overrides_env(monkeypatch):
     _capture_run(monkeypatch, cli, capture)
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
     monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "1")
-    cli.main(["--no-recursive-orphans"])
+    cli.main(["--no-recursive-include"])
     assert capture.get("recursive_orphans") is False
     assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "0"
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
     monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
-    cli.main(["--recursive-orphans"])
+    cli.main(["--recursive-include"])
     assert capture.get("recursive_orphans") is True
     assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "1"
 

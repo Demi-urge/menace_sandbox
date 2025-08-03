@@ -129,8 +129,8 @@ modules are integrated into `module_map.json` and existing workflows by default;
 set `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` to opt out. `auto_env_setup.ensure_env()` enables this behaviour by
 default through `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
 `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1` and
-`SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the CLI flags `--recursive-orphans` or
-`--no-recursive-orphans` and `--recursive-isolated` or `--no-recursive-isolated`
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the CLI flags `--recursive-include` or
+`--no-recursive-include` and `--recursive-isolated` or `--no-recursive-isolated`
 to override these defaults, which set the corresponding
 `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED` environment
 variables. Use `--discover-isolated` or `--no-discover-isolated` to toggle isolated module discovery. `--auto-include-isolated` forces discovery of isolated modules while
@@ -167,12 +167,12 @@ export SANDBOX_AUTO_INCLUDE_ISOLATED=1
 - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
   (set to `0` or use `--no-recursive-isolated` to disable)
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – recursively follow orphan dependencies
-  (`--no-recursive-orphans` to disable)
+  (`--no-recursive-include` to disable)
 - `SELF_TEST_DISABLE_AUTO_INTEGRATION=0` – enable automatic integration of passing modules (`1` to disable)
 - `SANDBOX_DISABLE_ORPHANS=1` – disable orphan testing when running via `sandbox_runner`
 - `SANDBOX_DISABLE_ORPHAN_SCAN=1` – skip orphan discovery during improvement cycles
 - `SANDBOX_DISCOVER_ISOLATED=1` – run `discover_isolated_modules` during orphan scans (set to `0` or use `--no-discover-isolated` to disable)
-- `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-orphans` to disable)
+- `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-include` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)
  - `SANDBOX_AUTO_INCLUDE_ISOLATED=0` – disable isolated module discovery
@@ -249,7 +249,7 @@ duplicating functionality.
 
 Recursion through orphan dependencies is enabled by default. Disable it by
 setting `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or
-pass `--no-recursive-orphans` to the relevant commands.
+pass `--no-recursive-include` to the relevant commands.
 
 ### Example: isolated module discovery and integration
 
@@ -278,10 +278,10 @@ echo 'import helper\n' > orphan.py
 echo 'VALUE = 1\n'   > helper.py
 
 # run the self tests recursively and prune passing entries
-python -m menace.self_test_service run --recursive-orphans --clean-orphans
+python -m menace.self_test_service run --recursive-include --clean-orphans
 
 # merge the modules during the next autonomous cycle
-python run_autonomous.py --include-orphans --recursive-orphans --clean-orphans
+python run_autonomous.py --include-orphans --recursive-include --clean-orphans
 ```
 
 After the run both `orphan.py` and `helper.py` are appended to
@@ -342,7 +342,7 @@ Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` fil
        --include-orphans
     ```
 
-   Use `--no-recursive-orphans` or `--no-recursive-isolated` to skip dependency
+   Use `--no-recursive-include` or `--no-recursive-isolated` to skip dependency
    traversal.
 
    Set `SELF_TEST_INCLUDE_ORPHANS=1` to achieve the same behaviour via
@@ -744,7 +744,7 @@ then creates one‑step workflows so later simulations include the newly
 discovered functionality.
 
 Control this behaviour with the CLI flags `--discover-orphans`,
-`--auto-include-isolated`, `--recursive-orphans`, `--recursive-isolated` and
+`--auto-include-isolated`, `--recursive-include`, `--recursive-isolated` and
 `--clean-orphans`. Equivalent environment variables are
 `SELF_TEST_DISCOVER_ORPHANS`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
 `SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED` and

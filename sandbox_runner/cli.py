@@ -1071,17 +1071,19 @@ def main(argv: List[str] | None = None) -> None:
         help="automatically include isolated modules recursively",
     )
     parser.add_argument(
+        "--recursive-include",
         "--recursive-orphans",
         action="store_true",
         dest="recursive_orphans",
         default=True,
-        help="enable recursive orphan dependency integration (default: enabled)",
+        help="enable recursive orphan dependency integration (alias: --recursive-orphans)",
     )
     parser.add_argument(
+        "--no-recursive-include",
         "--no-recursive-orphans",
         action="store_false",
         dest="recursive_orphans",
-        help="disable recursive orphan dependency integration (default: enabled)",
+        help="disable recursive orphan dependency integration",
     )
     parser.add_argument(
         "--include-orphans",

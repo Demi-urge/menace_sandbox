@@ -32,7 +32,7 @@ merged into `module_map.json`, making them available for future cycles. The gene
 `.env` enables this behaviour by default via `SANDBOX_RECURSIVE_ORPHANS=1`,
 `SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Disable
 recursion with `SANDBOX_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ISOLATED=0`
-or by passing the CLI flags `--no-recursive-orphans` or `--no-recursive-isolated`.
+or by passing the CLI flags `--no-recursive-include` or `--no-recursive-isolated`.
 Use `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
@@ -87,16 +87,16 @@ echo 'import helper\n' > orphan.py
 echo 'VALUE = 1\n'   > helper.py
 
 # run the self tests recursively and clean passing entries
-python -m menace.self_test_service run --recursive-orphans --clean-orphans
+python -m menace.self_test_service run --recursive-include --clean-orphans
 
 # integrate automatically during the next autonomous cycle
-python run_autonomous.py --include-orphans --recursive-orphans --clean-orphans
+python run_autonomous.py --include-orphans --recursive-include --clean-orphans
 ```
 
 To skip modules marked as redundant during this process:
 
 ```bash
-SANDBOX_SKIP_REDUNDANT=1 python run_autonomous.py --include-orphans --recursive-orphans
+SANDBOX_SKIP_REDUNDANT=1 python run_autonomous.py --include-orphans --recursive-include
 ```
 
 Passing files are merged into `module_map.json` and, with `--clean-orphans`
