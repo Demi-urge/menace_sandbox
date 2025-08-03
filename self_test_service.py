@@ -270,10 +270,13 @@ class SelfTestService:
         self.orphan_traces: dict[str, list[str]] = {}
 
     def _default_integration(self, mods: list[str]) -> None:
-        """Integrate passing modules into the sandbox workflow."""
+        """Refresh module map and include ``mods`` into workflows."""
+
         names = sorted({Path(m).name for m in mods})
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
         map_file = data_dir / "module_map.json"
+
+        # Ensure the module map knows about the modules before integration.
         try:
             from module_index_db import ModuleIndexDB
 
@@ -283,29 +286,13 @@ class SelfTestService:
         except Exception:
             self.logger.exception("module map refresh failed")
 
+        # Merge passing modules into the sandbox workflows.
         try:
-            from sandbox_runner.environment import (
-                generate_workflows_for_modules,
-                try_integrate_into_workflows,
-                run_workflow_simulations,
-            )
+            from sandbox_runner.environment import auto_include_modules
 
-            try:
-                generate_workflows_for_modules(list(names))
-            except Exception:
-                self.logger.exception("workflow generation failed")
-
-            try:
-                try_integrate_into_workflows(list(names))
-            except Exception:
-                self.logger.exception("workflow integration failed")
-
-            try:
-                run_workflow_simulations()
-            except Exception:
-                self.logger.exception("workflow simulation failed")
+            auto_include_modules(list(names))
         except Exception:
-            self.logger.exception("workflow integration setup failed")
+            self.logger.exception("module auto-inclusion failed")
 
         if self.clean_orphans:
             try:
