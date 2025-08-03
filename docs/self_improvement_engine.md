@@ -66,6 +66,25 @@ exercise the new code. Tests like `tests/test_run_autonomous_env_vars.py` and
 integration. For a concrete walkthrough see the
 [isolated module example](autonomous_sandbox.md#example-isolated-module-discovery-and-integration).
 
+### Example: recursive module inclusion with cleanup
+
+```bash
+# create an orphan and helper module
+echo 'import helper\n' > orphan.py
+echo 'VALUE = 1\n'   > helper.py
+
+# run the self tests recursively and clean passing entries
+python -m menace.self_test_service run --recursive-orphans --clean-orphans
+
+# integrate automatically during the next autonomous cycle
+python run_autonomous.py --include-orphans --recursive-orphans --clean-orphans
+```
+
+Passing files are merged into `module_map.json` and, with `--clean-orphans`
+or `SANDBOX_CLEAN_ORPHANS=1`, removed from `sandbox_data/orphan_modules.json`.
+Include `--auto-include-isolated --recursive-isolated` to apply the same flow
+to modules that are not referenced anywhere else.
+
 ## Reinforcement-learning policy
 
 `SelfImprovementEngine` can optionally be initialised with a `SelfImprovementPolicy`.
