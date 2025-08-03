@@ -576,7 +576,10 @@ class SelfTestService:
             )
             self.orphan_traces = {
                 str(Path(*k.split(".")).with_suffix(".py")): [
-                    str(Path(*p.split(".")).with_suffix(".py")) for p in v
+                    str(Path(*p.split(".")).with_suffix(".py"))
+                    for p in (
+                        v.get("parents") if isinstance(v, dict) else v
+                    )
                 ]
                 for k, v in trace.items()
             }

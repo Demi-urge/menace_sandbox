@@ -63,9 +63,9 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
 
     sr = importlib.import_module("sandbox_runner")
     assert sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path)) == {
-        "a": [],
-        "b": ["a"],
-        "c": ["b"],
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": False},
+        "c": {"parents": ["b"], "redundant": False},
     }
 
     generated: list[list[str]] = []

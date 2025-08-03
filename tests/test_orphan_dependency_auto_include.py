@@ -47,9 +47,10 @@ def test_discover_recursive_orphans_includes_orphan_deps(monkeypatch, tmp_path):
     result = discover_recursive_orphans(str(tmp_path))
 
     assert result == {
-        "orphan1": [],
-        "orphan2": [],
-        "helper": ["orphan1", "orphan2"],
+        "orphan1": {"parents": [], "redundant": False},
+        "orphan2": {"parents": [], "redundant": False},
+        "helper": {"parents": ["orphan1", "orphan2"], "redundant": False},
+        "legacy": {"parents": ["orphan1"], "redundant": True},
     }
 
 

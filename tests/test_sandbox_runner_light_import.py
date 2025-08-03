@@ -15,4 +15,7 @@ def test_light_import_orphan_utils(tmp_path, monkeypatch):
     assert orphans == ["a"]
 
     rec = sr.discover_recursive_orphans(str(tmp_path))
-    assert rec == {"a": [], "b": ["a"]}
+    assert rec == {
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": False},
+    }

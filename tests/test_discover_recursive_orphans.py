@@ -39,7 +39,10 @@ def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
     res = discover_recursive_orphans(
         str(tmp_path), module_map=data_dir / "module_map.json"
     )
-    assert res == {"a": [], "b": ["a"]}
+    assert res == {
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": False},
+    }
 
 
 def test_public_import(monkeypatch):
