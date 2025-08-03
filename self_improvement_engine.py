@@ -1646,7 +1646,7 @@ class SelfImprovementEngine:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-            self.orphan_traces = {
+            discovered = {
                 str(Path(*k.split(".")).with_suffix(".py")): {
                     "parents": [
                         str(Path(*p.split(".")).with_suffix(".py"))
@@ -1660,6 +1660,19 @@ class SelfImprovementEngine:
                 }
                 for k, v in trace.items()
             }
+            existing = getattr(self, "orphan_traces", {})
+            for mod, info in discovered.items():
+                cur = existing.get(mod)
+                if cur:
+                    parents = set(cur.get("parents", []))
+                    parents.update(info.get("parents", []))
+                    cur["parents"] = sorted(parents)
+                    cur["redundant"] = cur.get("redundant", False) or info.get(
+                        "redundant", False
+                    )
+                else:
+                    existing[mod] = info
+            self.orphan_traces = existing
             modules.extend(self.orphan_traces.keys())
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan discovery failed: %s", exc)
@@ -1675,6 +1688,8 @@ class SelfImprovementEngine:
 
         if not modules:
             return
+
+        modules = sorted(set(modules))
 
         filtered: list[str] = []
         skipped: list[str] = []
@@ -1704,6 +1719,22 @@ class SelfImprovementEngine:
             self.logger.info(
                 "redundant modules skipped", extra=log_record(modules=sorted(skipped))
             )
+
+        if filtered:
+            module_index = getattr(self, "module_index", None)
+            if module_index:
+                try:
+                    module_index.refresh([Path(m).name for m in filtered], force=True)
+                    module_index.save()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "module map refresh failed: %s", exc
+                    )
+            try:
+                auto_include_modules(sorted(filtered))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("auto inclusion failed: %s", exc)
+
         if not filtered:
             meta_path = data_dir / "orphan_classifications.json"
             try:
@@ -1736,6 +1767,18 @@ class SelfImprovementEngine:
                 self.logger.exception("orphan integration failed: %s", exc)
 
         integrated_names = {Path(p).name for p in integrated}
+        if integrated_names:
+            for m in integrate_candidates:
+                name = Path(m).name
+                if name in integrated_names:
+                    self.logger.info(
+                        "orphan module integrated",
+                        extra=log_record(
+                            module=name,
+                            parents=self.orphan_traces.get(m, {}).get("parents", []),
+                        ),
+                    )
+
         for m in modules:
             name = Path(m).name
             info = classifications.setdefault(
