@@ -85,7 +85,7 @@ merged into `module_map.json` so future runs treat them like regular members of
 their assigned groups. When the integration succeeds simple one-step workflows
 are created for the new modules so they can be benchmarked immediately.
 If a discovered module belongs to an existing workflow, the sandbox will attempt to merge it into that sequence automatically.
-Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-orphans`, to disable dependency scanning when building the list.
+Set `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-include`, to disable dependency scanning when building the list.
 
 Example workflow:
 
@@ -96,7 +96,7 @@ python run_autonomous.py --discover-orphans --include-orphans
 The command scans for orphan modules and follows their dependencies by default
 using `sandbox_runner.discover_recursive_orphans`, runs them with the standard
 unit tests and updates the module map once they succeed.  Disable dependency
-traversal with `--no-recursive-orphans` or by setting
+traversal with `--no-recursive-include` or by setting
 `SANDBOX_RECURSIVE_ORPHANS=0`.
 
 ### Recursive isolated modules

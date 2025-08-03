@@ -205,7 +205,7 @@ def test_no_recursive_flags_disable_recursion(monkeypatch, tmp_path):
         "--runs",
         "0",
         "--check-settings",
-        "--no-recursive-orphans",
+        "--no-recursive-include",
         "--no-recursive-isolated",
     ])
     sys.modules["sandbox_runner"]._sandbox_main({}, argparse.Namespace())

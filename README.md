@@ -81,7 +81,7 @@
   Set `SANDBOX_SKIP_REDUNDANT=1` to skip redundant modules entirely. Defaults set
   `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
   `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; disable with
-  `--no-recursive-orphans` or `--no-recursive-isolated`. The `--auto-include-isolated`
+  `--no-recursive-include` or `--no-recursive-isolated`. The `--auto-include-isolated`
   flag (or setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) forces isolated modules to
   be discovered and recursed. Environment flags are mirrored to matching
   `SELF_TEST_*` variables so the self-test service honours the same behaviour.
@@ -94,7 +94,7 @@
 
   ```bash
   # Example: skip redundant modules during a recursive scan
-  SANDBOX_SKIP_REDUNDANT=1 run_autonomous --discover-orphans --recursive-orphans
+  SANDBOX_SKIP_REDUNDANT=1 run_autonomous --discover-orphans --recursive-include
   ```
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
@@ -131,7 +131,7 @@ package and can be imported directly. By default orphan modules are processed
 `SELF_TEST_DISABLE_ORPHANS=1` or pass `--include-orphans` to skip them.
 Recursion through orphan dependencies is enabled by default; set
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or pass
-`--no-recursive-orphans` to turn off dependency scanning. Disable automatic
+`--no-recursive-include` to turn off dependency scanning. Disable automatic
 discovery with
 `SELF_TEST_DISCOVER_ORPHANS=0` or `--discover-orphans`.
 When launched via `run_autonomous.py` newly discovered files are written to
@@ -165,10 +165,10 @@ python run_autonomous.py --discover-orphans --clean-orphans \
 After the run, passing modules are appended to `sandbox_data/module_map.json`
 and any matching entries are dropped from `orphan_modules.json`. The next
 autonomous cycle can schedule the new modules alongside existing workflows,
-so they become part of broader flows automatically. Use `--no-recursive-orphans`
+so they become part of broader flows automatically. Use `--no-recursive-include`
 or `--no-recursive-isolated` to disable dependency traversal. Recursion through
 orphan dependencies is enabled by default; set `SANDBOX_RECURSIVE_ORPHANS=0` or
-`SELF_TEST_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-orphans` to disable.
+`SELF_TEST_RECURSIVE_ORPHANS=0`, or pass `--no-recursive-include` to disable.
 Set `SANDBOX_CLEAN_ORPHANS=1` to mirror the `--clean-orphans` option.
 The sandbox can also group modules automatically by analysing imports,
 function calls and optionally docstring similarity. HDBSCAN clustering can be

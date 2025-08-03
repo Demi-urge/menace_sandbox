@@ -15,7 +15,7 @@ def test_metrics_server_started(monkeypatch, tmp_path):
     called = {}
     monkeypatch.setattr(mod, "start_metrics_server", lambda port: called.setdefault("port", port))
 
-    mod.main(["--check-settings", "--metrics-port", "9999", "--no-recursive-orphans", "--no-recursive-isolated"])
+    mod.main(["--check-settings", "--metrics-port", "9999", "--no-recursive-include", "--no-recursive-isolated"])
 
     assert called.get("port") == 9999
 
@@ -33,7 +33,7 @@ def test_recursive_flags_mirrored(monkeypatch, tmp_path):
     ]:
         monkeypatch.delenv(key, raising=False)
 
-    mod.main(["--check-settings", "--no-recursive-orphans", "--no-recursive-isolated"])
+    mod.main(["--check-settings", "--no-recursive-include", "--no-recursive-isolated"])
 
     assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "0"
     assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "0"

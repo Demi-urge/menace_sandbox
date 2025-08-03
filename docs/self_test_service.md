@@ -46,8 +46,8 @@ behaviour by default. By default `auto_env_setup.ensure_env` sets
 `SELF_TEST_RECURSIVE_ORPHANS=1` and
 `SELF_TEST_RECURSIVE_ISOLATED=1` so orphan and isolated modules are followed
 through their import chains. Disable recursion with the CLI flags
-`--no-recursive-orphans` or `--no-recursive-isolated`, or set the corresponding
-environment variables to `0`. The complementary flags `--recursive-orphans` and
+`--no-recursive-include` or `--no-recursive-isolated`, or set the corresponding
+environment variables to `0`. The complementary flags `--recursive-include` and
 `--recursive-isolated` explicitly enable this behaviour and set
 `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED` respectively. Use
 `--auto-include-isolated` (or `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
@@ -106,14 +106,14 @@ Options include:
 - `--include-orphans` – also run modules listed in `sandbox_data/orphan_modules.json`
  - `--discover-orphans` – automatically run `scripts/find_orphan_modules.py` and include the results
  - `--auto-include-isolated` – automatically run `discover_isolated_modules` and append results (use `--no-auto-include-isolated` to disable)
- - `--recursive-orphans` – recurse through orphan dependencies (`--no-recursive-orphans` to disable)
+ - `--recursive-include` – recurse through orphan dependencies (`--no-recursive-include` to disable)
  - `--recursive-isolated` – recurse through dependencies of isolated modules (`--no-recursive-isolated` to disable)
- - `--no-recursive-orphans` – do not recurse through orphan dependencies
+ - `--no-recursive-include` – do not recurse through orphan dependencies
  - `--no-recursive-isolated` – do not recurse through dependencies of isolated modules
  - `--clean-orphans` – remove passing entries from `orphan_modules.json`
 
 Recursion through orphan dependencies is enabled by default; use
-`--no-recursive-orphans` to limit the search to top-level modules or set
+`--no-recursive-include` to limit the search to top-level modules or set
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`.
 Remove stale containers left over from interrupted runs with:
 
@@ -171,7 +171,7 @@ dependencies is enabled by default, mirroring the effect of setting
 `SELF_TEST_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ORPHANS=1`. These defaults
 are written to the generated `.env` by `auto_env_setup.ensure_env`. Disable
 recursion with `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0`
-or the `--no-recursive-orphans` option. The search uses
+or the `--no-recursive-include` option. The search uses
 `sandbox_runner.discover_recursive_orphans` from `sandbox_runner.orphan_discovery`
 to walk each orphan's imports until no new local modules remain, returning a
 mapping from each module to the module(s) that imported it. This function
@@ -197,7 +197,7 @@ To skip modules classified as redundant during this discovery step:
 
 ```bash
 SANDBOX_SKIP_REDUNDANT=1 python -m menace.self_test_service run tests/unit \
-    --include-orphans --discover-orphans --recursive-orphans
+    --include-orphans --discover-orphans --recursive-include
 ```
 
 Passing orphan modules are merged into `module_map.json` so subsequent sandbox
@@ -229,7 +229,7 @@ using `sandbox_runner.discover_recursive_orphans`. Orphans are processed unless
 `SELF_TEST_DISABLE_ORPHANS=1` or `--include-orphans` is supplied. Disable the
 search with `SELF_TEST_DISCOVER_ORPHANS=0` and turn off recursion with
 `SELF_TEST_RECURSIVE_ORPHANS=0`, `SANDBOX_RECURSIVE_ORPHANS=0` or
-`--no-recursive-orphans`. The generated list is saved for future runs and the
+`--no-recursive-include`. The generated list is saved for future runs and the
 new modules are tested immediately. Isolated modules discovered by
 `discover_isolated_modules` are processed when `--auto-include-isolated` is supplied
 or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` is set. Disable this step by setting
