@@ -34,10 +34,13 @@ discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
 orphan's imports, collects any local dependencies and returns a mapping from
 each discovered module to the module(s) that required it. Every candidate is then
 executed in an ephemeral sandbox via `pytest` so side effects are contained.
-Modules that pass are appended to `sandbox_data/module_map.json` and
-`environment.generate_workflows_for_modules` is invoked to build temporary
-workflows so they can be scheduled in later runs. By default
-`auto_env_setup.ensure_env` sets `SELF_TEST_RECURSIVE_ORPHANS=1` and
+Modules that pass are automatically appended to `sandbox_data/module_map.json`
+and merged into the sandbox's workflows via
+`environment.generate_workflows_for_modules` and
+`try_integrate_into_workflows`. Opt out by setting
+`SELF_TEST_DISABLE_AUTO_INTEGRATION=1` or by supplying a custom
+`integration_callback`. By default `auto_env_setup.ensure_env` sets
+`SELF_TEST_RECURSIVE_ORPHANS=1` and
 `SELF_TEST_RECURSIVE_ISOLATED=1` so orphan and isolated modules are followed
 through their import chains. Disable recursion with the CLI flags
 `--no-recursive-orphans` or `--no-recursive-isolated`, or set the corresponding
@@ -58,6 +61,8 @@ passing entries from `orphan_modules.json`.
   `discover_isolated_modules`.
 - `SANDBOX_CLEAN_ORPHANS` – remove passing entries from `orphan_modules.json`
   after integration.
+- `SELF_TEST_DISABLE_AUTO_INTEGRATION` – skip automatic merging of passing
+  modules into `module_map.json` and workflow updates.
 
 These flags drive the workflow integration stage: passing modules and their
 helpers are written to `module_map.json` and merged into existing flows via
