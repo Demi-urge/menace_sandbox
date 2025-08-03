@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Iterable, List
 
+from orphan_analyzer import analyze_redundancy
 from scripts.find_orphan_modules import find_orphan_modules
 
 try:
@@ -24,7 +25,35 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
 
     root = Path(base_dir).resolve()
 
-    modules = {str(p) for p in find_orphan_modules(root, recursive=False)}
+    # ------------------------------------------------------------------
+    # Determine modules already known from the module map and ignore them
+    known: set[str] = set()
+    map_file = root / "sandbox_data" / "module_map.json"
+    try:
+        data = json.loads(map_file.read_text())
+    except Exception:
+        data = {}
+    if isinstance(data, dict):
+        mod_section = data.get("modules") if isinstance(data.get("modules"), dict) else data
+        if isinstance(mod_section, dict):
+            for key in mod_section.keys():
+                p = Path(key)
+                if p.suffix != ".py":
+                    p = p.with_suffix(".py")
+                known.add(p.as_posix())
+
+    modules: set[str] = set()
+
+    def _add(path: Path) -> None:
+        rel = path.relative_to(root).as_posix()
+        if rel in known:
+            return
+        if analyze_redundancy(path):
+            return
+        modules.add(rel)
+
+    for p in find_orphan_modules(root, recursive=False):
+        _add(root / p)
 
     names: Iterable[str] = []
     if _discover_import_orphans is not None:
@@ -35,7 +64,7 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
         for name in names:
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
-                modules.add(str(path.relative_to(root)))
+                _add(path)
 
     if recursive and _discover_recursive_orphans is not None:
         try:
@@ -45,7 +74,7 @@ def discover_isolated_modules(base_dir: str | Path, *, recursive: bool = False) 
         for name in trace:
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
-                modules.add(str(path.relative_to(root)))
+                _add(path)
 
     cache = root / "sandbox_data" / "orphan_modules.json"
     try:
