@@ -266,8 +266,9 @@ class SelfTestService:
             self.integration_callback = self._default_integration
 
         # populated by ``_discover_orphans`` when recursive orphan discovery is
-        # enabled; maps module paths to the modules that imported them
-        self.orphan_traces: dict[str, list[str]] = {}
+        # enabled; maps module paths to metadata including import parents and
+        # redundancy classification
+        self.orphan_traces: dict[str, dict[str, Any]] = {}
 
     def _default_integration(self, mods: list[str]) -> None:
         """Refresh module map and include ``mods`` into workflows."""
@@ -575,12 +576,17 @@ class SelfTestService:
                 module_map=str(Path("sandbox_data") / "module_map.json"),
             )
             self.orphan_traces = {
-                str(Path(*k.split(".")).with_suffix(".py")): [
-                    str(Path(*p.split(".")).with_suffix(".py"))
-                    for p in (
-                        v.get("parents") if isinstance(v, dict) else v
-                    )
-                ]
+                str(Path(*k.split(".")).with_suffix(".py")): {
+                    "parents": [
+                        str(Path(*p.split(".")).with_suffix(".py"))
+                        for p in (
+                            v.get("parents") if isinstance(v, dict) else v
+                        )
+                    ],
+                    "redundant": bool(v.get("redundant", False))
+                    if isinstance(v, dict)
+                    else False,
+                }
                 for k, v in trace.items()
             }
             modules = list(self.orphan_traces.keys())
@@ -588,6 +594,7 @@ class SelfTestService:
             from scripts.find_orphan_modules import find_orphan_modules
 
             modules = [str(p) for p in find_orphan_modules(Path.cwd())]
+            self.orphan_traces.update({m: {"parents": [], "redundant": False} for m in modules})
 
         def _collect_recursive(mods: Iterable[str]) -> set[str]:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -685,17 +692,21 @@ class SelfTestService:
         modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
 
         filtered: list[str] = []
+        skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
         for m in modules:
             p = Path(m)
-            try:
-                if analyze_redundancy(p):
-                    self.logger.info(
-                        "redundant module skipped", extra={"module": p.name}
+            info = self.orphan_traces.setdefault(m, {"parents": [], "redundant": False})
+            if "redundant" not in info or info["redundant"] is False:
+                try:
+                    info["redundant"] = bool(analyze_redundancy(p))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "redundancy analysis failed for %s: %s", p, exc
                     )
-                    continue
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "redundancy analysis failed for %s: %s", p, exc
+                    info["redundant"] = False
+            if skip_red and info["redundant"]:
+                self.logger.info(
+                    "redundant module skipped", extra={"module": p.name}
                 )
                 continue
             filtered.append(m)
@@ -721,6 +732,7 @@ class SelfTestService:
 
         seen: set[str] = set()
         filtered: list[str] = []
+        skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
 
         for m in modules:
             p = Path(m)
@@ -728,15 +740,17 @@ class SelfTestService:
             if key in seen:
                 continue
             seen.add(key)
+            info = self.orphan_traces.setdefault(key, {"parents": [], "redundant": False})
             try:
-                if analyze_redundancy(p):
-                    self.logger.info(
-                        "redundant module skipped", extra={"module": p.name}
-                    )
-                    continue
+                info["redundant"] = bool(analyze_redundancy(p))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "redundancy analysis failed for %s: %s", p, exc
+                )
+                info["redundant"] = False
+            if skip_red and info["redundant"]:
+                self.logger.info(
+                    "redundant module skipped", extra={"module": p.name}
                 )
                 continue
             filtered.append(key)
@@ -807,6 +821,11 @@ class SelfTestService:
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
+            skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
+            if skip_red:
+                orphan_list = [
+                    m for m in orphan_list if not self.orphan_traces.get(m, {}).get("redundant")
+                ]
 
         combined_file = list(dict.fromkeys(existing + discovered))
         if combined_file or path.exists():
@@ -1133,6 +1152,11 @@ class SelfTestService:
                 passed_set = [p for p in orphan_passed if p not in orphan_failed]
                 if passed_set:
                     self.results["orphan_passed"] = sorted(passed_set)
+                redundant_set = [
+                    p for p in orphan_set if self.orphan_traces.get(p, {}).get("redundant")
+                ]
+                if redundant_set:
+                    self.results["orphan_redundant"] = sorted(redundant_set)
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip

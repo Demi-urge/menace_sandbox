@@ -137,6 +137,7 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+    monkeypatch.setenv("SANDBOX_SKIP_REDUNDANT", "1")
 
     calls: list[Path] = []
 
@@ -177,6 +178,7 @@ def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
 
+    monkeypatch.setenv("SANDBOX_SKIP_REDUNDANT", "1")
     mods = svc._discover_orphans()
 
     assert mods == [str(Path("foo.py"))]
@@ -208,6 +210,7 @@ def test_discover_isolated_filters(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
 
+    monkeypatch.setenv("SANDBOX_SKIP_REDUNDANT", "1")
     mods = svc._discover_isolated()
 
     assert mods == [str(Path("foo.py"))]
@@ -235,9 +238,34 @@ def test_discover_orphans_filters_non_recursive(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sts, "analyze_redundancy", fake_analyze)
 
+    monkeypatch.setenv("SANDBOX_SKIP_REDUNDANT", "1")
     mods = svc._discover_orphans()
 
     assert mods == [str(Path("foo.py"))]
     assert sorted(c.name for c in calls) == ["dup.py", "foo.py"]
     assert "redundant module skipped" in svc.logger.info_msgs
+
+
+def test_discover_orphans_records_redundant_metadata(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    svc = sts.SelfTestService(discover_isolated=False)
+    svc.logger = DummyLogger()
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.discover_recursive_orphans = (
+        lambda repo, module_map=None: {
+            "foo": {"parents": [], "redundant": False},
+            "dup": {"parents": [], "redundant": True},
+        }
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    monkeypatch.setattr(sts, "analyze_redundancy", lambda p: False)
+    mods = svc._discover_orphans()
+
+    assert sorted(mods) == [str(Path("dup.py")), str(Path("foo.py"))]
+    dup_key = str(Path("dup.py"))
+    foo_key = str(Path("foo.py"))
+    assert svc.orphan_traces[dup_key]["redundant"] is True
+    assert svc.orphan_traces[foo_key]["redundant"] is False
 
