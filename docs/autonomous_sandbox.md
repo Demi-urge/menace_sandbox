@@ -213,8 +213,9 @@ database:
 `run_autonomous.py` mirrors the `SANDBOX_*` values to the matching
 `SELF_TEST_*` variables so that `SelfTestService` honours the same recursion
 strategy. Passing modules and their helpers are written to
-`module_map.json` and existing flows via `try_integrate_into_workflows`. Tests
-such as `tests/test_recursive_isolated.py` and
+`module_map.json` and existing flows via `try_integrate_into_workflows`.
+Integration uses repository-relative paths to avoid filename collisions.
+Tests such as `tests/test_recursive_isolated.py` and
 `tests/test_self_test_service_recursive_integration.py` exercise this path and
 assert that both isolated modules and their dependencies are executed and
 integrated.

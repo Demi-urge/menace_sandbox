@@ -61,9 +61,10 @@ and only integrates modules exceeding at least one of these thresholds.
 `SELF_TEST_*` variables so the improvement engine and `SelfTestService` apply the
 same recursion rules. Passing modules are appended to `module_map.json`, and
 `try_integrate_into_workflows` updates existing flows so subsequent cycles
-exercise the new code. Tests like `tests/test_run_autonomous_env_vars.py` and
-`tests/test_self_test_service_recursive_integration.py` assert this recursive
-integration. For a concrete walkthrough see the
+exercise the new code. Module identifiers are repository-relative paths to
+avoid filename collisions. Tests like `tests/test_run_autonomous_env_vars.py`
+and `tests/test_self_test_service_recursive_integration.py` assert this
+recursive integration. For a concrete walkthrough see the
 [isolated module example](autonomous_sandbox.md#example-isolated-module-discovery-and-integration).
 
 ### Example: recursive module inclusion with cleanup
