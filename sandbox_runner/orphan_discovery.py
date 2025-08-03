@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import List
 
+import orphan_analyzer
+
 
 
 def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]:
@@ -103,7 +105,8 @@ def discover_recursive_orphans(
 
     The result maps each newly discovered module to the module(s) that imported
     it. Top level orphans will have an empty list of parents. Modules already
-    present in ``module_map`` are ignored in the output.
+    present in ``module_map`` are ignored in the output. Modules flagged as
+    redundant or legacy by ``orphan_analyzer.analyze_redundancy`` are skipped.
     """
 
     repo = Path(repo_path)
@@ -140,6 +143,8 @@ def discover_recursive_orphans(
         path = repo / Path(*mod.split(".")).with_suffix(".py")
         if not path.exists():
             continue
+        if orphan_analyzer.analyze_redundancy(path):
+            continue
         try:
             text = path.read_text()
             tree = ast.parse(text)
@@ -152,7 +157,8 @@ def discover_recursive_orphans(
                     name = alias.name
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                    if not (mod_path.exists() or pkg_init.exists()):
+                    target = mod_path if mod_path.exists() else pkg_init
+                    if not target.exists() or orphan_analyzer.analyze_redundancy(target):
                         continue
                     parents.setdefault(name, set()).add(mod)
                     if name not in seen:
@@ -169,7 +175,8 @@ def discover_recursive_orphans(
                     name = ".".join(base_prefix + node.module.split("."))
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                    if mod_path.exists() or pkg_init.exists():
+                    target = mod_path if mod_path.exists() else pkg_init
+                    if target.exists() and not orphan_analyzer.analyze_redundancy(target):
                         parents.setdefault(name, set()).add(mod)
                         if name not in seen:
                             queue.append(name)
@@ -178,7 +185,8 @@ def discover_recursive_orphans(
                         name = ".".join(base_prefix + alias.name.split("."))
                         mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                         pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                        if mod_path.exists() or pkg_init.exists():
+                        target = mod_path if mod_path.exists() else pkg_init
+                        if target.exists() and not orphan_analyzer.analyze_redundancy(target):
                             parents.setdefault(name, set()).add(mod)
                             if name not in seen:
                                 queue.append(name)
