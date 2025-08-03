@@ -4,7 +4,7 @@ import ast
 import json
 import os
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import orphan_analyzer
 
@@ -99,14 +99,19 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
 
 def discover_recursive_orphans(
-    repo_path: str, module_map: str | Path | None = None
-) -> dict[str, list[str]]:
+    repo_path: str,
+    module_map: str | Path | None = None,
+    *,
+    skip_redundant: bool = False,
+) -> dict[str, dict[str, Any]]:
     """Return orphan modules and their local dependencies.
 
-    The result maps each newly discovered module to the module(s) that imported
-    it. Top level orphans will have an empty list of parents. Modules already
-    present in ``module_map`` are ignored in the output. Modules flagged as
-    redundant or legacy by ``orphan_analyzer.analyze_redundancy`` are skipped.
+    The result maps each newly discovered module to metadata containing the
+    modules that imported it and a ``redundant`` flag indicating whether the
+    module is considered redundant. Top level orphans will have an empty list of
+    parents. Modules already present in ``module_map`` are ignored in the
+    output. Set ``skip_redundant`` to ``True`` to omit modules marked as
+    redundant by :func:`orphan_analyzer.analyze_redundancy`.
     """
 
     repo = Path(repo_path)
@@ -133,18 +138,23 @@ def discover_recursive_orphans(
     queue = list(orphans)
     seen: set[str] = set()
     parents: dict[str, set[str]] = {m: set() for m in orphans}
+    redundant: dict[str, bool] = {}
 
     while queue:
         mod = queue.pop(0)
         if mod in seen:
             continue
         seen.add(mod)
-        found.add(mod)
         path = repo / Path(*mod.split(".")).with_suffix(".py")
         if not path.exists():
             continue
-        if orphan_analyzer.analyze_redundancy(path):
+        is_redundant = redundant.get(mod)
+        if is_redundant is None:
+            is_redundant = orphan_analyzer.analyze_redundancy(path)
+            redundant[mod] = is_redundant
+        if skip_redundant and is_redundant:
             continue
+        found.add(mod)
         try:
             text = path.read_text()
             tree = ast.parse(text)
@@ -158,7 +168,13 @@ def discover_recursive_orphans(
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     target = mod_path if mod_path.exists() else pkg_init
-                    if not target.exists() or orphan_analyzer.analyze_redundancy(target):
+                    if not target.exists():
+                        continue
+                    is_red = redundant.get(name)
+                    if is_red is None:
+                        is_red = orphan_analyzer.analyze_redundancy(target)
+                        redundant[name] = is_red
+                    if skip_redundant and is_red:
                         continue
                     parents.setdefault(name, set()).add(mod)
                     if name not in seen:
@@ -176,22 +192,39 @@ def discover_recursive_orphans(
                     mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                     pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                     target = mod_path if mod_path.exists() else pkg_init
-                    if target.exists() and not orphan_analyzer.analyze_redundancy(target):
-                        parents.setdefault(name, set()).add(mod)
-                        if name not in seen:
-                            queue.append(name)
+                    if not target.exists():
+                        continue
+                    is_red = redundant.get(name)
+                    if is_red is None:
+                        is_red = orphan_analyzer.analyze_redundancy(target)
+                        redundant[name] = is_red
+                    if skip_redundant and is_red:
+                        continue
+                    parents.setdefault(name, set()).add(mod)
+                    if name not in seen:
+                        queue.append(name)
                 elif node.names:
                     for alias in node.names:
                         name = ".".join(base_prefix + alias.name.split("."))
                         mod_path = repo / Path(*name.split(".")).with_suffix(".py")
                         pkg_init = repo / Path(*name.split(".")) / "__init__.py"
                         target = mod_path if mod_path.exists() else pkg_init
-                        if target.exists() and not orphan_analyzer.analyze_redundancy(target):
-                            parents.setdefault(name, set()).add(mod)
-                            if name not in seen:
-                                queue.append(name)
+                        if not target.exists():
+                            continue
+                        is_red = redundant.get(name)
+                        if is_red is None:
+                            is_red = orphan_analyzer.analyze_redundancy(target)
+                            redundant[name] = is_red
+                        if skip_redundant and is_red:
+                            continue
+                        parents.setdefault(name, set()).add(mod)
+                        if name not in seen:
+                            queue.append(name)
 
     return {
-        m: sorted(parents.get(m, []))
+        m: {
+            "parents": sorted(parents.get(m, [])),
+            "redundant": redundant.get(m, False),
+        }
         for m in sorted(found - known)
     }

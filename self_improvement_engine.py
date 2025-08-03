@@ -1630,7 +1630,10 @@ class SelfImprovementEngine:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-            self.orphan_traces = trace
+            self.orphan_traces = {
+                k: (v.get("parents") if isinstance(v, dict) else v)
+                for k, v in trace.items()
+            }
             modules.extend(
                 [str(Path(*n.split(".")).with_suffix(".py")) for n in trace]
             )
