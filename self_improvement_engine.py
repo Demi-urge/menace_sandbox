@@ -1690,10 +1690,14 @@ class SelfImprovementEngine:
             return
 
         passing = self._test_orphan_modules(filtered)
+        passing_names = {Path(p).name for p in passing}
         integrated: set[str] = set()
         if passing:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            abs_paths = [str(repo / p) if not Path(p).is_absolute() else str(Path(p)) for p in passing]
+            abs_paths = [
+                str(repo / p) if not Path(p).is_absolute() else str(Path(p))
+                for p in passing
+            ]
             try:
                 integrated = self._integrate_orphans(abs_paths)
             except Exception as exc:  # pragma: no cover - best effort
@@ -1704,7 +1708,12 @@ class SelfImprovementEngine:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load orphan modules")
             existing = []
-        remaining = [m for m in filtered if Path(m).name not in integrated]
+        env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
+        if env_clean and env_clean.lower() in ("1", "true", "yes"):
+            existing = [m for m in existing if Path(m).name not in passing_names]
+            remaining = [m for m in filtered if Path(m).name not in passing_names]
+        else:
+            remaining = [m for m in filtered if Path(m).name not in integrated]
         combined = sorted(set(existing).union(remaining))
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
