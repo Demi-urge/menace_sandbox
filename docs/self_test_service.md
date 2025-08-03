@@ -31,9 +31,10 @@ container issues:
 
 The service participates in the sandbox's recursive module discovery. During
 discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
-orphan's imports, collects any local dependencies and returns a mapping from
-each discovered module to the module(s) that required it. Every candidate is then
-executed in an ephemeral sandbox via `pytest` so side effects are contained.
+orphan's imports, collects any local dependencies and returns a mapping where
+each module lists its importing `parents` and whether it was deemed
+`redundant`. Every candidate is then executed in an ephemeral sandbox via
+`pytest` so side effects are contained.
 Modules that pass are automatically appended to `sandbox_data/module_map.json`
 via `module_index_db.ModuleIndexDB` and merged into the sandbox's workflows
 through `sandbox_runner.environment.auto_include_modules`. Opt out by setting
@@ -63,6 +64,17 @@ passing entries from `orphan_modules.json`.
   after integration.
 - `SELF_TEST_DISABLE_AUTO_INTEGRATION` – skip automatic merging of passing
   modules into `module_map.json` and workflow updates.
+- `SANDBOX_SKIP_REDUNDANT` – ignore modules flagged as redundant.
+
+### Redundant module handling
+
+`discover_recursive_orphans` annotates each entry with a `redundant` flag based
+on `orphan_analyzer.analyze_redundancy`. Setting
+`SANDBOX_SKIP_REDUNDANT=1` skips execution of these modules. When the variable is
+unset redundant modules are still executed so their classification and `parents`
+are recorded, but they are excluded from integration results. The
+`SelfImprovementEngine` consults the same metadata and refuses to merge
+redundant modules into workflows even if they pass their tests.
 
 These flags drive the workflow integration stage: passing modules and their
 helpers are written to `module_map.json` and merged into existing flows via
@@ -177,6 +189,13 @@ Example running tests with orphan and isolated discovery:
 python -m menace.self_test_service run tests/unit \
     --include-orphans --discover-orphans --auto-include-isolated \
     --clean-orphans
+```
+
+To skip modules classified as redundant during this discovery step:
+
+```bash
+SANDBOX_SKIP_REDUNDANT=1 python -m menace.self_test_service run tests/unit \
+    --include-orphans --discover-orphans --recursive-orphans
 ```
 
 Passing orphan modules are merged into `module_map.json` so subsequent sandbox
