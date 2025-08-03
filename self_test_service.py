@@ -1195,10 +1195,13 @@ class SelfTestService:
                     self.logger.exception("result callback failed")
 
             if self.integration_callback and not any_failed and passed_set:
+                skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
                 integrate_mods = [
                     m
                     for m in passed_set
-                    if not self.orphan_traces.get(m, {}).get("redundant")
+                    if not (
+                        skip_red and self.orphan_traces.get(m, {}).get("redundant")
+                    )
                 ]
                 if integrate_mods:
                     try:
