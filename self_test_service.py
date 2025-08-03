@@ -599,8 +599,17 @@ class SelfTestService:
         else:
             from scripts.find_orphan_modules import find_orphan_modules
 
-            modules = [str(p) for p in find_orphan_modules(Path.cwd())]
-            self.orphan_traces.update({m: {"parents": [], "redundant": False} for m in modules})
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+            modules = []
+            for p in find_orphan_modules(Path.cwd()):
+                try:
+                    rel = Path(p).resolve().relative_to(repo).as_posix()
+                except Exception:
+                    rel = str(p)
+                modules.append(rel)
+            self.orphan_traces.update(
+                {m: {"parents": [], "redundant": False} for m in modules}
+            )
 
         def _collect_recursive(mods: Iterable[str]) -> set[str]:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -695,7 +704,8 @@ class SelfTestService:
                                     queue.append(dep)
             return seen
 
-        modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
+        if self.recursive_orphans:
+            modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
 
         filtered: list[str] = []
         skip_red = os.getenv("SANDBOX_SKIP_REDUNDANT") in {"1", "true", "yes"}
@@ -1184,20 +1194,25 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("result callback failed")
 
-            if (
-                not any_failed
-                and self.integration_callback
-                and passed_set
-            ):
-                try:
-                    self.integration_callback(passed_set)
-                except Exception:
-                    self.logger.exception("orphan integration failed")
-                if self.clean_orphans and self.integration_callback is not self._default_integration:
+            if self.integration_callback and not any_failed and passed_set:
+                integrate_mods = [
+                    m
+                    for m in passed_set
+                    if not self.orphan_traces.get(m, {}).get("redundant")
+                ]
+                if integrate_mods:
                     try:
-                        self._clean_orphan_list(passed_set)
+                        self.integration_callback(integrate_mods)
                     except Exception:
-                        self.logger.exception("failed to clean orphan list")
+                        self.logger.exception("orphan integration failed")
+                    if (
+                        self.clean_orphans
+                        and self.integration_callback is not self._default_integration
+                    ):
+                        try:
+                            self._clean_orphan_list(integrate_mods)
+                        except Exception:
+                            self.logger.exception("failed to clean orphan list")
 
             if not queue:
                 self._clear_state()

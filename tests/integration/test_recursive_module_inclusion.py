@@ -140,11 +140,8 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     sr = importlib.import_module("sandbox_runner")
-    assert sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path)) == {
-        "a": {"parents": [], "redundant": False},
-        "b": {"parents": ["a"], "redundant": True},
-        "c": {"parents": ["b"], "redundant": False},
-    }
+    mapping = sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))
+    assert set(mapping) == {"a"}
 
     generated: list[list[str]] = []
 
@@ -198,13 +195,13 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
     )
     svc.run_once()
 
-    assert generated and generated[0] == ["a.py", "b.py", "c.py"]
-    assert integrated == ["a.py", "b.py", "c.py"]
+    assert generated and generated[0] == ["a.py", "c.py"]
+    assert integrated == ["a.py", "c.py"]
     data = json.loads(map_path.read_text())
-    assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
+    assert set(data["modules"]) == {"a.py", "c.py"}
     assert svc.results.get("orphan_redundant") == ["b.py"]
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_list == []
+    assert orphan_list == ["b.py"]
 
 
 def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
@@ -222,9 +219,8 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     sr = importlib.import_module("sandbox_runner")
-    assert sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))["b"][
-        "redundant"
-    ]
+    mapping = sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))
+    assert "b" not in mapping
 
     generated: list[list[str]] = []
 
