@@ -49,6 +49,7 @@ def test_recursive_inclusion_autonomous(tmp_path, monkeypatch):
     mapping = discover_recursive_orphans(str(tmp_path))
     assert mapping == {
         "helper": {"parents": ["orphan"], "redundant": False},
+        "legacy": {"parents": ["orphan"], "redundant": True},
         "nested": {"parents": ["helper"], "redundant": False},
         "orphan": {"parents": [], "redundant": False},
     }

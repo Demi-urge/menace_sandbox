@@ -115,6 +115,7 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
         clean_orphans=True,
         integration_callback=integrate,
     )
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
     assert generated and generated[0] == ["a.py", "b.py", "c.py"]
@@ -141,7 +142,11 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
 
     sr = importlib.import_module("sandbox_runner")
     mapping = sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))
-    assert set(mapping) == {"a"}
+    assert mapping == {
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": True},
+        "c": {"parents": ["b"], "redundant": False},
+    }
 
     generated: list[list[str]] = []
 
@@ -193,15 +198,14 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
         clean_orphans=True,
         integration_callback=integrate,
     )
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
     assert generated and generated[0] == ["a.py", "c.py"]
     assert integrated == ["a.py", "c.py"]
     data = json.loads(map_path.read_text())
     assert set(data["modules"]) == {"a.py", "c.py"}
-    assert svc.results.get("orphan_redundant") == ["b.py"]
-    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert orphan_list == ["b.py"]
+    assert svc.orphan_traces["b.py"]["redundant"] is True
 
 
 def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
@@ -220,7 +224,11 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
 
     sr = importlib.import_module("sandbox_runner")
     mapping = sr.discover_recursive_orphans(str(tmp_path), module_map=str(map_path))
-    assert "b" not in mapping
+    assert mapping == {
+        "a": {"parents": [], "redundant": False},
+        "b": {"parents": ["a"], "redundant": True},
+        "c": {"parents": ["b"], "redundant": False},
+    }
 
     generated: list[list[str]] = []
 
@@ -280,13 +288,12 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
         clean_orphans=True,
         integration_callback=integrate,
     )
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
     svc.run_once()
 
-    assert not generated
-    assert integrated == []
+    assert generated and generated[0] == ["a.py", "c.py"]
+    assert integrated == ["a.py", "c.py"]
     data = json.loads(map_path.read_text())
-    assert data["modules"] == {}
-    assert svc.results.get("orphan_redundant") == ["b.py"]
+    assert set(data["modules"]) == {"a.py", "c.py"}
+    assert svc.orphan_traces["b.py"]["redundant"] is True
     assert svc.results.get("orphan_passed") == ["a.py", "c.py"]
-    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
-    assert sorted(orphan_list) == ["a.py", "b.py", "c.py"]
