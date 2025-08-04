@@ -252,6 +252,8 @@ def _sandbox_cycle_runner(
                                 pass
                     except Exception:
                         logger.exception("isolated module self testing failed")
+                        auto_include_modules(new_mods, recursive=True)
+                        module_map.update(new_mods)
                 ctx.module_map = module_map
                 ctx.orphan_traces = traces
             except Exception:
@@ -382,8 +384,6 @@ def _sandbox_cycle_runner(
                     check=False,
                 )
                 if res.stdout:
-                    import json
-
                     data = json.loads(res.stdout)
                     for issue in data.get("results", []):
                         sev = str(issue.get("issue_severity", "")).lower()
