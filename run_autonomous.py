@@ -1113,9 +1113,12 @@ def main(argv: List[str] | None = None) -> None:
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
+    auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
     if getattr(args, "auto_include_isolated", False):
-        os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
-        os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1"
+        auto_iso = "1"
+    if auto_iso is not None:
+        os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = auto_iso
+        os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = auto_iso
 
     os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
     os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
@@ -1135,10 +1138,14 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = val
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = val
 
-    val = "1" if args.recursive_isolated else "0"
+    recursive_isolated = args.recursive_isolated
+    env_rec_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+    if env_rec_iso is not None:
+        recursive_isolated = env_rec_iso.lower() not in {"0", "false", "no"}
+    val = "1" if recursive_isolated else "0"
     os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
     os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
-    if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
+    if auto_iso and auto_iso.lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
         os.environ.setdefault("SELF_TEST_DISCOVER_ISOLATED", "1")
