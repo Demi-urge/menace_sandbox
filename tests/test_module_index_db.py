@@ -24,10 +24,17 @@ def test_get_resolves_suffix(tmp_path):
     assert db.get("foo.py") == 7
 
 
+def test_distinct_paths(tmp_path):
+    db = ModuleIndexDB(tmp_path / "map.json")
+    idx_a = db.get("a/foo.py")
+    idx_b = db.get("b/foo.py")
+    assert idx_a != idx_b
+
+
 
 def test_auto_map(monkeypatch, tmp_path):
     generated = {}
-    def fake_generate(output, *, root, algorithm, threshold, semantic):
+    def fake_generate(output, *, root, algorithm, threshold, semantic, exclude=None):
         generated.update(dict(output=output, root=root, algorithm=algorithm, threshold=threshold, semantic=semantic))
         output.write_text(json.dumps({"mod": 3}))
         return {"mod": 3}
@@ -53,7 +60,7 @@ def test_auto_map(monkeypatch, tmp_path):
 def test_autodiscover_deprecated(monkeypatch, tmp_path):
     generated = {}
 
-    def fake_generate(output, *, root, algorithm, threshold, semantic):
+    def fake_generate(output, *, root, algorithm, threshold, semantic, exclude=None):
         generated.update(dict(output=output))
         output.write_text(json.dumps({"m": 1}))
         return {"m": 1}
