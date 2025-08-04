@@ -15,6 +15,9 @@ from .secrets_manager import SecretsManager
 from .vault_secret_provider import VaultSecretProvider
 from . import config_discovery as cd
 
+# Shared defaults
+RECURSIVE_ISOLATED_DEFAULT = "1"
+
 # Default environment variables with fallbacks
 # These are persisted to ``.env`` when missing so the application can
 # start without manual configuration. Values can still be overridden via
@@ -36,12 +39,29 @@ DEFAULT_VARS: Dict[str, str] = {
     "SELF_TEST_DISABLE_ORPHANS": "0",
     "SELF_TEST_DISCOVER_ORPHANS": "1",
     "SELF_TEST_RECURSIVE_ORPHANS": "1",
-    "SELF_TEST_RECURSIVE_ISOLATED": "1",
+    "SELF_TEST_RECURSIVE_ISOLATED": RECURSIVE_ISOLATED_DEFAULT,
     "SANDBOX_RECURSIVE_ORPHANS": "1",
-    "SANDBOX_RECURSIVE_ISOLATED": "1",
+    "SANDBOX_RECURSIVE_ISOLATED": RECURSIVE_ISOLATED_DEFAULT,
     "SELF_TEST_AUTO_INCLUDE_ISOLATED": "1",
     "SANDBOX_AUTO_INCLUDE_ISOLATED": "1",
 }
+
+
+def get_recursive_isolated() -> bool:
+    """Return whether isolated module dependencies should be traversed."""
+    val = (
+        os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+        or os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
+        or RECURSIVE_ISOLATED_DEFAULT
+    )
+    return val.lower() not in {"0", "false", "no"}
+
+
+def set_recursive_isolated(enabled: bool) -> None:
+    """Synchronise recursion flags for isolated modules."""
+    val = "1" if enabled else "0"
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
+    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
 
 
 def ensure_env(path: str = ".env") -> None:
