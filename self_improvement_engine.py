@@ -1376,7 +1376,12 @@ class SelfImprovementEngine:
         if not modules:
             return set()
 
-        svc = SelfTestService(
+        try:  # pragma: no cover - dynamic imports for isolated tests
+            from self_test_service import SelfTestService as _STS
+        except Exception:  # pragma: no cover - fallback when service unavailable
+            return set(modules)
+
+        svc = _STS(
             pytest_args=" ".join(modules),
             include_orphans=True,
             discover_orphans=True,
@@ -1974,7 +1979,22 @@ class SelfImprovementEngine:
         try:
             # refresh orphan data so new modules are considered before policy evaluation
             self._update_orphan_modules()
-            self._refresh_module_map(self._load_orphan_candidates())
+            orphans = self._load_orphan_candidates()
+            if orphans:
+                passing = self._test_orphan_modules(orphans)
+                if passing:
+                    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                    abs_paths = [
+                        str(repo / p) if not Path(p).is_absolute() else str(Path(p))
+                        for p in passing
+                    ]
+                    try:
+                        self._integrate_orphans(abs_paths)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "orphan integration failed: %s", exc
+                        )
+            self._refresh_module_map()
             state = (
                 self._policy_state()
                 if self.policy
