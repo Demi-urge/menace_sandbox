@@ -1117,7 +1117,8 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1"
         os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1"
 
-    os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
+    os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
+    os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
 
     val = "1" if args.recursive_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
@@ -1140,6 +1141,8 @@ def main(argv: List[str] | None = None) -> None:
     if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
         os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
         os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
+        os.environ.setdefault("SELF_TEST_DISCOVER_ISOLATED", "1")
+        os.environ.setdefault("SELF_TEST_RECURSIVE_ISOLATED", "1")
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"

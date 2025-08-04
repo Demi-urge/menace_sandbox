@@ -134,11 +134,12 @@ in the same recursive manner. Passing modules are integrated into
 enables this behaviour by default through `SELF_TEST_RECURSIVE_ORPHANS=1`,
 `SELF_TEST_RECURSIVE_ISOLATED=1`, `SANDBOX_RECURSIVE_ORPHANS=1`,
 `SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the
-CLI flags `--recursive-include` or `--no-recursive-include` and
-`--recursive-isolated` or `--no-recursive-isolated` to override these defaults,
-which set the corresponding `SANDBOX_RECURSIVE_ORPHANS` and
-`SANDBOX_RECURSIVE_ISOLATED` environment variables. Use `--discover-isolated` or
-`--no-discover-isolated` to toggle isolated module discovery. `--auto-include-isolated`
+CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
+`--recursive-include`/`--no-recursive-include`) and `--recursive-isolated` or
+`--no-recursive-isolated` to override these defaults, which set the
+corresponding `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED`
+environment variables. Use `--discover-isolated` or `--no-discover-isolated` to
+toggle isolated module discovery. `--auto-include-isolated`
 forces discovery of isolated modules while `--clean-orphans` (or
 `SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
 `orphan_modules.json`.
@@ -151,6 +152,16 @@ export SANDBOX_RECURSIVE_ORPHANS=0
 export SANDBOX_RECURSIVE_ISOLATED=0
 # force isolated modules to be included recursively
 export SANDBOX_AUTO_INCLUDE_ISOLATED=1
+```
+
+Example CLI usage:
+
+```bash
+# disable orphan recursion but force isolated modules to be included
+python -m sandbox_runner.cli --no-recursive-orphans --auto-include-isolated
+
+# run a full autonomous cycle with explicit recursion flags
+python run_autonomous.py --recursive-orphans --recursive-isolated
 ```
 
 `run_autonomous` and `sandbox_runner` mirror these values to the matching

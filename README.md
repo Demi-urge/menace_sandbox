@@ -81,7 +81,8 @@
   Modules marked as redundant are skipped automatically. Defaults set
   `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
   `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; disable with
-  `--no-recursive-include` or `--no-recursive-isolated`. The `--auto-include-isolated`
+  `--no-recursive-orphans`/`--no-recursive-include` or `--no-recursive-isolated`. The
+  `--auto-include-isolated`
   flag (or setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) forces isolated modules to
   be discovered and recursed. Environment flags are mirrored to matching
   `SELF_TEST_*` variables so the self-test service honours the same behaviour.
@@ -90,6 +91,12 @@
   # Example: disable recursion but include isolated modules automatically
   SANDBOX_RECURSIVE_ORPHANS=0 SANDBOX_RECURSIVE_ISOLATED=0 \
   SANDBOX_AUTO_INCLUDE_ISOLATED=1 run_autonomous --check-settings
+  ```
+
+  ```bash
+  # Same behaviour using CLI flags
+  python run_autonomous.py --no-recursive-orphans --no-recursive-isolated \
+      --auto-include-isolated --check-settings
   ```
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
