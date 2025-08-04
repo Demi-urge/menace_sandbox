@@ -49,6 +49,15 @@ import sandbox_runner.environment as environment
 from .self_test_service import SelfTestService
 from orphan_analyzer import analyze_redundancy
 
+try:
+    from .auto_env_setup import get_recursive_isolated
+except Exception:  # pragma: no cover - direct execution
+    def get_recursive_isolated() -> bool:  # type: ignore
+        val = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
+            "SELF_TEST_RECURSIVE_ISOLATED"
+        )
+        return (val or "1").lower() not in {"0", "false", "no"}
+
 import numpy as np
 import socket
 import contextlib
@@ -1696,12 +1705,7 @@ class SelfImprovementEngine:
             modules = list(modules)
             auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
             if auto_iso and auto_iso.lower() in {"1", "true", "yes"}:
-                recursive_iso = True
-                env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-                if env_iso is None:
-                    env_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-                if env_iso is not None and env_iso.lower() in {"0", "false", "no"}:
-                    recursive_iso = False
+                recursive_iso = get_recursive_isolated()
                 try:
                     from scripts.discover_isolated_modules import discover_isolated_modules
 
@@ -1756,24 +1760,16 @@ class SelfImprovementEngine:
         if env_rec is not None:
             recursive = env_rec.lower() in ("1", "true", "yes")
 
-        # isolated modules are processed recursively by default
-        recursive_iso = True
-        env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-        if env_iso is None:
-            env_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-        if env_iso is not None and env_iso.lower() in ("0", "false", "no"):
-            recursive_iso = False
+        # isolated modules are processed recursively based on configuration
+        recursive_iso = get_recursive_isolated()
 
-        auto_include = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-        if auto_include is None:
-            auto_include = os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
-        recur_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
-            "SELF_TEST_RECURSIVE_ISOLATED"
+        auto_include = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") or os.getenv(
+            "SELF_TEST_AUTO_INCLUDE_ISOLATED"
         )
         discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
         if (
             (auto_include and auto_include.lower() in ("1", "true", "yes"))
-            or (recur_env and recur_env.lower() in ("1", "true", "yes"))
+            or recursive_iso
         ):
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules

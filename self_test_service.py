@@ -38,6 +38,20 @@ except Exception:  # pragma: no cover - fallback when imported directly
     from error_logger import ErrorLogger  # type: ignore
 
 try:
+    from .auto_env_setup import get_recursive_isolated, set_recursive_isolated
+except Exception:  # pragma: no cover - direct execution
+    def get_recursive_isolated() -> bool:  # type: ignore
+        val = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
+            "SELF_TEST_RECURSIVE_ISOLATED"
+        )
+        return (val or "1").lower() not in {"0", "false", "no"}
+
+    def set_recursive_isolated(enabled: bool) -> None:  # type: ignore
+        val = "1" if enabled else "0"
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
+        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+
+try:
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - package may not be available
     import metrics_exporter as _me  # type: ignore
@@ -104,7 +118,7 @@ class SelfTestService:
         discover_orphans: bool = True,
         discover_isolated: bool = True,
         recursive_orphans: bool = True,
-        recursive_isolated: bool = True,
+        recursive_isolated: bool | None = None,
         clean_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
@@ -243,16 +257,11 @@ class SelfTestService:
         )
         if env_isolated is not None:
             self.discover_isolated = env_isolated.lower() in ("1", "true", "yes")
-
-        env_recursive_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-        if env_recursive_iso is not None:
-            self.recursive_isolated = env_recursive_iso.lower() not in (
-                "0",
-                "false",
-                "no",
-            )
-        else:
-            self.recursive_isolated = bool(recursive_isolated)
+        self.recursive_isolated = (
+            get_recursive_isolated()
+            if recursive_isolated is None
+            else bool(recursive_isolated)
+        )
         auto_inc = (
             os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
             or os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
@@ -1750,9 +1759,7 @@ def cli(argv: list[str] | None = None) -> int:
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
     os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
     recursive_orphans = args.recursive_orphans
-    val = "1" if args.recursive_isolated else "0"
-    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
-    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+    set_recursive_isolated(args.recursive_isolated)
 
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
