@@ -127,8 +127,9 @@ def discover_recursive_orphans(
 
     Modules reported by this function are orphaned within *repo_path* and are
     not known to the optional ``module_map``. Each result entry contains the
-    list of orphan modules importing it under ``parents``. Any module marked as
-    redundant by :func:`orphan_analyzer.analyze_redundancy` is skipped entirely.
+    list of orphan modules importing it under ``parents``.  Redundant modules
+    identified by :func:`orphan_analyzer.analyze_redundancy` are included in the
+    mapping with ``{"redundant": True}`` so callers can record and report them.
     """
 
     repo = Path(repo_path)
@@ -232,8 +233,6 @@ def discover_recursive_orphans(
                 is_red = False
             redundant[mod] = is_red
         found.add(mod)
-        if is_red:
-            continue
 
         for name in imports.get(mod, set()):
             if name not in modules:
@@ -258,8 +257,6 @@ def discover_recursive_orphans(
 
             parents.setdefault(name, set()).add(mod)
             found.add(name)
-            if is_red:
-                continue
 
             if name not in orphans:
                 orphans.add(name)
