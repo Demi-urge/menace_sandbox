@@ -312,17 +312,12 @@ class SelfTestService:
         try:
             from sandbox_runner.environment import auto_include_modules
 
-            recursive = self.recursive_orphans
-            env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
-            if env_recursive is None:
-                env_recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-            if env_recursive is not None:
-                recursive = env_recursive.lower() in ("1", "true", "yes")
-
             sig = inspect.signature(auto_include_modules)
             kwargs: dict[str, object] = {}
             if "recursive" in sig.parameters:
-                kwargs["recursive"] = recursive
+                # Always include dependent helpers when merging modules into
+                # workflows.
+                kwargs["recursive"] = True
             if "validate" in sig.parameters:
                 kwargs["validate"] = True
             auto_include_modules(list(paths), **kwargs)
@@ -833,72 +828,26 @@ class SelfTestService:
     def _discover_isolated(self, recursive: bool | None = None) -> list[str]:
         """Return modules discovered by ``discover_isolated_modules``.
 
-        Persistence of the results is handled by the caller.
+        Persistence of the results is handled by the caller.  This wrapper
+        records basic metadata for the modules returned by the helper.
         """
         from scripts.discover_isolated_modules import discover_isolated_modules
 
-        if recursive is None:
-            env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-            if env_val is not None:
-                recursive = env_val.lower() not in ("0", "false", "no")
-            else:
-                recursive = self.recursive_isolated
+        modules = discover_isolated_modules(
+            Path.cwd(),
+            recursive=self.recursive_isolated if recursive is None else recursive,
+        )
 
-        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
-
-        trace: dict[str, Any] = {}
-        if recursive:
-            try:
-                from sandbox_runner import discover_recursive_orphans as _discover
-
-                trace = _discover(str(Path.cwd()))
-            except Exception:  # pragma: no cover - best effort
-                trace = {}
-            for k, v in trace.items():
-                parents = [
-                    str(Path(*p.split(".")).with_suffix(".py"))
-                    for p in (v.get("parents") if isinstance(v, dict) else v)
-                ]
-                info = self.orphan_traces.setdefault(
-                    str(Path(*k.split(".")).with_suffix(".py")), {"parents": []}
-                )
-                info["parents"] = list(
-                    dict.fromkeys(info.get("parents", []) + parents)
-                )
-                if isinstance(v, dict) and "redundant" in v:
-                    info["redundant"] = bool(v["redundant"])
-
-            modules = [str(Path(m)) for m in sorted(self._collect_recursive(modules))]
-        else:
-            modules = [str(Path(m)) for m in modules]
-
-        seen: set[str] = set()
-        filtered: list[str] = []
-
+        results: list[str] = []
         for m in modules:
             key = str(Path(m))
-            if key in seen:
-                continue
-            seen.add(key)
-            info = self.orphan_traces.setdefault(key, {"parents": [], "redundant": None})
-            redundant_flag = info.get("redundant")
-            if redundant_flag is None:
-                try:
-                    redundant_flag = bool(analyze_redundancy(Path(key)))
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "redundancy analysis failed for %s: %s", key, exc
-                    )
-                    redundant_flag = False
-                info["redundant"] = redundant_flag
-            if redundant_flag:
-                self.logger.info(
-                    "redundant module skipped", extra={"module": key}
-                )
-                continue
-            filtered.append(key)
+            entry = self.orphan_traces.setdefault(key, {"parents": []})
+            # ``discover_isolated_modules`` only returns non-redundant modules but
+            # we record the classification explicitly for later reference.
+            entry["redundant"] = False
+            results.append(key)
 
-        return filtered
+        return results
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
@@ -999,7 +948,12 @@ class SelfTestService:
             failed = 0
             coverage_total = 0.0
             runtime_total = 0.0
-            paths.extend(orphan_list)
+
+        # Always include newly discovered modules in the test run.
+        for m in orphan_list:
+            if m not in paths:
+                paths.append(m)
+
         self._state = None
 
         all_orphans = set(orphan_list) | set(redundant_list)
