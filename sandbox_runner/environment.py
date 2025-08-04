@@ -5475,8 +5475,18 @@ def auto_include_modules(
 
     mod_paths = {Path(m).as_posix() for m in modules}
 
-    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS", "")
-    if recursive or env_rec.lower() in ("1", "true", "yes"):
+    # Determine whether to expand modules using recursive orphan discovery.
+    env_val = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
+    should_expand = recursive
+    if env_val is not None:
+        should_expand = should_expand or env_val.lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    if should_expand:
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         try:
             discovered = discover_recursive_orphans(str(repo))
