@@ -120,29 +120,28 @@ After the system tools are in place install the Python requirements via
 
 `auto_env_setup.ensure_env()` generates a `.env` file with sensible defaults. The following variables are particularly relevant for the autonomous workflow:
 
-### Recursive inclusion flow
+### Recursive orphan discovery and integration
 
-Orphan and isolated modules are now discovered recursively. The helper
-`sandbox_runner.discover_recursive_orphans` walks import chains and returns a
-mapping from each discovered module to the module(s) that imported it. Setting
-`SANDBOX_RECURSIVE_ORPHANS=1` lets the walker follow each orphan's import chain
-so new modules are discovered recursively. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1`
-isolated modules are pulled into this scan and their dependencies are traversed
-in the same recursive manner. Passing modules are integrated into
-`module_map.json` and existing workflows by default; set
-`SELF_TEST_DISABLE_AUTO_INTEGRATION=1` to opt out. `auto_env_setup.ensure_env()`
-enables this behaviour by default through `SELF_TEST_RECURSIVE_ORPHANS=1`,
-`SELF_TEST_RECURSIVE_ISOLATED=1`, `SANDBOX_RECURSIVE_ORPHANS=1`,
-`SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Use the
-CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
-`--recursive-include`/`--no-recursive-include`) and `--recursive-isolated` or
-`--no-recursive-isolated` to override these defaults, which set the
-corresponding `SANDBOX_RECURSIVE_ORPHANS` and `SANDBOX_RECURSIVE_ISOLATED`
-environment variables. Use `--discover-isolated` or `--no-discover-isolated` to
-toggle isolated module discovery. `--auto-include-isolated`
-forces discovery of isolated modules while `--clean-orphans` (or
-`SANDBOX_CLEAN_ORPHANS=1`) prunes passing entries from
-`orphan_modules.json`.
+The sandbox walks the repository for modules with no inbound references and
+recursively follows their imports. `sandbox_runner.discover_recursive_orphans`
+starts at each orphan and, when `SANDBOX_RECURSIVE_ORPHANS=1`, follows the import
+chain so that helper files are discovered automatically. The resulting module
+set is executed by `SelfTestService`; any module that passes is appended to
+`sandbox_data/module_map.json` and stitched into existing workflows. Setting
+`SANDBOX_CLEAN_ORPHANS=1` cleans processed names out of
+`sandbox_data/orphan_modules.json` after a successful run. With
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1` isolated files participate in the same scan and
+`SANDBOX_RECURSIVE_ISOLATED=1` pulls in their dependencies. These defaults are
+enabled by `auto_env_setup.ensure_env()` through the corresponding `SELF_TEST_*`
+variables.
+
+Use the CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
+`--recursive-include`/`--no-recursive-include`), `--recursive-isolated` or
+`--no-recursive-isolated`, `--discover-isolated`, `--auto-include-isolated` and
+`--clean-orphans` to override the behaviour. Each flag mirrors an environment
+variable (`SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED`,
+`SANDBOX_DISCOVER_ISOLATED`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
+`SANDBOX_CLEAN_ORPHANS`) which can be set directly as needed.
 
 To toggle recursion via the environment instead of CLI flags:
 
