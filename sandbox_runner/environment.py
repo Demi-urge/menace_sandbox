@@ -5473,10 +5473,10 @@ def auto_include_modules(
     from sandbox_runner.orphan_discovery import discover_recursive_orphans
     import orphan_analyzer
 
-    mod_set = {Path(m).as_posix() for m in modules}
+    mod_paths = {Path(m).as_posix() for m in modules}
 
-    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-    if recursive or (env_rec and env_rec.lower() in ("1", "true", "yes")):
+    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS", "")
+    if recursive or env_rec.lower() in ("1", "true", "yes"):
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         try:
             discovered = discover_recursive_orphans(str(repo))
@@ -5488,11 +5488,11 @@ def auto_include_modules(
                         continue
                 except Exception:
                     continue
-                mod_set.add(path.as_posix())
+                mod_paths.add(path.as_posix())
         except Exception:
             pass
 
-    mods = sorted(mod_set)
+    mods = sorted(mod_paths)
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
     result = run_workflow_simulations()

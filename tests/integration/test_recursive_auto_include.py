@@ -1,7 +1,5 @@
 import json
 import os
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -22,9 +20,10 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     map_path = data_dir / "module_map.json"
     map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
 
-    generated = []
-    integrated = []
+    generated: list[list[str]] = []
+    integrated: list[str] = []
 
+    # Stub out workflow helpers to capture inputs
     def fake_generate(mods, workflows_db="workflows.db"):
         generated.append(sorted(mods))
         (tmp_path / workflows_db).write_text("dummy")
@@ -37,41 +36,26 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
             data["modules"][Path(m).name] = 1
         map_path.write_text(json.dumps(data))
 
-    env_mod = types.ModuleType("sandbox_runner.environment")
-    env_mod.generate_workflows_for_modules = fake_generate
-    env_mod.try_integrate_into_workflows = fake_integrate
-    env_mod.run_workflow_simulations = lambda: []
+    import sandbox_runner.environment as env_mod
 
-    def auto_include_modules(mods, recursive=False):
-        mod_set = {Path(m).as_posix() for m in mods}
-        if recursive:
-            from sandbox_runner.orphan_discovery import discover_recursive_orphans
-            import orphan_analyzer
+    monkeypatch.setattr(env_mod, "generate_workflows_for_modules", fake_generate)
+    monkeypatch.setattr(env_mod, "try_integrate_into_workflows", fake_integrate)
+    monkeypatch.setattr(env_mod, "run_workflow_simulations", lambda: [])
 
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            for name, info in discover_recursive_orphans(str(repo)).items():
-                path = Path(*name.split(".")).with_suffix(".py")
-                full = repo / path
-                if info.get("redundant") or orphan_analyzer.analyze_redundancy(full):
-                    continue
-                mod_set.add(path.as_posix())
-        mods2 = sorted(mod_set)
-        env_mod.generate_workflows_for_modules(mods2)
-        env_mod.try_integrate_into_workflows(mods2)
-        return env_mod.run_workflow_simulations()
+    import sandbox_runner.orphan_discovery as od
 
-    env_mod.auto_include_modules = auto_include_modules
-    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
-
-    od = types.ModuleType("sandbox_runner.orphan_discovery")
-    od.discover_recursive_orphans = lambda path: {
-        "a": {"parents": [], "redundant": False},
-        "b": {"parents": ["a"], "redundant": False},
-        "c": {"parents": ["b", "a"], "redundant": False},
-    }
-    monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_discovery", od)
+    monkeypatch.setattr(
+        od,
+        "discover_recursive_orphans",
+        lambda path: {
+            "a": {"parents": [], "redundant": False},
+            "b": {"parents": ["a"], "redundant": False},
+            "c": {"parents": ["b", "a"], "redundant": False},
+        },
+    )
 
     import orphan_analyzer
+
     monkeypatch.setattr(
         orphan_analyzer,
         "analyze_redundancy",
