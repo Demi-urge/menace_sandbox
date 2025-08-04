@@ -273,15 +273,20 @@ pass `--no-recursive-include` to the relevant commands.
 echo 'import helper\n' > isolated.py
 echo 'VALUE = 1\n' > helper.py
 
-# test the isolated module inside the sandbox
-python -m menace.self_test_service run isolated.py --auto-include-isolated
+# test the isolated module inside the sandbox and pull in its helper
+python -m menace.self_test_service run isolated.py \
+    --auto-include-isolated --recursive-isolated
 
-# integrate the module during the next autonomous cycle
-python run_autonomous.py --auto-include-isolated --include-orphans
+# integrate the module and clean the orphan cache during the next cycle
+python run_autonomous.py --auto-include-isolated --include-orphans \
+    --recursive-isolated --clean-orphans
 ```
 
-After the cycle both `isolated.py` and `helper.py` appear in `module_map.json`
-and are scheduled automatically via `try_integrate_into_workflows`. See
+`discover_isolated_modules` locates both files and `SelfTestService` executes
+them recursively. Non-redundant modules are appended to `sandbox_data/module_map.json`
+and scheduled automatically via `try_integrate_into_workflows`. With
+`--clean-orphans` (or `SANDBOX_CLEAN_ORPHANS=1`) the processed names are removed
+from `sandbox_data/orphan_modules.json`. See
 `tests/test_self_test_service_recursive_integration.py::test_recursive_isolated_integration`
 for an automated assertion of this workflow.
 
