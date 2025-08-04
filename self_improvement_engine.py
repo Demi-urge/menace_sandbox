@@ -1693,6 +1693,26 @@ class SelfImprovementEngine:
             self.orphan_traces = {}
 
         if modules:
+            modules = list(modules)
+            auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+            if auto_iso and auto_iso.lower() in {"1", "true", "yes"}:
+                recursive_iso = True
+                env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+                if env_iso is None:
+                    env_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
+                if env_iso is not None and env_iso.lower() in {"0", "false", "no"}:
+                    recursive_iso = False
+                try:
+                    from scripts.discover_isolated_modules import discover_isolated_modules
+
+                    iso_mods = discover_isolated_modules(
+                        str(repo), recursive=recursive_iso
+                    )
+                    modules.extend(sorted(iso_mods))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "isolated module discovery failed: %s", exc
+                    )
             repo_mods = self._collect_recursive_modules(modules)
             passing = self._test_orphan_modules(repo_mods)
             if passing:
@@ -1883,12 +1903,6 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "module map refresh failed: %s", exc
                     )
-            try:
-                environment.auto_include_modules(
-                    sorted(filtered), recursive=True, validate=True
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("auto inclusion failed: %s", exc)
 
         if not filtered:
             meta_path = data_dir / "orphan_classifications.json"
@@ -1905,6 +1919,13 @@ class SelfImprovementEngine:
             return
 
         passing = self._test_orphan_modules(filtered)
+        if passing:
+            try:
+                environment.auto_include_modules(
+                    sorted(passing), recursive=True, validate=True
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("auto inclusion failed: %s", exc)
         passing_names = set(passing)
         integrate_candidates = [
             p for p in passing if not self.orphan_traces.get(p, {}).get("redundant")
@@ -2126,6 +2147,14 @@ class SelfImprovementEngine:
             if orphans:
                 passing = self._test_orphan_modules(orphans)
                 if passing:
+                    try:
+                        environment.auto_include_modules(
+                            sorted(passing), recursive=True, validate=True
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "auto inclusion failed: %s", exc
+                        )
                     repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                     abs_paths = [str(repo / p) for p in passing]
                     try:

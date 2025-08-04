@@ -185,7 +185,7 @@ def test_update_orphan_modules_with_modules(monkeypatch, tmp_path):
     eng._collect_recursive_modules = lambda mods: set(mods)
 
     env = types.SimpleNamespace(
-        auto_include_modules=lambda mods, recursive=False: calls.__setitem__(
+        auto_include_modules=lambda mods, recursive=False, validate=False: calls.__setitem__(
             "auto", list(mods)
         )
     )
