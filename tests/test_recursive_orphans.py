@@ -163,6 +163,47 @@ def test_clean_orphans_removes_passing(monkeypatch, tmp_path):
     assert data == ["bar.py"]
 
 
+def test_update_orphan_modules_with_modules(monkeypatch, tmp_path):
+    index = DummyIndex()
+    eng = types.SimpleNamespace(
+        module_index=index,
+        module_clusters={},
+        logger=DummyLogger(),
+    )
+    calls = {"refresh": 0, "integrated": None, "auto": None}
+
+    def fake_integrate(paths: list[str]) -> set[str]:
+        calls["integrated"] = list(paths)
+        return {Path(p).name for p in paths}
+
+    def fake_refresh(self, modules=None):
+        calls["refresh"] += 1
+
+    eng._integrate_orphans = fake_integrate
+    eng._refresh_module_map = types.MethodType(fake_refresh, eng)
+    eng._test_orphan_modules = lambda mods: set(mods)
+    eng._collect_recursive_modules = lambda mods: set(mods)
+
+    env = types.SimpleNamespace(
+        auto_include_modules=lambda mods, recursive=False: calls.__setitem__(
+            "auto", list(mods)
+        )
+    )
+    _update_orphan_modules.__globals__["environment"] = env
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    (tmp_path / "orphan_modules.json").write_text(json.dumps(["foo.py"]))
+
+    _update_orphan_modules(eng, ["foo.py"])
+
+    assert calls["integrated"] == [str(tmp_path / "foo.py")]
+    assert calls["refresh"] == 1
+    assert json.loads((tmp_path / "orphan_modules.json").read_text()) == []
+    assert calls["auto"] == ["foo.py"]
+
+
 def test_refresh_module_map_triggers_update(monkeypatch, tmp_path):
     index = DummyIndex()
     eng = types.SimpleNamespace(
