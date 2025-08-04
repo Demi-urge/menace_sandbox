@@ -123,17 +123,20 @@ After the system tools are in place install the Python requirements via
 ### Recursive orphan discovery and integration
 
 The sandbox walks the repository for modules with no inbound references and
-recursively follows their imports. `sandbox_runner.discover_recursive_orphans`
-starts at each orphan and, when `SANDBOX_RECURSIVE_ORPHANS=1`, follows the import
-chain so that helper files are discovered automatically. The resulting module
-set is executed by `SelfTestService`; any module that passes is appended to
-`sandbox_data/module_map.json` and stitched into existing workflows. Setting
+recursively follows their imports. Isolated modules are included in this scan
+and their dependencies are discovered recursively by default
+(`SANDBOX_RECURSIVE_ISOLATED=1`). `sandbox_runner.discover_recursive_orphans`
+starts at each orphan and, when `SANDBOX_RECURSIVE_ORPHANS=1`, follows the
+import chain so that helper files are discovered automatically. Each candidate
+module is executed by `SelfTestService`; modules that pass are appended to
+`sandbox_data/module_map.json` while failures are logged and skipped. Setting
 `SANDBOX_CLEAN_ORPHANS=1` cleans processed names out of
-`sandbox_data/orphan_modules.json` after a successful run. With
-`SANDBOX_AUTO_INCLUDE_ISOLATED=1` isolated files participate in the same scan and
-`SANDBOX_RECURSIVE_ISOLATED=1` pulls in their dependencies. These defaults are
-enabled by `auto_env_setup.ensure_env()` through the corresponding `SELF_TEST_*`
-variables.
+`sandbox_data/orphan_modules.json` after a successful run. Disable recursion with
+`SANDBOX_RECURSIVE_ISOLATED=0` (or `--no-recursive-isolated`) and
+`SANDBOX_RECURSIVE_ORPHANS=0` (or `--no-recursive-orphans`/`--no-recursive-include`).
+With `SANDBOX_AUTO_INCLUDE_ISOLATED=1` isolated files participate in the same
+scan. These defaults are enabled by `auto_env_setup.ensure_env()` through the
+corresponding `SELF_TEST_*` variables.
 
 Use the CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
 `--recursive-include`/`--no-recursive-include`), `--recursive-isolated` or
