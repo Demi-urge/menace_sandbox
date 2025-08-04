@@ -193,6 +193,12 @@ class SelfTestService:
         except ValueError:
             self.workers = 1
 
+        # Allow the test runner to be customised via environment variable.  This
+        # defaults to ``pytest`` to preserve historical behaviour but can be
+        # overridden by setting ``SELF_TEST_RUNNER``.  All discovered modules are
+        # executed using this runner within :meth:`_run_once`.
+        self.test_runner = os.getenv("SELF_TEST_RUNNER", "pytest")
+
         disable_env = os.getenv("SELF_TEST_DISABLE_ORPHANS")
         if disable_env is None:
             disable_env = os.getenv("SANDBOX_DISABLE_ORPHANS")
@@ -1033,7 +1039,7 @@ class SelfTestService:
                 cmd = [
                     sys.executable,
                     "-m",
-                    "pytest",
+                    self.test_runner,
                     "-q",
                     "--json-report",
                 ]
@@ -1083,7 +1089,7 @@ class SelfTestService:
                     container_cmd = [
                         "python",
                         "-m",
-                        "pytest",
+                        self.test_runner,
                         *cmd[3:],
                     ]
 
@@ -1271,14 +1277,20 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
+            passed_set: list[str] = []
             if all_orphans:
+                passed_set = [p for p in orphan_passed if p not in orphan_failed]
+                redundant_set = sorted(set(redundant_list))
                 self.results["orphan_total"] = len(all_orphans)
                 self.results["orphan_failed"] = len(orphan_failed)
-                passed_set = [p for p in orphan_passed if p not in orphan_failed]
+                self.results["orphan_passed"] = len(passed_set)
+                self.results["orphan_redundant"] = len(redundant_set)
                 if passed_set:
-                    self.results["orphan_passed"] = sorted(passed_set)
-                if redundant_list:
-                    self.results["orphan_redundant"] = sorted(set(redundant_list))
+                    self.results["orphan_passed_modules"] = sorted(passed_set)
+                if orphan_failed:
+                    self.results["orphan_failed_modules"] = sorted(orphan_failed)
+                if redundant_set:
+                    self.results["orphan_redundant_modules"] = redundant_set
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
