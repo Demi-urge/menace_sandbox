@@ -166,32 +166,44 @@ def _sandbox_cycle_runner(
         except TypeError:
             ctx.sandbox.analyse_and_fix()
         auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "").lower()
-        rec_env = os.getenv("SANDBOX_RECURSIVE_ORPHANS", "").lower()
-        if auto_iso in ("1", "true", "yes") and rec_env in ("1", "true", "yes"):
+        discover_env = os.getenv("SANDBOX_DISCOVER_ISOLATED", "").lower()
+        rec_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "").lower()
+        if auto_iso in ("1", "true", "yes"):
             try:
+                from scripts.discover_isolated_modules import discover_isolated_modules
+
+                recursive = rec_env in ("1", "true", "yes")
+                paths = discover_isolated_modules(ctx.repo, recursive=recursive)
+
                 module_map = set(getattr(ctx, "module_map", set()))
                 traces = getattr(ctx, "orphan_traces", {})
-                map_path = getattr(getattr(ctx.improver, "module_index", None), "path", None)
-                discovered = discover_recursive_orphans(str(ctx.repo), module_map=map_path)
                 new_mods: list[str] = []
-                for name, info in discovered.items():
-                    path = Path(*name.split(".")).with_suffix(".py").as_posix()
+                for path in paths:
                     if path in module_map or path in traces:
                         continue
-                    traces[path] = info
-                    if info.get("redundant") is True:
-                        continue
+                    traces[path] = {"parents": [], "redundant": False}
                     new_mods.append(path)
                 if new_mods:
-                    recursive = True
-                    sig = inspect.signature(auto_include_modules)
-                    kwargs = {"recursive": recursive} if "recursive" in sig.parameters else {}
-                    auto_include_modules(new_mods, **kwargs)
+                    auto_include_modules(new_mods, recursive=True)
                     module_map.update(new_mods)
+                    if os.getenv("SANDBOX_CLEAN_ORPHANS", "").lower() in (
+                        "1",
+                        "true",
+                        "yes",
+                    ):
+                        cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
+                        try:
+                            data = (
+                                json.loads(cache.read_text()) if cache.exists() else []
+                            )
+                            data = [p for p in data if p not in new_mods]
+                            cache.write_text(json.dumps(sorted(data), indent=2))
+                        except Exception:
+                            pass
                 ctx.module_map = module_map
                 ctx.orphan_traces = traces
             except Exception:
-                logger.exception("recursive orphan auto-inclusion failed")
+                logger.exception("isolated module auto-inclusion failed")
         logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(

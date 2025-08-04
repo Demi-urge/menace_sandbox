@@ -1,5 +1,7 @@
 import types
 import pytest
+import sys
+from pathlib import Path
 
 import sandbox_runner.cycle as cycle
 import sandbox_runner as pkg
@@ -7,7 +9,7 @@ import sandbox_runner as pkg
 
 def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
     monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
 
@@ -18,9 +20,17 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
         calls.append(list(mods))
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
-    monkeypatch.setattr(
-        cycle, "discover_recursive_orphans", lambda repo, module_map=None: {"foo": {"parents": [], "redundant": True}}
-    )
+    mod = types.ModuleType("scripts.discover_isolated_modules")
+
+    def discover(repo_path, *, recursive=False):
+        assert Path(repo_path) == tmp_path
+        return ["foo.py"]
+
+    mod.discover_isolated_modules = discover
+    pkg_mod = types.ModuleType("scripts")
+    pkg_mod.discover_isolated_modules = mod
+    monkeypatch.setitem(sys.modules, "scripts", pkg_mod)
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
     monkeypatch.setattr(
         cycle,
         "ResourceTuner",
@@ -46,7 +56,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
         sandbox=types.SimpleNamespace(analyse_and_fix=lambda *a, **k: None),
         repo=tmp_path,
         module_map=set(),
-        orphan_traces={},
+        orphan_traces={"foo.py": {"parents": [], "redundant": True}},
         tracker=object(),
         models=[],
         module_counts={},
