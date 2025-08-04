@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Discover modules not referenced by tests or other modules."""
+"""Discover modules not referenced by tests or other modules.
+
+Dependencies of isolated modules are included by default.
+"""
 from __future__ import annotations
 
 import os
@@ -20,7 +23,7 @@ except Exception:  # pragma: no cover - sandbox_runner may not be available
 
 
 def discover_isolated_modules(
-    base_dir: str | Path, *, recursive: bool = False
+    base_dir: str | Path, *, recursive: bool = True
 ) -> list[str]:
     """Return sorted paths of isolated modules under *base_dir*.
 
@@ -105,10 +108,12 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", default=".", help="Repository root")
     parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Include dependencies of isolated modules",
+        "--no-recursive",
+        action="store_false",
+        dest="recursive",
+        help="Exclude dependencies of isolated modules",
     )
+    parser.set_defaults(recursive=True)
     args = parser.parse_args()
     res = discover_isolated_modules(Path(args.path), recursive=args.recursive)
     print(json.dumps(res, indent=2))

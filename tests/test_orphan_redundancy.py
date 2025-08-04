@@ -191,7 +191,7 @@ def test_discover_isolated_filters(monkeypatch, tmp_path):
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(path, *, recursive=False):
+    def discover(path, *, recursive=True):
         return [Path("foo.py"), Path("foo.py"), Path("dup.py")]
 
     mod.discover_isolated_modules = discover

@@ -201,7 +201,7 @@ def test_isolated_modules_refresh_map(monkeypatch, tmp_path):
 
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(path, *, recursive=False):
+    def discover(path, *, recursive=True):
         assert Path(path) == repo
         return ["iso.py"]
 
@@ -262,7 +262,7 @@ def test_recursive_isolated(monkeypatch, tmp_path):
     called = {}
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(path, *, recursive=False):
+    def discover(path, *, recursive=True):
         called["recursive"] = recursive
         assert Path(path) == repo
         return ["iso.py"]

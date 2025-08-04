@@ -22,7 +22,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(repo_path, *, recursive=False):
+    def discover(repo_path, *, recursive=True):
         assert Path(repo_path) == tmp_path
         return ["foo.py"]
 

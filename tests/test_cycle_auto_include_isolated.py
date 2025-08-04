@@ -25,7 +25,7 @@ def _prepare(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "auto_include_modules", fake_auto_include)
     monkeypatch.setattr(cycle, "auto_include_modules", env.auto_include_modules)
 
-    def discover_isolated_modules(repo_path, *, recursive=False):
+    def discover_isolated_modules(repo_path, *, recursive=True):
         assert Path(repo_path) == tmp_path
         assert recursive
         names = ["isolated.py", "helper.py"]

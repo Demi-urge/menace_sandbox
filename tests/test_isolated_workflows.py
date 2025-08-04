@@ -92,7 +92,7 @@ def test_isolated_modules_written_to_workflows(tmp_path, monkeypatch):
 
     import types as _types
 
-    def discover(path, *, recursive=False):
+    def discover(path, *, recursive=True):
         assert Path(path) == repo
         return ["iso.py", "dep.py"]
 

@@ -46,7 +46,7 @@ def test_known_and_duplicate_modules_skipped(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "analyze_redundancy", lambda p: False)
     mod._discover_import_orphans = lambda root, recursive=False: ["b", "c"]
 
-    res = discover_isolated_modules(tmp_path)
+    res = discover_isolated_modules(tmp_path, recursive=False)
     assert res == ["c.py"]
 
 
@@ -64,6 +64,6 @@ def test_redundant_modules_omitted(tmp_path, monkeypatch):
     mod._discover_import_orphans = None
     monkeypatch.setattr(mod, "analyze_redundancy", lambda p: p.name == "d.py")
 
-    res = discover_isolated_modules(tmp_path)
+    res = discover_isolated_modules(tmp_path, recursive=False)
     assert res == ["c.py"]
 

@@ -202,7 +202,7 @@ def test_discover_isolated_option(tmp_path, monkeypatch):
     import types
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
-    mod_iso.discover_isolated_modules = lambda root, *, recursive=False: ["foo.py", "bar.py"]
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py", "bar.py"]
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
@@ -507,7 +507,7 @@ def _setup_isolated(monkeypatch):
 
     called = {}
 
-    def discover(root, *, recursive=False):
+    def discover(root, *, recursive=True):
         called["recursive"] = recursive
         return ["foo.py"]
 
@@ -583,7 +583,7 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     import types
 
     mod_iso = types.ModuleType("scripts.discover_isolated_modules")
-    mod_iso.discover_isolated_modules = lambda root, *, recursive=False: ["foo.py"]
+    mod_iso.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]
     pkg = types.ModuleType("scripts")
     pkg.discover_isolated_modules = mod_iso
     monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)

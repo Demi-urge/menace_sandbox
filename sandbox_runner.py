@@ -926,10 +926,13 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     arg_iso = getattr(args, "discover_isolated", None)
     if arg_iso is not None:
         discover_isolated = arg_iso
-    recursive_isolated = bool(
-        getattr(args, "recursive_isolated", False)
-        or os.getenv("SANDBOX_RECURSIVE_ISOLATED", "0") in {"1", "true", "yes"}
-    )
+    recursive_isolated = True
+    env_rec_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+    if env_rec_iso is not None:
+        recursive_isolated = env_rec_iso.lower() not in {"0", "false", "no"}
+    arg_rec_iso = getattr(args, "recursive_isolated", None)
+    if arg_rec_iso is not None:
+        recursive_isolated = arg_rec_iso
     recursive_orphans = True
     env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
     if env_rec is not None:
