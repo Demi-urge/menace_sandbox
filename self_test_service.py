@@ -285,7 +285,16 @@ class SelfTestService:
     def _default_integration(self, mods: list[str]) -> None:
         """Refresh module map and include ``mods`` into workflows."""
 
-        names = sorted({Path(m).name for m in mods})
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        paths: list[str] = []
+        for m in mods:
+            p = Path(m)
+            try:
+                rel = p.resolve().relative_to(repo)
+            except Exception:
+                rel = p
+            paths.append(rel.as_posix())
+        paths = sorted(set(paths))
         data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
         map_file = data_dir / "module_map.json"
 
@@ -294,7 +303,7 @@ class SelfTestService:
             from module_index_db import ModuleIndexDB
 
             index = ModuleIndexDB(map_file)
-            index.refresh(names, force=True)
+            index.refresh(paths, force=True)
             index.save()
         except Exception:
             self.logger.exception("module map refresh failed")
@@ -316,7 +325,7 @@ class SelfTestService:
                 kwargs["recursive"] = recursive
             if "validate" in sig.parameters:
                 kwargs["validate"] = True
-            auto_include_modules(list(names), **kwargs)
+            auto_include_modules(list(paths), **kwargs)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
 
@@ -813,7 +822,7 @@ class SelfTestService:
                 info["redundant"] = redundant_flag
             if redundant_flag:
                 self.logger.info(
-                    "redundant module skipped", extra={"module": p.name}
+                    "redundant module skipped", extra={"module": m}
                 )
                 continue
             filtered.append(m)
@@ -884,7 +893,7 @@ class SelfTestService:
                 info["redundant"] = redundant_flag
             if redundant_flag:
                 self.logger.info(
-                    "redundant module skipped", extra={"module": Path(key).name}
+                    "redundant module skipped", extra={"module": key}
                 )
                 continue
             filtered.append(key)
