@@ -249,13 +249,16 @@ integrated.
 
 The sandbox can automatically pick up modules that are otherwise disconnected
 from the rest of the codebase. Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1`
-or passing `--auto-include-isolated` loads candidates returned by
-`discover_isolated_modules`. With `SANDBOX_RECURSIVE_ISOLATED=1` their import
-chains are traversed so supporting files are executed alongside the target
-module. Once the tests succeed, the modules are merged into
-`module_map.json` and existing flows through `try_integrate_into_workflows`.
-Entries flagged by `orphan_analyzer.analyze_redundancy` are skipped to avoid
-duplicating functionality.
+or passing `--auto-include-isolated` forces `discover_isolated_modules` to run
+and implicitly sets `SANDBOX_DISCOVER_ISOLATED=1` and
+`SANDBOX_RECURSIVE_ISOLATED=1` unless they are overridden. With
+`SANDBOX_RECURSIVE_ISOLATED=1` their import chains are traversed so supporting
+files are executed alongside the target module, while
+`SANDBOX_RECURSIVE_ORPHANS=1` lets deeper orphan dependencies join the scan.
+Once the tests succeed, the modules are merged into `module_map.json` and
+existing flows through `try_integrate_into_workflows`. Entries flagged by
+`orphan_analyzer.analyze_redundancy` are skipped to avoid duplicating
+functionality.
 
 Recursion through orphan dependencies is enabled by default. Disable it by
 setting `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`, or
@@ -269,10 +272,10 @@ echo 'import helper\n' > isolated.py
 echo 'VALUE = 1\n' > helper.py
 
 # test the isolated module inside the sandbox
-python -m menace.self_test_service run isolated.py --auto-include-isolated --recursive-isolated
+python -m menace.self_test_service run isolated.py --auto-include-isolated
 
 # integrate the module during the next autonomous cycle
-python run_autonomous.py --discover-isolated --include-orphans
+python run_autonomous.py --auto-include-isolated --include-orphans
 ```
 
 After the cycle both `isolated.py` and `helper.py` appear in `module_map.json`

@@ -104,16 +104,15 @@ traversal with `--no-recursive-include` or by setting
 
 Isolated modules returned by `discover_isolated_modules` are loaded when
 `--auto-include-isolated` is supplied or `SANDBOX_AUTO_INCLUDE_ISOLATED=1` is
-set and are processed recursively by default. These isolated modules are tested
-along with any dependencies and merged into `module_map.json` once they pass so
-later runs treat them as normal members of their assigned groups. Simple
-workflows are generated for the new modules and existing flows are updated via
-`try_integrate_into_workflows`. Dependency traversal is enabled by default
-through `SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; set
-`SELF_TEST_RECURSIVE_ISOLATED=0`, `SANDBOX_RECURSIVE_ISOLATED=0` or use
-`--no-recursive-isolated` when running the self tests manually to disable this
-behaviour. Redundant modules flagged by `orphan_analyzer.analyze_redundancy`
-are skipped during integration.
+set and are processed recursively by default. Enabling
+`SANDBOX_AUTO_INCLUDE_ISOLATED` forces `discover_isolated_modules` to run and
+sets `SANDBOX_DISCOVER_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1` unless
+they are explicitly overridden. `SANDBOX_RECURSIVE_ORPHANS` controls whether any
+dependencies discovered through the orphan walker are also traversed, allowing
+helper chains to be executed and integrated. Passing modules are merged into
+`module_map.json` and simple workflows are generated via
+`try_integrate_into_workflows`. Redundant modules flagged by
+`orphan_analyzer.analyze_redundancy` are skipped during integration.
 
 #### Flags and environment variables
 
@@ -121,17 +120,20 @@ The discovery helpers expose identical controls via CLI flags and environment
 variables:
 
 - `--discover-orphans` / `SELF_TEST_DISCOVER_ORPHANS=1` – enable orphan scans.
+- `--discover-isolated` / `SANDBOX_DISCOVER_ISOLATED=1` – run
+  `discover_isolated_modules` during scans.
 - `--auto-include-isolated` / `SANDBOX_AUTO_INCLUDE_ISOLATED=1` /
-  `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` – add isolated modules returned by
-  `discover_isolated_modules`.
+  `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` – force isolated discovery and recursive
+  integration.
 - `--recursive-include` / `SANDBOX_RECURSIVE_ORPHANS=1` /
   `SELF_TEST_RECURSIVE_ORPHANS=1` – traverse orphan dependencies.
 - `--recursive-isolated` / `SANDBOX_RECURSIVE_ISOLATED=1` /
   `SELF_TEST_RECURSIVE_ISOLATED=1` – follow dependencies of isolated modules.
 
 When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox invokes
-`environment.auto_include_modules` so passing modules and their dependencies are
-persisted to `sandbox_data/module_map.json` and merged into existing workflows.
+`environment.auto_include_modules`, running `discover_isolated_modules`
+automatically and persisting passing modules and their dependencies to
+`sandbox_data/module_map.json`. Existing workflows are updated in the same pass.
 
 #### Example: isolated module with dependencies
 
@@ -149,11 +151,10 @@ def run():
     return sample.util.helper()
 PY
 
-SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
-  python run_autonomous.py --discover-orphans --auto-include-isolated
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 python run_autonomous.py --auto-include-isolated
 
-# SelfTestService exercises both modules, auto_include_modules writes them to
-# sandbox_data/module_map.json and the workflow database gains single-step
+# discover_isolated_modules pulls in both files and auto_include_modules writes
+# them to sandbox_data/module_map.json; the workflow database gains single-step
 # entries for future runs
 ```
 
