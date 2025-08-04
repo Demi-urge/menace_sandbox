@@ -1462,7 +1462,13 @@ class SelfTestService:
         count = 0
         while True:
             try:
-                asyncio.run(self._run_once(refresh_orphans=refresh_orphans))
+                sig = inspect.signature(self._run_once)
+                kwargs = (
+                    {"refresh_orphans": refresh_orphans}
+                    if "refresh_orphans" in sig.parameters
+                    else {}
+                )
+                asyncio.run(self._run_once(**kwargs))
             except Exception:
                 self.logger.exception("self test run failed")
             count += 1
