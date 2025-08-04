@@ -233,7 +233,6 @@ def discover_recursive_orphans(
                 is_red = False
             redundant[mod] = is_red
         found.add(mod)
-
         for name in imports.get(mod, set()):
             if name not in modules:
                 continue
@@ -247,13 +246,13 @@ def discover_recursive_orphans(
             if not target.exists():
                 continue
 
-            is_red = redundant.get(name)
-            if is_red is None:
+            is_red_child = redundant.get(name)
+            if is_red_child is None:
                 try:
-                    is_red = orphan_analyzer.analyze_redundancy(target)
+                    is_red_child = orphan_analyzer.analyze_redundancy(target)
                 except Exception:
-                    is_red = False
-                redundant[name] = is_red
+                    is_red_child = False
+                redundant[name] = is_red_child
 
             parents.setdefault(name, set()).add(mod)
             found.add(name)
@@ -262,10 +261,34 @@ def discover_recursive_orphans(
                 orphans.add(name)
                 queue.append(name)
 
-    return {
+    result = {
         m: {
             "parents": sorted(parents.get(m, [])),
             "redundant": redundant.get(m, False),
         }
         for m in sorted(found - known)
     }
+
+    try:  # best effort cache
+        data_dir = repo / "sandbox_data"
+        cache = data_dir / "orphan_modules.json"
+        paths = [
+            Path(*name.split(".")).with_suffix(".py").as_posix()
+            for name, info in result.items()
+            if not info.get("redundant")
+        ]
+        existing: list[str] = []
+        if cache.exists():
+            try:
+                existing = json.loads(cache.read_text()) or []
+                if not isinstance(existing, list):
+                    existing = []
+            except Exception:  # pragma: no cover - best effort
+                existing = []
+        combined = sorted(set(existing).union(paths))
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(combined, indent=2))
+    except Exception:  # pragma: no cover - best effort
+        pass
+
+    return result
