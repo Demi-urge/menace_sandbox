@@ -164,6 +164,21 @@ def _sandbox_cycle_runner(
         )
         logger.info("tester run", extra=log_record(cycle=idx))
         ctx.tester.run_once()
+        results = getattr(ctx.tester, "results", {}) or {}
+        if results:
+            passed = results.get("orphan_passed_modules", [])
+            failed = results.get("orphan_failed_modules", [])
+            redundant = results.get("orphan_redundant_modules", [])
+            tested = sorted(set(passed) | set(failed) | set(redundant))
+            logger.info(
+                "self test results",
+                extra=log_record(
+                    tested=tested,
+                    passed=passed,
+                    failed=failed,
+                    redundant=sorted(redundant),
+                ),
+            )
         logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
@@ -176,6 +191,7 @@ def _sandbox_cycle_runner(
                 module_map = set(getattr(ctx, "module_map", set()))
                 traces = getattr(ctx, "orphan_traces", {})
                 new_mods: list[str] = []
+                trace_details: Dict[str, Dict[str, Any]] = {}
                 for name, info in trace.items():
                     rel = Path(*name.split("."))
                     path = (ctx.repo / rel).with_suffix(".py")
@@ -190,8 +206,20 @@ def _sandbox_cycle_runner(
                         "parents": info.get("parents", []),
                         "redundant": bool(info.get("redundant")),
                     }
+                    trace_details[rel_path] = traces[rel_path]
                     if not traces[rel_path]["redundant"]:
                         new_mods.append(rel_path)
+                if trace_details:
+                    logger.info(
+                        "orphan discovery",
+                        extra=log_record(
+                            discovered=sorted(trace_details.keys()),
+                            redundant=[
+                                m for m, inf in trace_details.items() if inf.get("redundant")
+                            ],
+                            parents={m: inf.get("parents", []) for m, inf in trace_details.items()},
+                        ),
+                    )
                 if new_mods:
                     try:
                         auto_include_modules(new_mods, recursive=True, validate=True)
