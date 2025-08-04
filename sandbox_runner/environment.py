@@ -5443,6 +5443,7 @@ def run_workflow_simulations(
 def auto_include_modules(
     modules: Iterable[str],
     recursive: bool = False,
+    validate: bool = False,
 ) -> "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]:
     """Automatically include ``modules`` into the workflow system.
 
@@ -5462,6 +5463,12 @@ def auto_include_modules(
     filtering out modules deemed redundant by
     :func:`orphan_analyzer.analyze_redundancy`.
 
+    When ``validate`` is ``True`` each candidate module is first executed via
+    :class:`self_test_service.SelfTestService`. Only modules that pass these
+    self tests are merged into the workflow system. Modules flagged as
+    redundant are recorded in ``sandbox_data/orphan_modules.json`` instead of
+    being integrated.
+
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller and the resulting ROI metrics are saved to
     ``SANDBOX_DATA_DIR/roi_history.json`` for later analysis by the self-
@@ -5472,6 +5479,7 @@ def auto_include_modules(
     from pathlib import Path
     from sandbox_runner.orphan_discovery import discover_recursive_orphans
     import orphan_analyzer
+    import json
 
     mod_paths = {Path(m).as_posix() for m in modules}
 
@@ -5503,6 +5511,59 @@ def auto_include_modules(
             pass
 
     mods = sorted(mod_paths)
+
+    if validate:
+        try:
+            from self_test_service import SelfTestService
+
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            passed_mods: list[str] = []
+            redundant_mods: list[str] = []
+            for mod in mods:
+                path = repo / mod
+                try:
+                    if orphan_analyzer.analyze_redundancy(path):
+                        redundant_mods.append(mod)
+                        continue
+                except Exception:
+                    pass
+                try:
+                    svc = SelfTestService(
+                        pytest_args=mod,
+                        include_orphans=False,
+                        discover_orphans=False,
+                        discover_isolated=False,
+                        disable_auto_integration=True,
+                    )
+                    res = svc.run_once()
+                    if not res.get("failed"):
+                        passed_mods.append(mod)
+                except Exception:
+                    continue
+
+            if redundant_mods:
+                cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
+                try:
+                    existing = json.loads(cache.read_text()) if cache.exists() else {}
+                except Exception:
+                    existing = {}
+                for m in redundant_mods:
+                    info = existing.get(m, {})
+                    info["redundant"] = True
+                    existing[m] = info
+                try:
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(json.dumps(existing, indent=2))
+                except Exception:
+                    pass
+
+            mods = passed_mods
+        except Exception:
+            pass
+
+    if not mods:
+        return run_workflow_simulations()
+
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
     result = run_workflow_simulations()

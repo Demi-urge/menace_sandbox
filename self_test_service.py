@@ -311,7 +311,11 @@ class SelfTestService:
                 recursive = env_recursive.lower() in ("1", "true", "yes")
 
             sig = inspect.signature(auto_include_modules)
-            kwargs = {"recursive": recursive} if "recursive" in sig.parameters else {}
+            kwargs: dict[str, object] = {}
+            if "recursive" in sig.parameters:
+                kwargs["recursive"] = recursive
+            if "validate" in sig.parameters:
+                kwargs["validate"] = True
             auto_include_modules(list(names), **kwargs)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
