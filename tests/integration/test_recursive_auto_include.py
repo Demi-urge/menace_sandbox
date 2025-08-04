@@ -67,7 +67,7 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     od.discover_recursive_orphans = lambda path: {
         "a": {"parents": [], "redundant": False},
         "b": {"parents": ["a"], "redundant": False},
-        "c": {"parents": ["b"], "redundant": False},
+        "c": {"parents": ["b", "a"], "redundant": False},
     }
     monkeypatch.setitem(sys.modules, "sandbox_runner.orphan_discovery", od)
 
@@ -85,6 +85,10 @@ def test_auto_include_recursive_chain(tmp_path, monkeypatch):
     env, generated, integrated, map_path = _setup_env(monkeypatch, tmp_path)
 
     from sandbox_runner.environment import auto_include_modules
+    from sandbox_runner.orphan_discovery import discover_recursive_orphans
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["c"]["parents"] == ["b", "a"]
 
     auto_include_modules(["a.py"], recursive=True)
 
@@ -99,6 +103,10 @@ def test_auto_include_recursive_skips_redundant(tmp_path, monkeypatch):
     env, generated, integrated, map_path = _setup_env(monkeypatch, tmp_path, redundant=True)
 
     from sandbox_runner.environment import auto_include_modules
+    from sandbox_runner.orphan_discovery import discover_recursive_orphans
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["c"]["parents"] == ["b", "a"]
 
     auto_include_modules(["a.py"], recursive=True)
 
