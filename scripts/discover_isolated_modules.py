@@ -80,7 +80,12 @@ def discover_isolated_modules(
         for name, info in trace.items():
             path = root / (name.replace(".", os.sep) + ".py")
             if path.exists():
-                _add(path, redundant=info.get("redundant"))
+                # ``discover_recursive_orphans`` historically returned either a
+                # mapping with ``{"redundant": bool}`` or simply a list of
+                # parents.  The tests stub the latter form, so guard against
+                # missing ``get``.
+                red = info.get("redundant") if isinstance(info, dict) else None
+                _add(path, redundant=red)
 
     filtered = [k for k, v in modules.items() if not v]
     cache = root / "sandbox_data" / "orphan_modules.json"
