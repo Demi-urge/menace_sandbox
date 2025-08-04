@@ -42,7 +42,17 @@ candidate is then executed in an ephemeral sandbox via
 Modules that pass are automatically appended to `sandbox_data/module_map.json`
 via `module_index_db.ModuleIndexDB` and merged into the sandbox's workflows
 through `sandbox_runner.environment.auto_include_modules` with
-`recursive=True` by default. Toggle recursion with
+`recursive=True` by default. Entries are indexed using repository-relative paths
+so files sharing a name in different directories do not collide:
+
+```bash
+mkdir -p pkg_a pkg_b
+echo 'VALUE=1' > pkg_a/common.py
+echo 'VALUE=2' > pkg_b/common.py
+python -m menace.self_test_service run pkg_a/common.py pkg_b/common.py --auto-include-isolated
+# module_map.json now lists pkg_a/common.py and pkg_b/common.py separately
+```
+Toggle recursion with
 `SELF_TEST_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ORPHANS=0`. Opt out by
 setting `SELF_TEST_DISABLE_AUTO_INTEGRATION=1` or by supplying a custom
 `integration_callback`. When no callback is provided the service uses this

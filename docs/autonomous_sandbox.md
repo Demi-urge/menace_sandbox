@@ -754,7 +754,9 @@ import tree of known orphans and collects their local dependencies, while
 references. The resulting paths are passed to
 `run_repo_section_simulations(..., modules=modules)` for sandbox execution. A
 `SelfTestService` instance exercises each module and, when the module passes, it
-is appended to `sandbox_data/module_map.json`. `environment.generate_workflows_for_modules`
+is appended to `sandbox_data/module_map.json`. Entries are indexed using
+repository‑relative paths so files with the same name in different directories
+remain distinct. `environment.generate_workflows_for_modules`
 then creates one‑step workflows so later simulations include the newly
 discovered functionality.
 
@@ -814,6 +816,17 @@ SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
 # demo_pkg/main.py and demo_pkg/util.py are tested by SelfTestService,
 # auto_include_modules records them in sandbox_data/module_map.json and
 # single-step workflows are generated for future runs
+```
+
+### Example: handling duplicate filenames
+
+```bash
+mkdir -p pkg_a pkg_b
+echo 'VALUE=1' > pkg_a/common.py
+echo 'VALUE=2' > pkg_b/common.py
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 \
+  python -m sandbox_runner.cli pkg_a/common.py pkg_b/common.py --auto-include-isolated
+# module_map.json lists pkg_a/common.py and pkg_b/common.py separately
 ```
 
 ## Docker usage

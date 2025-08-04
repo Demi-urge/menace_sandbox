@@ -77,8 +77,19 @@ and only integrates modules exceeding at least one of these thresholds.
 `SELF_TEST_*` variables so the improvement engine and `SelfTestService` apply the
 same recursion rules. Passing modules are appended to `module_map.json`, and
 `try_integrate_into_workflows` updates existing flows so subsequent cycles
-exercise the new code. Module identifiers are repository-relative paths to
-avoid filename collisions. Tests like `tests/test_run_autonomous_env_vars.py`
+exercise the new code. Modules are indexed and auto-included using
+repository-relative paths, so files named the same in different directories
+do not collide:
+
+```bash
+mkdir -p pkg_a pkg_b
+echo 'VALUE=1' > pkg_a/common.py
+echo 'VALUE=2' > pkg_b/common.py
+python -m menace.self_test_service run pkg_a/common.py pkg_b/common.py --auto-include-isolated
+python run_autonomous.py --auto-include-isolated
+# module_map.json records pkg_a/common.py and pkg_b/common.py separately
+```
+Tests like `tests/test_run_autonomous_env_vars.py`
 and `tests/test_self_test_service_recursive_integration.py` assert this
 recursive integration. For a concrete walkthrough see the example below.
 
