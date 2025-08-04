@@ -981,7 +981,11 @@ class SelfTestService:
         all_orphans = set(orphan_list) | set(redundant_list)
         orphan_set = set(orphan_list)
 
-        queue: list[str] = [p or "" for p in paths]
+        queue: list[str] = [
+            p or ""
+            for p in paths
+            if not (p and str(Path(p)) in redundant_list)
+        ]
         self._save_state(queue, passed, failed, coverage_total, runtime_total)
         proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
 
