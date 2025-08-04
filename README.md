@@ -148,6 +148,9 @@ dependencies. Passing modules are appended to `sandbox_data/module_map.json` and
 `sandbox_runner.environment.generate_workflows_for_modules` creates trivial
 workflows so the new code participates in later simulations.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
+Each candidate is tagged with a `redundant` flag by
+`orphan_analyzer.analyze_redundancy`; redundant modules are logged and skipped
+during integration.
 Isolated modules returned by `discover_isolated_modules` are included when
 `--auto-include-isolated` is supplied or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` is set.
 When launched via `run_autonomous.py` this behaviour also sets
@@ -157,6 +160,23 @@ through their dependencies is enabled by default
 `SELF_TEST_RECURSIVE_ISOLATED=0` or `SANDBOX_RECURSIVE_ISOLATED=0` or use
 `--no-recursive-isolated` to disable. Use `--auto-include-isolated` to enable
 discovery automatically (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`).
+
+Example integrating an isolated module with dependencies:
+
+```bash
+echo 'import helper\n' > isolated.py
+echo 'VALUE = 1\n'   > helper.py
+
+# discover, test and integrate both files automatically
+python -m sandbox_runner.cli --discover-orphans --auto-include-isolated \
+    --recursive-isolated --clean-orphans
+```
+
+`discover_isolated_modules` locates `isolated.py` and `helper.py`,
+`SelfTestService` exercises them recursively and non-redundant modules are
+written to `sandbox_data/module_map.json`. With `--clean-orphans` (or
+`SANDBOX_CLEAN_ORPHANS=1`) any processed names are pruned from
+`sandbox_data/orphan_modules.json`.
 
 Example discovering orphans:
 
