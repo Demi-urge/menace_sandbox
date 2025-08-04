@@ -166,22 +166,28 @@ def _sandbox_cycle_runner(
         except TypeError:
             ctx.sandbox.analyse_and_fix()
         auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "").lower()
-        rec_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "1").lower()
         if auto_iso in ("1", "true", "yes"):
             try:
-                from scripts.discover_isolated_modules import discover_isolated_modules
-
-                recursive = rec_env not in ("0", "false", "no")
-                paths = discover_isolated_modules(ctx.repo, recursive=recursive)
-
+                trace = discover_recursive_orphans(str(ctx.repo))
                 module_map = set(getattr(ctx, "module_map", set()))
                 traces = getattr(ctx, "orphan_traces", {})
                 new_mods: list[str] = []
-                for path in paths:
-                    if path in module_map or path in traces:
+                for name, info in trace.items():
+                    rel = Path(*name.split("."))
+                    path = (ctx.repo / rel).with_suffix(".py")
+                    if not path.exists():
+                        path = ctx.repo / rel / "__init__.py"
+                    if not path.exists():
                         continue
-                    traces[path] = {"parents": [], "redundant": False}
-                    new_mods.append(path)
+                    rel_path = path.relative_to(ctx.repo).as_posix()
+                    if rel_path in module_map or rel_path in traces:
+                        continue
+                    traces[rel_path] = {
+                        "parents": info.get("parents", []),
+                        "redundant": bool(info.get("redundant")),
+                    }
+                    if not traces[rel_path]["redundant"]:
+                        new_mods.append(rel_path)
                 if new_mods:
                     try:
                         from self_test_service import SelfTestService
@@ -234,27 +240,18 @@ def _sandbox_cycle_runner(
                                 logger.exception(
                                     "failed to record self test failures",
                                 )
-
-                        if passed_mods and os.getenv(
-                            "SANDBOX_CLEAN_ORPHANS", ""
-                        ).lower() in ("1", "true", "yes"):
-                            cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
-                            try:
-                                data = (
-                                    json.loads(cache.read_text())
-                                    if cache.exists()
-                                    else []
-                                )
-                                data = [p for p in data if p not in passed_mods]
-                                cache.write_text(json.dumps(sorted(data), indent=2))
-                            except Exception:
-                                pass
                     except Exception:
                         logger.exception("isolated module self testing failed")
                         auto_include_modules(new_mods, recursive=True)
                         module_map.update(new_mods)
                 ctx.module_map = module_map
                 ctx.orphan_traces = traces
+                try:
+                    cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
+                    cache.parent.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(json.dumps(traces, indent=2))
+                except Exception:
+                    logger.exception("failed to record orphan traces")
             except Exception:
                 logger.exception("isolated module auto-inclusion failed")
         logger.info("patch application", extra=log_record(cycle=idx))
