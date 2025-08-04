@@ -13,9 +13,13 @@ import orphan_analyzer
 def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]:
     """Return module names that are never imported by other modules.
 
-    By default this walks the import graph recursively and includes any modules
-    whose importers are exclusively within the orphan set. Set ``recursive`` to
-    ``False`` to return only top-level orphans.
+    The function walks the repository rooted at ``repo_path`` and builds a
+    simple import graph.  Modules listed in ``sandbox_data/module_map.json`` are
+    ignored.  When ``recursive`` is ``True`` (the default) any modules imported
+    solely by other orphan modules are also considered orphans.  Detected
+    redundant modules, determined via :func:`orphan_analyzer.analyze_redundancy`,
+    are filtered out.  Non-redundant orphan paths are cached in
+    ``sandbox_data/orphan_modules.json`` for later inspection.
     """
 
     repo_path = os.path.abspath(repo_path)
@@ -95,13 +99,45 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
                     queue.append(name)
         result = sorted(orphans)
 
+    # Exclude modules already known via module_map.json
+    known: set[str] = set()
     try:
         repo = Path(repo_path)
+        map_file = repo / "sandbox_data" / "module_map.json"
+        if map_file.exists():
+            data = json.loads(map_file.read_text())
+            if isinstance(data, dict):
+                modules_dict = data.get("modules", data)
+                if isinstance(modules_dict, dict):
+                    for k in modules_dict.keys():
+                        p = Path(str(k))
+                        name = p.with_suffix("").as_posix().replace("/", ".")
+                        known.add(name)
+    except Exception:  # pragma: no cover - best effort
+        known = set()
+    if known:
+        result = [m for m in result if m not in known]
+
+    # Filter redundant modules and cache non-redundant paths
+    non_redundant: list[str] = []
+    paths: list[str] = []
+    for name in result:
+        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+        target = mod_path if mod_path.exists() else pkg_init
+        if target.exists():
+            try:
+                if orphan_analyzer.analyze_redundancy(target):
+                    continue
+            except Exception:  # pragma: no cover - best effort
+                pass
+            paths.append(target.relative_to(repo).as_posix())
+        non_redundant.append(name)
+    result = non_redundant
+
+    try:
         data_dir = repo / "sandbox_data"
         cache = data_dir / "orphan_modules.json"
-        paths = [
-            Path(*name.split(".")).with_suffix(".py").as_posix() for name in result
-        ]
         existing: list[str] = []
         if cache.exists():
             try:
@@ -277,17 +313,17 @@ def discover_recursive_orphans(
             for name, info in result.items()
             if not info.get("redundant")
         ]
-        existing: list[str] = []
-        if cache.exists():
-            try:
-                existing = json.loads(cache.read_text()) or []
-                if not isinstance(existing, list):
+        if data_dir.exists():
+            existing: list[str] = []
+            if cache.exists():
+                try:
+                    existing = json.loads(cache.read_text()) or []
+                    if not isinstance(existing, list):
+                        existing = []
+                except Exception:  # pragma: no cover - best effort
                     existing = []
-            except Exception:  # pragma: no cover - best effort
-                existing = []
-        combined = sorted(set(existing).union(paths))
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(combined, indent=2))
+            combined = sorted(set(existing).union(paths))
+            cache.write_text(json.dumps(combined, indent=2))
     except Exception:  # pragma: no cover - best effort
         pass
 
