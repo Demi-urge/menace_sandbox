@@ -28,9 +28,14 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
     setup_logging()
 
-from .data_bot import DataBot
-from .error_bot import ErrorDB
-from .error_logger import ErrorLogger
+try:
+    from .data_bot import DataBot
+    from .error_bot import ErrorDB
+    from .error_logger import ErrorLogger
+except Exception:  # pragma: no cover - fallback when imported directly
+    from data_bot import DataBot  # type: ignore
+    from error_bot import ErrorDB  # type: ignore
+    from error_logger import ErrorLogger  # type: ignore
 
 try:
     from . import metrics_exporter as _me
