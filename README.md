@@ -74,29 +74,35 @@
 - Background updates handled by `UnifiedUpdateService` even without the supervisor
 - Automatic first-run sandbox improving the codebase before live execution
 - Recursive inclusion flow discovers orphan and isolated modules, tests them
-  and integrates passing ones into existing workflows. `sandbox_runner.discover_recursive_orphans`
-  returns a mapping for each module listing its importing `parents` and whether
-  it is `redundant`. The self-test service records this information and the
-  improvement engine integrates only modules whose `redundant` flag is false.
-  Modules marked as redundant are skipped automatically. Defaults set
-  `SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
-  `SANDBOX_RECURSIVE_ORPHANS=1` and `SANDBOX_RECURSIVE_ISOLATED=1`; disable with
-  `--no-recursive-orphans`/`--no-recursive-include` or `--no-recursive-isolated`. The
-  `--auto-include-isolated`
-  flag (or setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) forces isolated modules to
-  be discovered and recursed. Environment flags are mirrored to matching
-  `SELF_TEST_*` variables so the self-test service honours the same behaviour.
+  and integrates passing ones into existing workflows. The helper
+  `scripts/discover_isolated_modules.py` surfaces standalone files while
+  `sandbox_runner.discover_recursive_orphans` maps each candidate to its
+  importing `parents` and marks redundant entries. The self-test service records
+  this metadata and the improvement engine integrates only modules whose
+  `redundant` flag is false. Run the isolated scan with
+  `SANDBOX_DISCOVER_ISOLATED=1` (or `--discover-isolated`) and pair it with
+  `SANDBOX_AUTO_INCLUDE_ISOLATED=1`/`--auto-include-isolated` to test and merge
+  the results automatically. Recursion through dependencies is enabled by default
+  (`SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
+  `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1`); disable with
+  `--no-recursive-orphans`/`--no-recursive-include` or `--no-recursive-isolated`.
+  Use `SANDBOX_CLEAN_ORPHANS=1` (or `--clean-orphans`) to prune processed names
+  from `sandbox_data/orphan_modules.json`. Environment flags are mirrored to
+  matching `SELF_TEST_*` variables so the self-test service honours the same
+  behaviour.
 
   ```bash
   # Example: disable recursion but include isolated modules automatically
-  SANDBOX_RECURSIVE_ORPHANS=0 SANDBOX_RECURSIVE_ISOLATED=0 \
-  SANDBOX_AUTO_INCLUDE_ISOLATED=1 run_autonomous --check-settings
+  SANDBOX_DISCOVER_ISOLATED=1 SANDBOX_RECURSIVE_ORPHANS=0 \
+  SANDBOX_RECURSIVE_ISOLATED=0 SANDBOX_AUTO_INCLUDE_ISOLATED=1 \
+  SANDBOX_CLEAN_ORPHANS=1 run_autonomous --check-settings
   ```
 
   ```bash
   # Same behaviour using CLI flags
   python run_autonomous.py --no-recursive-orphans --no-recursive-isolated \
-      --auto-include-isolated --check-settings
+      --discover-isolated --auto-include-isolated --clean-orphans \
+      --check-settings
   ```
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
@@ -150,16 +156,16 @@ workflows so the new code participates in later simulations.
 If an orphan maps onto an existing workflow group, the sandbox attempts to add it to those sequences automatically.
 Each candidate is tagged with a `redundant` flag by
 `orphan_analyzer.analyze_redundancy`; redundant modules are logged and skipped
-during integration.
-Isolated modules returned by `discover_isolated_modules` are included when
-`--auto-include-isolated` is supplied or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` is set.
-When launched via `run_autonomous.py` this behaviour also sets
-`SANDBOX_AUTO_INCLUDE_ISOLATED=1` so passing modules update the map. Recursion
-through their dependencies is enabled by default
-(`SELF_TEST_RECURSIVE_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`); set
-`SELF_TEST_RECURSIVE_ISOLATED=0` or `SANDBOX_RECURSIVE_ISOLATED=0` or use
-`--no-recursive-isolated` to disable. Use `--auto-include-isolated` to enable
-discovery automatically (equivalent to `SANDBOX_AUTO_INCLUDE_ISOLATED=1`).
+during integration. Isolated modules returned by
+`scripts/discover_isolated_modules.py` are included when `--auto-include-isolated`
+is supplied or `SELF_TEST_AUTO_INCLUDE_ISOLATED=1`/`SANDBOX_AUTO_INCLUDE_ISOLATED=1`
+is set. To run the discovery step explicitly use `--discover-isolated` or set
+`SELF_TEST_DISCOVER_ISOLATED=1`/`SANDBOX_DISCOVER_ISOLATED=1`. Recursion through
+their dependencies is enabled by default (`SELF_TEST_RECURSIVE_ISOLATED=1` and
+`SANDBOX_RECURSIVE_ISOLATED=1`); set `SELF_TEST_RECURSIVE_ISOLATED=0` or
+`SANDBOX_RECURSIVE_ISOLATED=0` or pass `--no-recursive-isolated` to disable.
+Use `--clean-orphans` or `SANDBOX_CLEAN_ORPHANS=1` to prune successful modules
+from the orphan cache after integration.
 
 Example integrating an isolated module with dependencies:
 
