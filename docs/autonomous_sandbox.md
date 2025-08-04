@@ -123,7 +123,12 @@ After the system tools are in place install the Python requirements via
 ### Recursive orphan discovery and integration
 
 The sandbox walks the repository for modules with no inbound references and
-recursively follows their imports. Isolated modules are included in this scan
+recursively follows their imports. The helper script
+`scripts/discover_isolated_modules.py` locates standalone files with no
+references elsewhere in the tree. Setting `SANDBOX_DISCOVER_ISOLATED=1` (or
+passing `--discover-isolated`) runs this scan before the orphan pass, while
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1` (or `--auto-include-isolated`) feeds the
+results directly into the self‑tests. Isolated modules are included in the scan
 and their dependencies are discovered recursively by default
 (`SANDBOX_RECURSIVE_ISOLATED=1`). `sandbox_runner.discover_recursive_orphans`
 starts at each orphan and, when `SANDBOX_RECURSIVE_ORPHANS=1`, follows the
@@ -194,6 +199,8 @@ python run_autonomous.py --recursive-orphans --recursive-isolated
 - `SANDBOX_RECURSIVE_ORPHANS=1` – recurse through orphan dependencies when refreshing the module map (default; set to `0` or use `--no-recursive-include` to disable)
 - `SANDBOX_RECURSIVE_ISOLATED=1` – recurse through isolated modules when
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)
+- `SANDBOX_CLEAN_ORPHANS=1` – prune processed names from `orphan_modules.json`
+  after successful integration
  - `SANDBOX_AUTO_INCLUDE_ISOLATED=0` – disable isolated module discovery
  - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
