@@ -120,7 +120,7 @@ def test_recursive_isolated_integration(monkeypatch, tmp_path):
     # stub discovery to ensure recursion
     called: dict[str, object] = {}
 
-    def fake_discover(root, *, recursive=False):
+    def fake_discover(root, *, recursive=True):
         called["root"] = Path(root)
         called["recursive"] = recursive
         mods = ["isolated.py"]

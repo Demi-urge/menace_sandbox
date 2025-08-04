@@ -108,7 +108,7 @@ def _setup_isolated(monkeypatch, returned):
 
     called = {}
 
-    def discover(root, *, recursive=False):
+    def discover(root, *, recursive=True):
         called["recursive"] = recursive
         called["root"] = root
         return list(returned)

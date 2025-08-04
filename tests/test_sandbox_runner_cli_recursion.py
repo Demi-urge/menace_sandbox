@@ -39,10 +39,10 @@ def _capture_run(monkeypatch, cli, capture):
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = (
             "1" if discover_isolated else "0"
         )
-        recursive_isolated = False
+        recursive_isolated = True
         env_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-        if env_iso is not None and env_iso.lower() in {"1", "true"}:
-            recursive_isolated = True
+        if env_iso is not None and env_iso.lower() in {"0", "false", "no"}:
+            recursive_isolated = False
         arg_iso = getattr(args, "recursive_isolated", None)
         if arg_iso is not None:
             recursive_isolated = arg_iso

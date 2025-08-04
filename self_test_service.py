@@ -241,10 +241,10 @@ class SelfTestService:
 
         env_recursive_iso = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
         if env_recursive_iso is not None:
-            self.recursive_isolated = env_recursive_iso.lower() in (
-                "1",
-                "true",
-                "yes",
+            self.recursive_isolated = env_recursive_iso.lower() not in (
+                "0",
+                "false",
+                "no",
             )
         else:
             self.recursive_isolated = bool(recursive_isolated)
@@ -822,7 +822,7 @@ class SelfTestService:
         if recursive is None:
             env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
             if env_val is not None:
-                recursive = env_val.lower() in ("1", "true", "yes")
+                recursive = env_val.lower() not in ("0", "false", "no")
             else:
                 recursive = self.recursive_isolated
 

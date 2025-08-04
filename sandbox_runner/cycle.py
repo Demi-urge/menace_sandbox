@@ -172,7 +172,7 @@ def _sandbox_cycle_runner(
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules
 
-                recursive = rec_env in ("1", "true", "yes")
+                recursive = rec_env not in ("0", "false", "no")
                 paths = discover_isolated_modules(ctx.repo, recursive=recursive)
 
                 module_map = set(getattr(ctx, "module_map", set()))

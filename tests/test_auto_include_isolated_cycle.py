@@ -30,7 +30,7 @@ def test_auto_include_isolated_cycle(monkeypatch, tmp_path):
     called = {}
     mod = types.ModuleType("scripts.discover_isolated_modules")
 
-    def discover(path, *, recursive=False):
+    def discover(path, *, recursive=True):
         called["recursive"] = recursive
         assert Path(path) == repo
         return ["iso.py", "dep.py"]
