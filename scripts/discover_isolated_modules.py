@@ -27,8 +27,10 @@ def discover_isolated_modules(
 ) -> list[str]:
     """Return sorted paths of isolated modules under *base_dir*.
 
-    ``analyze_redundancy`` is used internally to filter modules marked as
-    redundant but the returned list contains only the remaining module paths.
+    Dependencies of isolated modules are traversed when ``recursive`` is
+    true which is the default.  ``analyze_redundancy`` is used internally to
+    filter modules marked as redundant but the returned list contains only the
+    remaining module paths.
     """
     import json
 
@@ -111,9 +113,9 @@ if __name__ == "__main__":  # pragma: no cover - simple CLI
         "--no-recursive",
         action="store_false",
         dest="recursive",
+        default=True,
         help="Exclude dependencies of isolated modules",
     )
-    parser.set_defaults(recursive=True)
     args = parser.parse_args()
     res = discover_isolated_modules(Path(args.path), recursive=args.recursive)
     print(json.dumps(res, indent=2))

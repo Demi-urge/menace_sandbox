@@ -166,8 +166,7 @@ def _sandbox_cycle_runner(
         except TypeError:
             ctx.sandbox.analyse_and_fix()
         auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "").lower()
-        discover_env = os.getenv("SANDBOX_DISCOVER_ISOLATED", "").lower()
-        rec_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "").lower()
+        rec_env = os.getenv("SANDBOX_RECURSIVE_ISOLATED", "1").lower()
         if auto_iso in ("1", "true", "yes"):
             try:
                 from scripts.discover_isolated_modules import discover_isolated_modules
