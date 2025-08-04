@@ -3,7 +3,23 @@ from __future__ import annotations
 """Periodic self-improvement engine for the Menace system."""
 
 import logging
-from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
+try:
+    from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
+except Exception:  # pragma: no cover - simplified environments
+    try:
+        from logging_utils import log_record  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        def log_record(**fields: object) -> dict[str, object]:  # type: ignore
+            return fields
+
+    def get_logger(name: str) -> logging.Logger:  # type: ignore
+        return logging.getLogger(name)
+
+    def setup_logging() -> None:  # type: ignore
+        return
+
+    def set_correlation_id(_: str | None) -> None:  # type: ignore
+        return
 import time
 import threading
 import asyncio
@@ -17,6 +33,7 @@ from .metrics_exporter import (
     synergy_weight_updates_total,
     synergy_weight_update_failures_total,
     synergy_weight_update_alerts_total,
+    orphan_modules_reintroduced_total,
 )
 from alert_dispatcher import dispatch_alert
 import json
@@ -1375,6 +1392,9 @@ class SelfImprovementEngine:
         modules = [str(p) for p in paths]
         if not modules:
             return set()
+        self.logger.info(
+            "self test start", extra=log_record(modules=sorted(modules))
+        )
 
         try:  # pragma: no cover - dynamic imports for isolated tests
             from self_test_service import SelfTestService as _STS
@@ -1408,6 +1428,16 @@ class SelfImprovementEngine:
                     )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed")
+            failed_mods = sorted(set(modules) - passed)
+            self.logger.info(
+                "self test summary",
+                extra=log_record(
+                    tested=sorted(modules),
+                    passed=sorted(passed),
+                    failed=failed_mods,
+                    redundant=[],
+                ),
+            )
             return passed
 
         svc = _STS(
@@ -1447,12 +1477,17 @@ class SelfImprovementEngine:
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
 
+        failed_mods = [m for m in modules if m not in passing and m not in redundant]
         self.logger.info(
             "self test summary",
             extra=log_record(
-                passed=len(passing),
-                failed=int(results.get("failed", 0)),
-                redundant=len(redundant),
+                tested=sorted(modules),
+                passed=sorted(passing),
+                failed=sorted(failed_mods),
+                redundant=sorted(redundant),
+                passed_count=len(passing),
+                failed_count=len(failed_mods),
+                redundant_count=len(redundant),
             ),
         )
 
@@ -1542,6 +1577,10 @@ class SelfImprovementEngine:
                         orphan_path.write_text(json.dumps(sorted(keep), indent=2))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan modules")
+            try:
+                orphan_modules_reintroduced_total.inc(len(mods))
+            except Exception:
+                pass
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
@@ -1738,6 +1777,20 @@ class SelfImprovementEngine:
                 if isinstance(v, dict) and "redundant" in v:
                     info["redundant"] = bool(v["redundant"])
                 discovered[str(Path(*k.split(".")).with_suffix(".py"))] = info
+
+            if discovered:
+                self.logger.info(
+                    "orphan discovery",
+                    extra=log_record(
+                        discovered=sorted(discovered.keys()),
+                        redundant=[
+                            m for m, inf in discovered.items() if inf.get("redundant")
+                        ],
+                        parents={
+                            m: inf.get("parents", []) for m, inf in discovered.items()
+                        },
+                    ),
+                )
 
             existing = getattr(self, "orphan_traces", {})
             for mod, info in discovered.items():

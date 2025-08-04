@@ -398,6 +398,10 @@ synergy_adaptation_actions_total = Gauge(
     "Total preset adaptation decisions",
     labelnames=["action"],
 )
+orphan_modules_reintroduced_total = Gauge(
+    "orphan_modules_reintroduced_total",
+    "Total number of orphan modules reintroduced after tests",
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )
