@@ -28,7 +28,8 @@ import math
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
-from sandbox_runner.environment import auto_include_modules
+import sandbox_runner.environment as environment
+from .self_test_service import SelfTestService
 from orphan_analyzer import analyze_redundancy
 
 import numpy as np
@@ -1360,67 +1361,74 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _test_orphan_modules(self, paths: Iterable[str]) -> set[str]:
-        """Execute sandbox simulations for ``paths`` and return those that pass.
+        """Run self tests for ``paths`` and integrate successful modules.
 
-        Modules are considered successful when all recorded executions exit with
-        status code ``0`` **and** the collected ROI or synergy metrics exceed
-        ``SELF_TEST_ROI_THRESHOLD`` or ``SELF_TEST_SYNERGY_THRESHOLD``. Metrics
-        are logged for each module and any failures or low scores are excluded
-        from the returned set.
+        The modules are executed via :class:`SelfTestService` with orphan
+        discovery enabled. After the test run any modules that pass are
+        automatically included into the workflow system using
+        :func:`sandbox_runner.environment.auto_include_modules` with recursive
+        dependency discovery enabled. Modules identified as redundant are
+        recorded in ``self.orphan_traces`` for future runs. Basic metrics about
+        the run are logged and stored via ``data_bot`` when available.
         """
 
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         modules = [str(p) for p in paths]
         if not modules:
             return set()
 
-        roi_threshold = float(os.getenv("SELF_TEST_ROI_THRESHOLD", "0") or 0.0)
-        syn_threshold = float(os.getenv("SELF_TEST_SYNERGY_THRESHOLD", "0") or 0.0)
+        svc = SelfTestService(
+            pytest_args=" ".join(modules),
+            include_orphans=True,
+            discover_orphans=True,
+            discover_isolated=True,
+            recursive_orphans=True,
+            recursive_isolated=True,
+            clean_orphans=True,
+            disable_auto_integration=True,
+        )
 
         try:
-            from sandbox_runner import run_repo_section_simulations
-
-            tracker, details = run_repo_section_simulations(
-                str(repo), modules=modules, return_details=True
-            )
+            asyncio.run(svc._run_once())
         except Exception as exc:  # pragma: no cover - best effort
-            self.logger.exception("sandbox execution failed: %s", exc)
+            self.logger.exception("self test execution failed: %s", exc)
             return set()
 
-        passing: set[str] = set()
-        module_deltas = getattr(tracker, "module_deltas", {}) if tracker else {}
-        for mod in modules:
-            sec_map = details.get(mod, {}) if isinstance(details, dict) else {}
-            failed = False
-            for runs in sec_map.values():
-                for entry in runs:
-                    res = entry.get("result", {})
-                    if res.get("exit_code") not in (0, None):
-                        failed = True
-                        break
-                if failed:
-                    break
-            if failed or not sec_map:
-                self.logger.info(
-                    "sandbox tests failed",
-                    extra=log_record(module=Path(mod).name),
-                )
-                continue
+        results = svc.results or {}
+        passed = set(results.get("orphan_passed", []))
+        redundant = set(results.get("orphan_redundant", []))
 
-            sec_roi = sum(
-                sum(vals)
-                for key, vals in module_deltas.items()
-                if key.startswith(f"{mod}:")
+        for name in redundant:
+            self.orphan_traces.setdefault(name, {})["redundant"] = True
+            self.logger.info(
+                "redundant module recorded",
+                extra=log_record(module=Path(name).name),
             )
-            syn_roi = sum(module_deltas.get(mod, []))
-            total_roi = sec_roi + syn_roi
 
-            metrics = log_record(module=Path(mod).name, roi=total_roi, synergy_roi=syn_roi)
-            if total_roi > roi_threshold or syn_roi > syn_threshold:
-                self.logger.info("sandbox metrics", extra=metrics)
-                passing.add(mod)
-            else:
-                self.logger.info("sandbox metrics below thresholds", extra=metrics)
+        passing = {p for p in passed if p not in redundant}
+        if passing:
+            try:
+                environment.auto_include_modules(sorted(passing), recursive=True)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("auto inclusion failed: %s", exc)
+
+        self.logger.info(
+            "self test summary",
+            extra=log_record(
+                passed=len(passing),
+                failed=int(results.get("failed", 0)),
+                redundant=len(redundant),
+            ),
+        )
+
+        if self.data_bot and getattr(self.data_bot, "metrics_db", None):
+            try:
+                cycle = datetime.utcnow().isoformat()
+                db = self.data_bot.metrics_db
+                db.log_eval(cycle, "self_test_passed", float(len(passing)))
+                if redundant:
+                    db.log_eval(cycle, "self_test_redundant", float(len(redundant)))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to record self test metrics")
 
         return passing
 
@@ -1471,7 +1479,7 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
-                auto_include_modules(sorted(mods), recursive=True)
+                environment.auto_include_modules(sorted(mods), recursive=True)
                 if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                     try:
                         self._update_orphan_modules()
@@ -1733,7 +1741,7 @@ class SelfImprovementEngine:
                         "module map refresh failed: %s", exc
                     )
             try:
-                auto_include_modules(sorted(filtered))
+                environment.auto_include_modules(sorted(filtered))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
 
@@ -1862,7 +1870,7 @@ class SelfImprovementEngine:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 abs_paths = [str(repo / p) for p in passing]
                 try:
-                    auto_include_modules(sorted(passing), recursive=True)
+                    environment.auto_include_modules(sorted(passing), recursive=True)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 try:
@@ -1945,7 +1953,7 @@ class SelfImprovementEngine:
                 deps = self._collect_recursive_modules(abs_new)
                 abs_deps = [str(repo / p) for p in deps]
                 try:
-                    auto_include_modules(sorted(deps), recursive=True)
+                    environment.auto_include_modules(sorted(deps), recursive=True)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 self._integrate_orphans(abs_deps)
