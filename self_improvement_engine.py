@@ -1598,7 +1598,38 @@ class SelfImprovementEngine:
             self.orphan_traces = {}
 
         if modules:
-            self._refresh_module_map(modules)
+            repo_mods = self._collect_recursive_modules(modules)
+            passing = self._test_orphan_modules(repo_mods)
+            if passing:
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                abs_paths = [
+                    str(repo / p) if not Path(p).is_absolute() else str(Path(p))
+                    for p in passing
+                ]
+                try:
+                    environment.auto_include_modules(sorted(passing), recursive=True)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed: %s", exc)
+                try:
+                    self._integrate_orphans(abs_paths)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("orphan integration failed: %s", exc)
+                try:
+                    self._refresh_module_map()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("module map refresh failed: %s", exc)
+                try:
+                    existing = json.loads(path.read_text()) if path.exists() else []
+                except Exception:  # pragma: no cover - best effort
+                    existing = []
+                passing_names = {Path(p).name for p in passing}
+                keep = [m for m in existing if Path(m).name not in passing_names]
+                if len(keep) != len(existing):
+                    try:
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(json.dumps(sorted(keep), indent=2))
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to clean orphan modules")
             return
 
         if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
