@@ -40,7 +40,11 @@ logger = get_logger(__name__)
 
 from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
 from .resource_tuner import ResourceTuner
-from .orphan_discovery import discover_recursive_orphans
+from .orphan_discovery import (
+    discover_recursive_orphans,
+    append_orphan_cache,
+    prune_orphan_cache,
+)
 
 
 def map_module_identifier(name: str, repo: Path) -> str:
@@ -195,16 +199,13 @@ def _sandbox_cycle_runner(
                     except Exception:
                         logger.exception("isolated module auto-inclusion failed")
                 ctx.module_map = module_map
-                ctx.orphan_traces = traces
                 try:
-                    cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
-                    existing = json.loads(cache.read_text()) if cache.exists() else {}
-                except Exception:
-                    existing = {}
-                existing.update(traces)
-                try:
-                    cache.parent.mkdir(parents=True, exist_ok=True)
-                    cache.write_text(json.dumps(existing, indent=2))
+                    append_orphan_cache(ctx.repo, traces)
+                    if new_mods:
+                        prune_orphan_cache(ctx.repo, new_mods, traces)
+                        for m in new_mods:
+                            traces.pop(m, None)
+                    ctx.orphan_traces = traces
                 except Exception:
                     logger.exception("failed to record orphan traces")
             except Exception:

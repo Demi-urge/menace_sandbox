@@ -4,9 +4,96 @@ import ast
 import json
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Iterable, List, Dict
 
 import orphan_analyzer
+
+
+def _cache_path(repo: Path | str) -> Path:
+    """Return path to the orphan module cache for ``repo``."""
+
+    repo_path = Path(repo)
+    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+    cache_dir = Path(data_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo_path / cache_dir
+    return cache_dir / "orphan_modules.json"
+
+
+def load_orphan_cache(repo: Path | str) -> Dict[str, Dict[str, Any]]:
+    """Load ``orphan_modules.json`` as a mapping.
+
+    Older installations stored the data as a list of strings. This helper
+    normalises the structure and always returns a dictionary mapping module
+    paths to metadata dictionaries.
+    """
+
+    path = _cache_path(repo)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text()) or {}
+    except Exception:  # pragma: no cover - best effort
+        return {}
+    if isinstance(data, list):
+        return {str(p): {} for p in data}
+    if isinstance(data, dict):
+        norm: Dict[str, Dict[str, Any]] = {}
+        for k, v in data.items():
+            if isinstance(v, dict):
+                norm[str(k)] = {str(kk): vv for kk, vv in v.items()}
+            else:
+                norm[str(k)] = {}
+        return norm
+    return {}
+
+
+def _save_orphan_cache(repo: Path | str, data: Dict[str, Dict[str, Any]]) -> None:
+    path = _cache_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+
+def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) -> None:
+    """Merge ``entries`` into ``orphan_modules.json`` for ``repo``."""
+
+    if not entries:
+        return
+    data = load_orphan_cache(repo)
+    changed = False
+    for key, info in entries.items():
+        cur = data.get(key, {})
+        if isinstance(info, dict):
+            cur.update(info)
+        data[key] = cur
+        changed = True
+    if changed:
+        _save_orphan_cache(repo, data)
+
+
+def prune_orphan_cache(
+    repo: Path | str,
+    modules: Iterable[str],
+    traces: Dict[str, Dict[str, Any]] | None = None,
+) -> None:
+    """Remove ``modules`` from the orphan cache unless marked redundant."""
+
+    data = load_orphan_cache(repo)
+    changed = False
+    for mod in modules:
+        info = data.get(mod, {})
+        redundant = info.get("redundant")
+        if traces and mod in traces:
+            redundant = traces[mod].get("redundant", redundant)
+        if redundant:
+            data[mod] = {"redundant": True}
+        elif mod in data:
+            del data[mod]
+        else:
+            continue
+        changed = True
+    if changed:
+        _save_orphan_cache(repo, data)
 
 
 
@@ -23,6 +110,7 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
     """
 
     repo_path = os.path.abspath(repo_path)
+    repo = Path(repo_path)
 
     modules: dict[str, str] = {}
     imported_by: dict[str, set[str]] = {}
@@ -135,22 +223,25 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
         non_redundant.append(name)
     result = non_redundant
 
-    try:
-        data_dir = repo / "sandbox_data"
-        cache = data_dir / "orphan_modules.json"
-        existing: list[str] = []
-        if cache.exists():
-            try:
-                existing = json.loads(cache.read_text()) or []
-                if not isinstance(existing, list):
-                    existing = []
-            except Exception:  # pragma: no cover - best effort
-                existing = []
-        combined = sorted(set(existing).union(paths))
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(combined, indent=2))
+    try:  # best effort cache update
+        entries = {p: {} for p in paths}
+        append_orphan_cache(repo, entries)
     except Exception:  # pragma: no cover - best effort
-        pass
+        try:
+            cache = repo / "sandbox_data" / "orphan_modules.json"
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            existing = {}
+            if cache.exists():
+                try:
+                    existing = json.loads(cache.read_text()) or {}
+                except Exception:
+                    existing = {}
+            if isinstance(existing, list):
+                existing = {str(p): {} for p in existing}
+            existing.update(entries)
+            cache.write_text(json.dumps(existing, indent=2))
+        except Exception:
+            pass
 
     return result
 
@@ -306,24 +397,16 @@ def discover_recursive_orphans(
     }
 
     try:  # best effort cache
-        data_dir = repo / "sandbox_data"
-        cache = data_dir / "orphan_modules.json"
-        paths = [
-            Path(*name.split(".")).with_suffix(".py").as_posix()
-            for name, info in result.items()
-            if not info.get("redundant")
-        ]
-        if data_dir.exists():
-            existing: list[str] = []
-            if cache.exists():
-                try:
-                    existing = json.loads(cache.read_text()) or []
-                    if not isinstance(existing, list):
-                        existing = []
-                except Exception:  # pragma: no cover - best effort
-                    existing = []
-            combined = sorted(set(existing).union(paths))
-            cache.write_text(json.dumps(combined, indent=2))
+        entries: Dict[str, Dict[str, Any]] = {}
+        for name, info in result.items():
+            mod_path = Path(*name.split(".")).with_suffix(".py")
+            pkg_init = Path(*name.split(".")) / "__init__.py"
+            target = mod_path if (repo / mod_path).exists() else pkg_init
+            entries[target.as_posix()] = {
+                "parents": info.get("parents", []),
+                "redundant": bool(info.get("redundant")),
+            }
+        append_orphan_cache(repo, entries)
     except Exception:  # pragma: no cover - best effort
         pass
 
