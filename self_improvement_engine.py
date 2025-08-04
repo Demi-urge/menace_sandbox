@@ -646,9 +646,21 @@ class SelfImprovementEngine:
             self._last_map_refresh = 0.0
         if self.module_index and self.patch_db:
             try:
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 with self.patch_db._connect() as conn:
-                    rows = conn.execute("SELECT DISTINCT filename FROM patch_history").fetchall()
-                mods = [str(Path(r[0]).name) for r in rows]
+                    rows = conn.execute(
+                        "SELECT DISTINCT filename FROM patch_history"
+                    ).fetchall()
+                mods: list[str] = []
+                for r in rows:
+                    p = Path(r[0])
+                    if not p.is_absolute():
+                        p = repo / p
+                    try:
+                        rel = p.relative_to(repo).as_posix()
+                    except Exception:
+                        rel = p.as_posix()
+                    mods.append(rel)
                 self.module_index.refresh(mods)
             except Exception:
                 self.logger.exception("module map refresh failed during init")
@@ -668,8 +680,7 @@ class SelfImprovementEngine:
                 repo_path = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 discovered = discover_module_groups(repo_path)
                 module_groups = {
-                    (Path(m).name + (".py" if "." not in Path(m).name else "")):
-                    grp
+                    (m if m.endswith(".py") else f"{m}.py"): grp
                     for grp, mods in discovered.items()
                     for m in mods
                 }
@@ -1143,6 +1154,7 @@ class SelfImprovementEngine:
         )
         if pdb:
             try:
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 with pdb._connect() as conn:
                     rows = conn.execute(
                         "SELECT roi_delta, complexity_delta, reverted, filename "
@@ -1155,7 +1167,12 @@ class SelfImprovementEngine:
                     revert_rate = float(
                         sum(1 for r in rows if r[2]) / len(rows)
                     )
-                    mod_name = Path(rows[0][3]).name
+                    p = Path(rows[0][3])
+                    abs_p = p if p.is_absolute() else repo / p
+                    try:
+                        mod_name = abs_p.resolve().relative_to(repo).as_posix()
+                    except Exception:
+                        mod_name = p.name
                     module_idx = self.module_index.get(mod_name)
                     mods = [m for m, idx in self.module_clusters.items() if idx == module_idx]
                     try:
@@ -1163,7 +1180,7 @@ class SelfImprovementEngine:
                             placeholders = ",".join("?" * len(mods))
                             total = conn.execute(
                                 f"SELECT SUM(roi_delta) FROM patch_history WHERE filename IN ({placeholders})",
-                                mods,
+                                [Path(m).name for m in mods],
                             ).fetchone()
                             module_trend = float(total[0] or 0.0)
                         else:
@@ -1417,7 +1434,7 @@ class SelfImprovementEngine:
                 failed = any(s.get("result", {}).get("exit_code") for s in sec)
                 if failed:
                     self.logger.info(
-                        "self tests failed", extra=log_record(module=Path(m).name)
+                        "self tests failed", extra=log_record(module=m)
                     )
                     continue
                 passed.add(m)
@@ -1465,7 +1482,7 @@ class SelfImprovementEngine:
             self.orphan_traces.setdefault(name, {})["redundant"] = True
             self.logger.info(
                 "redundant module recorded",
-                extra=log_record(module=Path(name).name),
+                extra=log_record(module=name),
             )
 
         passing = {p for p in passed if p not in redundant}
@@ -1522,21 +1539,27 @@ class SelfImprovementEngine:
         if not self.module_index:
             return set()
 
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         mods: set[str] = set()
         for p in paths:
             path = Path(p)
             try:
                 if analyze_redundancy(path):
+                    rel = path.resolve().relative_to(repo).as_posix()
                     self.logger.info(
                         "redundant module skipped",
-                        extra=log_record(module=path.name),
+                        extra=log_record(module=rel),
                     )
                     continue
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "redundancy analysis failed for %s: %s", path, exc
                 )
-            mods.add(path.name)
+            try:
+                rel = path.resolve().relative_to(repo).as_posix()
+            except Exception:
+                rel = path.name
+            mods.add(rel)
 
         unknown = [m for m in mods if m not in self.module_clusters]
         if not unknown:
@@ -1572,7 +1595,7 @@ class SelfImprovementEngine:
                         existing = json.loads(orphan_path.read_text()) or []
                     except Exception:  # pragma: no cover - best effort
                         existing = []
-                    keep = [p for p in existing if Path(p).name not in mods]
+                    keep = [p for p in existing if p not in mods]
                     if len(keep) != len(existing):
                         orphan_path.write_text(json.dumps(sorted(keep), indent=2))
             except Exception:  # pragma: no cover - best effort
@@ -1674,10 +1697,7 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
             if passing:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                abs_paths = [
-                    str(repo / p) if not Path(p).is_absolute() else str(Path(p))
-                    for p in passing
-                ]
+                abs_paths = [str(repo / p) for p in passing]
                 try:
                     environment.auto_include_modules(
                         sorted(passing), recursive=True, validate=True
@@ -1696,8 +1716,7 @@ class SelfImprovementEngine:
                     existing = json.loads(path.read_text()) if path.exists() else []
                 except Exception:  # pragma: no cover - best effort
                     existing = []
-                passing_names = {Path(p).name for p in passing}
-                keep = [m for m in existing if Path(m).name not in passing_names]
+                keep = [m for m in existing if m not in passing]
                 if len(keep) != len(existing):
                     try:
                         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1840,11 +1859,11 @@ class SelfImprovementEngine:
                     redundant_flag = False
                 info["redundant"] = redundant_flag
 
-            classifications[p.name] = {"redundant": redundant_flag}
+            classifications[m] = {"redundant": redundant_flag}
             if redundant_flag:
-                skipped.append(p.name)
+                skipped.append(m)
                 self.logger.info(
-                    "redundant module skipped", extra=log_record(module=p.name)
+                    "redundant module skipped", extra=log_record(module=m)
                 )
                 continue
             filtered.append(m)
@@ -1858,7 +1877,7 @@ class SelfImprovementEngine:
             module_index = getattr(self, "module_index", None)
             if module_index:
                 try:
-                    module_index.refresh([Path(m).name for m in filtered], force=True)
+                    module_index.refresh(filtered, force=True)
                     module_index.save()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
@@ -1866,7 +1885,7 @@ class SelfImprovementEngine:
                     )
             try:
                 environment.auto_include_modules(
-                    sorted(filtered), validate=True
+                    sorted(filtered), recursive=True, validate=True
                 )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
@@ -1886,49 +1905,43 @@ class SelfImprovementEngine:
             return
 
         passing = self._test_orphan_modules(filtered)
-        passing_names = {Path(p).name for p in passing}
+        passing_names = set(passing)
         integrate_candidates = [
             p for p in passing if not self.orphan_traces.get(p, {}).get("redundant")
         ]
         integrated: set[str] = set()
         if integrate_candidates:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            abs_paths = [
-                str(repo / p) if not Path(p).is_absolute() else str(Path(p))
-                for p in integrate_candidates
-            ]
+            abs_paths = [str(repo / p) for p in integrate_candidates]
             try:
                 integrated = self._integrate_orphans(abs_paths)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan integration failed: %s", exc)
-
-        integrated_names = {Path(p).name for p in integrated}
+        integrated_names = set(integrated)
         if integrated_names:
             for m in integrate_candidates:
-                name = Path(m).name
-                if name in integrated_names:
+                if m in integrated_names:
                     self.logger.info(
                         "orphan module integrated",
                         extra=log_record(
-                            module=name,
+                            module=m,
                             parents=self.orphan_traces.get(m, {}).get("parents", []),
                         ),
                     )
 
         for m in modules:
-            name = Path(m).name
             info = classifications.setdefault(
-                name, {"redundant": self.orphan_traces.get(m, {}).get("redundant", False)}
+                m, {"redundant": self.orphan_traces.get(m, {}).get("redundant", False)}
             )
-            if name not in integrated_names:
+            if m not in integrated_names:
                 if info.get("redundant"):
                     self.logger.info(
-                        "redundant module classified", extra=log_record(module=name)
+                        "redundant module classified", extra=log_record(module=m)
                     )
                 else:
                     info["legacy"] = True
                     self.logger.info(
-                        "legacy module classified", extra=log_record(module=name)
+                        "legacy module classified", extra=log_record(module=m)
                     )
 
         try:
@@ -1938,10 +1951,10 @@ class SelfImprovementEngine:
             existing = []
         env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
         if env_clean and env_clean.lower() in ("1", "true", "yes"):
-            existing = [m for m in existing if Path(m).name not in passing_names]
-            remaining = [m for m in filtered if Path(m).name not in passing_names]
+            existing = [m for m in existing if m not in passing]
+            remaining = [m for m in filtered if m not in passing]
         else:
-            remaining = [m for m in filtered if Path(m).name not in integrated]
+            remaining = [m for m in filtered if m not in integrated]
         remaining = [
             m for m in remaining if not self.orphan_traces.get(m, {}).get("redundant")
         ]
@@ -2026,25 +2039,29 @@ class SelfImprovementEngine:
         pending: dict[str, Path] = {}
         for r in rows:
             p = Path(r[0])
-            name = p.name
-            if name in self.module_clusters or name in pending:
+            abs_p = p if p.is_absolute() else repo / p
+            try:
+                rel = abs_p.resolve().relative_to(repo).as_posix()
+            except Exception:
                 continue
-            pending[name] = p if p.is_absolute() else repo / p
+            if rel in self.module_clusters or rel in pending:
+                continue
+            pending[rel] = abs_p
         new_mods: set[str] = set()
         skipped: set[str] = set()
-        for name, path in pending.items():
+        for rel, path in pending.items():
             try:
                 if analyze_redundancy(path):
-                    skipped.add(name)
+                    skipped.add(rel)
                     self.logger.info(
-                        "redundant module skipped", extra=log_record(module=name)
+                        "redundant module skipped", extra=log_record(module=rel)
                     )
                     continue
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "redundancy analysis failed for %s: %s", path, exc
                 )
-            new_mods.add(name)
+            new_mods.add(rel)
         if skipped:
             self.logger.info(
                 "redundant modules skipped", extra=log_record(modules=sorted(skipped))
@@ -2055,9 +2072,10 @@ class SelfImprovementEngine:
             exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = build_module_map(repo, ignore=exclude)
+            mapping = { (f"{k}.py" if not k.endswith(".py") else k): v for k, v in mapping.items() }
             if skipped:
                 for key in list(mapping.keys()):
-                    if f"{Path(key).name}.py" in skipped or key in skipped:
+                    if key in skipped:
                         mapping.pop(key, None)
             self.module_index.merge_groups(mapping)
             self.module_clusters.update(mapping)
@@ -2109,10 +2127,7 @@ class SelfImprovementEngine:
                 passing = self._test_orphan_modules(orphans)
                 if passing:
                     repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                    abs_paths = [
-                        str(repo / p) if not Path(p).is_absolute() else str(Path(p))
-                        for p in passing
-                    ]
+                    abs_paths = [str(repo / p) for p in passing]
                     try:
                         self._integrate_orphans(abs_paths)
                     except Exception as exc:  # pragma: no cover - best effort
@@ -2494,12 +2509,18 @@ class SelfImprovementEngine:
             group_idx = None
             if self.patch_db:
                 try:
+                    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                     with self.patch_db._connect() as conn:
                         row = conn.execute(
                             "SELECT filename FROM patch_history ORDER BY id DESC LIMIT 1"
                         ).fetchone()
                     if row:
-                        mod_name = Path(row[0]).name
+                        p = Path(row[0])
+                        abs_p = p if p.is_absolute() else repo / p
+                        try:
+                            mod_name = abs_p.resolve().relative_to(repo).as_posix()
+                        except Exception:
+                            mod_name = p.name
                         group_idx = self.module_clusters.get(mod_name)
                         if group_idx is None and self.module_index:
                             group_idx = self.module_index.get(mod_name)
