@@ -1403,7 +1403,9 @@ class SelfImprovementEngine:
                 passed.add(m)
             if passed:
                 try:
-                    environment.auto_include_modules(sorted(passed), recursive=True)
+                    environment.auto_include_modules(
+                        sorted(passed), recursive=True, validate=True
+                    )
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed")
             return passed
@@ -1439,7 +1441,9 @@ class SelfImprovementEngine:
         passing = {p for p in passed if p not in redundant}
         if passing:
             try:
-                environment.auto_include_modules(sorted(passing), recursive=True)
+                environment.auto_include_modules(
+                    sorted(passing), recursive=True, validate=True
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
 
@@ -1511,7 +1515,9 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
-                environment.auto_include_modules(sorted(mods), recursive=True)
+                environment.auto_include_modules(
+                    sorted(mods), recursive=True, validate=True
+                )
                 if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
                     try:
                         self._update_orphan_modules()
@@ -1634,7 +1640,9 @@ class SelfImprovementEngine:
                     for p in passing
                 ]
                 try:
-                    environment.auto_include_modules(sorted(passing), recursive=True)
+                    environment.auto_include_modules(
+                        sorted(passing), recursive=True, validate=True
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 try:
@@ -1804,7 +1812,9 @@ class SelfImprovementEngine:
                         "module map refresh failed: %s", exc
                     )
             try:
-                environment.auto_include_modules(sorted(filtered))
+                environment.auto_include_modules(
+                    sorted(filtered), validate=True
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
 
@@ -1933,7 +1943,9 @@ class SelfImprovementEngine:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                 abs_paths = [str(repo / p) for p in passing]
                 try:
-                    environment.auto_include_modules(sorted(passing), recursive=True)
+                    environment.auto_include_modules(
+                        sorted(passing), recursive=True, validate=True
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 try:
@@ -2016,7 +2028,9 @@ class SelfImprovementEngine:
                 deps = self._collect_recursive_modules(abs_new)
                 abs_deps = [str(repo / p) for p in deps]
                 try:
-                    environment.auto_include_modules(sorted(deps), recursive=True)
+                    environment.auto_include_modules(
+                        sorted(deps), recursive=True, validate=True
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
                 self._integrate_orphans(abs_deps)

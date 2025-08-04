@@ -190,66 +190,21 @@ def _sandbox_cycle_runner(
                         new_mods.append(rel_path)
                 if new_mods:
                     try:
-                        from self_test_service import SelfTestService
-
-                        passed_mods: list[str] = []
-                        failed_mods: list[str] = []
-
-                        for mod in new_mods:
-                            try:
-                                svc = SelfTestService(
-                                    pytest_args=mod,
-                                    include_orphans=False,
-                                    discover_orphans=False,
-                                    discover_isolated=False,
-                                    disable_auto_integration=True,
-                                )
-                                res = svc.run_once()
-                                if res.get("failed"):
-                                    failed_mods.append(mod)
-                                else:
-                                    passed_mods.append(mod)
-                            except Exception:
-                                logger.exception("self tests failed for %s", mod)
-                                failed_mods.append(mod)
-
-                        if passed_mods:
-                            auto_include_modules(passed_mods, recursive=True)
-                            module_map.update(passed_mods)
-
-                        if failed_mods:
-                            logger.warning(
-                                "self tests failed for %s",
-                                ", ".join(sorted(failed_mods)),
-                            )
-                            fail_cache = (
-                                ctx.repo
-                                / "sandbox_data"
-                                / "failed_isolated_modules.json"
-                            )
-                            try:
-                                existing = (
-                                    json.loads(fail_cache.read_text())
-                                    if fail_cache.exists()
-                                    else []
-                                )
-                                existing = sorted(set(existing) | set(failed_mods))
-                                fail_cache.parent.mkdir(parents=True, exist_ok=True)
-                                fail_cache.write_text(json.dumps(existing, indent=2))
-                            except Exception:
-                                logger.exception(
-                                    "failed to record self test failures",
-                                )
-                    except Exception:
-                        logger.exception("isolated module self testing failed")
-                        auto_include_modules(new_mods, recursive=True)
+                        auto_include_modules(new_mods, recursive=True, validate=True)
                         module_map.update(new_mods)
+                    except Exception:
+                        logger.exception("isolated module auto-inclusion failed")
                 ctx.module_map = module_map
                 ctx.orphan_traces = traces
                 try:
                     cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
+                    existing = json.loads(cache.read_text()) if cache.exists() else {}
+                except Exception:
+                    existing = {}
+                existing.update(traces)
+                try:
                     cache.parent.mkdir(parents=True, exist_ok=True)
-                    cache.write_text(json.dumps(traces, indent=2))
+                    cache.write_text(json.dumps(existing, indent=2))
                 except Exception:
                     logger.exception("failed to record orphan traces")
             except Exception:
