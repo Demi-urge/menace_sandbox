@@ -571,6 +571,162 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
+    def _collect_recursive(self, mods: Iterable[str]) -> set[str]:
+        """Return modules reachable from *mods* while recording parent chains.
+
+        ``self.orphan_traces`` is updated in-place to ensure each discovered
+        module contains a ``parents`` list preserving the import chain and a
+        ``redundant`` flag determined via :func:`analyze_redundancy`.
+        """
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        queue: list[tuple[Path, list[str]]] = []
+        seen: set[str] = set()
+
+        for m in mods:
+            p = Path(m)
+            if not p.is_absolute():
+                p = repo / p
+            key = p.relative_to(repo).as_posix()
+            parents = list(self.orphan_traces.get(key, {}).get("parents", []))
+            queue.append((p, parents))
+
+        while queue:
+            path, parents = queue.pop()
+            try:
+                rel = path.relative_to(repo).as_posix()
+            except Exception:
+                continue
+
+            entry = self.orphan_traces.setdefault(rel, {"parents": [], "redundant": None})
+            if parents:
+                entry_parents = entry.get("parents", [])
+                entry["parents"] = list(dict.fromkeys(entry_parents + parents))
+            if entry.get("redundant") is None:
+                try:
+                    entry["redundant"] = bool(analyze_redundancy(path))
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("redundancy analysis failed for %s", path)
+                    entry["redundant"] = False
+
+            if rel in seen:
+                continue
+            seen.add(rel)
+
+            if not path.exists():
+                continue
+            try:
+                src = path.read_text(encoding="utf-8")
+                tree = ast.parse(src)
+            except Exception:
+                continue
+
+            pkg_parts = rel.split("/")[:-1]
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        name = alias.name
+                        mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                        pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                        dep = (
+                            mod_path
+                            if mod_path.exists()
+                            else pkg_init
+                            if pkg_init.exists()
+                            else None
+                        )
+                        if dep is not None:
+                            dep_rel = dep.relative_to(repo).as_posix()
+                            dep_parents = [rel] + parents
+                            dep_entry = self.orphan_traces.setdefault(
+                                dep_rel, {"parents": [], "redundant": None}
+                            )
+                            dep_entry["parents"] = list(
+                                dict.fromkeys(dep_entry.get("parents", []) + dep_parents)
+                            )
+                            queue.append((dep, dep_parents))
+                elif isinstance(node, ast.ImportFrom):
+                    if node.level:
+                        if node.level - 1 <= len(pkg_parts):
+                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                        else:
+                            base_prefix = []
+                    else:
+                        base_prefix = pkg_parts
+                    if node.module:
+                        parts = base_prefix + node.module.split(".")
+                        mod_path = repo / Path(*parts).with_suffix(".py")
+                        pkg_init = repo / Path(*parts) / "__init__.py"
+                        dep = (
+                            mod_path
+                            if mod_path.exists()
+                            else pkg_init
+                            if pkg_init.exists()
+                            else None
+                        )
+                        if dep is not None:
+                            dep_rel = dep.relative_to(repo).as_posix()
+                            dep_parents = [rel] + parents
+                            dep_entry = self.orphan_traces.setdefault(
+                                dep_rel, {"parents": [], "redundant": None}
+                            )
+                            dep_entry["parents"] = list(
+                                dict.fromkeys(dep_entry.get("parents", []) + dep_parents)
+                            )
+                            queue.append((dep, dep_parents))
+                        for alias in node.names:
+                            if alias.name == "*":
+                                continue
+                            sub_parts = parts + alias.name.split(".")
+                            mod_path = repo / Path(*sub_parts).with_suffix(".py")
+                            pkg_init = repo / Path(*sub_parts) / "__init__.py"
+                            dep = (
+                                mod_path
+                                if mod_path.exists()
+                                else pkg_init
+                                if pkg_init.exists()
+                                else None
+                            )
+                            if dep is not None:
+                                dep_rel = dep.relative_to(repo).as_posix()
+                                dep_parents = [rel] + parents
+                                dep_entry = self.orphan_traces.setdefault(
+                                    dep_rel, {"parents": [], "redundant": None}
+                                )
+                                dep_entry["parents"] = list(
+                                    dict.fromkeys(
+                                        dep_entry.get("parents", []) + dep_parents
+                                    )
+                                )
+                                queue.append((dep, dep_parents))
+                    elif node.names:
+                        for alias in node.names:
+                            name = ".".join(base_prefix + alias.name.split("."))
+                            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
+                            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
+                            dep = (
+                                mod_path
+                                if mod_path.exists()
+                                else pkg_init
+                                if pkg_init.exists()
+                                else None
+                            )
+                            if dep is not None:
+                                dep_rel = dep.relative_to(repo).as_posix()
+                                dep_parents = [rel] + parents
+                                dep_entry = self.orphan_traces.setdefault(
+                                    dep_rel, {"parents": [], "redundant": None}
+                                )
+                                dep_entry["parents"] = list(
+                                    dict.fromkeys(
+                                        dep_entry.get("parents", []) + dep_parents
+                                    )
+                                )
+                                queue.append((dep, dep_parents))
+
+        return seen
+
+    # ------------------------------------------------------------------
     def _discover_orphans(self, recursive: bool | None = None) -> list[str]:
         """Return orphan modules detected in the repository.
 
@@ -612,6 +768,7 @@ class SelfTestService:
                     info["redundant"] = bool(v["redundant"])
                 self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
             modules = list(self.orphan_traces.keys())
+            modules = [str(Path(m)) for m in sorted(self._collect_recursive(modules))]
         else:
             from scripts.find_orphan_modules import find_orphan_modules
 
@@ -624,102 +781,6 @@ class SelfTestService:
                     rel = str(p)
                 modules.append(rel)
             self.orphan_traces.update({m: {"parents": []} for m in modules})
-
-        def _collect_recursive(mods: Iterable[str]) -> set[str]:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            queue: list[Path] = []
-            seen: set[str] = set()
-            for m in mods:
-                p = Path(m)
-                if not p.is_absolute():
-                    p = repo / p
-                queue.append(p)
-            while queue:
-                path = queue.pop()
-                try:
-                    rel = path.relative_to(repo).as_posix()
-                except Exception:
-                    continue
-                if rel in seen:
-                    continue
-                seen.add(rel)
-                if not path.exists():
-                    continue
-                try:
-                    src = path.read_text(encoding="utf-8")
-                    tree = ast.parse(src)
-                except Exception:
-                    continue
-                pkg_parts = rel.split("/")[:-1]
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            name = alias.name
-                            mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                            pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                            dep = (
-                                mod_path
-                                if mod_path.exists()
-                                else pkg_init
-                                if pkg_init.exists()
-                                else None
-                            )
-                            if dep is not None:
-                                queue.append(dep)
-                    elif isinstance(node, ast.ImportFrom):
-                        if node.level:
-                            if node.level - 1 <= len(pkg_parts):
-                                base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
-                            else:
-                                base_prefix = []
-                        else:
-                            base_prefix = pkg_parts
-                        if node.module:
-                            parts = base_prefix + node.module.split(".")
-                            mod_path = repo / Path(*parts).with_suffix(".py")
-                            pkg_init = repo / Path(*parts) / "__init__.py"
-                            dep = (
-                                mod_path
-                                if mod_path.exists()
-                                else pkg_init
-                                if pkg_init.exists()
-                                else None
-                            )
-                            if dep is not None:
-                                queue.append(dep)
-                            for alias in node.names:
-                                if alias.name == "*":
-                                    continue
-                                sub_parts = parts + alias.name.split(".")
-                                mod_path = repo / Path(*sub_parts).with_suffix(".py")
-                                pkg_init = repo / Path(*sub_parts) / "__init__.py"
-                                dep = (
-                                    mod_path
-                                    if mod_path.exists()
-                                    else pkg_init
-                                    if pkg_init.exists()
-                                    else None
-                                )
-                                if dep is not None:
-                                    queue.append(dep)
-                        elif node.names:
-                            for alias in node.names:
-                                name = ".".join(base_prefix + alias.name.split("."))
-                                mod_path = repo / Path(*name.split(".")).with_suffix(".py")
-                                pkg_init = repo / Path(*name.split(".")) / "__init__.py"
-                                dep = (
-                                    mod_path
-                                    if mod_path.exists()
-                                    else pkg_init
-                                    if pkg_init.exists()
-                                    else None
-                                )
-                                if dep is not None:
-                                    queue.append(dep)
-            return seen
-
-        if recursive:
-            modules = [str(Path(m)) for m in sorted(_collect_recursive(modules))]
 
         filtered: list[str] = []
         for m in modules:
@@ -761,26 +822,54 @@ class SelfTestService:
 
         modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
 
+        trace: dict[str, Any] = {}
+        if recursive:
+            try:
+                from sandbox_runner import discover_recursive_orphans as _discover
+
+                trace = _discover(str(Path.cwd()))
+            except Exception:  # pragma: no cover - best effort
+                trace = {}
+            for k, v in trace.items():
+                parents = [
+                    str(Path(*p.split(".")).with_suffix(".py"))
+                    for p in (v.get("parents") if isinstance(v, dict) else v)
+                ]
+                info = self.orphan_traces.setdefault(
+                    str(Path(*k.split(".")).with_suffix(".py")), {"parents": []}
+                )
+                info["parents"] = list(
+                    dict.fromkeys(info.get("parents", []) + parents)
+                )
+                if isinstance(v, dict) and "redundant" in v:
+                    info["redundant"] = bool(v["redundant"])
+
+            modules = [str(Path(m)) for m in sorted(self._collect_recursive(modules))]
+        else:
+            modules = [str(Path(m)) for m in modules]
+
         seen: set[str] = set()
         filtered: list[str] = []
 
         for m in modules:
-            p = Path(m)
-            key = str(p)
+            key = str(Path(m))
             if key in seen:
                 continue
             seen.add(key)
-            info = self.orphan_traces.setdefault(key, {"parents": [], "redundant": False})
-            try:
-                info["redundant"] = bool(analyze_redundancy(p))
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "redundancy analysis failed for %s: %s", p, exc
-                )
-                info["redundant"] = False
-            if info["redundant"]:
+            info = self.orphan_traces.setdefault(key, {"parents": [], "redundant": None})
+            redundant_flag = info.get("redundant")
+            if redundant_flag is None:
+                try:
+                    redundant_flag = bool(analyze_redundancy(Path(key)))
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "redundancy analysis failed for %s: %s", key, exc
+                    )
+                    redundant_flag = False
+                info["redundant"] = redundant_flag
+            if redundant_flag:
                 self.logger.info(
-                    "redundant module skipped", extra={"module": p.name}
+                    "redundant module skipped", extra={"module": Path(key).name}
                 )
                 continue
             filtered.append(key)
@@ -824,6 +913,7 @@ class SelfTestService:
 
         orphan_list: list[str] = existing if self.include_orphans else []
         discovered: list[str] = []
+        redundant_list: list[str] = []
 
         if self.include_orphans and (refresh_orphans or not path.exists()):
             try:
@@ -851,9 +941,11 @@ class SelfTestService:
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
-            orphan_list = [
-                m for m in orphan_list if not self.orphan_traces.get(m, {}).get("redundant")
-            ]
+        redundant_list = [
+            m for m, info in self.orphan_traces.items() if info.get("redundant")
+        ]
+        if orphan_list:
+            orphan_list = [m for m in orphan_list if m not in redundant_list]
 
         combined_file = list(dict.fromkeys(existing + discovered))
         if combined_file or path.exists():
@@ -886,6 +978,7 @@ class SelfTestService:
             paths.extend(orphan_list)
         self._state = None
 
+        all_orphans = set(orphan_list) | set(redundant_list)
         orphan_set = set(orphan_list)
 
         queue: list[str] = [p or "" for p in paths]
@@ -1174,17 +1267,14 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
-            if orphan_set:
-                self.results["orphan_total"] = len(orphan_set)
+            if all_orphans:
+                self.results["orphan_total"] = len(all_orphans)
                 self.results["orphan_failed"] = len(orphan_failed)
                 passed_set = [p for p in orphan_passed if p not in orphan_failed]
                 if passed_set:
                     self.results["orphan_passed"] = sorted(passed_set)
-                redundant_set = [
-                    p for p in orphan_set if self.orphan_traces.get(p, {}).get("redundant")
-                ]
-                if redundant_set:
-                    self.results["orphan_redundant"] = sorted(redundant_set)
+                if redundant_list:
+                    self.results["orphan_redundant"] = sorted(set(redundant_list))
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip

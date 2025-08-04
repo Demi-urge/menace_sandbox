@@ -111,7 +111,7 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
 
     svc = sts.SelfTestService(
         include_orphans=True,
-        recursive_orphans=True,
+       recursive_orphans=True,
         clean_orphans=True,
         integration_callback=integrate,
     )
@@ -119,6 +119,8 @@ def test_recursive_module_inclusion(tmp_path, monkeypatch):
     svc.run_once()
 
     assert generated and generated[0] == ["a.py", "b.py", "c.py"]
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
     data = json.loads(map_path.read_text())
     assert all(name in data["modules"] for name in ["a.py", "b.py", "c.py"])
     orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
@@ -206,6 +208,10 @@ def test_recursive_module_inclusion_with_redundant(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert set(data["modules"]) == {"a.py", "c.py"}
     assert svc.orphan_traces["b.py"]["redundant"] is True
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
+    assert svc.results.get("orphan_redundant") == ["b.py"]
+    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert orphan_list == []
 
 
 def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
@@ -296,4 +302,8 @@ def test_recursive_module_inclusion_redundant_fail(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert set(data["modules"]) == {"a.py", "c.py"}
     assert svc.orphan_traces["b.py"]["redundant"] is True
+    assert svc.orphan_traces["c.py"]["parents"] == ["b.py"]
     assert svc.results.get("orphan_passed") == ["a.py", "c.py"]
+    assert svc.results.get("orphan_redundant") == ["b.py"]
+    orphan_list = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert orphan_list == []
