@@ -28,12 +28,17 @@ the recursive module discovery used by `SelfTestService`. The sandbox follows
 orphan and isolated modules through their import chains and
 `discover_recursive_orphans` returns a mapping where each entry records its
 importing `parents` and whether it is considered `redundant`. Passing files are
-merged into `module_map.json`, making them available for future cycles. The generated
-`.env` enables this behaviour by default via `SANDBOX_RECURSIVE_ORPHANS=1`,
-`SANDBOX_RECURSIVE_ISOLATED=1` and `SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Disable
-recursion with `SANDBOX_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ISOLATED=0`
-or by passing the CLI flags `--no-recursive-include` or `--no-recursive-isolated`.
-Use `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
+merged into `module_map.json`, making them available for future cycles. The
+generated `.env` enables this behaviour by default via
+`SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1` and
+`SANDBOX_AUTO_INCLUDE_ISOLATED=1`. Setting `SANDBOX_AUTO_INCLUDE_ISOLATED=1` or
+using `--auto-include-isolated` forces `discover_isolated_modules` to run and
+implicitly sets `SANDBOX_DISCOVER_ISOLATED=1` and `SANDBOX_RECURSIVE_ISOLATED=1`
+unless they are overridden. `SANDBOX_RECURSIVE_ORPHANS=1` ensures helper chains
+found by the orphan walker are also traversed. Disable recursion with
+`SANDBOX_RECURSIVE_ORPHANS=0` or `SANDBOX_RECURSIVE_ISOLATED=0` or by passing
+the CLI flags `--no-recursive-include` or `--no-recursive-isolated`. Use
+`--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
 
@@ -43,6 +48,8 @@ passing entries from `orphan_modules.json` after integration.
   modules and their imports.
 - `SANDBOX_RECURSIVE_ISOLATED` / `SELF_TEST_RECURSIVE_ISOLATED` – traverse
   dependencies of isolated modules.
+- `SANDBOX_DISCOVER_ISOLATED` / `SELF_TEST_DISCOVER_ISOLATED` – run
+  `discover_isolated_modules` during scans.
 - `SANDBOX_AUTO_INCLUDE_ISOLATED` – force discovery of modules returned by
   `discover_isolated_modules`.
 - `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
@@ -73,8 +80,23 @@ same recursion rules. Passing modules are appended to `module_map.json`, and
 exercise the new code. Module identifiers are repository-relative paths to
 avoid filename collisions. Tests like `tests/test_run_autonomous_env_vars.py`
 and `tests/test_self_test_service_recursive_integration.py` assert this
-recursive integration. For a concrete walkthrough see the
-[isolated module example](autonomous_sandbox.md#example-isolated-module-discovery-and-integration).
+recursive integration. For a concrete walkthrough see the example below.
+
+### Example: isolated module with helper
+
+```bash
+# create a simple isolated module and its helper
+echo 'import helper\n' > isolated.py
+echo 'VALUE = 1\n'   > helper.py
+
+# run the self tests forcing isolated discovery
+python -m menace.self_test_service run isolated.py --auto-include-isolated
+
+# integrate during the next autonomous cycle
+SANDBOX_AUTO_INCLUDE_ISOLATED=1 python run_autonomous.py --auto-include-isolated
+
+# both files now appear in sandbox_data/module_map.json
+```
 
 ### Example: recursive module inclusion with cleanup
 
