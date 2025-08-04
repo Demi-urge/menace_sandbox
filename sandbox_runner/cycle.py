@@ -184,22 +184,74 @@ def _sandbox_cycle_runner(
                     traces[path] = {"parents": [], "redundant": False}
                     new_mods.append(path)
                 if new_mods:
-                    auto_include_modules(new_mods, recursive=True)
-                    module_map.update(new_mods)
-                    if os.getenv("SANDBOX_CLEAN_ORPHANS", "").lower() in (
-                        "1",
-                        "true",
-                        "yes",
-                    ):
-                        cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
-                        try:
-                            data = (
-                                json.loads(cache.read_text()) if cache.exists() else []
+                    try:
+                        from self_test_service import SelfTestService
+
+                        passed_mods: list[str] = []
+                        failed_mods: list[str] = []
+
+                        for mod in new_mods:
+                            try:
+                                svc = SelfTestService(
+                                    pytest_args=mod,
+                                    include_orphans=False,
+                                    discover_orphans=False,
+                                    discover_isolated=False,
+                                    disable_auto_integration=True,
+                                )
+                                res = svc.run_once()
+                                if res.get("failed"):
+                                    failed_mods.append(mod)
+                                else:
+                                    passed_mods.append(mod)
+                            except Exception:
+                                logger.exception("self tests failed for %s", mod)
+                                failed_mods.append(mod)
+
+                        if passed_mods:
+                            auto_include_modules(passed_mods, recursive=True)
+                            module_map.update(passed_mods)
+
+                        if failed_mods:
+                            logger.warning(
+                                "self tests failed for %s",
+                                ", ".join(sorted(failed_mods)),
                             )
-                            data = [p for p in data if p not in new_mods]
-                            cache.write_text(json.dumps(sorted(data), indent=2))
-                        except Exception:
-                            pass
+                            fail_cache = (
+                                ctx.repo
+                                / "sandbox_data"
+                                / "failed_isolated_modules.json"
+                            )
+                            try:
+                                existing = (
+                                    json.loads(fail_cache.read_text())
+                                    if fail_cache.exists()
+                                    else []
+                                )
+                                existing = sorted(set(existing) | set(failed_mods))
+                                fail_cache.parent.mkdir(parents=True, exist_ok=True)
+                                fail_cache.write_text(json.dumps(existing, indent=2))
+                            except Exception:
+                                logger.exception(
+                                    "failed to record self test failures",
+                                )
+
+                        if passed_mods and os.getenv(
+                            "SANDBOX_CLEAN_ORPHANS", ""
+                        ).lower() in ("1", "true", "yes"):
+                            cache = ctx.repo / "sandbox_data" / "orphan_modules.json"
+                            try:
+                                data = (
+                                    json.loads(cache.read_text())
+                                    if cache.exists()
+                                    else []
+                                )
+                                data = [p for p in data if p not in passed_mods]
+                                cache.write_text(json.dumps(sorted(data), indent=2))
+                            except Exception:
+                                pass
+                    except Exception:
+                        logger.exception("isolated module self testing failed")
                 ctx.module_map = module_map
                 ctx.orphan_traces = traces
             except Exception:
@@ -241,7 +293,9 @@ def _sandbox_cycle_runner(
         elif failure_start is not None:
             recovery_time = time.perf_counter() - failure_start
             failure_start = None
-        mods, ctx.meta_log.last_patch_id = ctx.changed_modules(ctx.meta_log.last_patch_id)
+        mods, ctx.meta_log.last_patch_id = ctx.changed_modules(
+            ctx.meta_log.last_patch_id
+        )
         if section:
             mods = [m for m in mods if m == section.split(":", 1)[0]]
         mapped_mods = [map_module_identifier(m, ctx.repo) for m in mods]
@@ -250,7 +304,11 @@ def _sandbox_cycle_runner(
         if ctx.res_db is not None:
             try:
                 df = ctx.res_db.history()
-                cols = [c for c in ("cpu", "memory", "disk", "time", "gpu") if c in df.columns]
+                cols = [
+                    c
+                    for c in ("cpu", "memory", "disk", "time", "gpu")
+                    if c in df.columns
+                ]
                 if not df.empty and cols:
                     row = df.iloc[-1]
                     resources = {c: float(row[c]) for c in cols}
@@ -287,6 +345,7 @@ def _sandbox_cycle_runner(
         if not gpu_usage:
             try:
                 import docker  # type: ignore
+
                 cid = os.getenv("HOSTNAME")
                 if cid:
                     client = docker.from_env()
@@ -339,11 +398,15 @@ def _sandbox_cycle_runner(
         if not bandit_penalty:
             bandit_penalty = len(mods) * 5.0
         security_score = max(0.0, 100.0 - bandit_penalty)
-        safety_rating = security_score if roi >= ctx.prev_roi else max(0.0, security_score - 5)
+        safety_rating = (
+            security_score if roi >= ctx.prev_roi else max(0.0, security_score - 5)
+        )
 
         adaptability = float(len(mods))
         antifragility = max(0.0, roi - ctx.prev_roi)
-        efficiency_metric = 100.0 - float(resources.get("cpu", 0.0)) if resources else 100.0
+        efficiency_metric = (
+            100.0 - float(resources.get("cpu", 0.0)) if resources else 100.0
+        )
         flexibility = float(len(mods)) / float(total_mods)
 
         cov_path = ctx.repo / ".coverage"
@@ -386,7 +449,9 @@ def _sandbox_cycle_runner(
             try:
                 import sqlite3
 
-                with sqlite3.connect(ctx.patch_db_path, check_same_thread=False) as conn:
+                with sqlite3.connect(
+                    ctx.patch_db_path, check_same_thread=False
+                ) as conn:
                     rows = conn.execute(
                         "SELECT complexity_after FROM patch_history ORDER BY id DESC LIMIT 5"
                     ).fetchall()
@@ -407,7 +472,9 @@ def _sandbox_cycle_runner(
         code_quality = 0.0
         try:
             targets = (
-                [ctx.repo / section.split(":", 1)[0]] if section else [ctx.repo / m.split(":", 1)[0] for m in mods]
+                [ctx.repo / section.split(":", 1)[0]]
+                if section
+                else [ctx.repo / m.split(":", 1)[0] for m in mods]
             )
             targets = [t for t in targets if t.exists()]
             if targets:
@@ -431,7 +498,9 @@ def _sandbox_cycle_runner(
                                 reporter=TextReporter(buf),
                                 exit=False,
                             )
-                            cq_total += float(getattr(res.linter.stats, "global_note", 0.0))
+                            cq_total += float(
+                                getattr(res.linter.stats, "global_note", 0.0)
+                            )
                         except Exception:
                             logger.exception("pylint run failed for %s", t)
                 if mi_total:
@@ -481,7 +550,9 @@ def _sandbox_cycle_runner(
             logger.exception("discrepancy scan failed")
             detections = []
         metrics["discrepancy_count"] = len(detections)
-        scenario_metrics = {f"{k}:{scenario}": v for k, v in metrics.items()} if scenario else {}
+        scenario_metrics = (
+            {f"{k}:{scenario}": v for k, v in metrics.items()} if scenario else {}
+        )
         tracker.register_metrics(*metrics.keys(), *scenario_metrics.keys())
         if scenario:
             tracker.register_metrics("synergy_safety_rating")
@@ -528,7 +599,9 @@ def _sandbox_cycle_runner(
         ]
         if ctx.pre_roi_bot and getattr(ctx.pre_roi_bot, "prediction_manager", None):
             try:
-                tracker.predict_all_metrics(ctx.pre_roi_bot.prediction_manager, feat_vec)
+                tracker.predict_all_metrics(
+                    ctx.pre_roi_bot.prediction_manager, feat_vec
+                )
             except Exception:
                 logger.exception("metric prediction failed")
         ctx.meta_log.log_cycle(idx, roi, name_list, "self_improvement")
@@ -576,8 +649,15 @@ def _sandbox_cycle_runner(
                     )
                     key = mod.split(":", 1)[0]
                     history = ctx.conversations.get(key, [])
-                    resp = ctx.gpt_client.ask(history + [{"role": "user", "content": prompt}])
-                    suggestion = resp.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    resp = ctx.gpt_client.ask(
+                        history + [{"role": "user", "content": prompt}]
+                    )
+                    suggestion = (
+                        resp.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                        .strip()
+                    )
                     history = history + [{"role": "user", "content": prompt}]
                     if suggestion:
                         history.append({"role": "assistant", "content": suggestion})
@@ -591,8 +671,12 @@ def _sandbox_cycle_runner(
                     continue
                 try:
                     target_path = ctx.repo / module_name
-                    patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
-                    logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
+                    patch_id, _reverted, _ = ctx.engine.apply_patch(
+                        target_path, suggestion
+                    )
+                    logger.info(
+                        "patch applied", extra={"module": mod, "patch_id": patch_id}
+                    )
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
                     raise
@@ -667,7 +751,10 @@ def _sandbox_cycle_runner(
             res_window = resilience_history[-3:]
             curr_avg = sum(res_window) / len(res_window)
             resilience_drop = False
-            if prev_res_avg is not None and prev_res_avg - curr_avg > tracker.diminishing():
+            if (
+                prev_res_avg is not None
+                and prev_res_avg - curr_avg > tracker.diminishing()
+            ):
                 resilience_drop = True
             prev_res_avg = curr_avg
 
@@ -693,8 +780,14 @@ def _sandbox_cycle_runner(
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     hist = ctx.conversations.get("brainstorm", [])
-                    resp = ctx.gpt_client.ask(hist + [{"role": "user", "content": prompt}])
-                    idea = resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    resp = ctx.gpt_client.ask(
+                        hist + [{"role": "user", "content": prompt}]
+                    )
+                    idea = (
+                        resp.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    )
                     hist = hist + [{"role": "user", "content": prompt}]
                     if idea:
                         ctx.brainstorm_history.append(idea)
@@ -715,8 +808,12 @@ def _sandbox_cycle_runner(
                 suggestion = _choose_suggestion(ctx, module_name)
                 try:
                     target_path = ctx.repo / module_name
-                    patch_id, _reverted, _ = ctx.engine.apply_patch(target_path, suggestion)
-                    logger.info("patch applied", extra={"module": mod, "patch_id": patch_id})
+                    patch_id, _reverted, _ = ctx.engine.apply_patch(
+                        target_path, suggestion
+                    )
+                    logger.info(
+                        "patch applied", extra={"module": mod, "patch_id": patch_id}
+                    )
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
                     raise
@@ -756,7 +853,10 @@ def _sandbox_cycle_runner(
             res_window = resilience_history[-3:]
             curr_avg = sum(res_window) / len(res_window)
             resilience_drop = False
-            if prev_res_avg is not None and prev_res_avg - curr_avg > tracker.diminishing():
+            if (
+                prev_res_avg is not None
+                and prev_res_avg - curr_avg > tracker.diminishing()
+            ):
                 resilience_drop = True
             prev_res_avg = curr_avg
         if should_stop or abs(roi - ctx.prev_roi) < ctx.roi_tolerance:
@@ -814,4 +914,3 @@ def _sandbox_cycle_runner(
 
 if __name__ == "__main__":  # pragma: no cover - manual invocation
     setup_logging()
-
