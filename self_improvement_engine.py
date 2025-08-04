@@ -1379,7 +1379,34 @@ class SelfImprovementEngine:
         try:  # pragma: no cover - dynamic imports for isolated tests
             from self_test_service import SelfTestService as _STS
         except Exception:  # pragma: no cover - fallback when service unavailable
-            return set(modules)
+            _STS = None
+
+        if _STS is None:
+            try:
+                from sandbox_runner import run_repo_section_simulations as _sim
+            except Exception:  # pragma: no cover - best effort
+                return set()
+            passed: set[str] = set()
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            for m in modules:
+                try:
+                    _, details = _sim(str(repo), modules=[m], return_details=True)
+                except Exception:
+                    continue
+                sec = details.get(m, {}).get("sec", [])
+                failed = any(s.get("result", {}).get("exit_code") for s in sec)
+                if failed:
+                    self.logger.info(
+                        "self tests failed", extra=log_record(module=Path(m).name)
+                    )
+                    continue
+                passed.add(m)
+            if passed:
+                try:
+                    environment.auto_include_modules(sorted(passed), recursive=True)
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed")
+            return passed
 
         svc = _STS(
             pytest_args=" ".join(modules),
