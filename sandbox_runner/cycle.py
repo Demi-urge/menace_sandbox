@@ -13,6 +13,7 @@ import asyncio
 import sys
 import inspect
 from typing import Any, Dict, TYPE_CHECKING
+from sandbox_settings import SandboxSettings
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
@@ -153,78 +154,88 @@ def _sandbox_cycle_runner(
         "orphan_modules_redundant",
     )
     for idx in range(ctx.cycles):
-        try:
-            trace = discover_recursive_orphans(str(ctx.repo))
-            from scripts.discover_isolated_modules import discover_isolated_modules
+        settings = getattr(ctx, "settings", SandboxSettings())
+        if settings.auto_include_isolated:
+            try:
+                trace = discover_recursive_orphans(str(ctx.repo))
+                from scripts.discover_isolated_modules import discover_isolated_modules
 
-            module_map = set(getattr(ctx, "module_map", set()))
-            traces = getattr(ctx, "orphan_traces", {})
-            new_mods: list[str] = []
-            trace_details: Dict[str, Dict[str, Any]] = {}
+                module_map = set(getattr(ctx, "module_map", set()))
+                traces = getattr(ctx, "orphan_traces", {})
+                new_mods: list[str] = []
+                trace_details: Dict[str, Dict[str, Any]] = {}
 
-            for name, info in trace.items():
-                rel = Path(*name.split("."))
-                path = (ctx.repo / rel).with_suffix(".py")
-                if not path.exists():
-                    path = ctx.repo / rel / "__init__.py"
-                if not path.exists():
-                    continue
-                rel_path = path.relative_to(ctx.repo).as_posix()
-                if rel_path in module_map or rel_path in traces:
-                    continue
-                traces[rel_path] = {
-                    "parents": info.get("parents", []),
-                    "redundant": bool(info.get("redundant")),
-                }
-                trace_details[rel_path] = traces[rel_path]
-                if not traces[rel_path]["redundant"]:
+                for name, info in trace.items():
+                    rel = Path(*name.split("."))
+                    path = (ctx.repo / rel).with_suffix(".py")
+                    if not path.exists():
+                        path = ctx.repo / rel / "__init__.py"
+                    if not path.exists():
+                        continue
+                    rel_path = path.relative_to(ctx.repo).as_posix()
+                    if rel_path in module_map or rel_path in traces:
+                        continue
+                    traces[rel_path] = {
+                        "parents": info.get("parents", []),
+                        "redundant": bool(info.get("redundant")),
+                    }
+                    trace_details[rel_path] = traces[rel_path]
+                    if not traces[rel_path]["redundant"]:
+                        new_mods.append(rel_path)
+
+                for rel_path in discover_isolated_modules(
+                    str(ctx.repo), recursive=settings.recursive_isolated
+                ):
+                    if rel_path in module_map or rel_path in traces:
+                        continue
+                    traces[rel_path] = {"parents": [], "redundant": False}
+                    trace_details[rel_path] = traces[rel_path]
                     new_mods.append(rel_path)
 
-            for rel_path in discover_isolated_modules(str(ctx.repo), recursive=True):
-                if rel_path in module_map or rel_path in traces:
-                    continue
-                traces[rel_path] = {"parents": [], "redundant": False}
-                trace_details[rel_path] = traces[rel_path]
-                new_mods.append(rel_path)
+                if trace_details:
+                    logger.info(
+                        "orphan discovery",
+                        extra=log_record(
+                            discovered=sorted(trace_details.keys()),
+                            redundant=[
+                                m for m, inf in trace_details.items() if inf.get("redundant")
+                            ],
+                            parents={
+                                m: inf.get("parents", []) for m, inf in trace_details.items()
+                            },
+                        ),
+                    )
 
-            if trace_details:
-                logger.info(
-                    "orphan discovery",
-                    extra=log_record(
-                        discovered=sorted(trace_details.keys()),
-                        redundant=[
-                            m for m, inf in trace_details.items() if inf.get("redundant")
-                        ],
-                        parents={m: inf.get("parents", []) for m, inf in trace_details.items()},
-                    ),
-                )
-
-            pre_mods = set(new_mods)
-            if pre_mods:
-                module_map.update(pre_mods)
-            ctx.module_map = module_map
-            ctx.orphan_traces = traces
-
-            if pre_mods:
-                try:
-                    auto_include_modules(new_mods, recursive=True, validate=True)
-                except Exception:
-                    logger.exception("isolated module auto-inclusion failed")
-                module_map.difference_update(pre_mods - set(new_mods))
-                module_map.update(new_mods)
+                pre_mods = set(new_mods)
+                if pre_mods:
+                    module_map.update(pre_mods)
                 ctx.module_map = module_map
-
-            try:
-                append_orphan_cache(ctx.repo, traces)
-                if new_mods:
-                    prune_orphan_cache(ctx.repo, new_mods, traces)
-                    for m in new_mods:
-                        traces.pop(m, None)
                 ctx.orphan_traces = traces
+
+                if pre_mods:
+                    try:
+                        auto_include_modules(
+                            new_mods,
+                            recursive=settings.recursive_isolated,
+                            validate=True,
+                        )
+                    except Exception:
+                        logger.exception("isolated module auto-inclusion failed")
+                    module_map.difference_update(pre_mods - set(new_mods))
+                    module_map.update(new_mods)
+                    ctx.module_map = module_map
+
+                try:
+                    append_orphan_cache(ctx.repo, traces)
+                    if new_mods:
+                        prune_orphan_cache(ctx.repo, new_mods, traces)
+                        for m in new_mods:
+                            traces.pop(m, None)
+                    ctx.orphan_traces = traces
+                except Exception:
+                    logger.exception("failed to record orphan traces")
             except Exception:
-                logger.exception("failed to record orphan traces")
-        except Exception:
-            logger.exception("isolated module auto-inclusion failed")
+                logger.exception("isolated module auto-inclusion failed")
 
         logger.debug(
             "resource tuning start",

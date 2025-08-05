@@ -8,7 +8,8 @@ import sandbox_runner as pkg
 
 
 def _prepare(monkeypatch, tmp_path):
-    monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
+    monkeypatch.delenv("SANDBOX_AUTO_INCLUDE_ISOLATED", raising=False)
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
     monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
 
@@ -48,10 +49,13 @@ def _prepare(monkeypatch, tmp_path):
         repo=tmp_path,
         module_map=set(),
         orphan_traces={},
-        tracker=object(),
+        tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None),
         models=[],
         module_counts={},
         meta_log=types.SimpleNamespace(last_patch_id=None),
+        settings=types.SimpleNamespace(
+            auto_include_isolated=True, recursive_isolated=True
+        ),
     )
     return ctx, calls
 
