@@ -5457,10 +5457,12 @@ def auto_include_modules(
     #. Execute :func:`run_workflow_simulations` to evaluate the newly
        incorporated workflows.
 
-    When ``recursive`` is ``True`` the helper expands the initial module list
-    by following local imports using
-    :func:`sandbox_runner.dependency_utils.collect_local_dependencies`.  Modules
-    deemed redundant by :func:`orphan_analyzer.analyze_redundancy` are skipped.
+    When ``recursive`` or ``SANDBOX_RECURSIVE_ORPHANS`` is enabled the helper
+    expands the initial module list by following local imports using
+    :func:`sandbox_runner.dependency_utils.collect_local_dependencies` and by
+    merging orphan dependencies returned from
+    :func:`sandbox_runner.discover_recursive_orphans`. Modules deemed redundant
+    by :func:`orphan_analyzer.analyze_redundancy` are skipped.
 
     Optional integration of isolated modules discovered via
     ``scripts.discover_isolated_modules`` is preserved but expansion is limited
@@ -5484,7 +5486,7 @@ def auto_include_modules(
     import json
     from sandbox_settings import SandboxSettings
     from .dependency_utils import collect_local_dependencies
-
+    
     mod_paths = {Path(m).as_posix() for m in modules}
     redundant_mods: list[str] = []
 
@@ -5499,7 +5501,32 @@ def auto_include_modules(
         except Exception:
             pass
 
-    derived_mods = set(mod_paths)
+    recursive_orphans = recursive or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "1") not in {"0", "false", "False"}
+    candidate_paths = set(mod_paths)
+    evaluated: set[str] = set()
+    if recursive_orphans:
+        try:
+            import importlib, sys
+
+            od = (
+                importlib.reload(sys.modules["sandbox_runner.orphan_discovery"])
+                if "sandbox_runner.orphan_discovery" in sys.modules
+                else importlib.import_module("sandbox_runner.orphan_discovery")
+            )
+            mapping = od.discover_recursive_orphans(str(repo))
+            for name, info in mapping.items():
+                path = Path(name.replace(".", "/")).with_suffix(".py").as_posix()
+                candidate_paths.add(path)
+                evaluated.add(path)
+                if info.get("redundant"):
+                    redundant_mods.append(path)
+                    mod_paths.discard(path)
+                else:
+                    mod_paths.add(path)
+        except Exception:
+            pass
+
+    derived_mods = set(candidate_paths)
 
     include_isolated = recursive or getattr(settings, "auto_include_isolated", True)
     if include_isolated:
@@ -5527,46 +5554,45 @@ def auto_include_modules(
     passed_mods: list[str] = []
     failed_mods: list[str] = []
 
-    try:
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        from sandbox_settings import SandboxSettings
-        settings = SandboxSettings()
-        for mod in mods:
-            path = repo / mod
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+    from sandbox_settings import SandboxSettings
+    settings = SandboxSettings()
+    for mod in mods:
+        path = repo / mod
+        if mod not in evaluated:
             try:
                 if orphan_analyzer.analyze_redundancy(path):
                     redundant_mods.append(mod)
                     continue
             except Exception:
                 pass
-            if validate:
-                try:
-                    from self_test_service import SelfTestService
+        if validate:
+            try:
+                from self_test_service import SelfTestService
 
-                    svc = SelfTestService(
-                        pytest_args=mod,
-                        include_orphans=False,
-                        discover_orphans=False,
-                        discover_isolated=True,
-                        recursive_orphans=True,
-                        recursive_isolated=settings.recursive_isolated,
-                        auto_include_isolated=settings.auto_include_isolated,
-                        disable_auto_integration=True,
-                    )
-                    res, _passed = svc.run_once()
-                    if not res.get("failed"):
-                        passed_mods.append(mod)
-                    else:
-                        failed_mods.append(mod)
-                except Exception:
+                svc = SelfTestService(
+                    pytest_args=mod,
+                    include_orphans=False,
+                    discover_orphans=False,
+                    discover_isolated=True,
+                    recursive_orphans=True,
+                    recursive_isolated=settings.recursive_isolated,
+                    auto_include_isolated=settings.auto_include_isolated,
+                    disable_auto_integration=True,
+                )
+                res = svc.run_once()
+                result = res[0] if isinstance(res, tuple) else res
+                if not result.get("failed"):
+                    passed_mods.append(mod)
+                else:
                     failed_mods.append(mod)
-            else:
-                passed_mods.append(mod)
-    except Exception:
-        passed_mods = mods
+            except Exception:
+                failed_mods.append(mod)
+        else:
+            passed_mods.append(mod)
 
+    cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
     if redundant_mods:
-        cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
         try:
             existing = json.loads(cache.read_text()) if cache.exists() else {}
             if not isinstance(existing, dict):
@@ -5580,6 +5606,12 @@ def auto_include_modules(
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(existing, indent=2))
+        except Exception:
+            pass
+    else:
+        try:
+            if cache.exists():
+                cache.write_text(json.dumps({}))
         except Exception:
             pass
 
