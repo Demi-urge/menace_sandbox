@@ -34,6 +34,9 @@ from .metrics_exporter import (
     synergy_weight_update_failures_total,
     synergy_weight_update_alerts_total,
     orphan_modules_reintroduced_total,
+    orphan_modules_tested_total,
+    orphan_modules_failed_total,
+    orphan_modules_redundant_total,
 )
 from alert_dispatcher import dispatch_alert
 import json
@@ -1460,6 +1463,21 @@ class SelfImprovementEngine:
                     redundant=[],
                 ),
             )
+            counts = {
+                "orphan_modules_tested": len(modules),
+                "orphan_modules_passed": len(passed),
+                "orphan_modules_failed": len(failed_mods),
+                "orphan_modules_redundant": 0,
+            }
+            tracker = getattr(self, "tracker", None)
+            if tracker is not None:
+                tracker.register_metrics(*counts.keys())
+                base = tracker.roi_history[-1] if tracker.roi_history else 0.0
+                tracker.update(base, base, metrics=counts)
+            orphan_modules_tested_total.inc(len(modules))
+            orphan_modules_reintroduced_total.inc(len(passed))
+            orphan_modules_failed_total.inc(len(failed_mods))
+            orphan_modules_redundant_total.inc(0)
             return passed
 
         svc = _STS(
@@ -1512,6 +1530,22 @@ class SelfImprovementEngine:
                 redundant_count=len(redundant),
             ),
         )
+
+        counts = {
+            "orphan_modules_tested": len(modules),
+            "orphan_modules_passed": len(passing),
+            "orphan_modules_failed": len(failed_mods),
+            "orphan_modules_redundant": len(redundant),
+        }
+        tracker = getattr(self, "tracker", None)
+        if tracker is not None:
+            tracker.register_metrics(*counts.keys())
+            base = tracker.roi_history[-1] if tracker.roi_history else 0.0
+            tracker.update(base, base, metrics=counts)
+        orphan_modules_tested_total.inc(len(modules))
+        orphan_modules_reintroduced_total.inc(len(passing))
+        orphan_modules_failed_total.inc(len(failed_mods))
+        orphan_modules_redundant_total.inc(len(redundant))
 
         if self.data_bot and getattr(self.data_bot, "metrics_db", None):
             try:

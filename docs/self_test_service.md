@@ -27,6 +27,13 @@ container issues:
 - `self_test_container_timeouts_total` increments whenever a test container
     exceeds the configured timeout and is terminated.
 
+Orphan module processing is also exported via Prometheus gauges:
+
+- `orphan_modules_tested_total` – total orphan modules executed during self tests.
+- `orphan_modules_reintroduced_total` – modules that passed and were reintegrated.
+- `orphan_modules_failed_total` – orphan modules whose tests failed.
+- `orphan_modules_redundant_total` – modules skipped due to redundancy.
+
 ## Recursive inclusion flow
 
 The service participates in the sandbox's recursive module discovery. During
