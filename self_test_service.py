@@ -16,7 +16,7 @@ import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
 
@@ -78,6 +78,25 @@ setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_
 
 _container_lock = Lock()
 _file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
+
+try:
+    from sandbox_runner.dependency_utils import collect_local_dependencies
+except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
+    def collect_local_dependencies(
+        paths: Iterable[str],
+        *,
+        initial_parents: Mapping[str, list[str]] | None = None,
+        on_module: Callable[[str, Path, list[str]], None] | None = None,
+        on_dependency: Callable[[str, str, list[str]], None] | None = None,
+    ) -> set[str]:
+        for p in paths:
+            parents = list(initial_parents.get(p, []) if initial_parents else [])
+            if on_module is not None:
+                try:
+                    on_module(p, Path(p), parents)
+                except Exception:
+                    pass
+        return set(paths)
 
 
 class SelfTestService:
@@ -615,50 +634,6 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
-    def _collect_recursive(self, mods: Iterable[str]) -> set[str]:
-        """Return modules reachable from *mods* while recording parent chains."""
-
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-
-        def _on_module(rel: str, path: Path, parents: list[str]) -> None:
-            entry = self.orphan_traces.setdefault(rel, {"parents": [], "redundant": None})
-            if parents:
-                entry_parents = entry.get("parents", [])
-                entry["parents"] = list(dict.fromkeys(entry_parents + parents))
-            if entry.get("redundant") is None:
-                try:
-                    entry["redundant"] = bool(analyze_redundancy(path))
-                except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("redundancy analysis failed for %s", path)
-                    entry["redundant"] = False
-
-        def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
-            dep_entry = self.orphan_traces.setdefault(dep_rel, {"parents": [], "redundant": None})
-            dep_entry["parents"] = list(dict.fromkeys(dep_entry.get("parents", []) + chain))
-
-        initial_parents: dict[str, list[str]] = {}
-        for m in mods:
-            p = Path(m)
-            if not p.is_absolute():
-                p = repo / p
-            try:
-                rel = p.relative_to(repo).as_posix()
-            except Exception:
-                rel = p.as_posix()
-            entry = self.orphan_traces.get(rel)
-            if entry and "parents" in entry:
-                initial_parents[rel] = list(entry["parents"])
-
-        from sandbox_runner.dependency_utils import collect_local_dependencies
-
-        return collect_local_dependencies(
-            mods,
-            initial_parents=initial_parents,
-            on_module=_on_module,
-            on_dependency=_on_dependency,
-        )
-
-    # ------------------------------------------------------------------
     def _discover_orphans(self, recursive: bool | None = None) -> list[str]:
         """Return orphan modules detected in the repository.
 
@@ -697,8 +672,45 @@ class SelfTestService:
                 if isinstance(v, dict) and "redundant" in v:
                     info["redundant"] = bool(v["redundant"])
                 self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
-            modules = list(self.orphan_traces.keys())
-            modules = [str(Path(m)) for m in sorted(self._collect_recursive(modules))]
+            roots = list(self.orphan_traces.keys())
+            initial = {
+                m: info.get("parents", []) for m, info in self.orphan_traces.items()
+            }
+
+            def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+                entry = self.orphan_traces.setdefault(
+                    rel, {"parents": [], "redundant": None}
+                )
+                if parents:
+                    entry["parents"] = list(
+                        dict.fromkeys(entry.get("parents", []) + parents)
+                    )
+                if entry.get("redundant") is None:
+                    try:
+                        entry["redundant"] = bool(analyze_redundancy(path))
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "redundancy analysis failed for %s", path
+                        )
+                        entry["redundant"] = False
+
+            def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+                dep_entry = self.orphan_traces.setdefault(
+                    dep_rel, {"parents": [], "redundant": None}
+                )
+                dep_entry["parents"] = list(
+                    dict.fromkeys(dep_entry.get("parents", []) + chain)
+                )
+
+            collected = collect_local_dependencies(
+                roots,
+                initial_parents=initial,
+                on_module=_on_module,
+                on_dependency=_on_dependency,
+            )
+            if not collected:
+                collected = set(roots)
+            modules = [str(Path(p)) for p in sorted(collected)]
         else:
             from scripts.find_orphan_modules import find_orphan_modules
 
@@ -765,9 +777,39 @@ class SelfTestService:
             roots.append(key)
 
         # Follow dependency chains so helper modules are recorded alongside the
-        # isolated roots. ``_collect_recursive`` updates ``orphan_traces`` with
-        # parent relationships and redundancy flags for all discovered modules.
-        discovered = [str(Path(p)) for p in sorted(self._collect_recursive(roots))]
+        # isolated roots while also tracking parent relationships and redundancy
+        # flags for all discovered modules.
+
+        initial = {m: self.orphan_traces.get(m, {}).get("parents", []) for m in roots}
+
+        def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+            entry = self.orphan_traces.setdefault(rel, {"parents": [], "redundant": None})
+            if parents:
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + parents)
+                )
+            if entry.get("redundant") is None:
+                try:
+                    entry["redundant"] = bool(analyze_redundancy(path))
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("redundancy analysis failed for %s", path)
+                    entry["redundant"] = False
+
+        def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+            dep_entry = self.orphan_traces.setdefault(dep_rel, {"parents": [], "redundant": None})
+            dep_entry["parents"] = list(
+                dict.fromkeys(dep_entry.get("parents", []) + chain)
+            )
+
+        collected = collect_local_dependencies(
+            roots,
+            initial_parents=initial,
+            on_module=_on_module,
+            on_dependency=_on_dependency,
+        )
+        if not collected:
+            collected = set(roots)
+        discovered = [str(Path(p)) for p in sorted(collected)]
 
         filtered: list[str] = []
         for m in discovered:
@@ -900,6 +942,47 @@ class SelfTestService:
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
+
+            initial = {
+                m: self.orphan_traces.get(m, {}).get("parents", [])
+                for m in orphan_list
+            }
+
+            def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+                entry = self.orphan_traces.setdefault(
+                    rel, {"parents": [], "redundant": None}
+                )
+                if parents:
+                    entry["parents"] = list(
+                        dict.fromkeys(entry.get("parents", []) + parents)
+                    )
+                if entry.get("redundant") is None:
+                    try:
+                        entry["redundant"] = bool(analyze_redundancy(path))
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "redundancy analysis failed for %s", path
+                        )
+                        entry["redundant"] = False
+
+            def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+                dep_entry = self.orphan_traces.setdefault(
+                    dep_rel, {"parents": [], "redundant": None}
+                )
+                dep_entry["parents"] = list(
+                    dict.fromkeys(dep_entry.get("parents", []) + chain)
+                )
+
+            collected = collect_local_dependencies(
+                orphan_list,
+                initial_parents=initial,
+                on_module=_on_module,
+                on_dependency=_on_dependency,
+            )
+            if not collected:
+                collected = set(orphan_list)
+            orphan_list = [str(Path(p)) for p in sorted(collected)]
+
         redundant_list = [
             m for m, info in self.orphan_traces.items() if info.get("redundant")
         ]
@@ -1371,8 +1454,10 @@ class SelfTestService:
             return []
 
     # ------------------------------------------------------------------
-    def run_once(self, *, refresh_orphans: bool = False) -> dict[str, Any]:
-        """Execute the self tests once and return the results.
+    def run_once(
+        self, *, refresh_orphans: bool = False
+    ) -> tuple[dict[str, Any], list[str]]:
+        """Execute the self tests once and return results and passing modules.
 
         Any exception raised by :meth:`_run_once` is logged and swallowed.
         """
@@ -1393,7 +1478,10 @@ class SelfTestService:
                 _me.stop_metrics_server()
                 self._metrics_started = False
 
-        return self.results or {}
+        passed_modules: list[str] = []
+        if self.results is not None:
+            passed_modules = list(self.results.get("orphan_passed", []))
+        return self.results or {}, passed_modules
 
     # ------------------------------------------------------------------
     def run_continuous(

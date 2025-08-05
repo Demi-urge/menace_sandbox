@@ -41,8 +41,8 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
         def run_once(self):
             calls.append(self.arg)
             if self.arg == "dep_fail.py":
-                return {"failed": 1}
-            return {"failed": 0}
+                return {"failed": 1}, []
+            return {"failed": 0}, [self.arg]
 
     sts_mod.SelfTestService = DummySTS
     monkeypatch.setitem(sys.modules, "self_test_service", sts_mod)
@@ -51,9 +51,9 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
         passed = []
         for m in list(mods):
             svc = sts_mod.SelfTestService(pytest_args=m)
-            res = svc.run_once()
+            res, passed_mods = svc.run_once()
             if not res.get("failed"):
-                passed.append(m)
+                passed.extend(passed_mods)
         mods[:] = passed
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)

@@ -5553,7 +5553,7 @@ def auto_include_modules(
                         auto_include_isolated=settings.auto_include_isolated,
                         disable_auto_integration=True,
                     )
-                    res = svc.run_once()
+                    res, _passed = svc.run_once()
                     if not res.get("failed"):
                         passed_mods.append(mod)
                     else:
