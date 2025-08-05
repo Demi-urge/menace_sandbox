@@ -478,6 +478,36 @@ def test_env_disables_recursive_orphans(tmp_path, monkeypatch):
     assert called.get("used") is None
 
 
+def test_discover_orphans_skips_redundant(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("# deprecated\n")
+
+    import types
+
+    def discover(repo, module_map=None):
+        assert Path(repo) == tmp_path
+        return {"a": [], "b": ["a"]}
+
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = discover
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
+
+    def fake_analyze(path: Path) -> bool:
+        return path.name == "b.py"
+
+    monkeypatch.setattr(mod, "analyze_redundancy", fake_analyze)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    svc = mod.SelfTestService()
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
+    modules = svc._discover_orphans()
+    assert modules == ["a.py"]
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert svc.orphan_traces["b.py"]["redundant"] is True
+
+
 @pytest.mark.parametrize("var", ["SELF_TEST_DISABLE_ORPHANS", "SANDBOX_DISABLE_ORPHANS"])
 def test_env_orphans_disabled(tmp_path, monkeypatch, var):
     (tmp_path / "sandbox_data").mkdir()

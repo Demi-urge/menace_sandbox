@@ -841,10 +841,16 @@ class SelfTestService:
         """
         from scripts.discover_isolated_modules import discover_isolated_modules
 
-        modules = discover_isolated_modules(
-            Path.cwd(),
-            recursive=self.recursive_isolated if recursive is None else recursive,
-        )
+        if recursive is None:
+            env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
+            if env_val is None:
+                env_val = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
+            if env_val is not None:
+                recursive = env_val.lower() in ("1", "true", "yes")
+            else:
+                recursive = self.recursive_isolated
+
+        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
 
         roots: list[str] = []
         for m in modules:
@@ -858,7 +864,17 @@ class SelfTestService:
         # Follow dependency chains so helper modules are recorded alongside the
         # isolated roots. ``_collect_recursive`` updates ``orphan_traces`` with
         # parent relationships and redundancy flags for all discovered modules.
-        return [str(Path(p)) for p in sorted(self._collect_recursive(roots))]
+        discovered = [str(Path(p)) for p in sorted(self._collect_recursive(roots))]
+
+        filtered: list[str] = []
+        for m in discovered:
+            info = self.orphan_traces.get(m, {})
+            if info.get("redundant"):
+                self.logger.info("redundant module skipped", extra={"module": m})
+                continue
+            filtered.append(m)
+
+        return filtered
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
