@@ -15,8 +15,8 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
     (repo / "dep_fail.py").write_text("VALUE = 1\n")
     (repo / "redundant.py").write_text("VALUE = 1\n")
 
-    monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
+    monkeypatch.delenv("SANDBOX_AUTO_INCLUDE_ISOLATED", raising=False)
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
     monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
 
@@ -84,10 +84,13 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
         repo=repo,
         module_map=set(),
         orphan_traces={},
-        tracker=object(),
+        tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None),
         models=[],
         module_counts={},
         meta_log=types.SimpleNamespace(last_patch_id=None),
+        settings=types.SimpleNamespace(
+            auto_include_isolated=True, recursive_isolated=True
+        ),
     )
 
     with pytest.raises(RuntimeError):

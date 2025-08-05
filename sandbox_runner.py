@@ -116,6 +116,7 @@ from sandbox_runner.orphan_discovery import (
 )
 from menace.discrepancy_detection_bot import DiscrepancyDetectionBot
 from jinja2 import Template
+from sandbox_settings import SandboxSettings
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -558,6 +559,7 @@ class SandboxContext:
     meta_log: _SandboxMetaLogger
     backups: Dict[str, Any]
     env: Dict[str, str]
+    settings: SandboxSettings
     models: List[str]
     module_counts: Dict[str, int]
     changed_modules: Any
@@ -978,6 +980,8 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     except Exception:
         module_map_set = set()
 
+    settings = SandboxSettings()
+
     return SandboxContext(
         tmp=tmp,
         repo=repo,
@@ -995,6 +999,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         meta_log=meta_log,
         backups=backups,
         env=env,
+        settings=settings,
         models=models,
         module_counts=module_counts,
         changed_modules=_changed_modules,
