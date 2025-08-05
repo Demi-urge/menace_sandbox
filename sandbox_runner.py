@@ -920,27 +920,21 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         discover_orphans = False
     if getattr(args, "discover_orphans") is False:
         discover_orphans = False
-    if os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "0").lower() in {"1", "true", "yes"}:
+    if getattr(settings, "auto_include_isolated", True):
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
         os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
     discover_isolated = True
-    env_isolated = os.getenv("SANDBOX_DISCOVER_ISOLATED")
-    if env_isolated is not None:
-        discover_isolated = env_isolated.lower() in {"1", "true", "yes"}
     arg_iso = getattr(args, "discover_isolated", None)
     if arg_iso is not None:
         discover_isolated = arg_iso
-    recursive_isolated = True
-    env_rec_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-    if env_rec_iso is not None:
-        recursive_isolated = env_rec_iso.lower() not in {"0", "false", "no"}
+    recursive_isolated = getattr(settings, "recursive_isolated", True)
     arg_rec_iso = getattr(args, "recursive_isolated", None)
     if arg_rec_iso is not None:
         recursive_isolated = arg_rec_iso
-    recursive_orphans = True
-    env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-    if env_rec is not None:
-        recursive_orphans = env_rec.lower() not in {"0", "false"}
+    if getattr(settings, "auto_include_isolated", True):
+        recursive_isolated = True
+        discover_isolated = True
+    recursive_orphans = getattr(settings, "recursive_orphan_scan", True)
     arg_rec = getattr(args, "recursive_orphans", None)
     if arg_rec is not None:
         recursive_orphans = arg_rec

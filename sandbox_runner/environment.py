@@ -5480,20 +5480,14 @@ def auto_include_modules(
     from sandbox_runner.orphan_discovery import discover_recursive_orphans
     import orphan_analyzer
     import json
+    from sandbox_settings import SandboxSettings
 
     mod_paths = {Path(m).as_posix() for m in modules}
     redundant_mods: list[str] = []
 
+    settings = SandboxSettings()
     # Determine whether to expand modules using recursive orphan discovery.
-    env_val = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-    should_expand = recursive
-    if env_val is not None:
-        should_expand = should_expand or env_val.lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    should_expand = recursive or getattr(settings, "recursive_orphan_scan", True)
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
@@ -5514,11 +5508,7 @@ def auto_include_modules(
         except Exception:
             pass
 
-    auto_iso_env = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-    include_isolated = should_expand or (
-        auto_iso_env is not None
-        and auto_iso_env.lower() in {"1", "true", "yes", "on"}
-    )
+    include_isolated = should_expand or getattr(settings, "auto_include_isolated", True)
     if include_isolated:
         try:
             from scripts.discover_isolated_modules import discover_isolated_modules
