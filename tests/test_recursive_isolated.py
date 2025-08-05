@@ -182,3 +182,40 @@ def test_discover_isolated_records_dependencies(tmp_path, monkeypatch):
     mods = svc._discover_isolated()
     assert set(mods) == {"a.py", "b.py"}
     assert svc.orphan_traces.get("b.py", {}).get("parents") == ["a.py"]
+
+
+def test_discover_isolated_skips_redundant(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("# deprecated\n")
+
+    import types
+
+    def fake_discover(root, recursive=True):
+        assert recursive is True
+        return [Path("a.py")]
+
+    mod_iso = types.ModuleType("scripts.discover_isolated_modules")
+    mod_iso.discover_isolated_modules = fake_discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod_iso
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+
+    def fake_analyze(path: Path) -> bool:
+        return path.name == "b.py"
+
+    monkeypatch.setattr(svc_mod, "analyze_redundancy", fake_analyze)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    svc = svc_mod.SelfTestService(
+        discover_orphans=False,
+        discover_isolated=True,
+        recursive_isolated=True,
+    )
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
+    mods = svc._discover_isolated()
+    assert mods == ["a.py"]
+    assert svc.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert svc.orphan_traces["b.py"]["redundant"] is True
