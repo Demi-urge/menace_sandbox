@@ -188,10 +188,13 @@ def _sandbox_cycle_runner(
         if auto_iso in ("1", "true", "yes"):
             try:
                 trace = discover_recursive_orphans(str(ctx.repo))
+                from scripts.discover_isolated_modules import discover_isolated_modules
+
                 module_map = set(getattr(ctx, "module_map", set()))
                 traces = getattr(ctx, "orphan_traces", {})
                 new_mods: list[str] = []
                 trace_details: Dict[str, Dict[str, Any]] = {}
+
                 for name, info in trace.items():
                     rel = Path(*name.split("."))
                     path = (ctx.repo / rel).with_suffix(".py")
@@ -209,6 +212,14 @@ def _sandbox_cycle_runner(
                     trace_details[rel_path] = traces[rel_path]
                     if not traces[rel_path]["redundant"]:
                         new_mods.append(rel_path)
+
+                for rel_path in discover_isolated_modules(str(ctx.repo), recursive=True):
+                    if rel_path in module_map or rel_path in traces:
+                        continue
+                    traces[rel_path] = {"parents": [], "redundant": False}
+                    trace_details[rel_path] = traces[rel_path]
+                    new_mods.append(rel_path)
+
                 if trace_details:
                     logger.info(
                         "orphan discovery",
@@ -220,13 +231,22 @@ def _sandbox_cycle_runner(
                             parents={m: inf.get("parents", []) for m, inf in trace_details.items()},
                         ),
                     )
-                if new_mods:
+
+                pre_mods = set(new_mods)
+                if pre_mods:
+                    module_map.update(pre_mods)
+                ctx.module_map = module_map
+                ctx.orphan_traces = traces
+
+                if pre_mods:
                     try:
                         auto_include_modules(new_mods, recursive=True, validate=True)
-                        module_map.update(new_mods)
                     except Exception:
                         logger.exception("isolated module auto-inclusion failed")
-                ctx.module_map = module_map
+                    module_map.difference_update(pre_mods - set(new_mods))
+                    module_map.update(new_mods)
+                    ctx.module_map = module_map
+
                 try:
                     append_orphan_cache(ctx.repo, traces)
                     if new_mods:
