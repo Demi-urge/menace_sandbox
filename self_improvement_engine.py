@@ -1397,15 +1397,13 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _test_orphan_modules(self, paths: Iterable[str]) -> set[str]:
-        """Run self tests for ``paths`` and integrate successful modules.
+        """Run self tests for ``paths`` and return modules that succeed.
 
         The modules are executed via :class:`SelfTestService` with orphan
-        discovery enabled. After the test run any modules that pass are
-        automatically included into the workflow system using
-        :func:`sandbox_runner.environment.auto_include_modules` with recursive
-        dependency discovery enabled. Modules identified as redundant are
-        recorded in ``self.orphan_traces`` for future runs. Basic metrics about
-        the run are logged and stored via ``data_bot`` when available.
+        discovery enabled. Modules identified as redundant are recorded in
+        ``self.orphan_traces`` for future runs. Basic metrics about the run are
+        logged and stored via ``data_bot`` when available. Actual integration of
+        passing modules is handled by the caller.
         """
 
         modules = [str(p) for p in paths]
@@ -1440,13 +1438,6 @@ class SelfImprovementEngine:
                     )
                     continue
                 passed.add(m)
-            if passed:
-                try:
-                    environment.auto_include_modules(
-                        sorted(passed), recursive=True, validate=True
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("auto inclusion failed")
             failed_mods = sorted(set(modules) - passed)
             self.logger.info(
                 "self test summary",
@@ -1470,7 +1461,6 @@ class SelfImprovementEngine:
                 tracker.update(base, base, metrics=counts)
             try:
                 orphan_modules_tested_total.inc(len(modules))
-                orphan_modules_reintroduced_total.inc(len(passed))
                 orphan_modules_failed_total.inc(len(failed_mods))
                 orphan_modules_redundant_total.inc(0)
             except Exception:
@@ -1513,14 +1503,6 @@ class SelfImprovementEngine:
                 extra=log_record(module=name),
             )
 
-        if passing:
-            try:
-                environment.auto_include_modules(
-                    sorted(passing), recursive=True, validate=True
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("auto inclusion failed: %s", exc)
-
         failed_mods = [m for m in modules if m not in passing and m not in redundant]
         self.logger.info(
             "self test summary",
@@ -1548,7 +1530,6 @@ class SelfImprovementEngine:
             tracker.update(base, base, metrics=counts)
         try:
             orphan_modules_tested_total.inc(len(modules))
-            orphan_modules_reintroduced_total.inc(len(passing))
             orphan_modules_failed_total.inc(len(failed_mods))
             orphan_modules_redundant_total.inc(len(redundant))
         except Exception:
@@ -1674,6 +1655,7 @@ class SelfImprovementEngine:
             except Exception:  # pragma: no cover - fallback for tests
                 from sandbox_settings import SandboxSettings as _SS  # type: ignore
                 settings = _SS()
+
             if getattr(settings, "auto_include_isolated", True):
                 try:
                     from scripts.discover_isolated_modules import discover_isolated_modules
@@ -1686,6 +1668,28 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "isolated module discovery failed: %s", exc
                     )
+
+            try:
+                from sandbox_runner import discover_recursive_orphans as _discover
+
+                trace = _discover(str(repo), module_map=data_dir / "module_map.json")
+                for k, v in trace.items():
+                    info: dict[str, Any] = {
+                        "parents": [
+                            str(Path(*p.split(".")).with_suffix(".py"))
+                            for p in (
+                                v.get("parents") if isinstance(v, dict) else v
+                            )
+                        ]
+                    }
+                    if isinstance(v, dict) and "redundant" in v:
+                        info["redundant"] = bool(v["redundant"])
+                    mod_path = str(Path(*k.split(".")).with_suffix(".py"))
+                    self.orphan_traces.setdefault(mod_path, info)
+                    modules.append(mod_path)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("orphan discovery failed: %s", exc)
+
             try:
                 from sandbox_runner.dependency_utils import (
                     collect_local_dependencies,
@@ -1698,36 +1702,12 @@ class SelfImprovementEngine:
                 )
                 repo_mods = sorted(set(modules))
 
-            try:
-                svc = SelfTestService(
-                    pytest_args=" ".join(repo_mods),
-                    include_orphans=True,
-                    discover_orphans=True,
-                    recursive_orphans=True,
-                    clean_orphans=True,
-                    disable_auto_integration=True,
-                )
-                asyncio.run(svc._run_once())
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("self test execution failed: %s", exc)
-                return
-
-            results = svc.results or {}
-            integration = results.get("integration")
-            if isinstance(integration, dict):
-                passing = set(integration.get("integrated", []))
-                redundant = set(integration.get("redundant", []))
-            else:
-                passed = set(results.get("orphan_passed", []))
-                redundant = set(results.get("orphan_redundant", []))
-                passing = {p for p in passed if p not in redundant}
-            for name in redundant:
-                self.orphan_traces.setdefault(name, {})["redundant"] = True
+            passing = self._test_orphan_modules(repo_mods)
 
             if passing:
                 try:
                     environment.auto_include_modules(
-                        sorted(passing), recursive=True
+                        sorted(passing), recursive=True, validate=True
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
