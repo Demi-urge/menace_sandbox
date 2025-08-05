@@ -2,6 +2,7 @@ import asyncio
 import importlib.util
 import json
 import sys
+import types
 from pathlib import Path
 import pytest
 
@@ -17,6 +18,29 @@ if pkg is not None:
     pkg.__path__ = [str(ROOT)]
 from prometheus_client import REGISTRY
 REGISTRY._names_to_collectors.clear()
+db_mod = types.ModuleType("data_bot")
+db_mod.DataBot = object
+sys.modules["data_bot"] = db_mod
+sys.modules["menace.data_bot"] = db_mod
+err_db_mod = types.ModuleType("error_bot")
+class _ErrDB:
+    def __init__(self, *a, **k):
+        pass
+err_db_mod.ErrorDB = _ErrDB
+sys.modules["error_bot"] = err_db_mod
+sys.modules["menace.error_bot"] = err_db_mod
+err_log_mod = types.ModuleType("error_logger")
+class _ErrLogger:
+    def __init__(self, *a, **k):
+        pass
+err_log_mod.ErrorLogger = _ErrLogger
+sys.modules["error_logger"] = err_log_mod
+sys.modules["menace.error_logger"] = err_log_mod
+ae_mod = types.ModuleType("auto_env_setup")
+ae_mod.get_recursive_isolated = lambda: True
+ae_mod.set_recursive_isolated = lambda val: None
+sys.modules["auto_env_setup"] = ae_mod
+sys.modules["menace.auto_env_setup"] = ae_mod
 spec.loader.exec_module(mod)
 # simplify redundancy checks for tests
 mod.analyze_redundancy = lambda p: False
@@ -554,10 +578,15 @@ def _setup_isolated(monkeypatch):
     return called
 
 
-def test_recursive_isolated_env(tmp_path, monkeypatch):
+def test_recursive_isolated_setting(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "0")
+
+    class DummySettings:
+        auto_include_isolated = False
+        recursive_isolated = False
+
+    monkeypatch.setattr(mod, "SandboxSettings", lambda: DummySettings())
 
     called = _setup_isolated(monkeypatch)
     svc = mod.SelfTestService(discover_isolated=True)

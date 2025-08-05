@@ -5544,6 +5544,8 @@ def auto_include_modules(
 
     try:
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        from sandbox_settings import SandboxSettings
+        settings = SandboxSettings()
         for mod in mods:
             path = repo / mod
             try:
@@ -5562,6 +5564,8 @@ def auto_include_modules(
                         discover_orphans=False,
                         discover_isolated=True,
                         recursive_orphans=True,
+                        recursive_isolated=settings.recursive_isolated,
+                        auto_include_isolated=settings.auto_include_isolated,
                         disable_auto_integration=True,
                     )
                     res = svc.run_once()

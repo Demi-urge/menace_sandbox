@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import types
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,6 +19,32 @@ svc_mod = importlib.util.module_from_spec(spec)
 pkg = sys.modules.get("menace")
 if pkg is not None:
     pkg.__path__ = [str(ROOT)]
+me = types.SimpleNamespace(Gauge=lambda *a, **k: object())
+sys.modules["metrics_exporter"] = me
+sys.modules["menace.metrics_exporter"] = me
+db_mod = types.ModuleType("data_bot")
+db_mod.DataBot = object
+sys.modules["data_bot"] = db_mod
+sys.modules["menace.data_bot"] = db_mod
+err_db_mod = types.ModuleType("error_bot")
+class _ErrDB:
+    def __init__(self, *a, **k):
+        pass
+err_db_mod.ErrorDB = _ErrDB
+sys.modules["error_bot"] = err_db_mod
+sys.modules["menace.error_bot"] = err_db_mod
+err_log_mod = types.ModuleType("error_logger")
+class _ErrLogger:
+    def __init__(self, *a, **k):
+        pass
+err_log_mod.ErrorLogger = _ErrLogger
+sys.modules["error_logger"] = err_log_mod
+sys.modules["menace.error_logger"] = err_log_mod
+ae_mod = types.ModuleType("auto_env_setup")
+ae_mod.get_recursive_isolated = lambda: True
+ae_mod.set_recursive_isolated = lambda val: None
+sys.modules["auto_env_setup"] = ae_mod
+sys.modules["menace.auto_env_setup"] = ae_mod
 spec.loader.exec_module(svc_mod)
 svc_mod.analyze_redundancy = lambda p: False
 
@@ -137,7 +164,7 @@ def test_service_recursive_isolated_updates_file(tmp_path, monkeypatch):
     assert sorted(data) == ["bar.py", "foo.py"]
 
 
-def test_env_enables_isolated_processing(tmp_path, monkeypatch):
+def test_settings_enable_isolated_processing(tmp_path, monkeypatch):
     (tmp_path / "sandbox_data").mkdir()
     monkeypatch.chdir(tmp_path)
 
@@ -145,8 +172,12 @@ def test_env_enables_isolated_processing(tmp_path, monkeypatch):
     monkeypatch.setenv("SELF_TEST_DISCOVER_ORPHANS", "0")
     monkeypatch.setenv("SELF_TEST_RECURSIVE_ORPHANS", "0")
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
-    monkeypatch.setenv("SELF_TEST_DISCOVER_ISOLATED", "1")
-    monkeypatch.setenv("SELF_TEST_RECURSIVE_ISOLATED", "1")
+
+    class DummySettings:
+        auto_include_isolated = True
+        recursive_isolated = True
+
+    monkeypatch.setattr(svc_mod, "SandboxSettings", lambda: DummySettings())
     svc = svc_mod.SelfTestService(discover_isolated=False, recursive_isolated=False)
     asyncio.run(svc._run_once())
 

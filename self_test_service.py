@@ -22,6 +22,7 @@ import threading
 import inspect
 
 from orphan_analyzer import analyze_redundancy
+from sandbox_settings import SandboxSettings
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -112,7 +113,8 @@ class SelfTestService:
         discover_orphans: bool = True,
         discover_isolated: bool = True,
         recursive_orphans: bool = True,
-        recursive_isolated: bool | None = None,
+        auto_include_isolated: bool = SandboxSettings().auto_include_isolated,
+        recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
     ) -> None:
         """Create a new service instance.
@@ -134,11 +136,14 @@ class SelfTestService:
             When ``True``, follow orphan modules' import chains to include local
             dependencies. Defaults to ``True``. Set ``SELF_TEST_RECURSIVE_ORPHANS=0``
             or pass ``--no-recursive-include`` to disable.
+        auto_include_isolated:
+            When ``True``, force discovery of isolated modules and enable
+            recursive traversal. Defaults to
+            :class:`~sandbox_settings.SandboxSettings`.
         recursive_isolated:
-            When ``True``, traverse dependencies of isolated modules. Defaults
-            to :func:`get_recursive_isolated` so both sandbox and self-test
-            modes honour the ``SANDBOX_RECURSIVE_ISOLATED``/
-            ``SELF_TEST_RECURSIVE_ISOLATED`` flags.
+            When ``True``, traverse dependencies of isolated modules.
+            Defaults to :class:`~sandbox_settings.SandboxSettings` so both
+            sandbox and self-test modes honour the same setting.
         clean_orphans:
             When ``True``, remove successfully integrated modules from
             ``sandbox_data/orphan_modules.json`` after ``integration_callback``
@@ -248,24 +253,9 @@ class SelfTestService:
                 self.recursive_orphans = env_recursive.lower() in ("1", "true", "yes")
 
         self.discover_isolated = bool(discover_isolated)
-        env_isolated = (
-            os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
-            or os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-            or os.getenv("SELF_TEST_DISCOVER_ISOLATED")
-            or os.getenv("SANDBOX_DISCOVER_ISOLATED")
-        )
-        if env_isolated is not None:
-            self.discover_isolated = env_isolated.lower() in ("1", "true", "yes")
-        self.recursive_isolated = (
-            get_recursive_isolated()
-            if recursive_isolated is None
-            else bool(recursive_isolated)
-        )
-        auto_inc = (
-            os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED")
-            or os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-        )
-        if auto_inc and auto_inc.lower() in ("1", "true", "yes"):
+        self.recursive_isolated = bool(recursive_isolated)
+        self.auto_include_isolated = bool(auto_include_isolated)
+        if self.auto_include_isolated:
             self.discover_isolated = True
             self.recursive_isolated = True
 
@@ -1874,6 +1864,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_isolated=args.discover_isolated,
             recursive_orphans=recursive_orphans,
             recursive_isolated=args.recursive_isolated,
+            auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
         )
         try:
@@ -1913,6 +1904,7 @@ def cli(argv: list[str] | None = None) -> int:
             discover_isolated=args.discover_isolated,
             recursive_orphans=recursive_orphans,
             recursive_isolated=args.recursive_isolated,
+            auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
         )
         try:

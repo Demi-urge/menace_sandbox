@@ -1480,13 +1480,15 @@ class SelfImprovementEngine:
             orphan_modules_redundant_total.inc(0)
             return passed
 
+        settings = SandboxSettings()
         svc = _STS(
             pytest_args=" ".join(modules),
             include_orphans=True,
             discover_orphans=True,
             discover_isolated=True,
             recursive_orphans=True,
-            recursive_isolated=True,
+            recursive_isolated=settings.recursive_isolated,
+            auto_include_isolated=settings.auto_include_isolated,
             clean_orphans=True,
             disable_auto_integration=True,
         )

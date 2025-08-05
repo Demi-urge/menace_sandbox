@@ -75,6 +75,12 @@ environment variables to `0`. The complementary flags `--recursive-include` and
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json`.
 
+The constructor exposes `auto_include_isolated` and `recursive_isolated`
+parameters that mirror `SandboxSettings`. Setting
+`auto_include_isolated=True` forces isolated discovery and automatically
+enables recursive processing of their dependencies. `recursive_isolated`
+controls whether discovered isolated modules have their imports followed.
+
 ### Environment variables controlling recursion
 
 - `SELF_TEST_RECURSIVE_ORPHANS` / `SANDBOX_RECURSIVE_ORPHANS` – recurse through
