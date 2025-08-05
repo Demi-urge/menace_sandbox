@@ -1686,30 +1686,69 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "isolated module discovery failed: %s", exc
                     )
-            repo_mods = self._collect_recursive_modules(modules)
-            passing = self._test_orphan_modules(repo_mods)
+            try:
+                from sandbox_runner.dependency_utils import (
+                    collect_local_dependencies,
+                )
+
+                repo_mods = sorted(collect_local_dependencies(modules))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "dependency expansion failed: %s", exc
+                )
+                repo_mods = sorted(set(modules))
+
+            try:
+                svc = SelfTestService(
+                    pytest_args=" ".join(repo_mods),
+                    include_orphans=True,
+                    discover_orphans=True,
+                    recursive_orphans=True,
+                    clean_orphans=True,
+                    disable_auto_integration=True,
+                )
+                asyncio.run(svc._run_once())
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("self test execution failed: %s", exc)
+                return
+
+            results = svc.results or {}
+            integration = results.get("integration")
+            if isinstance(integration, dict):
+                passing = set(integration.get("integrated", []))
+                redundant = set(integration.get("redundant", []))
+            else:
+                passed = set(results.get("orphan_passed", []))
+                redundant = set(results.get("orphan_redundant", []))
+                passing = {p for p in passed if p not in redundant}
+            for name in redundant:
+                self.orphan_traces.setdefault(name, {})["redundant"] = True
+
             if passing:
-                repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                abs_paths = [str(repo / p) for p in passing]
                 try:
                     environment.auto_include_modules(
-                        sorted(passing), recursive=True, validate=True
+                        sorted(passing), recursive=True
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
-                integrated: set[str] = set()
+
+                if self.module_index:
+                    try:
+                        self.module_index.refresh(passing, force=True)
+                        self.module_index.save()
+                        for m in passing:
+                            self.module_clusters[m] = self.module_index.get(m)
+                        self._last_map_refresh = time.time()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "module map refresh failed: %s", exc
+                        )
+
                 try:
-                    integrated = self._integrate_orphans(abs_paths)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("orphan integration failed: %s", exc)
-                try:
-                    self._refresh_module_map()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("module map refresh failed: %s", exc)
-                try:
-                    orphan_modules_reintroduced_total.inc(len(integrated))
+                    orphan_modules_reintroduced_total.inc(len(passing))
                 except Exception:
                     pass
+
                 try:
                     existing = json.loads(path.read_text()) if path.exists() else []
                 except Exception:  # pragma: no cover - best effort
@@ -1857,7 +1896,13 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to write orphan classifications")
             return
 
-        passing = self._test_orphan_modules(filtered)
+        try:
+            from sandbox_runner.dependency_utils import collect_local_dependencies
+
+            repo_mods = sorted(collect_local_dependencies(filtered))
+        except Exception:  # pragma: no cover - best effort
+            repo_mods = filtered
+        passing = self._test_orphan_modules(repo_mods)
         if passing:
             try:
                 environment.auto_include_modules(
