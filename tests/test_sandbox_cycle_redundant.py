@@ -1,7 +1,7 @@
 import types
-import pytest
-import sys
 from pathlib import Path
+
+import pytest
 
 import sandbox_runner.cycle as cycle
 import sandbox_runner as pkg
@@ -9,28 +9,27 @@ import sandbox_runner as pkg
 
 def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
     monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
 
     # Record calls to auto_include_modules
-    calls = []
+    calls: list[tuple[list[str], bool, bool]] = []
 
-    def fake_auto_include(mods, recursive=False):
-        calls.append(list(mods))
+    def fake_auto_include(mods, recursive=False, validate=False):
+        calls.append((list(mods), recursive, validate))
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
-    mod = types.ModuleType("scripts.discover_isolated_modules")
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
 
-    def discover(repo_path, *, recursive=True):
+    (tmp_path / "foo.py").write_text("pass\n")
+
+    def fake_discover(repo_path):
         assert Path(repo_path) == tmp_path
-        return ["foo.py"]
+        return {"foo": {"parents": []}}
 
-    mod.discover_isolated_modules = discover
-    pkg_mod = types.ModuleType("scripts")
-    pkg_mod.discover_isolated_modules = mod
-    monkeypatch.setitem(sys.modules, "scripts", pkg_mod)
-    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", fake_discover)
+
     monkeypatch.setattr(
         cycle,
         "ResourceTuner",
