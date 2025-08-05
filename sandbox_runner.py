@@ -731,6 +731,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
     telem_db = ErrorDB(Path(tmp) / "errors.db")
     improver.error_bot = ErrorBot(telem_db, MetricsDB())
+    settings = SandboxSettings()
 
     class _TelemProxy:
         def __init__(self, db: ErrorDB) -> None:
@@ -804,6 +805,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         discover_isolated=discover_isolated,
         recursive_orphans=recursive_orphans,
         recursive_isolated=recursive_isolated,
+        auto_include_isolated=settings.auto_include_isolated,
         integration_callback=lambda mods: SelfImprovementEngine._refresh_module_map(
             improver, mods
         ),
@@ -979,8 +981,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             }
     except Exception:
         module_map_set = set()
-
-    settings = SandboxSettings()
 
     return SandboxContext(
         tmp=tmp,
