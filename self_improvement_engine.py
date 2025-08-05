@@ -1530,9 +1530,9 @@ class SelfImprovementEngine:
         """Refresh module index and clusters for newly tested orphan modules.
 
         ``auto_include_modules`` is invoked with ``recursive=True`` so that any
-        dependencies of ``paths`` are automatically included. When
-        ``SANDBOX_RECURSIVE_ORPHANS`` is enabled, newly discovered dependencies
-        trigger a rerun of :meth:`_update_orphan_modules` to continue traversal.
+        dependencies of ``paths`` are automatically included. Newly discovered
+        dependencies trigger a rerun of :meth:`_update_orphan_modules` to
+        continue traversal without manual intervention.
 
         Returns
         -------
@@ -1581,13 +1581,12 @@ class SelfImprovementEngine:
                 environment.auto_include_modules(
                     sorted(mods), recursive=True, validate=True
                 )
-                if os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1":
-                    try:
-                        self._update_orphan_modules()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "recursive orphan update failed: %s", exc
-                        )
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "recursive orphan update failed: %s", exc
+                    )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "auto inclusion failed: %s", exc
@@ -1605,10 +1604,6 @@ class SelfImprovementEngine:
                         orphan_path.write_text(json.dumps(sorted(keep), indent=2))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan modules")
-            try:
-                orphan_modules_reintroduced_total.inc(len(mods))
-            except Exception:
-                pass
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
@@ -1724,14 +1719,19 @@ class SelfImprovementEngine:
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
+                integrated: set[str] = set()
                 try:
-                    self._integrate_orphans(abs_paths)
+                    integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
                 try:
                     self._refresh_module_map()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("module map refresh failed: %s", exc)
+                try:
+                    orphan_modules_reintroduced_total.inc(len(integrated))
+                except Exception:
+                    pass
                 try:
                     existing = json.loads(path.read_text()) if path.exists() else []
                 except Exception:  # pragma: no cover - best effort
@@ -1743,6 +1743,12 @@ class SelfImprovementEngine:
                         path.write_text(json.dumps(sorted(keep), indent=2))
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception("failed to clean orphan modules")
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "post integration orphan update failed: %s", exc
+                    )
             return
 
         if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
@@ -1756,40 +1762,15 @@ class SelfImprovementEngine:
         if env_rec is not None:
             recursive = env_rec.lower() in ("1", "true", "yes")
 
-        # isolated modules are processed recursively based on configuration
-        recursive_iso = get_recursive_isolated()
+        try:
+            from scripts.discover_isolated_modules import discover_isolated_modules
 
-        auto_include = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") or os.getenv(
-            "SELF_TEST_AUTO_INCLUDE_ISOLATED"
-        )
-        discover_iso_flag = os.getenv("SANDBOX_DISCOVER_ISOLATED")
-        if (
-            (auto_include and auto_include.lower() in ("1", "true", "yes"))
-            or recursive_iso
-        ):
-            try:
-                from scripts.discover_isolated_modules import discover_isolated_modules
-
-                iso_mods = discover_isolated_modules(str(repo), recursive=True)
-                modules.extend(sorted(iso_mods))
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("isolated module discovery failed: %s", exc)
-
-        if discover_iso_flag is None or discover_iso_flag.lower() not in {"0", "false", "no"}:
-            try:
-                from scripts.discover_isolated_modules import discover_isolated_modules
-
-                prev: set[str] = set()
-                while True:
-                    new_paths = set(
-                        discover_isolated_modules(str(repo), recursive=recursive_iso)
-                    ) - prev
-                    if not new_paths:
-                        break
-                    modules.extend(sorted(new_paths))
-                    prev.update(new_paths)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("isolated module discovery failed: %s", exc)
+            iso_mods = discover_isolated_modules(str(repo), recursive=True)
+            modules.extend(sorted(iso_mods))
+            for m in iso_mods:
+                self.orphan_traces.setdefault(m, {"parents": []})
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("isolated module discovery failed: %s", exc)
 
         try:
             from sandbox_runner import discover_recursive_orphans as _discover
@@ -1941,6 +1922,10 @@ class SelfImprovementEngine:
                             parents=self.orphan_traces.get(m, {}).get("parents", []),
                         ),
                     )
+        try:
+            orphan_modules_reintroduced_total.inc(len(integrated_names))
+        except Exception:
+            pass
 
         for m in modules:
             info = classifications.setdefault(
@@ -2027,10 +2012,21 @@ class SelfImprovementEngine:
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
+                integrated: set[str] = set()
                 try:
-                    self._integrate_orphans(abs_paths)
+                    integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
+                try:
+                    orphan_modules_reintroduced_total.inc(len(integrated))
+                except Exception:
+                    pass
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "post integration orphan update failed: %s", exc
+                    )
             return
 
         if not self.auto_refresh_map or not self.module_index:
@@ -2117,7 +2113,23 @@ class SelfImprovementEngine:
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
-                self._integrate_orphans(abs_deps)
+                deps_integrated: set[str] = set()
+                try:
+                    deps_integrated = self._integrate_orphans(abs_deps)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "orphan integration failed: %s", exc
+                    )
+                try:
+                    orphan_modules_reintroduced_total.inc(len(deps_integrated))
+                except Exception:
+                    pass
+                try:
+                    self._update_orphan_modules()
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "post integration orphan update failed: %s", exc
+                    )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "orphan integration failed: %s", exc
@@ -2149,11 +2161,22 @@ class SelfImprovementEngine:
                         )
                     repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                     abs_paths = [str(repo / p) for p in passing]
+                    integrated: set[str] = set()
                     try:
-                        self._integrate_orphans(abs_paths)
+                        integrated = self._integrate_orphans(abs_paths)
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception(
                             "orphan integration failed: %s", exc
+                        )
+                    try:
+                        orphan_modules_reintroduced_total.inc(len(integrated))
+                    except Exception:
+                        pass
+                    try:
+                        self._update_orphan_modules()
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "post integration orphan update failed: %s", exc
                         )
             self._refresh_module_map()
             state = (
