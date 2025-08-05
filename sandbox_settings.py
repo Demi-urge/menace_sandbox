@@ -26,9 +26,17 @@ class SandboxSettings(BaseSettings):
     menace_env_file: str = Field(".env", env="MENACE_ENV_FILE")
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
-    auto_include_isolated: bool = Field(True, env="SANDBOX_AUTO_INCLUDE_ISOLATED")
+    auto_include_isolated: bool = Field(
+        True,
+        env="SANDBOX_AUTO_INCLUDE_ISOLATED",
+        description="Enable automatic inclusion of isolated modules discovered during orphan scanning.",
+    )
     recursive_orphan_scan: bool = Field(True, env="SANDBOX_RECURSIVE_ORPHANS")
-    recursive_isolated: bool = Field(True, env="SANDBOX_RECURSIVE_ISOLATED")
+    recursive_isolated: bool = Field(
+        True,
+        env="SANDBOX_RECURSIVE_ISOLATED",
+        description="Recursively resolve local imports when auto-including isolated modules.",
+    )
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")

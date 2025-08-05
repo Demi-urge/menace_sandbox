@@ -109,7 +109,16 @@ async def _collect_plugin_metrics_async(
 
 
 def include_orphan_modules(ctx: "SandboxContext") -> None:
-    """Discover orphan modules and include them in ``ctx``."""
+    """Discover orphan modules and feed viable ones into the workflow.
+
+    The helper consults :func:`discover_recursive_orphans` and the legacy
+    ``scripts.discover_isolated_modules`` script to find Python modules that are
+    not referenced anywhere in the repository. Newly discovered modules are
+    recorded in ``ctx.orphan_traces`` and passed to
+    :func:`environment.auto_include_modules` for optional integration. Only
+    modules that successfully pass the integration checks are added to
+    ``ctx.module_map`` and pruned from the orphan cache.
+    """
 
     settings = getattr(ctx, "settings", SandboxSettings())
     if not getattr(settings, "auto_include_isolated", False):
@@ -117,7 +126,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
     try:
         trace = discover_recursive_orphans(str(ctx.repo))
-        from scripts.discover_isolated_modules import discover_isolated_modules
+        try:
+            from scripts.discover_isolated_modules import discover_isolated_modules
+        except Exception:  # pragma: no cover - optional helper
+            def discover_isolated_modules(*_args: Any, **_kwargs: Any) -> list[str]:
+                return []
 
         module_map = set(getattr(ctx, "module_map", set()))
         traces = getattr(ctx, "orphan_traces", {})
@@ -165,30 +178,33 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 ),
             )
 
-        pre_mods = set(new_mods)
-        if pre_mods:
-            module_map.update(pre_mods)
-        ctx.module_map = module_map
         ctx.orphan_traces = traces
-
-        if pre_mods:
+        added: set[str] = set()
+        if new_mods:
             try:
-                auto_include_modules(new_mods, recursive=True, validate=True)
+                _, tested = auto_include_modules(
+                    new_mods, recursive=True, validate=True
+                )
+                added = set(tested.get("added", []))
             except Exception:
                 logger.exception("isolated module auto-inclusion failed")
-            module_map.difference_update(pre_mods - set(new_mods))
-            module_map.update(new_mods)
-            ctx.module_map = module_map
 
         try:
             append_orphan_cache(ctx.repo, traces)
-            if new_mods:
-                prune_orphan_cache(ctx.repo, new_mods, traces)
-                for m in new_mods:
-                    traces.pop(m, None)
-            ctx.orphan_traces = traces
         except Exception:
             logger.exception("failed to record orphan traces")
+
+        if added:
+            module_map.update(added)
+            ctx.module_map = module_map
+            try:
+                prune_orphan_cache(ctx.repo, added, traces)
+                for m in added:
+                    traces.pop(m, None)
+            except Exception:
+                logger.exception("failed to prune orphan cache")
+
+        ctx.orphan_traces = traces
     except Exception:
         logger.exception("isolated module auto-inclusion failed")
 
