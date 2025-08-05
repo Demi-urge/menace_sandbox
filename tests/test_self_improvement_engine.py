@@ -6,6 +6,7 @@ import asyncio
 
 import json
 from pathlib import Path
+import types
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 spec = importlib.util.spec_from_file_location(
     "menace", os.path.join(os.path.dirname(__file__), "..", "__init__.py")
@@ -66,7 +67,25 @@ if "git" not in sys.modules:
 
 if "filelock" not in sys.modules:
     filelock_mod = types.ModuleType("filelock")
-    filelock_mod.FileLock = object
+
+    class DummyLock:
+        def __init__(self, *a, **k):
+            self.is_locked = False
+            self.lock_file = ""
+
+        def acquire(self, *a, **k):
+            self.is_locked = True
+
+        def release(self):  # pragma: no cover - simplicity
+            self.is_locked = False
+
+        def __enter__(self):  # pragma: no cover
+            return self
+
+        def __exit__(self, *a):  # pragma: no cover
+            pass
+
+    filelock_mod.FileLock = DummyLock
     filelock_mod.Timeout = type("Timeout", (Exception,), {})
     sys.modules["filelock"] = filelock_mod
 
@@ -878,3 +897,77 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
     assert engine.roi_group_history.get(gid) == [1.0]
     data = json.loads((tmp_path / "map.json").read_text())
     assert data["modules"].get("a.py") == gid
+
+
+def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
+    import types
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.py").write_text("import b\n")
+    (repo / "b.py").write_text("import c\n")
+    (repo / "c.py").write_text("x = 1\n")
+
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    map_path = data_dir / "module_map.json"
+    map_path.write_text(json.dumps({"modules": {}, "groups": {}}))
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(repo))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
+
+    eng = types.SimpleNamespace(
+        orphan_traces={"c.py": {"parents": ["b.py"], "redundant": True}},
+        module_index=None,
+        module_clusters={},
+        logger=types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None),
+    )
+    eng._collect_recursive_modules = types.MethodType(
+        sie.SelfImprovementEngine._collect_recursive_modules, eng
+    )
+
+    integrated: list[str] = []
+
+    def fake_integrate(paths: list[str]) -> set[str]:
+        integrated.extend(sorted(Path(p).name for p in paths))
+        data = json.loads(map_path.read_text())
+        for p in paths:
+            data["modules"][Path(p).name] = 1
+        map_path.write_text(json.dumps(data))
+        return {Path(p).name for p in paths}
+
+    eng._integrate_orphans = fake_integrate
+    eng._refresh_module_map = lambda modules=None: None
+
+    def fake_test(mods: list[str]) -> list[str]:
+        return [m for m in mods if not eng.orphan_traces.get(m, {}).get("redundant")]
+
+    eng._test_orphan_modules = fake_test
+
+    calls: list[list[str]] = []
+    env = types.SimpleNamespace(
+        auto_include_modules=lambda mods, recursive=False, validate=False: calls.append(
+            sorted(mods)
+        )
+    )
+    monkeypatch.setattr(sie, "environment", env)
+    import sandbox_runner
+    monkeypatch.setattr(
+        sandbox_runner, "discover_recursive_orphans", lambda repo, module_map=None: {}
+    )
+
+    eng._update_orphan_modules = types.MethodType(
+        sie.SelfImprovementEngine._update_orphan_modules, eng
+    )
+    eng._update_orphan_modules(["a.py"])
+
+    assert calls[0] == ["a.py", "b.py"]
+    assert integrated[:2] == ["a.py", "b.py"]
+    data = json.loads(map_path.read_text())
+    assert set(data["modules"]) == {"a.py", "b.py"}
+    assert "c.py" not in data["modules"]
+    orphan_file = data_dir / "orphan_modules.json"
+    assert orphan_file.exists()
+    info = json.loads(orphan_file.read_text())
+    assert "c.py" not in info
+    assert eng.orphan_traces.get("c.py", {}).get("redundant") is True
