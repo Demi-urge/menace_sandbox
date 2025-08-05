@@ -52,11 +52,7 @@ from orphan_analyzer import analyze_redundancy
 try:
     from .auto_env_setup import get_recursive_isolated
 except Exception:  # pragma: no cover - direct execution
-    def get_recursive_isolated() -> bool:  # type: ignore
-        val = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
-            "SELF_TEST_RECURSIVE_ISOLATED"
-        )
-        return (val or "1").lower() not in {"0", "false", "no"}
+    from auto_env_setup import get_recursive_isolated  # type: ignore
 
 import numpy as np
 import socket
