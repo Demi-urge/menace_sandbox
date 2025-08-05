@@ -40,16 +40,10 @@ except Exception:  # pragma: no cover - fallback when imported directly
 try:
     from .auto_env_setup import get_recursive_isolated, set_recursive_isolated
 except Exception:  # pragma: no cover - direct execution
-    def get_recursive_isolated() -> bool:  # type: ignore
-        val = os.getenv("SANDBOX_RECURSIVE_ISOLATED") or os.getenv(
-            "SELF_TEST_RECURSIVE_ISOLATED"
-        )
-        return (val or "1").lower() not in {"0", "false", "no"}
-
-    def set_recursive_isolated(enabled: bool) -> None:  # type: ignore
-        val = "1" if enabled else "0"
-        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
-        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+    from auto_env_setup import (  # type: ignore
+        get_recursive_isolated,
+        set_recursive_isolated,
+    )
 
 try:
     from . import metrics_exporter as _me
@@ -140,6 +134,11 @@ class SelfTestService:
             When ``True``, follow orphan modules' import chains to include local
             dependencies. Defaults to ``True``. Set ``SELF_TEST_RECURSIVE_ORPHANS=0``
             or pass ``--no-recursive-include`` to disable.
+        recursive_isolated:
+            When ``True``, traverse dependencies of isolated modules. Defaults
+            to :func:`get_recursive_isolated` so both sandbox and self-test
+            modes honour the ``SANDBOX_RECURSIVE_ISOLATED``/
+            ``SELF_TEST_RECURSIVE_ISOLATED`` flags.
         clean_orphans:
             When ``True``, remove successfully integrated modules from
             ``sandbox_data/orphan_modules.json`` after ``integration_callback``
@@ -1610,7 +1609,7 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-isolated",
         dest="recursive_isolated",
         action="store_true",
-        default=True,
+        default=get_recursive_isolated(),
         help="Recursively discover dependencies of isolated modules (default: enabled)",
     )
     run.add_argument(
@@ -1714,7 +1713,7 @@ def cli(argv: list[str] | None = None) -> int:
         "--recursive-isolated",
         dest="recursive_isolated",
         action="store_true",
-        default=True,
+        default=get_recursive_isolated(),
         help="Recursively discover dependencies of isolated modules (default: enabled)",
     )
     sched.add_argument(

@@ -17,6 +17,10 @@ from . import config_discovery as cd
 
 # Shared defaults
 RECURSIVE_ISOLATED_DEFAULT = "1"
+RECURSIVE_ISOLATED_VARS = (
+    "SANDBOX_RECURSIVE_ISOLATED",
+    "SELF_TEST_RECURSIVE_ISOLATED",
+)
 
 # Default environment variables with fallbacks
 # These are persisted to ``.env`` when missing so the application can
@@ -39,9 +43,8 @@ DEFAULT_VARS: Dict[str, str] = {
     "SELF_TEST_DISABLE_ORPHANS": "0",
     "SELF_TEST_DISCOVER_ORPHANS": "1",
     "SELF_TEST_RECURSIVE_ORPHANS": "1",
-    "SELF_TEST_RECURSIVE_ISOLATED": RECURSIVE_ISOLATED_DEFAULT,
     "SANDBOX_RECURSIVE_ORPHANS": "1",
-    "SANDBOX_RECURSIVE_ISOLATED": RECURSIVE_ISOLATED_DEFAULT,
+    **{var: RECURSIVE_ISOLATED_DEFAULT for var in RECURSIVE_ISOLATED_VARS},
     "SELF_TEST_AUTO_INCLUDE_ISOLATED": "1",
     "SANDBOX_AUTO_INCLUDE_ISOLATED": "1",
 }
