@@ -840,6 +840,35 @@ Disable the scans entirely with `SELF_TEST_DISABLE_ORPHANS=1` or
 `environment.auto_include_modules` merges passing modules into the module map
 and generates one‑step workflows for them automatically.
 
+### Dependency expansion and validation
+
+`environment.auto_include_modules` recursively discovers helpers for each
+candidate by calling `dependency_utils.collect_local_dependencies`. When
+`SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1`, this walk
+follows each import chain so supporting files are queued alongside the target
+module. The collected set is executed by `SelfTestService`, which validates the
+isolated module and only forwards passing paths back to
+`auto_include_modules` for integration into `sandbox_data/module_map.json`.
+
+**Triggering recursive inclusion**
+
+Enable recursion directly from the command line:
+
+```bash
+python -m menace.self_test_service run module.py --recursive-include --recursive-isolated
+```
+
+or via environment variables:
+
+```bash
+SANDBOX_RECURSIVE_ORPHANS=1 SANDBOX_RECURSIVE_ISOLATED=1 \
+  python run_autonomous.py --auto-include-isolated
+```
+
+Both approaches ensure that helper modules discovered through
+`collect_local_dependencies` are validated by `SelfTestService` before being
+merged into the workflow.
+
 ### Walkthrough
 
 1. `sandbox_runner.discover_recursive_orphans` and
