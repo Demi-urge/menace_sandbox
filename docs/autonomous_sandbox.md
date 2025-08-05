@@ -143,6 +143,17 @@ With `SANDBOX_AUTO_INCLUDE_ISOLATED=1` isolated files participate in the same
 scan. These defaults are enabled by `auto_env_setup.ensure_env()` through the
 corresponding `SELF_TEST_*` variables.
 
+The sandbox enables recursion and isolated-module inclusion by default. Key
+flags and their associated environment variables are summarised below:
+
+| Variable | Default | CLI flag | Purpose |
+|---------|---------|---------|---------|
+| `SANDBOX_RECURSIVE_ORPHANS` | `1` | `--recursive-orphans` / `--no-recursive-orphans` (`--recursive-include`/`--no-recursive-include`) | Follow dependencies of orphan modules. |
+| `SANDBOX_RECURSIVE_ISOLATED` | `1` | `--recursive-isolated` / `--no-recursive-isolated` | Include dependencies of isolated modules. |
+| `SANDBOX_DISCOVER_ISOLATED` | `1` | `--discover-isolated` / `--no-discover-isolated` | Scan for modules with no inbound references before the orphan pass. |
+| `SANDBOX_AUTO_INCLUDE_ISOLATED` | `1` | `--auto-include-isolated` | Queue isolated modules for self‑tests automatically. |
+| `SANDBOX_CLEAN_ORPHANS` | `1` | `--clean-orphans` | Remove processed entries from `sandbox_data/orphan_modules.json`. |
+
 Use the CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
 `--recursive-include`/`--no-recursive-include`), `--recursive-isolated` or
 `--no-recursive-isolated`, `--discover-isolated`, `--auto-include-isolated` and
@@ -171,6 +182,27 @@ python -m sandbox_runner.cli --no-recursive-orphans --auto-include-isolated
 python run_autonomous.py --recursive-orphans --recursive-isolated
 ```
 
+### Example: auto‑detecting and integrating an isolated module
+
+1. **Create an isolated module** that is not imported anywhere else:
+
+   ```bash
+   echo "def ping(): return 'pong'" > isolated_ping.py
+   ```
+
+2. **Run the autonomous cycle** (recursion and isolated inclusion are enabled by default):
+
+   ```bash
+   python run_autonomous.py
+   ```
+
+3. The pre‑scan discovers `isolated_ping` and queues it for `SelfTestService`.
+   If the test passes, the module is appended to `sandbox_data/module_map.json`
+   and removed from `sandbox_data/orphan_modules.json`.
+
+4. Subsequent runs treat the module as part of the workflow system without
+   further manual intervention.
+
 `run_autonomous` and `sandbox_runner` mirror these values to the matching
 `SELF_TEST_*` variables so that `SelfTestService` observes the same behaviour.
 
@@ -186,10 +218,8 @@ python run_autonomous.py --recursive-orphans --recursive-isolated
 - `SELF_TEST_DISABLE_ORPHANS=0` – include orphan module discovery and execution (set to `1` to skip)
 - `SELF_TEST_DISCOVER_ORPHANS=1` – automatically scan for orphan modules (set to `0` to disable)
  - `SELF_TEST_DISCOVER_ISOLATED=1` – automatically discover isolated modules (set to `0` or use `--no-discover-isolated` to disable)
- - `SELF_TEST_AUTO_INCLUDE_ISOLATED=0` – disable automatic processing of
-  `discover_isolated_modules`
-- `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules
-  (set to `0` or use `--no-recursive-isolated` to disable)
+ - `SELF_TEST_AUTO_INCLUDE_ISOLATED=1` – queue results from `discover_isolated_modules` for self‑testing (set to `0` to disable)
+ - `SELF_TEST_RECURSIVE_ISOLATED=1` – recursively process isolated modules (set to `0` or use `--no-recursive-isolated` to disable)
 - `SELF_TEST_RECURSIVE_ORPHANS=1` – recursively follow orphan dependencies
   (`--no-recursive-include` to disable)
 - `SELF_TEST_DISABLE_AUTO_INTEGRATION=0` – enable automatic integration of passing modules (`1` to disable)
@@ -201,8 +231,7 @@ python run_autonomous.py --recursive-orphans --recursive-isolated
   building the module map (set to `0` or use `--no-recursive-isolated` to disable)
 - `SANDBOX_CLEAN_ORPHANS=1` – prune processed names from `orphan_modules.json`
   after successful integration
- - `SANDBOX_AUTO_INCLUDE_ISOLATED=0` – disable isolated module discovery
- - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (same as `--auto-include-isolated`)
+ - `SANDBOX_AUTO_INCLUDE_ISOLATED=1` – automatically discover isolated modules and recurse through them when scanning (`--auto-include-isolated`; set to `0` to disable)
 - `VISUAL_AGENT_TOKEN=<secret>` – authentication token for `menace_visual_agent_2.py`
  - `VISUAL_AGENT_AUTOSTART=1` – automatically launch the visual agent when missing
  - `VISUAL_AGENT_AUTO_RECOVER=1` – enable automatic queue recovery (set to `0` to disable)
