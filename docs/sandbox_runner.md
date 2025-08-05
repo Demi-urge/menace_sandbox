@@ -159,13 +159,15 @@ each orphan module to the module(s) that imported it, allowing downstream tools
 to construct workflow segments per dependency chain. The collected paths are
 then passed to
 `run_repo_section_simulations(..., modules=modules)` so only the candidates are
-executed. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox adds modules that
-pass to `sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`
-creates one‑step workflows for them. Enable `SANDBOX_RECURSIVE_ORPHANS=1` or
-`SANDBOX_RECURSIVE_ISOLATED=1` to pull in dependencies of discovered files.
-Disable the scan with `SANDBOX_DISABLE_ORPHAN_SCAN=1` or
-`SELF_TEST_DISABLE_ORPHANS=1`. Set `SANDBOX_DISCOVER_ISOLATED=0` or pass
-`--no-discover-isolated` to skip isolated module discovery.
+executed. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` or `--auto-include-isolated`
+is passed, the sandbox adds modules that pass to
+`sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`
+creates one‑step workflows for them. Enable recursive dependency scanning with
+`--recursive-include`/`SANDBOX_RECURSIVE_ORPHANS=1` or
+`--recursive-isolated`/`SANDBOX_RECURSIVE_ISOLATED=1`. Disable the scan with
+`SANDBOX_DISABLE_ORPHAN_SCAN=1` or `SELF_TEST_DISABLE_ORPHANS=1`. Set
+`SANDBOX_DISCOVER_ISOLATED=0` or pass `--no-discover-isolated` to skip isolated
+module discovery.
 
 ## Workflow Simulations
 

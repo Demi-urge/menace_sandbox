@@ -76,20 +76,20 @@
 - Recursive inclusion flow discovers orphan and isolated modules, tests them
   and integrates passing ones into existing workflows. The helper
   `scripts/discover_isolated_modules.py` surfaces standalone files while
-  `sandbox_runner.discover_recursive_orphans` maps each candidate to its
-  importing `parents` and marks redundant entries. The self-test service records
-  this metadata and the improvement engine integrates only modules whose
-  `redundant` flag is false. Run the isolated scan with
+  `sandbox_runner.discover_recursive_orphans` walks each candidate's import
+  chain, returning its importing `parents` and a `redundant` flag. The
+  self-test service records this metadata and the improvement engine integrates
+  only modules whose `redundant` flag is false. Run the isolated scan with
   `SANDBOX_DISCOVER_ISOLATED=1` (or `--discover-isolated`) and pair it with
   `SANDBOX_AUTO_INCLUDE_ISOLATED=1`/`--auto-include-isolated` to test and merge
-  the results automatically. Recursion through dependencies is enabled by default
-  (`SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
-  `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1`); disable with
-  `--no-recursive-orphans`/`--no-recursive-include` or `--no-recursive-isolated`.
-  Use `SANDBOX_CLEAN_ORPHANS=1` (or `--clean-orphans`) to prune processed names
-  from `sandbox_data/orphan_modules.json`. Environment flags are mirrored to
-  matching `SELF_TEST_*` variables so the self-test service honours the same
-  behaviour.
+  the results automatically. Recursion through dependencies is enabled by
+  default (`SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
+  `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1`); the CLI
+  aliases are `--recursive-include`/`--no-recursive-include` and
+  `--recursive-isolated`/`--no-recursive-isolated`. Use
+  `SANDBOX_CLEAN_ORPHANS=1` (or `--clean-orphans`) to prune processed names from
+  `sandbox_data/orphan_modules.json`. Environment flags are mirrored to matching
+  `SELF_TEST_*` variables so the self-test service honours the same behaviour.
 
   ```bash
   # Example: disable recursion but include isolated modules automatically
@@ -104,6 +104,27 @@
       --discover-isolated --auto-include-isolated --clean-orphans \
       --check-settings
   ```
+
+  ### Step-by-step: recursive inclusion run
+
+  ```bash
+  # 1. Prepare a candidate and its dependency
+  echo 'import util\n' > candidate.py
+  echo 'VALUE = 1\n'   > util.py
+
+  # 2. Discover orphans and include them recursively
+  python -m sandbox_runner.cli --discover-orphans --recursive-include \
+      --auto-include-isolated --clean-orphans
+
+  # 3. Inspect the generated module map and workflows
+  cat sandbox_data/module_map.json
+  ```
+
+  `sandbox_runner.discover_recursive_orphans` traces the `candidate -> util`
+  chain. With `SANDBOX_AUTO_INCLUDE_ISOLATED=1` and
+  `SANDBOX_RECURSIVE_ORPHANS=1` the sandbox appends both modules to
+  `sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`
+  creates one‑step workflows for future runs.
 
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
 Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.

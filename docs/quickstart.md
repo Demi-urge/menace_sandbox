@@ -31,6 +31,23 @@ This guide walks you through the common Menace workflows using the new `menace` 
    menace deploy
    ```
 
+### Recursive module discovery
+
+Passing modules are merged into the sandbox automatically and a simple
+workflow is generated for each one. To discover orphaned modules and their
+dependencies recursively, run:
+
+```bash
+menace sandbox run --discover-orphans --auto-include-isolated \
+    --recursive-include --recursive-isolated --clean-orphans
+```
+
+`--auto-include-isolated` sets `SANDBOX_AUTO_INCLUDE_ISOLATED=1` and
+`--recursive-include` enables `SANDBOX_RECURSIVE_ORPHANS=1`, causing
+`sandbox_runner.discover_recursive_orphans` to follow import chains and append
+non‑redundant modules to `sandbox_data/module_map.json`. One‑step workflows are
+created automatically so the new code participates in subsequent runs.
+
 ## Troubleshooting
 
 - **Missing packages** – run `menace setup` again to reinstall requirements.
