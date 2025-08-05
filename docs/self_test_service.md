@@ -34,6 +34,28 @@ Orphan module processing is also exported via Prometheus gauges:
 - `orphan_modules_failed_total` – orphan modules whose tests failed.
 - `orphan_modules_redundant_total` – modules skipped due to redundancy.
 
+## Return values and integration callbacks
+
+Calling `run_once` returns a tuple `(results, passed_modules)`. `results` is a
+dictionary summarising the test run and now includes an `integration` field with
+`integrated` and `redundant` lists. The second element is the list of modules
+that passed in isolation. When an `integration_callback` is supplied it receives
+`passed_modules` and may return a mapping with the same keys. These values are
+merged into `results["integration"]`, allowing custom callbacks to report which
+modules were incorporated or skipped.
+
+```python
+from menace.self_test_service import SelfTestService
+
+def integrate(paths):
+    # decide which modules to merge
+    return {"integrated": paths, "redundant": []}
+
+svc = SelfTestService(integration_callback=integrate)
+results, passed = svc.run_once()
+print(results["integration"])
+```
+
 ## SandboxSettings flags
 
 `sandbox_settings.SandboxSettings` provides switches that control the discovery
@@ -111,6 +133,17 @@ controls whether discovered isolated modules have their imports followed.
   after integration.
 - `SELF_TEST_DISABLE_AUTO_INTEGRATION` – skip automatic merging of passing
   modules into `module_map.json` and workflow updates.
+
+Example enabling recursion:
+
+```bash
+# CLI flags
+python -m menace.self_test_service run --recursive-include --recursive-isolated
+
+# Environment variables
+SELF_TEST_RECURSIVE_ORPHANS=1 SELF_TEST_RECURSIVE_ISOLATED=1 \
+  python -m menace.self_test_service run
+```
 
 ### Redundant module handling
 
