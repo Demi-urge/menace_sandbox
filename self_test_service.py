@@ -1638,7 +1638,10 @@ def cli(argv: list[str] | None = None) -> int:
         dest="discover_isolated",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Automatically run discover_isolated_modules and append results",
+        help=(
+            "Automatically run discover_isolated_modules and append results "
+            "(sets SANDBOX_AUTO_INCLUDE_ISOLATED=1 and SANDBOX_RECURSIVE_ISOLATED=1)"
+        ),
     )
     run.add_argument(
         "--refresh-orphans",
@@ -1651,14 +1654,20 @@ def cli(argv: list[str] | None = None) -> int:
         dest="recursive_orphans",
         action="store_true",
         default=True,
-        help="Recursively discover dependent orphan chains (alias: --recursive-orphans)",
+        help=(
+            "Recursively discover dependent orphan chains (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-orphans)"
+        ),
     )
     run.add_argument(
         "--no-recursive-include",
         "--no-recursive-orphans",
         dest="recursive_orphans",
         action="store_false",
-        help="Do not recurse through orphan dependencies",
+        help=(
+            "Do not recurse through orphan dependencies (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=0)"
+        ),
     )
     run.add_argument(
         "--recursive-isolated",
@@ -1813,7 +1822,15 @@ def cli(argv: list[str] | None = None) -> int:
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
     os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
     recursive_orphans = args.recursive_orphans
-    set_recursive_isolated(args.recursive_isolated)
+
+    if args.discover_isolated:
+        set_recursive_isolated(True)
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+    else:
+        set_recursive_isolated(args.recursive_isolated)
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
 
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"

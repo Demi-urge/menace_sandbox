@@ -249,6 +249,9 @@ def test_auto_include_isolated_sets_flags(monkeypatch, tmp_path):
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_DISCOVER_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
 
 
 def test_auto_include_isolated_flag(monkeypatch, tmp_path):
@@ -266,6 +269,9 @@ def test_auto_include_isolated_flag(monkeypatch, tmp_path):
     assert capture.get("recursive_isolated") is True
     assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
     assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_DISCOVER_ISOLATED") == "1"
+    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
 
 
 def test_no_discover_isolated_flag_disables(monkeypatch, tmp_path):

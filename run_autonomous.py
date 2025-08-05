@@ -1050,14 +1050,20 @@ def main(argv: List[str] | None = None) -> None:
         action="store_true",
         dest="recursive_orphans",
         default=True,
-        help="enable recursive integration of orphan dependency chains (alias: --recursive-orphans)",
+        help=(
+            "recursively integrate orphan dependency chains (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-orphans)"
+        ),
     )
     parser.add_argument(
         "--no-recursive-include",
         "--no-recursive-orphans",
         action="store_false",
         dest="recursive_orphans",
-        help="disable recursive integration of orphan dependency chains",
+        help=(
+            "disable recursive integration of orphan dependency chains (sets "
+            "SANDBOX_RECURSIVE_ORPHANS=0)"
+        ),
     )
     parser.add_argument(
         "--include-orphans",
@@ -1102,7 +1108,10 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument(
         "--auto-include-isolated",
         action="store_true",
-        help="automatically include isolated modules recursively",
+        help=(
+            "automatically include isolated modules recursively (sets "
+            "SANDBOX_AUTO_INCLUDE_ISOLATED=1 and SANDBOX_RECURSIVE_ISOLATED=1)"
+        ),
     )
     parser.add_argument(
         "--check-settings",
@@ -1119,7 +1128,6 @@ def main(argv: List[str] | None = None) -> None:
     if auto_iso is not None:
         os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = auto_iso
         os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = auto_iso
-
     os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
     os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
 
@@ -1146,10 +1154,10 @@ def main(argv: List[str] | None = None) -> None:
     os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
     os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
     if auto_iso and auto_iso.lower() in {"1", "true", "yes"}:
-        os.environ.setdefault("SANDBOX_DISCOVER_ISOLATED", "1")
-        os.environ.setdefault("SANDBOX_RECURSIVE_ISOLATED", "1")
-        os.environ.setdefault("SELF_TEST_DISCOVER_ISOLATED", "1")
-        os.environ.setdefault("SELF_TEST_RECURSIVE_ISOLATED", "1")
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+        os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
+        os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
