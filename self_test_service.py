@@ -331,12 +331,12 @@ class SelfTestService:
             auto_include_modules(list(paths), **kwargs)
         except Exception:
             self.logger.exception("module auto-inclusion failed")
-
-        if self.clean_orphans:
-            try:
-                self._clean_orphan_list(mods)
-            except Exception:
-                self.logger.exception("failed to clean orphan modules")
+        else:
+            if self.clean_orphans:
+                try:
+                    self._clean_orphan_list(mods)
+                except Exception:
+                    self.logger.exception("failed to clean orphan modules")
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -859,20 +859,76 @@ class SelfTestService:
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
-        """Remove ``modules`` from ``sandbox_data/orphan_modules.json``."""
+        """Prune ``sandbox_data/orphan_modules.json`` after integration.
+
+        ``modules`` should contain the root modules that were successfully
+        merged.  Any helper imports recorded in ``self.orphan_traces`` for those
+        modules are also removed from the orphan list.  Entries marked
+        ``{"redundant": true}`` are preserved for later auditing.
+        """
+
         path = Path("sandbox_data") / "orphan_modules.json"
         if not path.exists():
             return
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+
+        def _norm(p: str) -> str:
+            q = Path(p)
+            if not q.is_absolute():
+                q = repo / q
+            try:
+                return q.resolve().relative_to(repo).as_posix()
+            except Exception:
+                return str(q)
+
+        roots = {_norm(m) for m in modules}
+        to_remove: set[str] = set(roots)
+        for mod, info in self.orphan_traces.items():
+            parents = [_norm(p) for p in info.get("parents", [])]
+            if mod in roots or any(parent in roots for parent in parents):
+                to_remove.add(mod)
+
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh) or []
-                if not isinstance(data, list):
-                    return
-            remaining = [m for m in data if m not in modules]
-            if len(remaining) != len(data):
-                path.write_text(json.dumps(sorted(remaining), indent=2))
         except Exception:
-            self.logger.exception("failed to clean orphan modules")
+            self.logger.exception("failed to load orphan modules")
+            return
+
+        changed = False
+        if isinstance(data, list):
+            remaining: list[str] = []
+            for m in data:
+                norm = _norm(m)
+                if norm in to_remove and not self.orphan_traces.get(norm, {}).get("redundant"):
+                    changed = True
+                    continue
+                remaining.append(m)
+            if changed:
+                path.write_text(json.dumps(sorted(set(remaining)), indent=2))
+        elif isinstance(data, dict):
+            remaining_dict: dict[str, Any] = {}
+            for k, info in data.items():
+                norm = _norm(k)
+                if norm in to_remove:
+                    redundant = None
+                    if isinstance(info, dict):
+                        redundant = info.get("redundant")
+                    redundant = self.orphan_traces.get(norm, {}).get(
+                        "redundant", redundant
+                    )
+                    if redundant:
+                        remaining_dict[k] = {"redundant": True}
+                    else:
+                        changed = True
+                        continue
+                else:
+                    remaining_dict[k] = info
+            if changed:
+                path.write_text(json.dumps(remaining_dict, indent=2, sort_keys=True))
+        else:  # pragma: no cover - unexpected structure
+            self.logger.error("invalid orphan module cache format: %s", type(data))
 
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
@@ -1263,14 +1319,10 @@ class SelfTestService:
                 redundant_set = sorted(set(redundant_list))
                 self.results["orphan_total"] = len(all_orphans)
                 self.results["orphan_failed"] = len(orphan_failed)
-                self.results["orphan_passed"] = len(passed_set)
-                self.results["orphan_redundant"] = len(redundant_set)
-                if passed_set:
-                    self.results["orphan_passed_modules"] = sorted(passed_set)
+                self.results["orphan_passed"] = sorted(passed_set)
+                self.results["orphan_redundant"] = redundant_set
                 if orphan_failed:
                     self.results["orphan_failed_modules"] = sorted(orphan_failed)
-                if redundant_set:
-                    self.results["orphan_redundant_modules"] = redundant_set
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
