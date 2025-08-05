@@ -152,3 +152,33 @@ def test_env_enables_isolated_processing(tmp_path, monkeypatch):
 
     assert called.get("recursive") is True
     assert Path(called.get("root")) == tmp_path
+
+
+def test_discover_isolated_records_dependencies(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("import b\n")
+    (tmp_path / "b.py").write_text("x = 1\n")
+
+    import types
+
+    def fake_discover(root, recursive=True):
+        assert recursive is True
+        return [Path("a.py")]
+
+    mod_iso = types.ModuleType("scripts.discover_isolated_modules")
+    mod_iso.discover_isolated_modules = fake_discover
+    pkg = types.ModuleType("scripts")
+    pkg.discover_isolated_modules = mod_iso
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod_iso)
+    monkeypatch.setitem(sys.modules, "scripts", pkg)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+
+    svc = svc_mod.SelfTestService(
+        discover_orphans=False,
+        discover_isolated=True,
+        recursive_isolated=True,
+    )
+    mods = svc._discover_isolated()
+    assert set(mods) == {"a.py", "b.py"}
+    assert svc.orphan_traces.get("b.py", {}).get("parents") == ["a.py"]
