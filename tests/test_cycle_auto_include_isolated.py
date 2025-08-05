@@ -1,47 +1,26 @@
-import types
-import sys
 from pathlib import Path
+import types
 
 import pytest
 
 import sandbox_runner.cycle as cycle
-import sandbox_runner.environment as env
-import orphan_analyzer
 import sandbox_runner as pkg
 
 
 def _prepare(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_AUTO_INCLUDE_ISOLATED", "1")
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ISOLATED", "1")
     monkeypatch.setattr(pkg, "build_section_prompt", lambda *a, **k: "", raising=False)
     monkeypatch.setattr(pkg, "GPT_SECTION_PROMPT_MAX_LENGTH", 0, raising=False)
 
     # Record calls to auto_include_modules
     calls = []
 
-    def fake_auto_include(mods, recursive=False):
-        calls.append((list(mods), recursive))
+    def fake_auto_include(mods, recursive=False, validate=False):
+        calls.append((list(mods), recursive, validate))
 
-    monkeypatch.setattr(env, "auto_include_modules", fake_auto_include)
-    monkeypatch.setattr(cycle, "auto_include_modules", env.auto_include_modules)
-
-    def discover_isolated_modules(repo_path, *, recursive=True):
-        assert Path(repo_path) == tmp_path
-        assert recursive
-        names = ["isolated.py", "helper.py"]
-        result = []
-        for name in names:
-            path = Path(repo_path) / name
-            if not orphan_analyzer.analyze_redundancy(path):
-                result.append(name)
-        return result
-
-    mod = types.ModuleType("scripts.discover_isolated_modules")
-    mod.discover_isolated_modules = discover_isolated_modules
-    pkg_mod = types.ModuleType("scripts")
-    pkg_mod.discover_isolated_modules = mod
-    monkeypatch.setitem(sys.modules, "scripts", pkg_mod)
-    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", mod)
+    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
 
     monkeypatch.setattr(
         cycle,
@@ -79,21 +58,41 @@ def _prepare(monkeypatch, tmp_path):
 
 def test_auto_include_isolated_with_helper(monkeypatch, tmp_path):
     ctx, calls = _prepare(monkeypatch, tmp_path)
-    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", lambda p: False)
+    (tmp_path / "isolated.py").write_text("x=1\n")
+    (tmp_path / "helper.py").write_text("x=1\n")
+
+    def fake_discover(repo_path):
+        assert Path(repo_path) == tmp_path
+        return {
+            "isolated": {"parents": []},
+            "helper": {"parents": []},
+        }
+
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", fake_discover)
+
     with pytest.raises(RuntimeError):
         cycle._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
-    assert calls == [(["isolated.py", "helper.py"], True)]
+
+    assert calls == [(["isolated.py", "helper.py"], True, True)]
     assert ctx.module_map == {"isolated.py", "helper.py"}
 
 
 def test_auto_include_skips_redundant(monkeypatch, tmp_path):
     ctx, calls = _prepare(monkeypatch, tmp_path)
+    (tmp_path / "isolated.py").write_text("x=1\n")
+    (tmp_path / "helper.py").write_text("x=1\n")
 
-    def analyze(path):
-        return path.name == "helper.py"
+    def fake_discover(repo_path):
+        assert Path(repo_path) == tmp_path
+        return {
+            "isolated": {"parents": []},
+            "helper": {"parents": [], "redundant": True},
+        }
 
-    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", analyze)
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", fake_discover)
+
     with pytest.raises(RuntimeError):
         cycle._sandbox_cycle_runner(ctx, None, None, ctx.tracker)
-    assert calls == [(["isolated.py"], True)]
+
+    assert calls == [(["isolated.py"], True, True)]
     assert ctx.module_map == {"isolated.py"}
