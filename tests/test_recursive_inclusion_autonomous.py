@@ -24,6 +24,7 @@ def _load_auto_include(fake_generate, fake_try, fake_run):
         "Dict": Dict,
         "Any": Any,
         "ROITracker": type("ROITracker", (), {}),
+        "__name__": "sandbox_runner.environment",
     }
     future = ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations", asname=None)], level=0)
     module = ast.Module(body=[future, func], type_ignores=[])
@@ -55,7 +56,7 @@ def test_recursive_inclusion_autonomous(tmp_path, monkeypatch):
     }
 
     data_dir = tmp_path / "sandbox_data"
-    data_dir.mkdir()
+    data_dir.mkdir(exist_ok=True)
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
