@@ -402,6 +402,19 @@ orphan_modules_reintroduced_total = Gauge(
     "orphan_modules_reintroduced_total",
     "Total number of orphan modules reintroduced after tests",
 )
+orphan_modules_passed_total = orphan_modules_reintroduced_total
+orphan_modules_tested_total = Gauge(
+    "orphan_modules_tested_total",
+    "Total number of orphan modules tested",
+)
+orphan_modules_failed_total = Gauge(
+    "orphan_modules_failed_total",
+    "Total number of orphan modules failing tests",
+)
+orphan_modules_redundant_total = Gauge(
+    "orphan_modules_redundant_total",
+    "Total number of orphan modules marked redundant",
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )

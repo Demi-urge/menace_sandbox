@@ -38,6 +38,13 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = get_logger(__name__)
 
+from metrics_exporter import (
+    orphan_modules_reintroduced_total,
+    orphan_modules_tested_total,
+    orphan_modules_failed_total,
+    orphan_modules_redundant_total,
+)
+
 from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
@@ -139,6 +146,12 @@ def _sandbox_cycle_runner(
     failure_start: float | None = None
     start_roi = ctx.prev_roi
     last_metrics: Dict[str, float] | None = None
+    tracker.register_metrics(
+        "orphan_modules_tested",
+        "orphan_modules_passed",
+        "orphan_modules_failed",
+        "orphan_modules_redundant",
+    )
     for idx in range(ctx.cycles):
         try:
             trace = discover_recursive_orphans(str(ctx.repo))
@@ -238,11 +251,20 @@ def _sandbox_cycle_runner(
         logger.info("tester run", extra=log_record(cycle=idx))
         ctx.tester.run_once()
         results = getattr(ctx.tester, "results", {}) or {}
+        tested: list[str] = []
+        passed: list[str] = []
+        failed: list[str] = []
+        redundant: list[str] = []
+        tested_count = passed_count = failed_count = redundant_count = 0
         if results:
             passed = results.get("orphan_passed_modules", [])
             failed = results.get("orphan_failed_modules", [])
             redundant = results.get("orphan_redundant_modules", [])
             tested = sorted(set(passed) | set(failed) | set(redundant))
+            tested_count = len(tested)
+            passed_count = len(passed)
+            failed_count = len(failed)
+            redundant_count = len(redundant)
             logger.info(
                 "self test results",
                 extra=log_record(
@@ -252,6 +274,10 @@ def _sandbox_cycle_runner(
                     redundant=sorted(redundant),
                 ),
             )
+            orphan_modules_tested_total.inc(tested_count)
+            orphan_modules_reintroduced_total.inc(passed_count)
+            orphan_modules_failed_total.inc(failed_count)
+            orphan_modules_redundant_total.inc(redundant_count)
         logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
@@ -528,6 +554,10 @@ def _sandbox_cycle_runner(
             "maintainability": maintainability,
             "code_quality": code_quality,
             "recovery_time": recovery_time,
+            "orphan_modules_tested": float(tested_count),
+            "orphan_modules_passed": float(passed_count),
+            "orphan_modules_failed": float(failed_count),
+            "orphan_modules_redundant": float(redundant_count),
         }
         if ctx.plugins:
             try:
