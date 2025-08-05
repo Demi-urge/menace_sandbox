@@ -119,6 +119,10 @@ Sandbox runs record additional metrics in the tracker:
 - `maintainability`
 - `code_quality`
 - `recovery_time`
+- `orphan_modules_tested`
+- `orphan_modules_passed`
+- `orphan_modules_failed`
+- `orphan_modules_redundant`
 
 Forecasts for these values help prioritise improvements when ROI alone is stable.
 
