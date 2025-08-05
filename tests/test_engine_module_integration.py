@@ -28,19 +28,22 @@ class DummySTS:
 
     async def _run_once(self):
         self.results = {
-            "orphan_passed": ["new_mod.py"],
-            "orphan_redundant": ["old_mod.py"],
+            "integration": {
+                "integrated": ["new_mod.py"],
+                "redundant": ["old_mod.py"],
+            },
             "failed": 0,
         }
 
 sts_mod = types.ModuleType("menace.self_test_service")
 sts_mod.SelfTestService = DummySTS
 sys.modules["menace.self_test_service"] = sts_mod
+sys.modules["self_test_service"] = sts_mod
 
 # stub sandbox_runner.environment
 calls: dict[str, object] = {}
 
-def fake_auto_include(mods, recursive=False):
+def fake_auto_include(mods, recursive=False, **kwargs):
     calls["mods"] = list(mods)
     calls["recursive"] = recursive
 
@@ -52,6 +55,10 @@ sandbox_runner_pkg.environment = env_mod
 sys.modules["sandbox_runner"] = sandbox_runner_pkg
 
 sie = _load_engine()
+sys.modules["sandbox_settings"].SandboxSettings = lambda: types.SimpleNamespace(
+    sandbox_data_dir="sandbox_data", recursive_isolated=True, auto_include_isolated=True
+)
+sie.SandboxSettings = sys.modules["sandbox_settings"].SandboxSettings
 
 class DummyMetricsDB:
     def __init__(self):
