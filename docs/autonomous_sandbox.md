@@ -252,7 +252,10 @@ Integration uses repository-relative paths to avoid filename collisions.
 Tests such as `tests/test_recursive_isolated.py` and
 `tests/test_self_test_service_recursive_integration.py` exercise this path and
 assert that both isolated modules and their dependencies are executed and
-integrated.
+integrated. `tests/integration/test_auto_include_isolated_dependency.py`
+demonstrates that `environment.auto_include_modules` pulls in a standalone
+module together with its local imports and records redundant entries in
+`orphan_modules.json`.
 
 ### Automatic recursion for isolated modules
 
