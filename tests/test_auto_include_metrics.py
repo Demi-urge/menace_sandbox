@@ -1,4 +1,6 @@
 import json
+import sys
+import types
 from pathlib import Path
 
 import sandbox_runner.environment as env
@@ -30,10 +32,12 @@ def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
+    monkeypatch.setitem(sys.modules, "orphan_analyzer", types.SimpleNamespace(analyze_redundancy=lambda path: False))
 
-    result = env.auto_include_modules(["mod.py"])
+    result, tested = env.auto_include_modules(["mod.py"])
 
     assert result is tracker
+    assert tested == {"added": ["mod.py"], "failed": [], "redundant": []}
     assert calls.get("run") is True
     history = Path(tmp_path, "roi_history.json")
     assert history.exists()

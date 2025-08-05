@@ -46,13 +46,14 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "orphan_analyzer", types.SimpleNamespace(analyze_redundancy=analyze))
 
-    result = env.auto_include_modules([])
+    result, tested = env.auto_include_modules([])
 
     assert result is tracker
+    assert tested == {"added": ["good.py"], "failed": [], "redundant": ["bad.py"]}
     assert calls["discover"] == str(tmp_path)
     assert calls["generate"] == ["good.py"]
     assert calls["integrate"] == ["good.py"]
-    assert sorted(calls["analyze"]) == ["bad.py", "good.py"]
+    assert sorted(calls["analyze"]) == ["bad.py", "good.py", "good.py"]
 
 
 def test_recursive_validated_integration(monkeypatch, tmp_path):
@@ -93,7 +94,7 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
 
     class DummySelfTest:
         def __init__(self, pytest_args, **kwargs):
-            calls.setdefault("selftest", []).append(pytest_args)
+            calls.setdefault("selftest", []).append((pytest_args, kwargs))
 
         def run_once(self):
             return {"failed": False}
@@ -102,12 +103,24 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
         sys.modules, "self_test_service", types.SimpleNamespace(SelfTestService=DummySelfTest)
     )
 
-    result = env.auto_include_modules([], validate=True)
+    result, tested = env.auto_include_modules([], validate=True)
 
     assert result is tracker
+    assert tested == {"added": ["good.py"], "failed": [], "redundant": []}
     assert calls["discover"] == str(tmp_path)
     assert calls["generate"] == ["good.py"]
     assert calls["integrate"] == ["good.py"]
-    assert calls["selftest"] == ["good.py"]
+    assert calls["selftest"] == [
+        (
+            "good.py",
+            {
+                "include_orphans": False,
+                "discover_orphans": False,
+                "discover_isolated": True,
+                "recursive_orphans": True,
+                "disable_auto_integration": True,
+            },
+        )
+    ]
     assert calls["analyze"].count("good.py") == 2
     assert (tmp_path / "roi_history.json").exists()
