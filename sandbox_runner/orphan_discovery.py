@@ -402,7 +402,8 @@ def discover_recursive_orphans(
             mod_path = Path(*name.split(".")).with_suffix(".py")
             pkg_init = Path(*name.split(".")) / "__init__.py"
             target = mod_path if (repo / mod_path).exists() else pkg_init
-            entries[target.as_posix()] = {
+            full_path = (repo / target)
+            entries[full_path.relative_to(repo).as_posix()] = {
                 "parents": info.get("parents", []),
                 "redundant": bool(info.get("redundant")),
             }
