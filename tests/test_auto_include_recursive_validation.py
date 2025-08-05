@@ -13,16 +13,10 @@ class DummyTracker:
 
 def test_recursive_skips_redundant(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
     calls: dict[str, object] = {}
 
-    def fake_discover(repo_path: str):
-        calls["discover"] = repo_path
-        return {"good": {"parents": []}, "bad": {"parents": []}}
-
-    monkeypatch.setattr(
-        "sandbox_runner.orphan_discovery.discover_recursive_orphans", fake_discover
-    )
+    (tmp_path / "good.py").write_text("VALUE = 1\n")
+    (tmp_path / "bad.py").write_text("VALUE = 0\n")
 
     def fake_generate(mods, workflows_db="workflows.db"):
         calls["generate"] = list(mods)
@@ -44,31 +38,32 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
         calls.setdefault("analyze", []).append(Path(path).name)
         return Path(path).name == "bad.py"
 
-    monkeypatch.setitem(sys.modules, "orphan_analyzer", types.SimpleNamespace(analyze_redundancy=analyze))
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(analyze_redundancy=analyze),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "scripts.discover_isolated_modules",
+        types.SimpleNamespace(discover_isolated_modules=lambda *a, **k: []),
+    )
 
-    result, tested = env.auto_include_modules([])
+    result, tested = env.auto_include_modules(["good.py", "bad.py"])
 
     assert result is tracker
     assert tested == {"added": ["good.py"], "failed": [], "redundant": ["bad.py"]}
-    assert calls["discover"] == str(tmp_path)
     assert calls["generate"] == ["good.py"]
     assert calls["integrate"] == ["good.py"]
-    assert sorted(calls["analyze"]) == ["bad.py", "good.py", "good.py"]
+    assert sorted(calls["analyze"]) == ["bad.py", "good.py"]
 
 
 def test_recursive_validated_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "1")
     calls: dict[str, object] = {}
 
-    def fake_discover(repo_path: str):
-        calls["discover"] = repo_path
-        return {"good": {"parents": []}}
-
-    monkeypatch.setattr(
-        "sandbox_runner.orphan_discovery.discover_recursive_orphans", fake_discover
-    )
+    (tmp_path / "good.py").write_text("VALUE = 1\n")
 
     def fake_generate(mods, workflows_db="workflows.db"):
         calls["generate"] = list(mods)
@@ -90,7 +85,16 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
         calls.setdefault("analyze", []).append(Path(path).name)
         return False
 
-    monkeypatch.setitem(sys.modules, "orphan_analyzer", types.SimpleNamespace(analyze_redundancy=analyze))
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(analyze_redundancy=analyze),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "scripts.discover_isolated_modules",
+        types.SimpleNamespace(discover_isolated_modules=lambda *a, **k: []),
+    )
 
     class DummySelfTest:
         def __init__(self, pytest_args, **kwargs):
@@ -100,14 +104,15 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
             return {"failed": False}
 
     monkeypatch.setitem(
-        sys.modules, "self_test_service", types.SimpleNamespace(SelfTestService=DummySelfTest)
+        sys.modules,
+        "self_test_service",
+        types.SimpleNamespace(SelfTestService=DummySelfTest),
     )
 
-    result, tested = env.auto_include_modules([], validate=True)
+    result, tested = env.auto_include_modules(["good.py"], validate=True)
 
     assert result is tracker
     assert tested == {"added": ["good.py"], "failed": [], "redundant": []}
-    assert calls["discover"] == str(tmp_path)
     assert calls["generate"] == ["good.py"]
     assert calls["integrate"] == ["good.py"]
     assert calls["selftest"] == [
@@ -118,9 +123,11 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
                 "discover_orphans": False,
                 "discover_isolated": True,
                 "recursive_orphans": True,
+                "recursive_isolated": True,
+                "auto_include_isolated": True,
                 "disable_auto_integration": True,
             },
         )
     ]
-    assert calls["analyze"].count("good.py") == 2
+    assert calls["analyze"].count("good.py") == 1
     assert (tmp_path / "roi_history.json").exists()

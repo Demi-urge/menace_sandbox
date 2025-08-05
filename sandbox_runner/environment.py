@@ -5457,11 +5457,14 @@ def auto_include_modules(
     #. Execute :func:`run_workflow_simulations` to evaluate the newly
        incorporated workflows.
 
-    When ``recursive`` is ``True`` (or the ``SANDBOX_RECURSIVE_ORPHANS``
-    environment variable is truthy) the initial module list is expanded using
-    :func:`sandbox_runner.orphan_discovery.discover_recursive_orphans`,
-    filtering out modules deemed redundant by
-    :func:`orphan_analyzer.analyze_redundancy`.
+    When ``recursive`` is ``True`` the helper expands the initial module list
+    by following local imports using
+    :func:`sandbox_runner.dependency_utils.collect_local_dependencies`.  Modules
+    deemed redundant by :func:`orphan_analyzer.analyze_redundancy` are skipped.
+
+    Optional integration of isolated modules discovered via
+    ``scripts.discover_isolated_modules`` is preserved but expansion is limited
+    to dependencies of the originally requested modules.
 
     Each candidate module is executed via :class:`self_test_service.SelfTestService`
     (when ``validate`` is ``True``) with ``recursive_orphans=True`` and
@@ -5477,44 +5480,36 @@ def auto_include_modules(
 
     import os
     from pathlib import Path
-    from sandbox_runner.orphan_discovery import discover_recursive_orphans
     import orphan_analyzer
     import json
     from sandbox_settings import SandboxSettings
+    from .dependency_utils import collect_local_dependencies
 
     mod_paths = {Path(m).as_posix() for m in modules}
     redundant_mods: list[str] = []
 
     settings = SandboxSettings()
-    # Determine whether to expand modules using recursive orphan discovery.
-    should_expand = recursive or getattr(settings, "recursive_orphan_scan", True)
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
-    if should_expand:
+    if recursive:
         try:
-            discovered = discover_recursive_orphans(str(repo))
-            for name, info in discovered.items():
-                path = Path(*name.split(".")).with_suffix(".py")
-                full = repo / path
-                try:
-                    if info.get("redundant") or orphan_analyzer.analyze_redundancy(full):
-                        redundant_mods.append(path.as_posix())
-                        continue
-                except Exception:
-                    redundant_mods.append(path.as_posix())
-                    continue
-                mod_paths.add(path.as_posix())
+            deps = collect_local_dependencies(modules)
+            mod_paths.update(deps)
         except Exception:
             pass
 
-    include_isolated = should_expand or getattr(settings, "auto_include_isolated", True)
+    derived_mods = set(mod_paths)
+
+    include_isolated = recursive or getattr(settings, "auto_include_isolated", True)
     if include_isolated:
         try:
             from scripts.discover_isolated_modules import discover_isolated_modules
 
             isolated = discover_isolated_modules(repo, recursive=True)
             for rel in isolated:
+                if rel not in derived_mods:
+                    continue
                 path = Path(rel)
                 full = repo / path
                 try:
@@ -5574,6 +5569,8 @@ def auto_include_modules(
         cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
         try:
             existing = json.loads(cache.read_text()) if cache.exists() else {}
+            if not isinstance(existing, dict):
+                existing = {}
         except Exception:
             existing = {}
         for m in redundant_mods:
@@ -5586,11 +5583,11 @@ def auto_include_modules(
         except Exception:
             pass
 
-    mods = passed_mods
+    mods = [m for m in passed_mods if m in derived_mods]
     tested = {
-        "added": passed_mods,
-        "failed": failed_mods,
-        "redundant": redundant_mods,
+        "added": [m for m in passed_mods if m in derived_mods],
+        "failed": [m for m in failed_mods if m in derived_mods],
+        "redundant": [m for m in redundant_mods if m in derived_mods],
     }
 
     if not mods:

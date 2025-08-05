@@ -23,6 +23,7 @@ def _load_auto_include(fake_generate, fake_try, fake_run):
         "Dict": Dict,
         "Any": Any,
         "ROITracker": type("ROITracker", (), {}),
+        "__name__": "sandbox_runner.environment",
     }
     future = ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations", asname=None)], level=0
@@ -50,6 +51,7 @@ def test_discover_recursive_orphans_includes_orphan_deps(monkeypatch, tmp_path):
         "orphan1": {"parents": [], "redundant": False},
         "orphan2": {"parents": [], "redundant": False},
         "helper": {"parents": ["orphan1", "orphan2"], "redundant": False},
+        "legacy": {"parents": ["orphan1"], "redundant": True},
     }
 
 
