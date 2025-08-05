@@ -1498,8 +1498,14 @@ class SelfImprovementEngine:
             return set()
 
         results = svc.results or {}
-        passed = set(results.get("orphan_passed", []))
-        redundant = set(results.get("orphan_redundant", []))
+        integration = results.get("integration")
+        if isinstance(integration, dict):
+            passing = set(integration.get("integrated", []))
+            redundant = set(integration.get("redundant", []))
+        else:
+            passed = set(results.get("orphan_passed", []))
+            redundant = set(results.get("orphan_redundant", []))
+            passing = {p for p in passed if p not in redundant}
 
         for name in redundant:
             self.orphan_traces.setdefault(name, {})["redundant"] = True
@@ -1508,7 +1514,6 @@ class SelfImprovementEngine:
                 extra=log_record(module=name),
             )
 
-        passing = {p for p in passed if p not in redundant}
         if passing:
             try:
                 environment.auto_include_modules(

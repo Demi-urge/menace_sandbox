@@ -98,7 +98,9 @@ class SelfTestService:
         workers: int | None = None,
         data_bot: DataBot | None = None,
         result_callback: Callable[[dict[str, Any]], Any] | None = None,
-        integration_callback: Callable[[list[str]], None] | None = None,
+        integration_callback: (
+            Callable[[list[str]], dict[str, list[str]] | None] | None
+        ) = None,
         disable_auto_integration: bool = False,
         container_image: str = "python:3.11-slim",
         use_container: bool = False,
@@ -130,8 +132,9 @@ class SelfTestService:
             Port for the Prometheus metrics server. Overrides ``SELF_TEST_METRICS_PORT``.
         integration_callback:
             Callable invoked with a list of successfully tested orphan modules
-            after each run. Can be used to merge them into the sandbox's module
-            map.
+            after each run. May return a mapping with ``integrated`` and
+            ``redundant`` module lists which is aggregated into
+            :attr:`integration_details` and exposed through ``results``.
         recursive_orphans:
             When ``True``, follow orphan modules' import chains to include local
             dependencies. Defaults to :class:`~sandbox_settings.SandboxSettings`.
@@ -279,8 +282,20 @@ class SelfTestService:
         # redundancy classification
         self.orphan_traces: dict[str, dict[str, Any]] = {}
 
-    def _default_integration(self, mods: list[str]) -> None:
-        """Refresh module map and include ``mods`` into workflows."""
+        # aggregated details about the most recent integration run
+        self.integration_details: dict[str, list[str]] = {
+            "integrated": [],
+            "redundant": [],
+        }
+
+    def _default_integration(self, mods: list[str]) -> dict[str, list[str]]:
+        """Refresh module map and include ``mods`` into workflows.
+
+        Returns
+        -------
+        dict[str, list[str]]
+            Mapping containing ``integrated`` and ``redundant`` module lists.
+        """
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         paths: list[str] = []
@@ -326,6 +341,20 @@ class SelfTestService:
                     self._clean_orphan_list(mods)
                 except Exception:
                     self.logger.exception("failed to clean orphan modules")
+
+        redundant = []
+        if self.results:
+            redundant = list(self.results.get("orphan_redundant", []))
+
+        return {"integrated": paths, "redundant": sorted(set(redundant))}
+
+    def get_integration_details(self) -> dict[str, list[str]]:
+        """Return aggregated integration results."""
+
+        return {
+            "integrated": sorted(set(self.integration_details.get("integrated", []))),
+            "redundant": sorted(set(self.integration_details.get("redundant", []))),
+        }
 
     def _store_history(self, rec: dict[str, Any]) -> None:
         if not self.history_path:
@@ -1355,18 +1384,29 @@ class SelfTestService:
                     m for m in passed_set if not self.orphan_traces.get(m, {}).get("redundant")
                 ]
                 cleaned = False
+                info: dict[str, list[str]] | None = None
                 if self.integration_callback and integrate_mods:
                     try:
-                        self.integration_callback(integrate_mods)
+                        info = self.integration_callback(integrate_mods)
                     except Exception:
                         self.logger.exception("orphan integration failed")
                     else:
                         cleaned = self.integration_callback is self._default_integration
+                        if isinstance(info, dict):
+                            self.integration_details["integrated"].extend(
+                                info.get("integrated", [])
+                            )
+                            self.integration_details["redundant"].extend(
+                                info.get("redundant", [])
+                            )
                 if self.clean_orphans and integrate_mods and not cleaned:
                     try:
                         self._clean_orphan_list(integrate_mods)
                     except Exception:
                         self.logger.exception("failed to clean orphan list")
+
+            if self.results is not None:
+                self.results["integration"] = self.get_integration_details()
 
             if not queue:
                 self._clear_state()

@@ -664,3 +664,72 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     assert calls == [["foo.py"]]
     assert svc.results.get("orphan_passed") == ["foo.py"]
 
+
+def test_default_integration_reports(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (tmp_path / "foo.py").write_text("VALUE = 1\n")
+
+    mod.analyze_redundancy = lambda p: False
+
+    calls: dict[str, object] = {}
+
+    class DummyIndex:
+        def __init__(self, path):
+            self.path = path
+
+        def refresh(self, modules, force=False):
+            calls["refresh"] = list(modules)
+
+        def save(self):
+            calls["save"] = True
+
+    idx_mod = types.ModuleType("module_index_db")
+    idx_mod.ModuleIndexDB = DummyIndex
+    monkeypatch.setitem(sys.modules, "module_index_db", idx_mod)
+
+    env_mod = types.ModuleType("sandbox_runner.environment")
+    env_mod.auto_include_modules = lambda mods, **k: calls.setdefault("auto", list(mods))
+    sr_pkg = types.ModuleType("sandbox_runner")
+    sr_pkg.environment = env_mod
+    sr_pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
+    monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr_pkg)
+
+    iso_mod = types.ModuleType("scripts.discover_isolated_modules")
+    iso_mod.discover_isolated_modules = lambda root, *, recursive=True: ["foo.py"]
+    scripts_pkg = types.ModuleType("scripts")
+    scripts_pkg.discover_isolated_modules = iso_mod
+    monkeypatch.setitem(sys.modules, "scripts", scripts_pkg)
+    monkeypatch.setitem(sys.modules, "scripts.discover_isolated_modules", iso_mod)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            Path(path).write_text(json.dumps({"summary": {"passed": 1, "failed": 0}}))
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    svc = mod.SelfTestService()
+    svc.logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
+    svc.run_once()
+
+    assert svc.results.get("integration") == {"integrated": ["foo.py"], "redundant": []}
+
