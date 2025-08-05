@@ -5606,10 +5606,43 @@ def auto_include_modules(
 
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
+
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    map_file = data_dir / "module_map.json"
+    try:
+        existing = json.loads(map_file.read_text()) if map_file.exists() else {}
+    except Exception:
+        existing = {}
+    if (
+        isinstance(existing, dict)
+        and isinstance(existing.get("modules"), dict)
+    ):
+        module_map = existing["modules"]
+        container: dict[str, Any] = existing
+    else:
+        module_map = existing if isinstance(existing, dict) else {}
+        container = module_map
+    next_id = (
+        max((int(v) for v in module_map.values() if isinstance(v, int)), default=0)
+        + 1
+    )
+    for mod in mods:
+        if mod not in module_map:
+            module_map[mod] = next_id
+            next_id += 1
+    try:
+        map_file.parent.mkdir(parents=True, exist_ok=True)
+        map_file.write_text(json.dumps(container, indent=2))
+    except Exception:
+        pass
+
     result = run_workflow_simulations()
     tracker = result[0] if isinstance(result, tuple) else result
     try:
-        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        tracker.cluster_map.update(module_map)
+    except Exception:
+        pass
+    try:
         data_dir.mkdir(parents=True, exist_ok=True)
         tracker.save_history(str(data_dir / "roi_history.json"))
     except Exception:
