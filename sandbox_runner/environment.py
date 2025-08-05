@@ -5494,8 +5494,9 @@ def auto_include_modules(
             "on",
         }
 
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+
     if should_expand:
-        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         try:
             discovered = discover_recursive_orphans(str(repo))
             for name, info in discovered.items():
@@ -5503,6 +5504,28 @@ def auto_include_modules(
                 full = repo / path
                 try:
                     if info.get("redundant") or orphan_analyzer.analyze_redundancy(full):
+                        continue
+                except Exception:
+                    continue
+                mod_paths.add(path.as_posix())
+        except Exception:
+            pass
+
+    auto_iso_env = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
+    include_isolated = should_expand or (
+        auto_iso_env is not None
+        and auto_iso_env.lower() in {"1", "true", "yes", "on"}
+    )
+    if include_isolated:
+        try:
+            from scripts.discover_isolated_modules import discover_isolated_modules
+
+            isolated = discover_isolated_modules(repo, recursive=True)
+            for rel in isolated:
+                path = Path(rel)
+                full = repo / path
+                try:
+                    if orphan_analyzer.analyze_redundancy(full):
                         continue
                 except Exception:
                     continue
