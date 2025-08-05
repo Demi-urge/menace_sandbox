@@ -804,6 +804,20 @@ remain distinct. `environment.generate_workflows_for_modules`
 then creates one‑step workflows so later simulations include the newly
 discovered functionality.
 
+### Automatic self-testing and integration
+
+The discovery helpers feed an automated pipeline that promotes passing modules:
+
+1. `sandbox_runner.discover_recursive_orphans` and `scripts.discover_isolated_modules` gather orphaned or isolated files.
+2. `SelfTestService` runs each candidate in isolation and reports failures without halting the sandbox.
+3. Successful modules are appended to `sandbox_data/module_map.json` and `environment.generate_workflows_for_modules` creates one‑step workflows so future runs schedule them automatically.
+
+`SandboxSettings` exposes flags to tune this behaviour:
+
+- `auto_include_isolated` (`SANDBOX_AUTO_INCLUDE_ISOLATED`) forces isolated discovery.
+- `recursive_orphan_scan` (`SANDBOX_RECURSIVE_ORPHANS`) follows orphan dependencies.
+- `recursive_isolated` (`SANDBOX_RECURSIVE_ISOLATED`) expands isolated modules through their imports.
+
 ### Flags and environment variables
 
 Discovery behaviour can be tuned through CLI flags or their environment

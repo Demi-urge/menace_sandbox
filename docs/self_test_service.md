@@ -34,6 +34,24 @@ Orphan module processing is also exported via Prometheus gauges:
 - `orphan_modules_failed_total` – orphan modules whose tests failed.
 - `orphan_modules_redundant_total` – modules skipped due to redundancy.
 
+## SandboxSettings flags
+
+`sandbox_settings.SandboxSettings` provides switches that control the discovery
+and integration pipeline:
+
+- `auto_include_isolated` (`SANDBOX_AUTO_INCLUDE_ISOLATED`) – include modules
+  found by `discover_isolated_modules` and merge passing ones automatically.
+- `recursive_orphan_scan` (`SANDBOX_RECURSIVE_ORPHANS`) – follow orphan
+  dependencies when generating the test list.
+- `recursive_isolated` (`SANDBOX_RECURSIVE_ISOLATED`) – expand isolated modules
+  through their imports.
+
+When enabled, passing modules are written to
+`sandbox_data/module_map.json` and `environment.generate_workflows_for_modules`
+creates single‑step workflows so subsequent cycles can schedule the new code.
+Setting `SANDBOX_CLEAN_ORPHANS=1` removes integrated entries from the orphan
+cache after each run.
+
 ## Recursive inclusion flow
 
 The service participates in the sandbox's recursive module discovery. During
