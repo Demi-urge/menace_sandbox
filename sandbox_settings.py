@@ -27,6 +27,7 @@ class SandboxSettings(BaseSettings):
     sandbox_data_dir: str = Field("sandbox_data", env="SANDBOX_DATA_DIR")
     sandbox_env_presets: str | None = Field(None, env="SANDBOX_ENV_PRESETS")
     auto_include_isolated: bool = Field(True, env="SANDBOX_AUTO_INCLUDE_ISOLATED")
+    recursive_orphan_scan: bool = Field(True, env="SANDBOX_RECURSIVE_ORPHANS")
     recursive_isolated: bool = Field(True, env="SANDBOX_RECURSIVE_ISOLATED")
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")

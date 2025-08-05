@@ -11,6 +11,7 @@ import shutil
 import math
 import platform
 import subprocess
+from sandbox_settings import SandboxSettings
 try:  # optional dependency
     from scipy.stats import pearsonr, t, levene
 except Exception:  # pragma: no cover - fallback when scipy is missing
@@ -1056,7 +1057,7 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-isolated",
         action="store_true",
         dest="recursive_isolated",
-        default=True,
+        default=None,
         help="recurse through dependencies of isolated modules (default: enabled)",
     )
     parser.add_argument(
@@ -1078,7 +1079,7 @@ def main(argv: List[str] | None = None) -> None:
         "--recursive-orphans",
         action="store_true",
         dest="recursive_orphans",
-        default=True,
+        default=None,
         help=(
             "recursively integrate orphan dependency chains (sets "
             "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-orphans)"
@@ -1344,29 +1345,32 @@ def main(argv: List[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
 
-    auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-    if getattr(args, "auto_include_isolated", False):
-        auto_iso = "1"
-    if auto_iso is not None:
-        os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = auto_iso
-        os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = auto_iso
-        if auto_iso.lower() in {"1", "true", "yes"}:
-            os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
-            os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
-            os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
-            os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = "1"
+    settings = SandboxSettings()
+    auto_include_isolated = bool(getattr(settings, "auto_include_isolated", True) or getattr(args, "auto_include_isolated", False))
+    recursive_orphans = getattr(settings, "recursive_orphan_scan", True)
+    if args.recursive_orphans is not None:
+        recursive_orphans = args.recursive_orphans
+    recursive_isolated = getattr(settings, "recursive_isolated", True)
+    if args.recursive_isolated is not None:
+        recursive_isolated = args.recursive_isolated
+    if auto_include_isolated:
+        recursive_isolated = True
 
-    val = "1" if args.recursive_orphans else "0"
+    args.auto_include_isolated = auto_include_isolated
+    args.recursive_orphans = recursive_orphans
+    args.recursive_isolated = recursive_isolated
+
+    os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
+    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
+    val = "1" if recursive_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
     os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
-
-    recursive_isolated = args.recursive_isolated
-    env_rec_iso = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-    if env_rec_iso is not None:
-        recursive_isolated = env_rec_iso.lower() not in {"0", "false", "no"}
-    val = "1" if recursive_isolated else "0"
-    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val
-    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val
+    val_iso = "1" if recursive_isolated else "0"
+    os.environ["SANDBOX_RECURSIVE_ISOLATED"] = val_iso
+    os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val_iso
+    if auto_include_isolated:
+        os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
+        os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
 
     level_str = str(getattr(args, "log_level", "INFO"))
     try:

@@ -112,7 +112,7 @@ class SelfTestService:
         include_orphans: bool = True,
         discover_orphans: bool = True,
         discover_isolated: bool = True,
-        recursive_orphans: bool = True,
+        recursive_orphans: bool = getattr(SandboxSettings(), "recursive_orphan_scan", True),
         auto_include_isolated: bool = SandboxSettings().auto_include_isolated,
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
@@ -134,8 +134,9 @@ class SelfTestService:
             map.
         recursive_orphans:
             When ``True``, follow orphan modules' import chains to include local
-            dependencies. Defaults to ``True``. Set ``SELF_TEST_RECURSIVE_ORPHANS=0``
-            or pass ``--no-recursive-include`` to disable.
+            dependencies. Defaults to :class:`~sandbox_settings.SandboxSettings`.
+            Set ``SELF_TEST_RECURSIVE_ORPHANS=0`` or pass ``--no-recursive-include``
+            to disable.
         auto_include_isolated:
             When ``True``, force discovery of isolated modules and enable
             recursive traversal. Defaults to
@@ -247,8 +248,6 @@ class SelfTestService:
                 self.discover_orphans = env_discover.lower() in ("1", "true", "yes")
 
             env_recursive = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
-            if env_recursive is None:
-                env_recursive = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
             if env_recursive is not None:
                 self.recursive_orphans = env_recursive.lower() in ("1", "true", "yes")
 
@@ -756,8 +755,6 @@ class SelfTestService:
         """
         if recursive is None:
             env_val = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
-            if env_val is None:
-                env_val = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
             if env_val is not None:
                 recursive = env_val.lower() in ("1", "true", "yes")
             else:

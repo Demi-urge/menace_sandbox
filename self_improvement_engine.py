@@ -1730,8 +1730,8 @@ class SelfImprovementEngine:
 
         if modules:
             modules = list(modules)
-            auto_iso = os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED")
-            if auto_iso and auto_iso.lower() in {"1", "true", "yes"}:
+            auto_iso = getattr(SandboxSettings(), "auto_include_isolated", True)
+            if auto_iso:
                 recursive_iso = get_recursive_isolated()
                 try:
                     from scripts.discover_isolated_modules import discover_isolated_modules
@@ -1791,10 +1791,8 @@ class SelfImprovementEngine:
             return
 
         modules: list[str] = []
-        recursive = True
-        env_rec = os.getenv("SANDBOX_RECURSIVE_ORPHANS")
-        if env_rec is None:
-            env_rec = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
+        recursive = getattr(SandboxSettings(), "recursive_orphan_scan", True)
+        env_rec = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
         if env_rec is not None:
             recursive = env_rec.lower() in ("1", "true", "yes")
 
