@@ -846,16 +846,19 @@ class SelfTestService:
             recursive=self.recursive_isolated if recursive is None else recursive,
         )
 
-        results: list[str] = []
+        roots: list[str] = []
         for m in modules:
             key = str(Path(m))
             entry = self.orphan_traces.setdefault(key, {"parents": []})
             # ``discover_isolated_modules`` only returns non-redundant modules but
             # we record the classification explicitly for later reference.
             entry["redundant"] = False
-            results.append(key)
+            roots.append(key)
 
-        return results
+        # Follow dependency chains so helper modules are recorded alongside the
+        # isolated roots. ``_collect_recursive`` updates ``orphan_traces`` with
+        # parent relationships and redundancy flags for all discovered modules.
+        return [str(Path(p)) for p in sorted(self._collect_recursive(roots))]
 
     # ------------------------------------------------------------------
     def _clean_orphan_list(self, modules: Iterable[str]) -> None:
