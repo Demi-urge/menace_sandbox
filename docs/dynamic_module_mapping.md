@@ -135,6 +135,18 @@ When `SANDBOX_AUTO_INCLUDE_ISOLATED=1` the sandbox invokes
 automatically and persisting passing modules and their dependencies to
 `sandbox_data/module_map.json`. Existing workflows are updated in the same pass.
 
+#### Integration pipeline and SandboxSettings
+
+The `sandbox_settings.SandboxSettings` dataclass mirrors these controls:
+
+- `auto_include_isolated` (`SANDBOX_AUTO_INCLUDE_ISOLATED`)
+- `recursive_orphan_scan` (`SANDBOX_RECURSIVE_ORPHANS`)
+- `recursive_isolated` (`SANDBOX_RECURSIVE_ISOLATED`)
+
+When enabled, discovered modules are executed by `SelfTestService`. Passing
+files are written to `sandbox_data/module_map.json` and one‑step workflows are
+generated so subsequent sandbox cycles incorporate the new code automatically.
+
 #### Example: isolated module with dependencies
 
 ```bash
