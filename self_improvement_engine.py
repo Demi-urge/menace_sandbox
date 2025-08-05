@@ -52,11 +52,6 @@ import sandbox_runner.environment as environment
 from .self_test_service import SelfTestService
 from orphan_analyzer import analyze_redundancy
 
-try:
-    from .auto_env_setup import get_recursive_isolated
-except Exception:  # pragma: no cover - direct execution
-    from auto_env_setup import get_recursive_isolated  # type: ignore
-
 import numpy as np
 import socket
 import contextlib
@@ -1474,10 +1469,13 @@ class SelfImprovementEngine:
                 tracker.register_metrics(*counts.keys())
                 base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                 tracker.update(base, base, metrics=counts)
-            orphan_modules_tested_total.inc(len(modules))
-            orphan_modules_reintroduced_total.inc(len(passed))
-            orphan_modules_failed_total.inc(len(failed_mods))
-            orphan_modules_redundant_total.inc(0)
+            try:
+                orphan_modules_tested_total.inc(len(modules))
+                orphan_modules_reintroduced_total.inc(len(passed))
+                orphan_modules_failed_total.inc(len(failed_mods))
+                orphan_modules_redundant_total.inc(0)
+            except Exception:
+                pass
             return passed
 
         settings = SandboxSettings()
@@ -1544,10 +1542,13 @@ class SelfImprovementEngine:
             tracker.register_metrics(*counts.keys())
             base = tracker.roi_history[-1] if tracker.roi_history else 0.0
             tracker.update(base, base, metrics=counts)
-        orphan_modules_tested_total.inc(len(modules))
-        orphan_modules_reintroduced_total.inc(len(passing))
-        orphan_modules_failed_total.inc(len(failed_mods))
-        orphan_modules_redundant_total.inc(len(redundant))
+        try:
+            orphan_modules_tested_total.inc(len(modules))
+            orphan_modules_reintroduced_total.inc(len(passing))
+            orphan_modules_failed_total.inc(len(failed_mods))
+            orphan_modules_redundant_total.inc(len(redundant))
+        except Exception:
+            pass
 
         if self.data_bot and getattr(self.data_bot, "metrics_db", None):
             try:
@@ -1730,14 +1731,17 @@ class SelfImprovementEngine:
 
         if modules:
             modules = list(modules)
-            auto_iso = getattr(SandboxSettings(), "auto_include_isolated", True)
-            if auto_iso:
-                recursive_iso = get_recursive_isolated()
+            try:
+                settings = SandboxSettings()
+            except Exception:  # pragma: no cover - fallback for tests
+                from sandbox_settings import SandboxSettings as _SS  # type: ignore
+                settings = _SS()
+            if getattr(settings, "auto_include_isolated", True):
                 try:
                     from scripts.discover_isolated_modules import discover_isolated_modules
 
                     iso_mods = discover_isolated_modules(
-                        str(repo), recursive=recursive_iso
+                        str(repo), recursive=getattr(settings, "recursive_orphan_scan", True)
                     )
                     modules.extend(sorted(iso_mods))
                 except Exception as exc:  # pragma: no cover - best effort
@@ -1787,19 +1791,18 @@ class SelfImprovementEngine:
                     )
             return
 
-        if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
-            return
-
+        try:
+            settings = SandboxSettings()
+        except Exception:  # pragma: no cover - fallback for tests
+            from sandbox_settings import SandboxSettings as _SS  # type: ignore
+            settings = _SS()
         modules: list[str] = []
-        recursive = getattr(SandboxSettings(), "recursive_orphan_scan", True)
-        env_rec = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
-        if env_rec is not None:
-            recursive = env_rec.lower() in ("1", "true", "yes")
-
         try:
             from scripts.discover_isolated_modules import discover_isolated_modules
 
-            iso_mods = discover_isolated_modules(str(repo), recursive=True)
+            iso_mods = discover_isolated_modules(
+                str(repo), recursive=getattr(settings, "recursive_orphan_scan", True)
+            )
             modules.extend(sorted(iso_mods))
             for m in iso_mods:
                 self.orphan_traces.setdefault(m, {"parents": []})
@@ -1853,15 +1856,6 @@ class SelfImprovementEngine:
             modules.extend(self.orphan_traces.keys())
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan discovery failed: %s", exc)
-
-        if not modules and not recursive:
-            try:
-                from scripts.find_orphan_modules import find_orphan_modules
-
-                modules = [str(p) for p in find_orphan_modules(repo, recursive=recursive)]
-                self.orphan_traces.update({m: {"parents": []} for m in modules})
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("orphan discovery failed: %s", exc)
 
         if not modules:
             return
@@ -1945,10 +1939,10 @@ class SelfImprovementEngine:
                 integrated = self._integrate_orphans(abs_paths)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan integration failed: %s", exc)
-        integrated_names = set(integrated)
+        integrated_names = {Path(m).name for m in integrated}
         if integrated_names:
             for m in integrate_candidates:
-                if m in integrated_names:
+                if Path(m).name in integrated_names:
                     self.logger.info(
                         "orphan module integrated",
                         extra=log_record(
@@ -1986,7 +1980,7 @@ class SelfImprovementEngine:
             existing = [m for m in existing if m not in passing]
             remaining = [m for m in filtered if m not in passing]
         else:
-            remaining = [m for m in filtered if m not in integrated]
+            remaining = [m for m in filtered if Path(m).name not in integrated_names]
         remaining = [
             m for m in remaining if not self.orphan_traces.get(m, {}).get("redundant")
         ]
