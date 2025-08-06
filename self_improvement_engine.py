@@ -1596,6 +1596,7 @@ class SelfImprovementEngine:
             recursive_orphans=True,
             recursive_isolated=settings.recursive_isolated,
             auto_include_isolated=settings.auto_include_isolated,
+            include_redundant=settings.test_redundant_modules,
             clean_orphans=True,
             disable_auto_integration=True,
         )
