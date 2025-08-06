@@ -230,13 +230,17 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         ]
         
         pre_mods = set(module_map)
-        tracker = None
         tested: Dict[str, list[str]] = {"added": [], "failed": [], "redundant": []}
         if candidate_mods:
             try:
                 tracker, tested = auto_include_modules(
                     candidate_mods, recursive=True, validate=True
                 )
+                if tracker is not None:
+                    try:
+                        ctx.tracker.merge_history(tracker)
+                    except Exception:
+                        logger.exception("failed to merge orphan metrics")
             except Exception:
                 logger.exception("isolated module auto-inclusion failed")
         
