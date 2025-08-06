@@ -46,7 +46,9 @@ menace sandbox run --discover-orphans --auto-include-isolated \
 `--recursive-include` enables `SANDBOX_RECURSIVE_ORPHANS=1`, causing
 `sandbox_runner.discover_recursive_orphans` to follow import chains and append
 non‑redundant modules to `sandbox_data/module_map.json`. One‑step workflows are
-created automatically so the new code participates in subsequent runs.
+created automatically so the new code participates in subsequent runs. The
+[recursive orphan workflow](recursive_orphan_workflow.md) document covers these
+environment variables in more detail.
 
 ## Troubleshooting
 

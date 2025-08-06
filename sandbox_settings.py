@@ -29,9 +29,13 @@ class SandboxSettings(BaseSettings):
     auto_include_isolated: bool = Field(
         True,
         env="SANDBOX_AUTO_INCLUDE_ISOLATED",
-        description="Enable automatic inclusion of isolated modules discovered during orphan scanning.",
+        description="Automatically include isolated modules during orphan scans (enabled by default).",
     )
-    recursive_orphan_scan: bool = Field(True, env="SANDBOX_RECURSIVE_ORPHANS")
+    recursive_orphan_scan: bool = Field(
+        True,
+        env="SANDBOX_RECURSIVE_ORPHANS",
+        description="Recurse through orphan dependencies when scanning (enabled by default).",
+    )
     recursive_isolated: bool = Field(
         True,
         env="SANDBOX_RECURSIVE_ISOLATED",
