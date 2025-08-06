@@ -5486,8 +5486,22 @@ def auto_include_modules(
     import json
     from sandbox_settings import SandboxSettings
     from .dependency_utils import collect_local_dependencies
-    
+
     mod_paths = {Path(m).as_posix() for m in modules}
+
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    map_file = data_dir / "module_map.json"
+    existing_mods: set[str] = set()
+    try:
+        mapping = json.loads(map_file.read_text()) if map_file.exists() else {}
+        if isinstance(mapping, dict):
+            if isinstance(mapping.get("modules"), dict):
+                existing_mods = set(mapping["modules"])
+            else:
+                existing_mods = set(mapping)
+    except Exception:
+        pass
+    mod_paths.difference_update(existing_mods)
     redundant_mods: list[str] = []
 
     settings = SandboxSettings()
@@ -5498,6 +5512,7 @@ def auto_include_modules(
         try:
             deps = collect_local_dependencies(modules)
             mod_paths.update(deps)
+            mod_paths.difference_update(existing_mods)
         except Exception:
             pass
 
@@ -5516,6 +5531,8 @@ def auto_include_modules(
             mapping = od.discover_recursive_orphans(str(repo))
             for name, info in mapping.items():
                 path = Path(name.replace(".", "/")).with_suffix(".py").as_posix()
+                if path in existing_mods:
+                    continue
                 candidate_paths.add(path)
                 evaluated.add(path)
                 if info.get("redundant"):
@@ -5538,6 +5555,8 @@ def auto_include_modules(
                 if rel not in derived_mods:
                     continue
                 path = Path(rel)
+                if path.as_posix() in existing_mods:
+                    continue
                 full = repo / path
                 try:
                     if orphan_analyzer.analyze_redundancy(full):
