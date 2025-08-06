@@ -1390,6 +1390,11 @@ class SelfTestService:
                     self.result_callback(self.results)
                 except Exception:
                     self.logger.exception("result callback failed")
+            if self.clean_orphans and passed_set:
+                try:
+                    self._clean_orphan_list(passed_set)
+                except Exception:
+                    self.logger.exception("failed to clean orphan list")
 
             if passed_set:
                 integrate_mods = [
