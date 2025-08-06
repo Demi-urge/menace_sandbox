@@ -306,6 +306,11 @@ class SelfTestService:
             "redundant": [],
         }
 
+        # exposed module classification sets for downstream metrics
+        self.orphan_passed_modules: list[str] = []
+        self.orphan_failed_modules: list[str] = []
+        self.orphan_redundant_modules: list[str] = []
+
     def _default_integration(self, mods: list[str]) -> dict[str, list[str]]:
         """Refresh module map and include ``mods`` into workflows.
 
@@ -360,11 +365,10 @@ class SelfTestService:
                 except Exception:
                     self.logger.exception("failed to clean orphan modules")
 
-        redundant = []
-        if self.results:
-            redundant = list(self.results.get("orphan_redundant", []))
-
-        return {"integrated": paths, "redundant": sorted(set(redundant))}
+        return {
+            "integrated": paths,
+            "redundant": sorted(set(self.orphan_redundant_modules)),
+        }
 
     def get_integration_details(self) -> dict[str, list[str]]:
         """Return aggregated integration results."""
@@ -906,6 +910,25 @@ class SelfTestService:
         if not paths:
             paths = [None]
 
+        env_flags = {
+            "SANDBOX_RECURSIVE_ORPHANS": "1" if self.recursive_orphans else "0",
+            "SELF_TEST_RECURSIVE_ORPHANS": "1" if self.recursive_orphans else "0",
+            "SANDBOX_DISCOVER_ORPHANS": "1" if self.discover_orphans else "0",
+            "SELF_TEST_DISCOVER_ORPHANS": "1" if self.discover_orphans else "0",
+            "SANDBOX_DISCOVER_ISOLATED": "1" if self.discover_isolated else "0",
+            "SELF_TEST_DISCOVER_ISOLATED": "1" if self.discover_isolated else "0",
+            "SANDBOX_AUTO_INCLUDE_ISOLATED": "1" if self.auto_include_isolated else "0",
+            "SELF_TEST_AUTO_INCLUDE_ISOLATED": "1" if self.auto_include_isolated else "0",
+            "SANDBOX_RECURSIVE_ISOLATED": "1" if self.recursive_isolated else "0",
+            "SELF_TEST_RECURSIVE_ISOLATED": "1" if self.recursive_isolated else "0",
+        }
+        os.environ.update(env_flags)
+
+        # reset exposed module sets for each run
+        self.orphan_passed_modules = []
+        self.orphan_failed_modules = []
+        self.orphan_redundant_modules = []
+
         path = Path("sandbox_data") / "orphan_modules.json"
         existing: list[str] = []
         if path.exists() and not refresh_orphans:
@@ -1327,12 +1350,16 @@ class SelfTestService:
             if all_orphans:
                 passed_set = [p for p in orphan_passed if p not in orphan_failed]
                 redundant_set = sorted(set(redundant_list))
+                self.orphan_passed_modules = sorted(passed_set)
+                self.orphan_failed_modules = sorted(orphan_failed)
+                self.orphan_redundant_modules = list(redundant_set)
                 self.results["orphan_total"] = len(all_orphans)
                 self.results["orphan_failed"] = len(orphan_failed)
-                self.results["orphan_passed"] = sorted(passed_set)
-                self.results["orphan_redundant"] = redundant_set
-                if orphan_failed:
-                    self.results["orphan_failed_modules"] = sorted(orphan_failed)
+                self.results["orphan_passed"] = self.orphan_passed_modules
+                self.results["orphan_passed_modules"] = self.orphan_passed_modules
+                self.results["orphan_redundant"] = self.orphan_redundant_modules
+                self.results["orphan_redundant_modules"] = self.orphan_redundant_modules
+                self.results["orphan_failed_modules"] = self.orphan_failed_modules
             if stdout_snip or stderr_snip or logs_snip:
                 self.results["stdout"] = stdout_snip
                 self.results["stderr"] = stderr_snip
@@ -1485,7 +1512,7 @@ class SelfTestService:
 
         passed_modules: list[str] = []
         if self.results is not None:
-            passed_modules = list(self.results.get("orphan_passed", []))
+            passed_modules = list(self.results.get("orphan_passed_modules", []))
         return self.results or {}, passed_modules
 
     # ------------------------------------------------------------------
@@ -1841,22 +1868,31 @@ def cli(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    val = "1" if args.recursive_orphans else "0"
+    rec_flag = getattr(args, "recursive_orphans", True)
+    val = "1" if rec_flag else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
     os.environ["SELF_TEST_RECURSIVE_ORPHANS"] = val
-    recursive_orphans = args.recursive_orphans
+    recursive_orphans = rec_flag
 
-    if args.discover_isolated:
+    os.environ["SANDBOX_DISCOVER_ORPHANS"] = (
+        "1" if getattr(args, "discover_orphans", False) else "0"
+    )
+    os.environ["SELF_TEST_DISCOVER_ORPHANS"] = (
+        "1" if getattr(args, "discover_orphans", False) else "0"
+    )
+
+    if getattr(args, "discover_isolated", False):
         set_recursive_isolated(True)
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
     else:
-        set_recursive_isolated(args.recursive_isolated)
+        set_recursive_isolated(getattr(args, "recursive_isolated", False))
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "0"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "0"
 
-    os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
-    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if args.discover_isolated else "0"
+    auto_iso = "1" if getattr(args, "discover_isolated", False) else "0"
+    os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = auto_iso
+    os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = auto_iso
 
     if args.cmd == "run":
         pytest_args = []
