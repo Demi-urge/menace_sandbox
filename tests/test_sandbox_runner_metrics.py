@@ -211,6 +211,75 @@ class DummyBus:
         pass
 
 
+def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
+    from sandbox_runner import cycle
+    from menace_sandbox.roi_tracker import ROITracker
+
+    (tmp_path / "mod.py").write_text("VALUE = 1\n")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(analyze_redundancy=lambda path: False),
+    )
+
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", lambda repo: {})
+
+    import scripts.discover_isolated_modules as dim
+
+    monkeypatch.setattr(dim, "discover_isolated_modules", lambda *a, **k: [])
+
+    class DummyMetric:
+        def inc(self, *_):
+            pass
+
+        def dec(self, *_):
+            pass
+
+    for name in (
+        "orphan_modules_reintroduced_total",
+        "orphan_modules_tested_total",
+        "orphan_modules_failed_total",
+        "orphan_modules_redundant_total",
+        "orphan_modules_legacy_total",
+    ):
+        monkeypatch.setattr(cycle, name, DummyMetric())
+
+    inner_tracker = ROITracker()
+    inner_tracker.roi_history = [0.5]
+    inner_tracker.metrics_history["custom"] = [1.0]
+
+    calls = {}
+
+    def fake_auto(mods, recursive=False, validate=False):
+        calls["mods"] = list(mods)
+        return inner_tracker, {"added": list(mods), "failed": [], "redundant": []}
+
+    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto)
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "append_orphan_classifications", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
+
+    class Settings:
+        auto_include_isolated = True
+        recursive_isolated = False
+
+    class Ctx:
+        def __init__(self, repo):
+            self.repo = repo
+            self.settings = Settings()
+            self.module_map = set()
+            self.orphan_traces = {"mod.py": {"classification": "candidate", "parents": []}}
+            self.tracker = ROITracker()
+
+    ctx = Ctx(tmp_path)
+    cycle.include_orphan_modules(ctx)
+
+    assert calls.get("mods") == ["mod.py"]
+    assert ctx.tracker.roi_history == [0.5]
+    assert ctx.tracker.metrics_history["custom"] == [1.0]
+
+
 def test_repo_section_metrics(monkeypatch, tmp_path):
     monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
 

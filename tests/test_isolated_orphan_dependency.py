@@ -2,6 +2,7 @@ from pathlib import Path
 
 import orphan_analyzer
 from sandbox_runner import cycle
+from menace_sandbox.roi_tracker import ROITracker
 
 
 def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
@@ -16,15 +17,42 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
 
     calls: dict[str, object] = {}
 
+    tracker = ROITracker()
+    tracker.roi_history = [0.2]
+
     def fake_auto_include(mods, recursive=False, validate=False):
         calls["mods"] = list(mods)
         calls["recursive"] = recursive
         calls["validate"] = validate
-        return object(), {"added": list(mods), "failed": [], "redundant": []}
+        return tracker, {"added": list(mods), "failed": [], "redundant": []}
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
     monkeypatch.setattr(cycle, "append_orphan_cache", lambda *_: None)
     monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *_: None)
+    monkeypatch.setattr(cycle, "append_orphan_classifications", lambda *_: None)
+
+    class DummyMetric:
+        def inc(self, *_):
+            pass
+
+        def dec(self, *_):
+            pass
+
+    monkeypatch.setattr(cycle, "orphan_modules_tested_total", DummyMetric())
+    monkeypatch.setattr(cycle, "orphan_modules_reintroduced_total", DummyMetric())
+    monkeypatch.setattr(cycle, "orphan_modules_failed_total", DummyMetric())
+    monkeypatch.setattr(cycle, "orphan_modules_redundant_total", DummyMetric())
+    monkeypatch.setattr(cycle, "orphan_modules_legacy_total", DummyMetric())
+
+    monkeypatch.setattr(
+        cycle,
+        "discover_recursive_orphans",
+        lambda repo: {
+            "isolated": {"classification": "candidate"},
+            "helper": {"classification": "candidate"},
+            "legacy": {"classification": "candidate"},
+        },
+    )
 
     import scripts.discover_isolated_modules as dim
 
@@ -40,6 +68,7 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
             self.settings = Settings()
             self.module_map: set[str] = set()
             self.orphan_traces: dict[str, dict[str, object]] = {}
+            self.tracker = ROITracker()
 
     ctx = Ctx(tmp_path)
     cycle.include_orphan_modules(ctx)
@@ -50,3 +79,4 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
     assert "legacy.py" not in calls["mods"]
     assert sorted(ctx.orphan_traces.keys()) == ["legacy.py"]
     assert ctx.orphan_traces["legacy.py"]["redundant"] is True
+    assert ctx.tracker.roi_history == [0.2]

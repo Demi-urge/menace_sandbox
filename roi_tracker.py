@@ -216,6 +216,41 @@ class ROITracker:
                 self.actual_metrics.setdefault(syn_name, [])
 
     # ------------------------------------------------------------------
+    def merge_history(self, other: "ROITracker") -> None:
+        """Merge ROI and metrics histories from ``other`` into this tracker."""
+
+        pre_len = len(self.roi_history)
+        self.roi_history.extend(other.roi_history)
+        delta = len(other.roi_history)
+
+        for name, hist in self.metrics_history.items():
+            hist.extend(other.metrics_history.get(name, [0.0] * delta))
+        for name, hist in other.metrics_history.items():
+            if name not in self.metrics_history:
+                self.metrics_history[name] = [0.0] * pre_len + list(hist)
+
+        for name, hist in self.synergy_metrics_history.items():
+            hist.extend(other.synergy_metrics_history.get(name, [0.0] * delta))
+        for name, hist in other.synergy_metrics_history.items():
+            if name not in self.synergy_metrics_history:
+                self.synergy_metrics_history[name] = [0.0] * pre_len + list(hist)
+
+        self.synergy_history.extend(other.synergy_history)
+        self.predicted_roi.extend(getattr(other, "predicted_roi", []))
+        self.actual_roi.extend(getattr(other, "actual_roi", []))
+
+        for name, hist in other.predicted_metrics.items():
+            self.predicted_metrics.setdefault(name, []).extend(hist)
+        for name, hist in other.actual_metrics.items():
+            self.actual_metrics.setdefault(name, []).extend(hist)
+
+        self.resource_metrics.extend(getattr(other, "resource_metrics", []))
+        for name, deltas in getattr(other, "module_deltas", {}).items():
+            self.module_deltas.setdefault(name, []).extend(deltas)
+        for name, deltas in getattr(other, "cluster_deltas", {}).items():
+            self.cluster_deltas.setdefault(name, []).extend(deltas)
+
+    # ------------------------------------------------------------------
     def diminishing(self) -> float:
         """Return the ROI delta threshold considered negligible.
 
