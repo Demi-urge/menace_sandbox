@@ -43,6 +43,7 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
     monkeypatch.setattr(cycle, "orphan_modules_failed_total", DummyMetric())
     monkeypatch.setattr(cycle, "orphan_modules_redundant_total", DummyMetric())
     monkeypatch.setattr(cycle, "orphan_modules_legacy_total", DummyMetric())
+    monkeypatch.setattr(cycle, "orphan_modules_reclassified_total", DummyMetric())
 
     monkeypatch.setattr(
         cycle,

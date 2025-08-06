@@ -193,19 +193,23 @@ def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
 
     for g in (
         metrics_exporter.orphan_modules_reintroduced_total,
+        metrics_exporter.orphan_modules_passed_total,
         metrics_exporter.orphan_modules_tested_total,
         metrics_exporter.orphan_modules_failed_total,
         metrics_exporter.orphan_modules_redundant_total,
         metrics_exporter.orphan_modules_legacy_total,
+        metrics_exporter.orphan_modules_reclassified_total,
     ):
         g.set(0)
 
     for name in [
         "orphan_modules_reintroduced_total",
+        "orphan_modules_passed_total",
         "orphan_modules_tested_total",
         "orphan_modules_failed_total",
         "orphan_modules_redundant_total",
         "orphan_modules_legacy_total",
+        "orphan_modules_reclassified_total",
     ]:
         _test_orphans.__globals__[name] = getattr(metrics_exporter, name)
         _integrate_orphans.__globals__[name] = getattr(metrics_exporter, name)
@@ -239,3 +243,4 @@ def test_update_orphan_modules_records_metrics(monkeypatch, tmp_path):
     assert metrics_exporter.orphan_modules_failed_total._value.get() == 0
     assert metrics_exporter.orphan_modules_redundant_total._value.get() == 0
     assert metrics_exporter.orphan_modules_legacy_total._value.get() == 0
+    assert metrics_exporter.orphan_modules_reclassified_total._value.get() == 0

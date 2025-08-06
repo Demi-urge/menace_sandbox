@@ -411,6 +411,10 @@ orphan_modules_failed_total = Gauge(
     "orphan_modules_failed_total",
     "Total number of orphan modules failing tests",
 )
+orphan_modules_reclassified_total = Gauge(
+    "orphan_modules_reclassified_total",
+    "Total number of orphan modules reclassified as candidates after tests",
+)
 orphan_modules_redundant_total = Gauge(
     "orphan_modules_redundant_total",
     "Total number of orphan modules marked redundant",

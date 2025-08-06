@@ -33,8 +33,10 @@ from .metrics_exporter import (
     synergy_weight_update_failures_total,
     synergy_weight_update_alerts_total,
     orphan_modules_reintroduced_total,
+    orphan_modules_passed_total,
     orphan_modules_tested_total,
     orphan_modules_failed_total,
+    orphan_modules_reclassified_total,
     orphan_modules_redundant_total,
     orphan_modules_legacy_total,
 )
@@ -1467,7 +1469,7 @@ class SelfImprovementEngine:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to write orphan classifications")
 
-        modules = candidates
+        modules = [*candidates, *legacy, *redundant]
         self.logger.info(
             "self test start",
             extra=log_record(
@@ -1482,6 +1484,7 @@ class SelfImprovementEngine:
                 "orphan_modules_tested": 0,
                 "orphan_modules_passed": 0,
                 "orphan_modules_failed": 0,
+                "orphan_modules_reclassified": 0,
                 "orphan_modules_redundant": len(redundant),
                 "orphan_modules_legacy": len(legacy),
             }
@@ -1492,8 +1495,9 @@ class SelfImprovementEngine:
                 tracker.update(base, base, metrics=counts)
             try:
                 orphan_modules_tested_total.set(0)
-                orphan_modules_reintroduced_total.set(0)
+                orphan_modules_passed_total.set(0)
                 orphan_modules_failed_total.set(0)
+                orphan_modules_reclassified_total.set(0)
                 orphan_modules_redundant_total.set(len(redundant))
                 orphan_modules_legacy_total.set(len(legacy))
             except Exception:
@@ -1524,7 +1528,19 @@ class SelfImprovementEngine:
                     )
                     continue
                 passed.add(m)
-            failed_mods = sorted(set(modules) - passed)
+            reclassified = {m for m in passed if m in legacy or m in redundant}
+            for name in sorted(reclassified):
+                classifications[name] = {"classification": "candidate"}
+                info = self.orphan_traces.setdefault(name, {"parents": []})
+                info["classification"] = "candidate"
+                info["redundant"] = False
+                if name in legacy:
+                    legacy.remove(name)
+                if name in redundant:
+                    redundant.remove(name)
+            failed_mods = sorted(
+                m for m in modules if m not in passed and m not in redundant
+            )
             self.logger.info(
                 "self test summary",
                 extra=log_record(
@@ -1539,6 +1555,7 @@ class SelfImprovementEngine:
                 "orphan_modules_tested": len(modules),
                 "orphan_modules_passed": len(passed),
                 "orphan_modules_failed": len(failed_mods),
+                "orphan_modules_reclassified": len(reclassified),
                 "orphan_modules_redundant": len(redundant),
                 "orphan_modules_legacy": len(legacy),
             }
@@ -1549,12 +1566,25 @@ class SelfImprovementEngine:
                 tracker.update(base, base, metrics=counts)
             try:
                 orphan_modules_tested_total.set(len(modules))
-                orphan_modules_reintroduced_total.set(len(passed))
+                orphan_modules_passed_total.set(len(passed))
                 orphan_modules_failed_total.set(len(failed_mods))
+                orphan_modules_reclassified_total.set(len(reclassified))
                 orphan_modules_redundant_total.set(len(redundant))
                 orphan_modules_legacy_total.set(len(legacy))
             except Exception:
                 pass
+            try:
+                existing_meta = (
+                    json.loads(meta_path.read_text()) if meta_path.exists() else {}
+                )
+            except Exception:  # pragma: no cover - best effort
+                existing_meta = {}
+            existing_meta.update(classifications)
+            try:
+                meta_path.parent.mkdir(parents=True, exist_ok=True)
+                meta_path.write_text(json.dumps(existing_meta, indent=2))
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to write orphan classifications")
             return passed
 
         settings = SandboxSettings()
@@ -1595,6 +1625,17 @@ class SelfImprovementEngine:
             redundant.extend(sorted(new_redundant))
             passing -= new_redundant
 
+        reclassified = {m for m in passing if m in legacy or m in redundant}
+        for name in sorted(reclassified):
+            classifications[name] = {"classification": "candidate"}
+            info = self.orphan_traces.setdefault(name, {"parents": []})
+            info["classification"] = "candidate"
+            info["redundant"] = False
+            if name in legacy:
+                legacy.remove(name)
+            if name in redundant:
+                redundant.remove(name)
+
         failed_mods = [m for m in modules if m not in passing and m not in redundant]
         self.logger.info(
             "self test summary",
@@ -1615,6 +1656,7 @@ class SelfImprovementEngine:
             "orphan_modules_tested": len(modules),
             "orphan_modules_passed": len(passing),
             "orphan_modules_failed": len(failed_mods),
+            "orphan_modules_reclassified": len(reclassified),
             "orphan_modules_redundant": len(redundant),
             "orphan_modules_legacy": len(legacy),
         }
@@ -1625,8 +1667,9 @@ class SelfImprovementEngine:
             tracker.update(base, base, metrics=counts)
         try:
             orphan_modules_tested_total.set(len(modules))
-            orphan_modules_reintroduced_total.set(len(passing))
+            orphan_modules_passed_total.set(len(passing))
             orphan_modules_failed_total.set(len(failed_mods))
+            orphan_modules_reclassified_total.set(len(reclassified))
             orphan_modules_redundant_total.set(len(redundant))
             orphan_modules_legacy_total.set(len(legacy))
         except Exception:
@@ -1683,29 +1726,32 @@ class SelfImprovementEngine:
         for p in paths:
             path = Path(p)
             try:
-                cls = classify_module(path)
-                if cls != "candidate":
-                    rel = path.resolve().relative_to(repo).as_posix()
-                    self.logger.info(
-                        "redundant module skipped",
-                        extra=log_record(module=rel),
-                    )
-                    try:
-                        if cls == "legacy":
-                            orphan_modules_legacy_total.inc(1)
-                        else:
-                            orphan_modules_redundant_total.inc(1)
-                    except Exception:
-                        pass
-                    continue
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "classification failed for %s: %s", path, exc
-                )
-            try:
                 rel = path.resolve().relative_to(repo).as_posix()
             except Exception:
                 rel = path.name
+            info = self.orphan_traces.get(rel, {})
+            cls = info.get("classification")
+            if cls is None:
+                try:
+                    cls = classify_module(path)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "classification failed for %s: %s", path, exc
+                    )
+                    cls = "candidate"
+            if cls != "candidate":
+                self.logger.info(
+                    "redundant module skipped",
+                    extra=log_record(module=rel),
+                )
+                try:
+                    if cls == "legacy":
+                        orphan_modules_legacy_total.inc(1)
+                    else:
+                        orphan_modules_redundant_total.inc(1)
+                except Exception:
+                    pass
+                continue
             mods.add(rel)
 
         unknown = [m for m in mods if m not in self.module_clusters]
