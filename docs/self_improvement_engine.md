@@ -41,6 +41,11 @@ the CLI flags `--no-recursive-include` or `--no-recursive-isolated`. Use
 `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
+Modules labelled `redundant` or `legacy` are now also queued for tests. With
+`SANDBOX_TEST_REDUNDANT=1` (the default) or the CLI flag
+`--include-redundant`/`--test-redundant`, their import chains are followed
+recursively so helper code is validated alongside active modules. Set
+`SANDBOX_TEST_REDUNDANT=0` to log them without execution.
 
 During a cycle the sandbox first calls `include_orphan_modules` to load entries
 from `sandbox_data/orphan_modules.json`. Each name is expanded by
@@ -97,15 +102,20 @@ python run_autonomous.py --include-orphans --recursive-include
   `discover_isolated_modules` during scans.
 - `SANDBOX_AUTO_INCLUDE_ISOLATED` – force discovery of modules returned by
   `discover_isolated_modules`.
+- `SANDBOX_TEST_REDUNDANT` / `SELF_TEST_INCLUDE_REDUNDANT` – run tests for
+  modules classified as redundant or legacy.
 - `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
 
 ### Redundant module handling
 
 Modules returned by `discover_recursive_orphans` include a `redundant` flag
-derived from `orphan_analyzer.analyze_redundancy`. These modules are skipped
-automatically during test runs so the classification and `parents` information
-is captured, but they are never merged into `module_map.json`.
+derived from `orphan_analyzer.analyze_redundancy`. With
+`SANDBOX_TEST_REDUNDANT=1` or the CLI flag `--include-redundant`/`--test-redundant`
+these modules are exercised during self tests and their dependency chains are
+walked recursively. They remain excluded from `module_map.json`, but their
+classification and `parents` information is captured for auditing. Set
+`SANDBOX_TEST_REDUNDANT=0` to record them without execution.
 
 Additional thresholds determine which modules `_test_orphan_modules`
 returns after sandbox simulations:
@@ -140,19 +150,27 @@ recursive integration. For a concrete walkthrough see the example below.
 
 ### Example: isolated module with helper
 
-```bash
-# create a simple isolated module and its helper
-echo 'import helper\n' > isolated.py
-echo 'VALUE = 1\n'   > helper.py
+1. **Create the isolated module and helper**:
 
-# run the self tests forcing isolated discovery
-python -m menace.self_test_service run isolated.py --auto-include-isolated
+   ```bash
+   echo 'import helper\n' > isolated.py
+   echo 'VALUE = 1\n'   > helper.py
+   ```
 
-# integrate during the next autonomous cycle
-SANDBOX_AUTO_INCLUDE_ISOLATED=1 python run_autonomous.py --auto-include-isolated
+2. **Run self tests to discover and validate the files**:
 
-# both files now appear in sandbox_data/module_map.json
-```
+   ```bash
+   python -m menace.self_test_service run isolated.py --auto-include-isolated
+   ```
+
+3. **Integrate during the next autonomous cycle**:
+
+   ```bash
+   SANDBOX_AUTO_INCLUDE_ISOLATED=1 python run_autonomous.py --auto-include-isolated
+   ```
+
+4. **Verify integration** – both files now appear in
+   `sandbox_data/module_map.json` and can participate in future runs.
 
 ### Example: recursive module inclusion with cleanup
 

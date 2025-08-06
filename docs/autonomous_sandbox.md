@@ -143,6 +143,13 @@ With `SANDBOX_AUTO_INCLUDE_ISOLATED=1` isolated files participate in the same
 scan. These defaults are enabled by `auto_env_setup.ensure_env()` through the
 corresponding `SELF_TEST_*` variables.
 
+Modules tagged as *redundant* or *legacy* can also be exercised during this
+walk. Setting `SANDBOX_TEST_REDUNDANT=1` (or passing
+`--include-redundant`/`--test-redundant`) keeps these modules in the candidate
+set so their helper chains are traversed and executed like any other orphan.
+Set `SANDBOX_TEST_REDUNDANT=0` to skip them while still recording their
+classification.
+
 The sandbox enables recursion and isolated-module inclusion by default. Key
 flags and their associated environment variables are summarised below:
 
@@ -153,14 +160,18 @@ flags and their associated environment variables are summarised below:
 | `SANDBOX_DISCOVER_ISOLATED` | `1` | `--discover-isolated` / `--no-discover-isolated` | Scan for modules with no inbound references before the orphan pass. |
 | `SANDBOX_AUTO_INCLUDE_ISOLATED` | `1` | `--auto-include-isolated` | Queue isolated modules for self‑tests automatically. |
 | `SANDBOX_CLEAN_ORPHANS` | `1` | `--clean-orphans` | Remove processed entries from `sandbox_data/orphan_modules.json`. |
+| `SANDBOX_TEST_REDUNDANT` | `1` | `--include-redundant` / `--test-redundant` | Run tests for modules marked as redundant or legacy. |
 
 Use the CLI flags `--recursive-orphans`/`--no-recursive-orphans` (aliases
 `--recursive-include`/`--no-recursive-include`), `--recursive-isolated` or
-`--no-recursive-isolated`, `--discover-isolated`, `--auto-include-isolated` and
-`--clean-orphans` to override the behaviour. Each flag mirrors an environment
-variable (`SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED`,
+`--no-recursive-isolated`, `--discover-isolated`, `--auto-include-isolated`,
+`--include-redundant`/`--test-redundant` and `--clean-orphans` to override the
+behaviour. Each flag mirrors an environment variable
+(`SANDBOX_RECURSIVE_ORPHANS`, `SANDBOX_RECURSIVE_ISOLATED`,
 `SANDBOX_DISCOVER_ISOLATED`, `SANDBOX_AUTO_INCLUDE_ISOLATED`,
-`SANDBOX_CLEAN_ORPHANS`) which can be set directly as needed.
+`SANDBOX_TEST_REDUNDANT`, `SANDBOX_CLEAN_ORPHANS`) which can be set directly as
+needed. The redundant flag also sets `SELF_TEST_INCLUDE_REDUNDANT` so the test
+runner honours the choice.
 
 To toggle recursion via the environment instead of CLI flags:
 
@@ -939,28 +950,38 @@ merged into the workflow.
 
 ### Example: integrating an isolated module with dependencies
 
-```bash
-mkdir -p demo_pkg
-cat <<'PY' > demo_pkg/util.py
-def double(x):
-    return x * 2
-PY
+1. **Create a package and helper module**:
 
-cat <<'PY' > demo_pkg/main.py
-import demo_pkg.util
+   ```bash
+   mkdir -p demo_pkg
+   cat <<'PY' > demo_pkg/util.py
+   def double(x):
+       return x * 2
+   PY
+   ```
 
-def run():
-    return demo_pkg.util.double(21)
-PY
+2. **Add an entry point that imports the helper**:
 
-# discover and integrate the new module and its dependency
-SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
-  python -m sandbox_runner.cli --discover-orphans --auto-include-isolated
+   ```bash
+   cat <<'PY' > demo_pkg/main.py
+   import demo_pkg.util
 
-# demo_pkg/main.py and demo_pkg/util.py are tested by SelfTestService,
-# auto_include_modules records them in sandbox_data/module_map.json and
-# single-step workflows are generated for future runs
-```
+   def run():
+       return demo_pkg.util.double(21)
+   PY
+   ```
+
+3. **Run discovery and tests**:
+
+   ```bash
+   SANDBOX_AUTO_INCLUDE_ISOLATED=1 SANDBOX_RECURSIVE_ISOLATED=1 \
+     python -m sandbox_runner.cli --discover-orphans --auto-include-isolated
+   ```
+
+4. **Observe integration** – `SelfTestService` executes both files. Passing
+   modules are written to `sandbox_data/module_map.json` and
+   `environment.generate_workflows_for_modules` creates single‑step workflows for
+   future cycles.
 
 ### Example: handling duplicate filenames
 
