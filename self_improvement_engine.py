@@ -52,7 +52,7 @@ from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
 import sandbox_runner.environment as environment
 from .self_test_service import SelfTestService
-from orphan_analyzer import classify_module
+from orphan_analyzer import classify_module, analyze_redundancy
 
 import numpy as np
 import socket
@@ -2006,100 +2006,77 @@ class SelfImprovementEngine:
             from sandbox_runner import discover_recursive_orphans as _discover
 
             trace = _discover(str(repo), module_map=data_dir / "module_map.json")
-            discovered: dict[str, dict[str, Any]] = {}
-            for k, v in trace.items():
-                info: dict[str, Any] = {
-                    "parents": [
-                        str(Path(*p.split(".")).with_suffix(".py"))
-                        for p in (
-                            v.get("parents") if isinstance(v, dict) else v
-                        )
-                    ]
-                }
-                if isinstance(v, dict):
-                    cls = v.get("classification")
+            for mod, info in trace.items():
+                parents = [
+                    str(Path(*p.split(".")).with_suffix(".py"))
+                    for p in (info.get("parents") if isinstance(info, dict) else info)
+                ]
+                entry: dict[str, Any] = {"parents": parents}
+                if isinstance(info, dict):
+                    cls = info.get("classification")
                     if cls is not None:
-                        info["classification"] = cls
-                        info["redundant"] = cls != "candidate"
-                    elif "redundant" in v:
-                        info["redundant"] = bool(v["redundant"])
-                discovered[str(Path(*k.split(".")).with_suffix(".py"))] = info
-
-            if discovered:
-                self.logger.info(
-                    "orphan discovery",
-                    extra=log_record(
-                        discovered=sorted(discovered.keys()),
-                        redundant=[
-                            m for m, inf in discovered.items() if inf.get("redundant")
-                        ],
-                        parents={
-                            m: inf.get("parents", []) for m, inf in discovered.items()
-                        },
-                    ),
-                )
-
-            existing = getattr(self, "orphan_traces", {})
-            for mod, info in discovered.items():
-                cur = existing.get(mod)
-                if cur:
-                    parents = set(cur.get("parents", []))
-                    parents.update(info.get("parents", []))
-                    cur["parents"] = sorted(parents)
-                    if "redundant" in info:
-                        cur["redundant"] = cur.get("redundant", False) or info["redundant"]
-                else:
-                    existing[mod] = info
-            self.orphan_traces = existing
-            modules.extend(self.orphan_traces.keys())
+                        entry["classification"] = cls
+                        entry["redundant"] = cls != "candidate"
+                    elif "redundant" in info:
+                        entry["redundant"] = bool(info["redundant"])
+                mod_path = str(Path(*mod.split(".")).with_suffix(".py"))
+                self.orphan_traces.setdefault(mod_path, entry).update(entry)
+                modules.append(mod_path)
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan discovery failed: %s", exc)
 
+        try:
+            existing = json.loads(path.read_text()) if path.exists() else []
+        except Exception:  # pragma: no cover - best effort
+            existing = []
+        if isinstance(existing, list):
+            modules.extend(existing)
+            for m in existing:
+                self.orphan_traces.setdefault(m, {"parents": []})
+        elif isinstance(existing, dict):
+            for m, info in existing.items():
+                modules.append(m)
+                if isinstance(info, dict):
+                    self.orphan_traces.setdefault(m, {"parents": info.get("parents", [])})
+
         if not modules:
+            tester = getattr(self, "_test_orphan_modules", None)
+            if tester is not None:
+                tester([])
             return
 
         modules = sorted(set(modules))
 
-        meta_path = data_dir / "orphan_classifications.json"
-        try:
-            existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-        except Exception:  # pragma: no cover - best effort
-            existing_meta = {}
-
         filtered: list[str] = []
         skipped: list[str] = []
-        classifications: dict[str, dict[str, Any]] = {}
-
         for m in modules:
             p = Path(m)
             info = self.orphan_traces.setdefault(m, {"parents": []})
-            classification = info.get("classification") or existing_meta.get(m, {}).get("classification")
-            if classification is None:
-                try:
-                    classification = classify_module(p)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "classification failed for %s: %s", p, exc
-                    )
-                    classification = "candidate"
-                info["classification"] = classification
-            info["redundant"] = classification != "candidate"
-            classifications[m] = {"classification": classification}
-            if classification == "legacy":
-                try:
-                    orphan_modules_legacy_total.inc(1)
-                except Exception:
-                    pass
-            elif classification == "redundant":
-                try:
-                    orphan_modules_redundant_total.inc(1)
-                except Exception:
-                    pass
-            if classification != "candidate":
+            try:
+                cls = classify_module(p)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "classification failed for %s: %s", p, exc
+                )
+                cls = "candidate"
+            try:
+                redundant = analyze_redundancy(p)
+            except Exception:  # pragma: no cover - best effort
+                redundant = False
+            if redundant:
+                info["classification"] = cls
+                info["redundant"] = True
                 skipped.append(m)
                 self.logger.info(
                     "redundant module skipped", extra=log_record(module=m)
                 )
+                try:
+                    if cls == "legacy":
+                        orphan_modules_legacy_total.inc(1)
+                    else:
+                        orphan_modules_redundant_total.inc(1)
+                except Exception:
+                    pass
                 continue
             filtered.append(m)
 
@@ -2108,74 +2085,53 @@ class SelfImprovementEngine:
                 "redundant modules skipped", extra=log_record(modules=sorted(skipped))
             )
 
-        if filtered:
-            module_index = getattr(self, "module_index", None)
-            if module_index:
-                try:
-                    module_index.refresh(filtered, force=True)
-                    module_index.save()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "module map refresh failed: %s", exc
-                    )
-
         if not filtered:
-            try:
-                existing_meta.update(classifications)
-                meta_path.parent.mkdir(parents=True, exist_ok=True)
-                meta_path.write_text(json.dumps(existing_meta, indent=2))
-            except Exception:  # pragma: no cover - best effort
-                self.logger.exception("failed to write orphan classifications")
+            tester = getattr(self, "_test_orphan_modules", None)
+            if tester is not None:
+                tester([])
             return
 
         try:
-            from sandbox_runner.dependency_utils import collect_local_dependencies
+            if hasattr(self, "_collect_recursive_modules"):
+                repo_mods = sorted(self._collect_recursive_modules(filtered))
+            else:  # pragma: no cover - fallback
+                from sandbox_runner.dependency_utils import collect_local_dependencies
 
-            repo_mods = sorted(collect_local_dependencies(filtered))
-        except Exception:  # pragma: no cover - best effort
-            repo_mods = filtered
+                repo_mods = sorted(collect_local_dependencies(filtered))
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("dependency expansion failed: %s", exc)
+            repo_mods = sorted(set(filtered))
+
         passing = self._test_orphan_modules(repo_mods)
-        passing_names = set(passing)
-        integrate_candidates = [
-            p for p in passing if not self.orphan_traces.get(p, {}).get("redundant")
-        ]
         integrated: set[str] = set()
-        if integrate_candidates:
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-            abs_paths = [str(repo / p) for p in integrate_candidates]
+        if passing:
             try:
-                integrated = self._integrate_orphans(abs_paths)
+                environment.auto_include_modules(
+                    sorted(passing), recursive=True, validate=True
+                )
+                try:
+                    environment.try_integrate_into_workflows(sorted(passing))
+                except Exception:  # pragma: no cover - best effort
+                    pass
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("auto inclusion failed: %s", exc)
+
+            repo_paths = [str(repo / p) for p in passing]
+            try:
+                integrated = self._integrate_orphans(repo_paths)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("orphan integration failed: %s", exc)
-        integrated_names = {Path(m).name for m in integrated}
-        if integrated_names:
-            for m in integrate_candidates:
-                if Path(m).name in integrated_names:
-                    self.logger.info(
-                        "orphan module integrated",
-                        extra=log_record(
-                            module=m,
-                            parents=self.orphan_traces.get(m, {}).get("parents", []),
-                        ),
-                    )
-        for m in modules:
-            cls = self.orphan_traces.get(m, {}).get("classification", "candidate")
-            classifications.setdefault(m, {"classification": cls})
-            if m not in integrated_names:
-                if cls == "redundant":
-                    self.logger.info(
-                        "redundant module classified", extra=log_record(module=m)
-                    )
-                elif cls == "legacy":
-                    self.logger.info(
-                        "legacy module classified", extra=log_record(module=m)
-                    )
+            try:
+                if hasattr(self, "_refresh_module_map"):
+                    self._refresh_module_map(passing)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("module map refresh failed: %s", exc)
 
         env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
         if env_clean and env_clean.lower() in ("1", "true", "yes"):
             survivors = [m for m in filtered if m not in passing]
         else:
-            survivors = [m for m in filtered if Path(m).name not in integrated_names]
+            survivors = [m for m in filtered if m not in passing]
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(sorted(survivors), indent=2))
@@ -2184,14 +2140,6 @@ class SelfImprovementEngine:
             )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to write orphan modules")
-
-        meta_path = data_dir / "orphan_classifications.json"
-        try:
-            existing_meta.update(classifications)
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.write_text(json.dumps(existing_meta, indent=2))
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to write orphan classifications")
 
     # ------------------------------------------------------------------
     def _load_orphan_candidates(self) -> list[str]:
