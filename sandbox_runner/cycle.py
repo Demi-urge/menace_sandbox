@@ -54,6 +54,7 @@ from .orphan_discovery import (
     append_orphan_cache,
     append_orphan_classifications,
     prune_orphan_cache,
+    load_orphan_cache,
 )
 import orphan_analyzer
 
@@ -137,6 +138,16 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
         module_map = set(getattr(ctx, "module_map", set()))
         traces = getattr(ctx, "orphan_traces", {})
+        try:
+            cached = load_orphan_cache(ctx.repo)
+            for k, info in cached.items():
+                cur = traces.get(k)
+                if cur:
+                    cur.update(info)
+                else:
+                    traces[k] = dict(info)
+        except Exception:
+            pass
         trace_details: Dict[str, Dict[str, Any]] = {}
         class_groups: Dict[str, list[str]] = {}
 

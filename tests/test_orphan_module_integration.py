@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 pyd_mod = types.ModuleType("pydantic")
 sub = types.ModuleType("pydantic.dataclasses")
 pyd_mod.BaseModel = type("BaseModel", (), {})
+pyd_mod.BaseSettings = type("BaseSettings", (), {})
 from dataclasses import dataclass as _dc
 sub.dataclass = _dc
 pyd_mod.dataclasses = sub
@@ -28,6 +29,15 @@ sys.modules.setdefault("yaml", yaml_mod)
 
 sys.modules.setdefault("pydantic", pyd_mod)
 sys.modules.setdefault("pydantic.dataclasses", sub)
+# stub sandbox_settings to avoid real pydantic dependency
+ss_mod = types.ModuleType("sandbox_settings")
+class _SS:
+    def __init__(self) -> None:
+        self.recursive_isolated = False
+        self.auto_include_isolated = True
+        self.recursive_orphan_scan = True
+ss_mod.SandboxSettings = _SS
+sys.modules.setdefault("sandbox_settings", ss_mod)
 
 # reset prometheus registry to avoid duplicate metric errors when importing
 REGISTRY._names_to_collectors.clear()
@@ -51,7 +61,7 @@ class DummyLogger:
     def __init__(self) -> None:
         self.exc: list[str] = []
 
-    def exception(self, msg: str, exc: Exception | None = None) -> None:
+    def exception(self, msg: str, *a) -> None:
         self.exc.append(msg)
 
     def info(self, *a, **k) -> None:
@@ -152,6 +162,9 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
     pkg.discover_recursive_orphans = lambda repo, module_map=None: {}
     monkeypatch.setitem(sys.modules, "sandbox_runner", pkg)
     monkeypatch.setitem(sys.modules, "sandbox_runner.environment", env_mod)
+    import orphan_analyzer
+    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", lambda p: False)
+    monkeypatch.setattr(orphan_analyzer, "classify_module", lambda p: "candidate")
     from sandbox_runner import environment as env
 
     map_path = tmp_path / "module_map.json"
@@ -166,6 +179,8 @@ def test_orphan_module_mapping(tmp_path, monkeypatch):
         self.save()
 
     monkeypatch.setattr(mod_db.ModuleIndexDB, "refresh", fake_refresh)
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
 
     svc = sts.SelfTestService(
         include_orphans=True,
@@ -205,11 +220,17 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
         ran.append(True)
 
     g = _integrate_orphans.__globals__
-    def fake_auto(mods, recursive=False):
+    def fake_auto(mods, recursive=True, validate=True):
         fake_generate(mods)
         fake_try(mods)
         fake_run()
-    g["auto_include_modules"] = fake_auto
+    env = types.SimpleNamespace(
+        auto_include_modules=fake_auto,
+        generate_workflows_for_modules=fake_generate,
+        try_integrate_into_workflows=fake_try,
+        run_workflow_simulations=fake_run,
+    )
+    g["environment"] = env
 
     class DummyIndex:
         def __init__(self) -> None:
@@ -231,11 +252,16 @@ def test_module_refresh_runs_simulation(tmp_path, monkeypatch):
         module_index=DummyIndex(),
         module_clusters={},
         logger=DummyLogger(),
+        orphan_traces={},
     )
-
     eng._collect_recursive_modules = lambda mods: {"foo.py", "dep.py"}
     eng._integrate_orphans = types.MethodType(_integrate_orphans, eng)
     eng._test_orphan_modules = types.MethodType(_test_orphan_modules, eng)
+    import orphan_analyzer
+    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", lambda p: False)
+    g = _test_orphan_modules.__globals__
+    g["classify_module"] = lambda p: "candidate"
+    g["_STS"] = None
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
 
@@ -508,3 +534,44 @@ def test_failed_orphans_not_added(tmp_path, monkeypatch):
     data = json.loads(map_path.read_text())
     assert "foo.py" not in data.get("modules", {})
     assert passed == []
+
+
+def test_skipped_modules_have_classifications(tmp_path, monkeypatch):
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (tmp_path / "legacy.py").write_text("# deprecated\n")
+    (tmp_path / "red.py").write_text("x = 1\n")
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(data_dir))
+
+    pkg = types.ModuleType("sandbox_runner")
+    pkg.__path__ = [str(ROOT / "sandbox_runner")]
+    sys.modules["sandbox_runner"] = pkg
+    import importlib
+    env = importlib.import_module("sandbox_runner.environment")
+    import orphan_analyzer
+
+    def fake_classify(path: Path) -> str:
+        name = Path(path).name
+        if name == "legacy.py":
+            return "legacy"
+        if name == "red.py":
+            return "redundant"
+        return "candidate"
+
+    monkeypatch.setattr(orphan_analyzer, "classify_module", fake_classify)
+    monkeypatch.setattr(
+        orphan_analyzer, "analyze_redundancy", lambda p: fake_classify(p) != "candidate"
+    )
+    monkeypatch.setattr(env, "generate_workflows_for_modules", lambda mods: None)
+    monkeypatch.setattr(env, "try_integrate_into_workflows", lambda mods: None)
+    monkeypatch.setattr(env, "run_workflow_simulations", lambda: types.SimpleNamespace())
+
+    env.auto_include_modules(["legacy.py", "red.py"], validate=False)
+
+    cache = json.loads((data_dir / "orphan_modules.json").read_text())
+    assert cache["legacy.py"]["classification"] == "legacy"
+    assert cache["legacy.py"]["redundant"] is True
+    assert cache["red.py"]["classification"] == "redundant"
+    assert cache["red.py"]["redundant"] is True

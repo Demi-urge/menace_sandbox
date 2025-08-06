@@ -2070,25 +2070,38 @@ class SelfImprovementEngine:
                     )
 
         try:
-            existing = json.loads(path.read_text()) if path.exists() else []
+            existing = json.loads(path.read_text()) if path.exists() else {}
+            if isinstance(existing, list):
+                existing = {m: {} for m in existing}
+            elif not isinstance(existing, dict):
+                existing = {}
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load orphan modules")
-            existing = []
+            existing = {}
         env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
         if env_clean and env_clean.lower() in ("1", "true", "yes"):
-            existing = [m for m in existing if m not in passing]
+            for m in passing:
+                existing.pop(m, None)
             remaining = [m for m in filtered if m not in passing]
         else:
+            for name in integrated_names:
+                existing.pop(name, None)
             remaining = [m for m in filtered if Path(m).name not in integrated_names]
-        remaining = [
-            m for m in remaining if not self.orphan_traces.get(m, {}).get("redundant")
-        ]
-        combined = sorted(set(existing).union(remaining))
+        for m in skipped:
+            info = self.orphan_traces.get(m, {})
+            cls = info.get("classification", "candidate")
+            existing[m] = {"classification": cls, "redundant": cls != "candidate"}
+        for m in remaining:
+            info = self.orphan_traces.get(m, {})
+            if info.get("redundant"):
+                continue
+            cls = info.get("classification", "candidate")
+            existing[m] = {"classification": cls, "redundant": cls != "candidate"}
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(combined, indent=2))
+            path.write_text(json.dumps(existing, indent=2))
             self.logger.info(
-                "orphan modules updated", extra=log_record(count=len(combined))
+                "orphan modules updated", extra=log_record(count=len(existing))
             )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to write orphan modules")
@@ -2108,9 +2121,21 @@ class SelfImprovementEngine:
         path = data_dir / "orphan_modules.json"
         try:
             if path.exists():
-                return json.loads(path.read_text()) or []
+                data = json.loads(path.read_text()) or {}
+            else:
+                return []
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load orphan candidates")
+            return []
+        if isinstance(data, list):
+            return [str(p) for p in data]
+        if isinstance(data, dict):
+            return [
+                m
+                for m, info in data.items()
+                if not isinstance(info, dict)
+                or info.get("classification", "candidate") == "candidate"
+            ]
         return []
 
     # ------------------------------------------------------------------
