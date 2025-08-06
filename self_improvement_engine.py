@@ -1594,8 +1594,8 @@ class SelfImprovementEngine:
             discover_orphans=True,
             discover_isolated=True,
             recursive_orphans=True,
-            recursive_isolated=settings.recursive_isolated,
-            auto_include_isolated=settings.auto_include_isolated,
+            recursive_isolated=True,
+            auto_include_isolated=True,
             include_redundant=settings.test_redundant_modules,
             clean_orphans=True,
             disable_auto_integration=True,
@@ -1947,6 +1947,12 @@ class SelfImprovementEngine:
                     environment.auto_include_modules(
                         sorted(passing), recursive=True, validate=True
                     )
+                    try:
+                        environment.try_integrate_into_workflows(
+                            sorted(passing)
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        pass
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("auto inclusion failed: %s", exc)
 
@@ -1956,6 +1962,18 @@ class SelfImprovementEngine:
                     integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
+                try:
+                    self._refresh_module_map(passing)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception(
+                        "module map refresh failed: %s", exc
+                    )
+                try:
+                    survivors = [m for m in modules if Path(m).name not in integrated]
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(json.dumps(sorted(survivors), indent=2))
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to write orphan modules")
             return
 
         try:
