@@ -13,6 +13,8 @@ class DummyTracker:
 
 def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
     calls = {}
 
     def fake_generate(mods, workflows_db="workflows.db"):
@@ -32,7 +34,14 @@ def test_auto_include_modules_saves_roi(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
-    monkeypatch.setitem(sys.modules, "orphan_analyzer", types.SimpleNamespace(analyze_redundancy=lambda path: False))
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=lambda path: "candidate",
+        ),
+    )
 
     result, tested = env.auto_include_modules(["mod.py"])
 

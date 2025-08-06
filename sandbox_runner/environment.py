@@ -5461,8 +5461,9 @@ def auto_include_modules(
     expands the initial module list by following local imports using
     :func:`sandbox_runner.dependency_utils.collect_local_dependencies` and by
     merging orphan dependencies returned from
-    :func:`sandbox_runner.discover_recursive_orphans`. Modules deemed redundant
-    by :func:`orphan_analyzer.analyze_redundancy` are skipped.
+    :func:`sandbox_runner.discover_recursive_orphans`. Redundancy analysis via
+    :func:`orphan_analyzer.classify_module` now occurs *after* optional self
+    testing so that modules are executed before being marked as redundant.
 
     Optional integration of isolated modules discovered via
     ``scripts.discover_isolated_modules`` is preserved but expansion is limited
@@ -5471,8 +5472,9 @@ def auto_include_modules(
     Each candidate module is executed via :class:`self_test_service.SelfTestService`
     (when ``validate`` is ``True``) with ``recursive_orphans=True`` and
     ``discover_isolated=True``. Only modules that pass these self tests are
-    merged into the workflow system. Modules flagged as redundant are recorded
-    in ``sandbox_data/orphan_modules.json`` instead of being integrated.
+    considered for integration. Modules classified as redundant after testing
+    are recorded in ``sandbox_data/orphan_modules.json`` and integrated only
+    when :class:`sandbox_settings.SandboxSettings` sets ``test_redundant``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller alongside a mapping of tested modules and the resulting ROI metrics
@@ -5598,15 +5600,6 @@ def auto_include_modules(
                 path = Path(rel)
                 if path.as_posix() in existing_mods:
                     continue
-                full = repo / path
-                try:
-                    cls = orphan_analyzer.classify_module(full)
-                    if cls != "candidate":
-                        redundant_mods[path.as_posix()] = cls
-                        continue
-                except Exception:
-                    redundant_mods[path.as_posix()] = "redundant"
-                    continue
                 mod_paths.add(path.as_posix())
         except Exception:
             pass
@@ -5615,19 +5608,8 @@ def auto_include_modules(
     passed_mods: list[str] = []
     failed_mods: list[str] = []
 
-    repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-    from sandbox_settings import SandboxSettings
-    settings = SandboxSettings()
     for mod in mods:
         path = repo / mod
-        if mod not in evaluated:
-            try:
-                cls = orphan_analyzer.classify_module(path)
-                if cls != "candidate":
-                    redundant_mods[mod] = cls
-                    continue
-            except Exception:
-                pass
         if validate:
             try:
                 from self_test_service import SelfTestService
@@ -5652,6 +5634,13 @@ def auto_include_modules(
                 failed_mods.append(mod)
         else:
             passed_mods.append(mod)
+
+        try:
+            cls = orphan_analyzer.classify_module(path)
+            if cls != "candidate":
+                redundant_mods[mod] = cls
+        except Exception:
+            pass
 
     cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
     if redundant_mods:
@@ -5678,7 +5667,11 @@ def auto_include_modules(
         except Exception:
             pass
 
-    mods = [m for m in passed_mods if m in derived_mods]
+    mods = [
+        m
+        for m in passed_mods
+        if m in derived_mods and (settings.test_redundant or m not in redundant_mods)
+    ]
     tested = {
         "added": [m for m in passed_mods if m in derived_mods],
         "failed": [m for m in failed_mods if m in derived_mods],
