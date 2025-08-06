@@ -48,13 +48,16 @@ def test_cycle_validates_orphans(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "self_test_service", sts_mod)
 
     def fake_auto_include(mods, recursive=False, validate=False):
-        passed = []
+        passed: list[str] = []
+        failed: list[str] = []
         for m in list(mods):
             svc = sts_mod.SelfTestService(pytest_args=m)
             res, passed_mods = svc.run_once()
-            if not res.get("failed"):
+            if res.get("failed"):
+                failed.append(m)
+            else:
                 passed.extend(passed_mods)
-        mods[:] = passed
+        return object(), {"added": passed, "failed": failed, "redundant": []}
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
 

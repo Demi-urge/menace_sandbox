@@ -53,6 +53,7 @@ def _prepare(monkeypatch, repo, data_dir):
         for m in mods:
             data["modules"][Path(m).name] = 1
         map_path.write_text(json.dumps(data))
+        return object(), {"added": list(mods), "failed": [], "redundant": []}
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
     monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)

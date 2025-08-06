@@ -224,21 +224,37 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 ),
             )
 
+
         candidate_mods = [
             m for m, info in traces.items() if info.get("classification") == "candidate"
         ]
-
-        ctx.orphan_traces = traces
-        added: set[str] = set()
+        
+        pre_mods = set(module_map)
+        tracker = None
+        tested: Dict[str, list[str]] = {"added": [], "failed": [], "redundant": []}
         if candidate_mods:
             try:
-                _, tested = auto_include_modules(
+                tracker, tested = auto_include_modules(
                     candidate_mods, recursive=True, validate=True
                 )
-                added = set(tested.get("added", []))
             except Exception:
                 logger.exception("isolated module auto-inclusion failed")
-
+        
+        added = set(tested.get("added", []))
+        failed = set(tested.get("failed", []))
+        redundant = set(tested.get("redundant", []))
+        
+        pre_mods.difference_update(failed | redundant)
+        module_map = pre_mods | added
+        ctx.module_map = module_map
+        
+        for m in failed:
+            entry = traces.setdefault(m, {"parents": []})
+            entry["failed"] = True
+        for m in redundant:
+            entry = traces.setdefault(m, {"parents": []})
+            entry["redundant"] = True
+        
         try:
             append_orphan_cache(ctx.repo, traces)
             class_entries = {
@@ -248,10 +264,8 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             append_orphan_classifications(ctx.repo, class_entries)
         except Exception:
             logger.exception("failed to record orphan traces")
-
+        
         if added:
-            module_map.update(added)
-            ctx.module_map = module_map
             try:
                 prune_orphan_cache(ctx.repo, added, traces)
                 for m in added:
@@ -263,8 +277,26 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     traces.pop(m, None)
             except Exception:
                 logger.exception("failed to prune orphan cache")
-
+        
         ctx.orphan_traces = traces
+        
+        tested_count = len(added | failed | redundant)
+        if tested_count:
+            try:
+                orphan_modules_tested_total.inc(tested_count)
+                orphan_modules_reintroduced_total.inc(len(added))
+                orphan_modules_failed_total.inc(len(failed))
+                orphan_modules_redundant_total.inc(len(redundant))
+            except Exception:
+                pass
+            logger.info(
+                "isolated module tests",
+                extra=log_record(
+                    added=sorted(added),
+                    failed=sorted(failed),
+                    redundant=sorted(redundant),
+                ),
+            )
     except Exception:
         logger.exception("isolated module auto-inclusion failed")
 

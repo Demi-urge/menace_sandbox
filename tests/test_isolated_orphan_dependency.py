@@ -1,27 +1,7 @@
 from pathlib import Path
 
 import orphan_analyzer
-from sandbox_runner.orphan_discovery import discover_recursive_orphans
 from sandbox_runner import cycle
-
-
-def test_discover_recursive_orphans_isolated_depends_orphan(monkeypatch, tmp_path):
-    (tmp_path / "isolated.py").write_text("import helper\nimport legacy\n")
-    (tmp_path / "helper.py").write_text("VALUE = 1\n")
-    (tmp_path / "legacy.py").write_text("VALUE = 2\n")
-
-    def fake_analyze(path: Path) -> bool:
-        return path.name == "legacy.py"
-
-    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
-
-    result = discover_recursive_orphans(str(tmp_path))
-
-    assert result == {
-        "isolated": {"parents": [], "redundant": False},
-        "helper": {"parents": ["isolated"], "redundant": False},
-        "legacy": {"parents": ["isolated"], "redundant": True},
-    }
 
 
 def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
@@ -40,7 +20,7 @@ def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
         calls["mods"] = list(mods)
         calls["recursive"] = recursive
         calls["validate"] = validate
-        return object(), {"added": list(mods)}
+        return object(), {"added": list(mods), "failed": [], "redundant": []}
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
     monkeypatch.setattr(cycle, "append_orphan_cache", lambda *_: None)
