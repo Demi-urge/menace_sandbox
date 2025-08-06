@@ -653,99 +653,74 @@ class SelfTestService:
                     pass
 
     # ------------------------------------------------------------------
-    def _discover_orphans(self, recursive: bool | None = None) -> list[str]:
+    def _discover_orphans(self) -> list[str]:
         """Return orphan modules detected in the repository.
 
         This helper performs discovery only; persisting the results is handled
-        by :meth:`_run_once` after combining orphan and isolated modules. The
-        ``recursive`` behaviour can be controlled via the
-        ``SELF_TEST_RECURSIVE_ORPHANS`` environment variable which, when set to
-        a truthy value, enables recursive dependency discovery regardless of the
-        instance configuration.
+        by :meth:`_run_once` after combining orphan and isolated modules.  The
+        discovery always enables recursive dependency tracing so helper modules
+        and their parent chains are captured in :attr:`orphan_traces`.
         """
-        if recursive is None:
-            env_val = os.getenv("SELF_TEST_RECURSIVE_ORPHANS")
-            if env_val is not None:
-                recursive = env_val.lower() in ("1", "true", "yes")
-            else:
-                recursive = self.recursive_orphans
+        from sandbox_runner import discover_recursive_orphans as _discover
 
-        modules: list[str]
-        if recursive:
-            from sandbox_runner import discover_recursive_orphans as _discover
-
-            trace = _discover(
-                str(Path.cwd()),
-                module_map=str(Path("sandbox_data") / "module_map.json"),
-            )
-            self.orphan_traces = {}
-            for k, v in trace.items():
-                info: dict[str, Any] = {
-                    "parents": [
-                        str(Path(*p.split(".")).with_suffix(".py"))
-                        for p in (
-                            v.get("parents") if isinstance(v, dict) else v
-                        )
-                    ]
-                }
-                if isinstance(v, dict) and "redundant" in v:
-                    info["redundant"] = bool(v["redundant"])
-                self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
-            roots = list(self.orphan_traces.keys())
-            initial = {
-                m: info.get("parents", []) for m, info in self.orphan_traces.items()
-            }
-
-            def _on_module(rel: str, path: Path, parents: list[str]) -> None:
-                entry = self.orphan_traces.setdefault(
-                    rel,
-                    {"parents": [], "classification": None, "redundant": None},
-                )
-                if parents:
-                    entry["parents"] = list(
-                        dict.fromkeys(entry.get("parents", []) + parents)
+        trace = _discover(
+            str(Path.cwd()),
+            module_map=str(Path("sandbox_data") / "module_map.json"),
+        )
+        self.orphan_traces = {}
+        for k, v in trace.items():
+            info: dict[str, Any] = {
+                "parents": [
+                    str(Path(*p.split(".")).with_suffix(".py"))
+                    for p in (
+                        v.get("parents") if isinstance(v, dict) else v
                     )
-                if entry.get("classification") is None:
-                    try:
-                        cls = classify_module(path)
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "classification failed for %s", path
-                        )
-                        cls = "candidate"
-                    entry["classification"] = cls
-                    entry["redundant"] = cls != "candidate"
+                ]
+            }
+            if isinstance(v, dict) and "redundant" in v:
+                info["redundant"] = bool(v["redundant"])
+            self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
+        roots = list(self.orphan_traces.keys())
+        initial = {
+            m: info.get("parents", []) for m, info in self.orphan_traces.items()
+        }
 
-            def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
-                dep_entry = self.orphan_traces.setdefault(
-                    dep_rel,
-                    {"parents": [], "classification": None, "redundant": None},
-                )
-                dep_entry["parents"] = list(
-                    dict.fromkeys(dep_entry.get("parents", []) + chain)
-                )
-
-            collected = collect_local_dependencies(
-                roots,
-                initial_parents=initial,
-                on_module=_on_module,
-                on_dependency=_on_dependency,
+        def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+            entry = self.orphan_traces.setdefault(
+                rel,
+                {"parents": [], "classification": None, "redundant": None},
             )
-            if not collected:
-                collected = set(roots)
-            modules = [str(Path(p)) for p in sorted(collected)]
-        else:
-            from scripts.find_orphan_modules import find_orphan_modules
-
-            repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
-            modules = []
-            for p in find_orphan_modules(Path.cwd()):
+            if parents:
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + parents)
+                )
+            if entry.get("classification") is None:
                 try:
-                    rel = Path(p).resolve().relative_to(repo).as_posix()
-                except Exception:
-                    rel = str(p)
-                modules.append(rel)
-            self.orphan_traces.update({m: {"parents": []} for m in modules})
+                    cls = classify_module(path)
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("classification failed for %s", path)
+                    cls = "candidate"
+                entry["classification"] = cls
+                entry["redundant"] = cls != "candidate"
+
+        def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+            dep_entry = self.orphan_traces.setdefault(
+                dep_rel,
+                {"parents": [], "classification": None, "redundant": None},
+            )
+            dep_entry["parents"] = list(
+                dict.fromkeys(dep_entry.get("parents", []) + chain)
+            )
+
+        collected = collect_local_dependencies(
+            roots,
+            initial_parents=initial,
+            on_module=_on_module,
+            on_dependency=_on_dependency,
+        )
+        if not collected:
+            collected = set(roots)
+        modules = [str(Path(p)) for p in sorted(collected)]
 
         filtered: list[str] = []
         for m in modules:
@@ -778,24 +753,16 @@ class SelfTestService:
         return filtered
 
     # ------------------------------------------------------------------
-    def _discover_isolated(self, recursive: bool | None = None) -> list[str]:
+    def _discover_isolated(self) -> list[str]:
         """Return modules discovered by ``discover_isolated_modules``.
 
         Persistence of the results is handled by the caller.  This wrapper
-        records basic metadata for the modules returned by the helper.
+        always enables recursive traversal so helper modules are captured and
+        parent chains recorded in :attr:`orphan_traces`.
         """
         from scripts.discover_isolated_modules import discover_isolated_modules
 
-        if recursive is None:
-            env_val = os.getenv("SELF_TEST_RECURSIVE_ISOLATED")
-            if env_val is None:
-                env_val = os.getenv("SANDBOX_RECURSIVE_ISOLATED")
-            if env_val is not None:
-                recursive = env_val.lower() in ("1", "true", "yes")
-            else:
-                recursive = self.recursive_isolated
-
-        modules = discover_isolated_modules(Path.cwd(), recursive=bool(recursive))
+        modules = discover_isolated_modules(Path.cwd(), recursive=True)
 
         roots: list[str] = []
         for m in modules:
@@ -1428,6 +1395,51 @@ class SelfTestService:
                 integrate_mods = [
                     m for m in passed_set if not self.orphan_traces.get(m, {}).get("redundant")
                 ]
+
+                if integrate_mods:
+                    initial = {
+                        m: self.orphan_traces.get(m, {}).get("parents", [])
+                        for m in integrate_mods
+                    }
+
+                    def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+                        entry = self.orphan_traces.setdefault(
+                            rel,
+                            {"parents": [], "classification": None, "redundant": None},
+                        )
+                        if parents:
+                            entry["parents"] = list(
+                                dict.fromkeys(entry.get("parents", []) + parents)
+                            )
+                        if entry.get("classification") is None:
+                            try:
+                                cls = classify_module(path)
+                            except Exception:  # pragma: no cover - best effort
+                                self.logger.exception(
+                                    "classification failed for %s", path
+                                )
+                                cls = "candidate"
+                            entry["classification"] = cls
+                            entry["redundant"] = cls != "candidate"
+
+                    def _on_dep(dep_rel: str, _parent: str, chain: list[str]) -> None:
+                        dep_entry = self.orphan_traces.setdefault(
+                            dep_rel,
+                            {"parents": [], "classification": None, "redundant": None},
+                        )
+                        dep_entry["parents"] = list(
+                            dict.fromkeys(dep_entry.get("parents", []) + chain)
+                        )
+
+                    collected = collect_local_dependencies(
+                        integrate_mods,
+                        initial_parents=initial,
+                        on_module=_on_module,
+                        on_dependency=_on_dep,
+                    )
+                    if collected:
+                        integrate_mods = [str(Path(p)) for p in sorted(collected)]
+
                 cleaned = False
                 info: dict[str, list[str]] | None = None
                 if self.integration_callback and integrate_mods:
@@ -1439,16 +1451,27 @@ class SelfTestService:
                         cleaned = self.integration_callback is self._default_integration
                         if isinstance(info, dict):
                             self.integration_details["integrated"].extend(
-                                info.get("integrated", [])
+                                info.get("integrated", integrate_mods)
                             )
                             self.integration_details["redundant"].extend(
                                 info.get("redundant", [])
                             )
+                        else:
+                            self.integration_details["integrated"].extend(integrate_mods)
+                elif integrate_mods:
+                    # No callback but still record integrated modules
+                    self.integration_details["integrated"].extend(integrate_mods)
+
                 if self.clean_orphans and integrate_mods and not cleaned:
                     try:
                         self._clean_orphan_list(integrate_mods)
                     except Exception:
                         self.logger.exception("failed to clean orphan list")
+
+                if self.orphan_redundant_modules:
+                    self.integration_details["redundant"].extend(
+                        self.orphan_redundant_modules
+                    )
 
             if self.results is not None:
                 self.results["integration"] = self.get_integration_details()
