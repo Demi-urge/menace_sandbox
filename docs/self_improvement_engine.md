@@ -49,7 +49,9 @@ from `sandbox_data/orphan_modules.json`. Each name is expanded by
 `environment.auto_include_modules`, which writes them to
 `sandbox_data/module_map.json` and, when recursion is enabled through
 `SANDBOX_RECURSIVE_ORPHANS` or `SANDBOX_RECURSIVE_ISOLATED`, also records any
-helpers discovered along the way.
+helpers discovered along the way. While scanning, modules tagged as legacy
+increment the `orphan_modules_legacy_total` gauge and it is decremented when
+those modules are later reclassified or integrated.
 
 To run a cycle with orphan discovery enabled, use:
 

@@ -1438,6 +1438,7 @@ class SelfImprovementEngine:
             except Exception:
                 rel = str(abs_path)
             info = self.orphan_traces.setdefault(rel, {"parents": []})
+            prev_cls = info.get("classification")
             info["classification"] = cls
             info["redundant"] = cls != "candidate"
             classifications[rel] = {"classification": cls}
@@ -1447,6 +1448,13 @@ class SelfImprovementEngine:
                 redundant.append(rel)
             else:
                 candidates.append(rel)
+            try:
+                if prev_cls == "legacy" and cls != "legacy":
+                    orphan_modules_legacy_total.dec(1)
+                elif prev_cls != "legacy" and cls == "legacy":
+                    orphan_modules_legacy_total.inc(1)
+            except Exception:
+                pass
 
         try:
             existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}

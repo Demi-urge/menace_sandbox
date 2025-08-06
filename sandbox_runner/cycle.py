@@ -159,6 +159,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                         classification = "redundant"
                 except Exception:
                     pass
+            prev_cls = traces.get(rel_path, {}).get("classification")
             traces[rel_path] = {
                 "parents": info.get("parents", []),
                 "classification": classification,
@@ -166,6 +167,13 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             }
             trace_details[rel_path] = traces[rel_path]
             class_groups.setdefault(classification, []).append(rel_path)
+            try:
+                if prev_cls == "legacy" and classification != "legacy":
+                    orphan_modules_legacy_total.dec(1)
+                elif prev_cls != "legacy" and classification == "legacy":
+                    orphan_modules_legacy_total.inc(1)
+            except Exception:
+                pass
 
         for rel_path in discover_isolated_modules(
             str(ctx.repo), recursive=settings.recursive_isolated
@@ -174,11 +182,17 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 continue
             if rel_path in traces:
                 entry = traces[rel_path]
+                prev_cls = entry.get("classification")
                 if entry.get("classification") != "candidate":
                     entry["classification"] = "candidate"
                     entry["redundant"] = False
                     trace_details[rel_path] = entry
                     class_groups.setdefault("candidate", []).append(rel_path)
+                    try:
+                        if prev_cls == "legacy":
+                            orphan_modules_legacy_total.dec(1)
+                    except Exception:
+                        pass
                 continue
             traces[rel_path] = {
                 "parents": [],
@@ -241,6 +255,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             try:
                 prune_orphan_cache(ctx.repo, added, traces)
                 for m in added:
+                    if traces.get(m, {}).get("classification") == "legacy":
+                        try:
+                            orphan_modules_legacy_total.dec(1)
+                        except Exception:
+                            pass
                     traces.pop(m, None)
             except Exception:
                 logger.exception("failed to prune orphan cache")
@@ -294,6 +313,7 @@ def _sandbox_cycle_runner(
         "orphan_modules_passed",
         "orphan_modules_failed",
         "orphan_modules_redundant",
+        "orphan_modules_legacy",
     )
     for idx in range(ctx.cycles):
         include_orphan_modules(ctx)
@@ -648,6 +668,7 @@ def _sandbox_cycle_runner(
             "orphan_modules_passed": float(passed_count),
             "orphan_modules_failed": float(failed_count),
             "orphan_modules_redundant": float(redundant_count),
+            "orphan_modules_legacy": float(legacy_count),
         }
         if ctx.plugins:
             try:
