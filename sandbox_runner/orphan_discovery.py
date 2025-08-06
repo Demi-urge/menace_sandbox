@@ -85,7 +85,13 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
 def append_orphan_classifications(
     repo: Path | str, entries: Dict[str, Dict[str, Any]]
 ) -> None:
-    """Merge ``entries`` into ``orphan_classifications.json`` for ``repo``."""
+    """Merge ``entries`` into ``orphan_classifications.json`` for ``repo``.
+
+    Each ``entries`` item may contain ``parents``, ``classification`` and
+    ``redundant`` fields which are preserved in the resulting cache so the
+    classification data mirrors the information stored in
+    ``orphan_modules.json``.
+    """
 
     if not entries:
         return
@@ -100,9 +106,17 @@ def append_orphan_classifications(
     for key, info in entries.items():
         if not isinstance(info, dict):
             continue
+        current = existing.get(key, {}) if isinstance(existing.get(key), dict) else {}
+        parents = info.get("parents")
+        if parents is not None:
+            current["parents"] = list(parents) if isinstance(parents, (set, list, tuple)) else parents
         cls = info.get("classification")
         if cls:
-            existing[key] = {"classification": cls}
+            current["classification"] = cls
+        if "redundant" in info:
+            current["redundant"] = bool(info["redundant"])
+        if current:
+            existing[key] = current
             changed = True
     if changed:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +194,7 @@ def discover_recursive_orphans(
     excluded from further processing.
     """
 
-    repo = Path(repo_path)
+    repo = Path(repo_path).resolve()
     if module_map is None:
         module_map = repo / "sandbox_data" / "module_map.json"
 
@@ -198,7 +212,7 @@ def discover_recursive_orphans(
         except Exception:
             known = set()
 
-    repo_path = os.path.abspath(repo_path)
+    repo_path = str(repo)
     modules: dict[str, str] = {}
     imported_by: dict[str, set[str]] = {}
     imports: dict[str, set[str]] = {}
@@ -327,13 +341,13 @@ def discover_recursive_orphans(
             target = mod_path if (repo / mod_path).exists() else pkg_init
             full_path = (repo / target)
             rel = full_path.relative_to(repo).as_posix()
-            entries[rel] = {
+            entry = {
                 "parents": info.get("parents", []),
+                "classification": info.get("classification", "candidate"),
                 "redundant": bool(info.get("redundant")),
             }
-            class_entries[rel] = {
-                "classification": info.get("classification", "candidate")
-            }
+            entries[rel] = entry
+            class_entries[rel] = dict(entry)
         append_orphan_cache(repo, entries)
         append_orphan_classifications(repo, class_entries)
     except Exception:  # pragma: no cover - best effort
