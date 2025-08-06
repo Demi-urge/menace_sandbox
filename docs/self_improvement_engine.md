@@ -53,6 +53,34 @@ helpers discovered along the way. While scanning, modules tagged as legacy
 increment the `orphan_modules_legacy_total` gauge and it is decremented when
 those modules are later reclassified or integrated.
 
+### Surfacing orphan chains
+
+`discover_recursive_orphans` loads names from
+`sandbox_data/orphan_modules.json` and follows their `import` statements
+recursively. Each item in the returned mapping lists its `parents`,
+revealing the full chain of helpers required for a module to run.
+
+### Validating and integrating candidates
+
+`auto_include_modules` runs the discovered modules through
+`SelfTestService` when validation is enabled. Candidates that pass are
+written to `sandbox_data/module_map.json` and `try_integrate_into_workflows`
+patches them into related workflows so subsequent cycles execute the new
+code.
+
+### Monitoring orphan module metrics
+
+Progress through the orphan workflow is exposed via Prometheus gauges:
+
+- `orphan_modules_tested_total`
+- `orphan_modules_reintroduced_total`
+- `orphan_modules_failed_total`
+- `orphan_modules_redundant_total`
+- `orphan_modules_legacy_total`
+
+Start the exporter with `metrics_exporter.start_metrics_server(8001)` and
+configure Prometheus to scrape the port to monitor these values over time.
+
 To run a cycle with orphan discovery enabled, use:
 
 ```bash
@@ -144,6 +172,15 @@ python run_autonomous.py --include-orphans --recursive-include --clean-orphans
   or `SANDBOX_CLEAN_ORPHANS=1`, removed from `sandbox_data/orphan_modules.json`.
 Include `--auto-include-isolated --recursive-isolated` to apply the same flow
 to modules that are not referenced anywhere else.
+
+### Example: reintroducing a dormant module
+
+```bash
+# assume util.py was removed from module_map.json
+echo '["util.py"]' > sandbox_data/orphan_modules.json
+python run_autonomous.py --include-orphans
+# util.py is added back and orphan_modules_reintroduced_total increases
+```
 
 ## Reinforcement-learning policy
 
