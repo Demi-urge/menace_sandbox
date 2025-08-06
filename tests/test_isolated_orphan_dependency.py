@@ -1,0 +1,72 @@
+from pathlib import Path
+
+import orphan_analyzer
+from sandbox_runner.orphan_discovery import discover_recursive_orphans
+from sandbox_runner import cycle
+
+
+def test_discover_recursive_orphans_isolated_depends_orphan(monkeypatch, tmp_path):
+    (tmp_path / "isolated.py").write_text("import helper\nimport legacy\n")
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")
+    (tmp_path / "legacy.py").write_text("VALUE = 2\n")
+
+    def fake_analyze(path: Path) -> bool:
+        return path.name == "legacy.py"
+
+    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
+
+    result = discover_recursive_orphans(str(tmp_path))
+
+    assert result == {
+        "isolated": {"parents": [], "redundant": False},
+        "helper": {"parents": ["isolated"], "redundant": False},
+        "legacy": {"parents": ["isolated"], "redundant": True},
+    }
+
+
+def test_include_orphan_modules_validates_and_integrates(monkeypatch, tmp_path):
+    (tmp_path / "isolated.py").write_text("import helper\nimport legacy\n")
+    (tmp_path / "helper.py").write_text("VALUE = 1\n")
+    (tmp_path / "legacy.py").write_text("VALUE = 2\n")
+
+    def fake_analyze(path: Path) -> bool:
+        return path.name == "legacy.py"
+
+    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
+
+    calls: dict[str, object] = {}
+
+    def fake_auto_include(mods, recursive=False, validate=False):
+        calls["mods"] = list(mods)
+        calls["recursive"] = recursive
+        calls["validate"] = validate
+        return object(), {"added": list(mods)}
+
+    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *_: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *_: None)
+
+    import scripts.discover_isolated_modules as dim
+
+    monkeypatch.setattr(dim, "discover_isolated_modules", lambda *_, **__: ["isolated.py"])
+
+    class Settings:
+        auto_include_isolated = True
+        recursive_isolated = True
+
+    class Ctx:
+        def __init__(self, repo: Path) -> None:
+            self.repo = repo
+            self.settings = Settings()
+            self.module_map: set[str] = set()
+            self.orphan_traces: dict[str, dict[str, object]] = {}
+
+    ctx = Ctx(tmp_path)
+    cycle.include_orphan_modules(ctx)
+
+    assert sorted(calls["mods"]) == ["helper.py", "isolated.py"]
+    assert calls["recursive"] and calls["validate"]
+    assert ctx.module_map == {"isolated.py", "helper.py"}
+    assert "legacy.py" not in calls["mods"]
+    assert sorted(ctx.orphan_traces.keys()) == ["legacy.py"]
+    assert ctx.orphan_traces["legacy.py"]["redundant"] is True
