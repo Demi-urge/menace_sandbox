@@ -5472,9 +5472,10 @@ def auto_include_modules(
     Each candidate module is executed via :class:`self_test_service.SelfTestService`
     (when ``validate`` is ``True``) with ``recursive_orphans=True`` and
     ``discover_isolated=True``. Only modules that pass these self tests are
-    considered for integration. Modules classified as redundant after testing
-    are recorded in ``sandbox_data/orphan_modules.json`` and integrated only
-    when :class:`sandbox_settings.SandboxSettings` sets ``test_redundant_modules``.
+    considered for integration. Modules that fail validation or are classified
+    as redundant after testing are recorded in ``sandbox_data/orphan_modules.json``
+    and integrated only when :class:`sandbox_settings.SandboxSettings` sets
+    ``test_redundant_modules``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller alongside a mapping of tested modules and the resulting ROI metrics
@@ -5510,8 +5511,10 @@ def auto_include_modules(
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
+    recursive_orphans = recursive or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "1") not in {"0", "false", "False"}
+
     traces = None
-    if recursive:
+    if recursive or recursive_orphans:
         try:
             import inspect
 
@@ -5558,7 +5561,6 @@ def auto_include_modules(
         except Exception:
             pass
 
-    recursive_orphans = recursive or os.getenv("SANDBOX_RECURSIVE_ORPHANS", "1") not in {"0", "false", "False"}
     candidate_paths = set(mod_paths)
     evaluated: set[str] = set()
     if recursive_orphans:
@@ -5644,17 +5646,21 @@ def auto_include_modules(
             pass
 
     cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
-    if redundant_mods:
+    if redundant_mods or failed_mods:
         try:
             existing = json.loads(cache.read_text()) if cache.exists() else {}
             if not isinstance(existing, dict):
                 existing = {}
         except Exception:
             existing = {}
-        for m, cls in redundant_mods.items():
+        for m in set(redundant_mods) | set(failed_mods):
             info = existing.get(m, {})
-            info["classification"] = cls
-            info["redundant"] = cls != "candidate"
+            if m in redundant_mods:
+                cls = redundant_mods[m]
+                info["classification"] = cls
+                info["redundant"] = cls != "candidate"
+            if m in failed_mods:
+                info["failed"] = True
             existing[m] = info
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)

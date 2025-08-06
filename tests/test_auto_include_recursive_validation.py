@@ -134,6 +134,7 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
                 "recursive_orphans": True,
                 "recursive_isolated": True,
                 "auto_include_isolated": True,
+                "include_redundant": True,
                 "disable_auto_integration": True,
             },
         )
