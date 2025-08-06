@@ -1593,8 +1593,8 @@ class SelfImprovementEngine:
             include_orphans=True,
             discover_orphans=True,
             discover_isolated=True,
-            recursive_orphans=True,
-            recursive_isolated=True,
+            recursive_orphans=settings.recursive_orphan_scan,
+            recursive_isolated=settings.recursive_isolated,
             auto_include_isolated=True,
             include_redundant=settings.test_redundant_modules,
             clean_orphans=True,
@@ -1724,13 +1724,14 @@ class SelfImprovementEngine:
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         mods: set[str] = set()
+        traces = getattr(self, "orphan_traces", {})
         for p in paths:
             path = Path(p)
             try:
                 rel = path.resolve().relative_to(repo).as_posix()
             except Exception:
                 rel = path.name
-            info = self.orphan_traces.get(rel, {})
+            info = traces.get(rel, {})
             cls = info.get("classification")
             if cls is None:
                 try:
@@ -1770,19 +1771,26 @@ class SelfImprovementEngine:
                 environment.auto_include_modules(
                     sorted(mods), recursive=True, validate=True
                 )
+            except Exception:
                 try:
-                    environment.try_integrate_into_workflows(sorted(mods))
-                except Exception:  # pragma: no cover - best effort
-                    pass
-                try:
-                    self._update_orphan_modules()
+                    auto_include_modules(
+                        sorted(mods), recursive=True, validate=True
+                    )
+                except TypeError:
+                    auto_include_modules(sorted(mods), recursive=True)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
-                        "recursive orphan update failed: %s", exc
+                        "auto inclusion failed: %s", exc
                     )
+            try:
+                environment.try_integrate_into_workflows(sorted(mods))
+            except Exception:  # pragma: no cover - best effort
+                pass
+            try:
+                self._update_orphan_modules()
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
-                    "auto inclusion failed: %s", exc
+                    "recursive orphan update failed: %s", exc
                 )
             try:
                 data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
@@ -1903,7 +1911,7 @@ class SelfImprovementEngine:
                     from scripts.discover_isolated_modules import discover_isolated_modules
 
                     iso_mods = discover_isolated_modules(
-                        str(repo), recursive=getattr(settings, "recursive_orphan_scan", True)
+                        str(repo), recursive=getattr(settings, "recursive_isolated", True)
                     )
                     modules.extend(sorted(iso_mods))
                 except Exception as exc:  # pragma: no cover - best effort
@@ -1986,7 +1994,7 @@ class SelfImprovementEngine:
             from scripts.discover_isolated_modules import discover_isolated_modules
 
             iso_mods = discover_isolated_modules(
-                str(repo), recursive=getattr(settings, "recursive_orphan_scan", True)
+                str(repo), recursive=getattr(settings, "recursive_isolated", True)
             )
             modules.extend(sorted(iso_mods))
             for m in iso_mods:
@@ -2224,15 +2232,22 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
             if passing:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                abs_paths = [str(repo / p) for p in passing]
                 try:
                     environment.auto_include_modules(
                         sorted(passing), recursive=True, validate=True
                     )
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("auto inclusion failed: %s", exc)
+                except Exception:
+                    try:
+                        auto_include_modules(
+                            sorted(passing), recursive=True, validate=True
+                        )
+                    except TypeError:
+                        auto_include_modules(sorted(passing), recursive=True)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception("auto inclusion failed: %s", exc)
                 integrated: set[str] = set()
                 try:
+                    abs_paths = [str(repo / p) for p in passing]
                     integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
