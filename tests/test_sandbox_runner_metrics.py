@@ -242,6 +242,7 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
         "orphan_modules_failed_total",
         "orphan_modules_redundant_total",
         "orphan_modules_legacy_total",
+        "orphan_modules_reclassified_total",
     ):
         monkeypatch.setattr(cycle, name, DummyMetric())
 
