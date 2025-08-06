@@ -339,7 +339,7 @@ def discover_recursive_orphans(
         m: {
             "parents": sorted(parents.get(m, [])),
             "classification": classifications.get(m, "candidate"),
-            "redundant": classifications.get(m, "candidate") != "candidate",
+            "redundant": classifications.get(m) in {"legacy", "redundant"},
         }
         for m in sorted(found - known)
     }
@@ -353,10 +353,11 @@ def discover_recursive_orphans(
             target = mod_path if (repo / mod_path).exists() else pkg_init
             full_path = (repo / target)
             rel = full_path.relative_to(repo).as_posix()
+            cls = info.get("classification", "candidate")
             entry = {
                 "parents": info.get("parents", []),
-                "classification": info.get("classification", "candidate"),
-                "redundant": bool(info.get("redundant")),
+                "classification": cls,
+                "redundant": cls in {"legacy", "redundant"},
             }
             entries[rel] = entry
             class_entries[rel] = dict(entry)
