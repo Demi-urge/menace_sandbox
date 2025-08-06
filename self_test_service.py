@@ -136,7 +136,7 @@ class SelfTestService:
         auto_include_isolated: bool = SandboxSettings().auto_include_isolated,
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
-        include_redundant: bool = False,
+        include_redundant: bool = SandboxSettings().test_redundant_modules,
     ) -> None:
         """Create a new service instance.
 
@@ -175,7 +175,9 @@ class SelfTestService:
         include_redundant:
             When ``True``, modules classified as ``redundant`` or ``legacy``
             are still returned from discovery helpers and included in test
-            runs. Can also be enabled via ``SELF_TEST_INCLUDE_REDUNDANT`` or
+            runs. Defaults to
+            :class:`~sandbox_settings.SandboxSettings.test_redundant_modules`.
+            Can also be enabled via ``SELF_TEST_INCLUDE_REDUNDANT`` or
             ``SANDBOX_TEST_REDUNDANT``.
         """
 

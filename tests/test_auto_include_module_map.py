@@ -145,7 +145,7 @@ def test_redundant_module_validated_and_skipped(monkeypatch, tmp_path):
             SandboxSettings=lambda: types.SimpleNamespace(
                 auto_include_isolated=False,
                 recursive_isolated=False,
-                test_redundant=False,
+                test_redundant_modules=False,
             )
         ),
     )
@@ -209,7 +209,7 @@ def test_redundant_module_integrated_when_flag_set(monkeypatch, tmp_path):
             SandboxSettings=lambda: types.SimpleNamespace(
                 auto_include_isolated=False,
                 recursive_isolated=False,
-                test_redundant=True,
+                test_redundant_modules=True,
             )
         ),
     )

@@ -5474,7 +5474,7 @@ def auto_include_modules(
     ``discover_isolated=True``. Only modules that pass these self tests are
     considered for integration. Modules classified as redundant after testing
     are recorded in ``sandbox_data/orphan_modules.json`` and integrated only
-    when :class:`sandbox_settings.SandboxSettings` sets ``test_redundant``.
+    when :class:`sandbox_settings.SandboxSettings` sets ``test_redundant_modules``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller alongside a mapping of tested modules and the resulting ROI metrics
@@ -5622,6 +5622,7 @@ def auto_include_modules(
                     recursive_orphans=True,
                     recursive_isolated=settings.recursive_isolated,
                     auto_include_isolated=settings.auto_include_isolated,
+                    include_redundant=settings.test_redundant_modules,
                     disable_auto_integration=True,
                 )
                 res = svc.run_once()
@@ -5670,7 +5671,7 @@ def auto_include_modules(
     mods = [
         m
         for m in passed_mods
-        if m in derived_mods and (settings.test_redundant or m not in redundant_mods)
+        if m in derived_mods and (settings.test_redundant_modules or m not in redundant_mods)
     ]
     tested = {
         "added": [m for m in passed_mods if m in derived_mods],

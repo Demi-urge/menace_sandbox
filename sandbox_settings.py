@@ -37,8 +37,8 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_RECURSIVE_ISOLATED",
         description="Recursively resolve local imports when auto-including isolated modules.",
     )
-    test_redundant: bool = Field(
-        False,
+    test_redundant_modules: bool = Field(
+        True,
         env="SANDBOX_TEST_REDUNDANT",
         description="Integrate modules classified as redundant after validation.",
     )
