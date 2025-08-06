@@ -161,10 +161,14 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             rel_path = path.relative_to(ctx.repo).as_posix()
             if rel_path in module_map or rel_path in traces:
                 continue
-            classification = info.get("classification", "candidate")
-            if info.get("redundant") and classification == "candidate":
-                classification = "redundant"
-            elif classification == "candidate":
+            try:
+                classification = orphan_analyzer.classify_module(path)
+            except Exception:
+                classification = "candidate"
+            provided = info.get("classification")
+            if isinstance(provided, str):
+                classification = provided
+            if classification == "candidate":
                 try:
                     if orphan_analyzer.analyze_redundancy(path):
                         classification = "redundant"
@@ -191,27 +195,37 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         ):
             if rel_path in module_map:
                 continue
-            if rel_path in traces:
-                entry = traces[rel_path]
-                prev_cls = entry.get("classification")
-                if entry.get("classification") != "candidate":
-                    entry["classification"] = "candidate"
-                    entry["redundant"] = False
-                    trace_details[rel_path] = entry
-                    class_groups.setdefault("candidate", []).append(rel_path)
+            path = ctx.repo / rel_path
+            entry = traces.setdefault(rel_path, {"parents": []})
+            prev_cls = entry.get("classification")
+            if prev_cls is None:
+                try:
+                    classification = orphan_analyzer.classify_module(path)
+                except Exception:
+                    classification = "candidate"
+                if classification == "candidate":
                     try:
-                        if prev_cls == "legacy":
-                            orphan_modules_legacy_total.dec(1)
+                        if orphan_analyzer.analyze_redundancy(path):
+                            classification = "redundant"
                     except Exception:
                         pass
-                continue
-            traces[rel_path] = {
-                "parents": [],
-                "classification": "candidate",
-                "redundant": False,
-            }
-            trace_details[rel_path] = traces[rel_path]
-            class_groups.setdefault("candidate", []).append(rel_path)
+            else:
+                classification = prev_cls
+            entry.update(
+                {
+                    "classification": classification,
+                    "redundant": classification != "candidate",
+                }
+            )
+            trace_details[rel_path] = entry
+            class_groups.setdefault(classification, []).append(rel_path)
+            try:
+                if prev_cls == "legacy" and classification != "legacy":
+                    orphan_modules_legacy_total.dec(1)
+                elif prev_cls != "legacy" and classification == "legacy":
+                    orphan_modules_legacy_total.inc(1)
+            except Exception:
+                pass
 
         if trace_details:
             logger.info(
