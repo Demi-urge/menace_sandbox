@@ -275,7 +275,9 @@ to load names from `sandbox_data/orphan_modules.json` and pass them to
 `environment.auto_include_modules` merges the files into
 `sandbox_data/module_map.json`. When `recursive=True` (the default when
 `SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1`) the helper
-also discovers local imports during integration.
+also discovers local imports during integration. Modules classified as legacy
+increment the `orphan_modules_legacy_total` Prometheus gauge and the value is
+decremented when those entries are reclassified or integrated.
 
 Example running a simulation that discovers orphans and includes them
 recursively:
