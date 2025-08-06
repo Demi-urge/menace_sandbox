@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
 
-from orphan_analyzer import analyze_redundancy
+from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
@@ -136,6 +136,7 @@ class SelfTestService:
         auto_include_isolated: bool = SandboxSettings().auto_include_isolated,
         recursive_isolated: bool = SandboxSettings().recursive_isolated,
         clean_orphans: bool = False,
+        include_redundant: bool = False,
     ) -> None:
         """Create a new service instance.
 
@@ -171,6 +172,11 @@ class SelfTestService:
             ``sandbox_data/orphan_modules.json`` after ``integration_callback``
             runs. Can also be enabled via the ``SANDBOX_CLEAN_ORPHANS``
             environment variable.
+        include_redundant:
+            When ``True``, modules classified as ``redundant`` or ``legacy``
+            are still returned from discovery helpers and included in test
+            runs. Can also be enabled via ``SELF_TEST_INCLUDE_REDUNDANT`` or
+            ``SANDBOX_TEST_REDUNDANT``.
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -284,6 +290,13 @@ class SelfTestService:
         if env_clean is not None:
             self.clean_orphans = env_clean.lower() in ("1", "true", "yes")
 
+        self.include_redundant = bool(include_redundant)
+        env_redundant = os.getenv("SELF_TEST_INCLUDE_REDUNDANT")
+        if env_redundant is None:
+            env_redundant = os.getenv("SANDBOX_TEST_REDUNDANT")
+        if env_redundant is not None:
+            self.include_redundant = env_redundant.lower() in ("1", "true", "yes")
+
         auto_disable_env = os.getenv("SELF_TEST_DISABLE_AUTO_INTEGRATION")
         if auto_disable_env is not None:
             disable_auto_integration = auto_disable_env.lower() in ("1", "true", "yes")
@@ -297,7 +310,7 @@ class SelfTestService:
 
         # populated by ``_discover_orphans`` when recursive orphan discovery is
         # enabled; maps module paths to metadata including import parents and
-        # redundancy classification
+        # redundancy/legacy classification
         self.orphan_traces: dict[str, dict[str, Any]] = {}
 
         # aggregated details about the most recent integration run
@@ -683,24 +696,28 @@ class SelfTestService:
 
             def _on_module(rel: str, path: Path, parents: list[str]) -> None:
                 entry = self.orphan_traces.setdefault(
-                    rel, {"parents": [], "redundant": None}
+                    rel,
+                    {"parents": [], "classification": None, "redundant": None},
                 )
                 if parents:
                     entry["parents"] = list(
                         dict.fromkeys(entry.get("parents", []) + parents)
                     )
-                if entry.get("redundant") is None:
+                if entry.get("classification") is None:
                     try:
-                        entry["redundant"] = bool(analyze_redundancy(path))
+                        cls = classify_module(path)
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
-                            "redundancy analysis failed for %s", path
+                            "classification failed for %s", path
                         )
-                        entry["redundant"] = False
+                        cls = "candidate"
+                    entry["classification"] = cls
+                    entry["redundant"] = cls != "candidate"
 
             def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
                 dep_entry = self.orphan_traces.setdefault(
-                    dep_rel, {"parents": [], "redundant": None}
+                    dep_rel,
+                    {"parents": [], "classification": None, "redundant": None},
                 )
                 dep_entry["parents"] = list(
                     dict.fromkeys(dep_entry.get("parents", []) + chain)
@@ -731,20 +748,27 @@ class SelfTestService:
         filtered: list[str] = []
         for m in modules:
             p = Path(m)
-            info = self.orphan_traces.setdefault(m, {"parents": []})
-            redundant_flag = info.get("redundant")
-            if redundant_flag is None:
+            info = self.orphan_traces.setdefault(
+                m,
+                {"parents": [], "classification": None, "redundant": None},
+            )
+            classification = info.get("classification")
+            if classification is None:
                 try:
-                    redundant_flag = bool(analyze_redundancy(p))
+                    classification = classify_module(p)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
-                        "redundancy analysis failed for %s: %s", p, exc
+                        "classification failed for %s: %s", p, exc
                     )
-                    redundant_flag = False
-                info["redundant"] = redundant_flag
-            if redundant_flag:
+                    classification = "candidate"
+                info["classification"] = classification
+                info["redundant"] = classification != "candidate"
+            redundant_flag = info.get("redundant")
+            if redundant_flag and not self.include_redundant:
                 self.logger.info(
-                    "redundant module skipped", extra={"module": m}
+                    "%s module skipped",
+                    classification,
+                    extra={"module": m},
                 )
                 continue
             filtered.append(m)
@@ -774,10 +798,11 @@ class SelfTestService:
         roots: list[str] = []
         for m in modules:
             key = str(Path(m))
-            entry = self.orphan_traces.setdefault(key, {"parents": []})
+            entry = self.orphan_traces.setdefault(
+                key, {"parents": [], "classification": "candidate", "redundant": False}
+            )
             # ``discover_isolated_modules`` only returns non-redundant modules but
             # we record the classification explicitly for later reference.
-            entry["redundant"] = False
             roots.append(key)
 
         # Follow dependency chains so helper modules are recorded alongside the
@@ -787,20 +812,26 @@ class SelfTestService:
         initial = {m: self.orphan_traces.get(m, {}).get("parents", []) for m in roots}
 
         def _on_module(rel: str, path: Path, parents: list[str]) -> None:
-            entry = self.orphan_traces.setdefault(rel, {"parents": [], "redundant": None})
+            entry = self.orphan_traces.setdefault(
+                rel, {"parents": [], "classification": None, "redundant": None}
+            )
             if parents:
                 entry["parents"] = list(
                     dict.fromkeys(entry.get("parents", []) + parents)
                 )
-            if entry.get("redundant") is None:
+            if entry.get("classification") is None:
                 try:
-                    entry["redundant"] = bool(analyze_redundancy(path))
+                    cls = classify_module(path)
                 except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("redundancy analysis failed for %s", path)
-                    entry["redundant"] = False
+                    self.logger.exception("classification failed for %s", path)
+                    cls = "candidate"
+                entry["classification"] = cls
+                entry["redundant"] = cls != "candidate"
 
         def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
-            dep_entry = self.orphan_traces.setdefault(dep_rel, {"parents": [], "redundant": None})
+            dep_entry = self.orphan_traces.setdefault(
+                dep_rel, {"parents": [], "classification": None, "redundant": None}
+            )
             dep_entry["parents"] = list(
                 dict.fromkeys(dep_entry.get("parents", []) + chain)
             )
@@ -818,8 +849,12 @@ class SelfTestService:
         filtered: list[str] = []
         for m in discovered:
             info = self.orphan_traces.get(m, {})
-            if info.get("redundant"):
-                self.logger.info("redundant module skipped", extra={"module": m})
+            if info.get("redundant") and not self.include_redundant:
+                self.logger.info(
+                    "%s module skipped",
+                    info.get("classification", "redundant"),
+                    extra={"module": m},
+                )
                 continue
             filtered.append(m)
 
@@ -921,6 +956,8 @@ class SelfTestService:
             "SELF_TEST_AUTO_INCLUDE_ISOLATED": "1" if self.auto_include_isolated else "0",
             "SANDBOX_RECURSIVE_ISOLATED": "1" if self.recursive_isolated else "0",
             "SELF_TEST_RECURSIVE_ISOLATED": "1" if self.recursive_isolated else "0",
+            "SANDBOX_TEST_REDUNDANT": "1" if self.include_redundant else "0",
+            "SELF_TEST_INCLUDE_REDUNDANT": "1" if self.include_redundant else "0",
         }
         os.environ.update(env_flags)
 
@@ -978,24 +1015,28 @@ class SelfTestService:
 
             def _on_module(rel: str, path: Path, parents: list[str]) -> None:
                 entry = self.orphan_traces.setdefault(
-                    rel, {"parents": [], "redundant": None}
+                    rel,
+                    {"parents": [], "classification": None, "redundant": None},
                 )
                 if parents:
                     entry["parents"] = list(
                         dict.fromkeys(entry.get("parents", []) + parents)
                     )
-                if entry.get("redundant") is None:
+                if entry.get("classification") is None:
                     try:
-                        entry["redundant"] = bool(analyze_redundancy(path))
+                        cls = classify_module(path)
                     except Exception:  # pragma: no cover - best effort
                         self.logger.exception(
-                            "redundancy analysis failed for %s", path
+                            "classification failed for %s", path
                         )
-                        entry["redundant"] = False
+                        cls = "candidate"
+                    entry["classification"] = cls
+                    entry["redundant"] = cls != "candidate"
 
             def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
                 dep_entry = self.orphan_traces.setdefault(
-                    dep_rel, {"parents": [], "redundant": None}
+                    dep_rel,
+                    {"parents": [], "classification": None, "redundant": None},
                 )
                 dep_entry["parents"] = list(
                     dict.fromkeys(dep_entry.get("parents", []) + chain)
@@ -1014,7 +1055,7 @@ class SelfTestService:
         redundant_list = [
             m for m, info in self.orphan_traces.items() if info.get("redundant")
         ]
-        if orphan_list:
+        if orphan_list and not self.include_redundant:
             orphan_list = [m for m in orphan_list if m not in redundant_list]
 
         combined_file = list(dict.fromkeys(existing + discovered))
@@ -1059,7 +1100,7 @@ class SelfTestService:
         queue: list[str] = [
             p or ""
             for p in paths
-            if not (p and str(Path(p)) in redundant_list)
+            if self.include_redundant or not (p and str(Path(p)) in redundant_list)
         ]
         self._save_state(queue, passed, failed, coverage_total, runtime_total)
         proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
@@ -1737,6 +1778,16 @@ def cli(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Remove passing modules from orphan_modules.json",
     )
+    run.add_argument(
+        "--include-redundant",
+        "--test-redundant",
+        dest="include_redundant",
+        action="store_true",
+        help=(
+            "Also run tests for modules classified as redundant or legacy "
+            "(sets SELF_TEST_INCLUDE_REDUNDANT=1 and SANDBOX_TEST_REDUNDANT=1)"
+        ),
+    )
 
     sched = sub.add_parser("run-scheduled", help="Run self tests on an interval")
     sched.add_argument("paths", nargs="*", help="Test paths or patterns")
@@ -1842,6 +1893,16 @@ def cli(argv: list[str] | None = None) -> int:
         help="Remove passing modules from orphan_modules.json",
     )
     sched.add_argument(
+        "--include-redundant",
+        "--test-redundant",
+        dest="include_redundant",
+        action="store_true",
+        help=(
+            "Also run tests for modules classified as redundant or legacy "
+            "(sets SELF_TEST_INCLUDE_REDUNDANT=1 and SANDBOX_TEST_REDUNDANT=1)"
+        ),
+    )
+    sched.add_argument(
         "--no-container",
         dest="use_container",
         action="store_false",
@@ -1894,6 +1955,13 @@ def cli(argv: list[str] | None = None) -> int:
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = auto_iso
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = auto_iso
 
+    os.environ["SANDBOX_TEST_REDUNDANT"] = (
+        "1" if getattr(args, "include_redundant", False) else "0"
+    )
+    os.environ["SELF_TEST_INCLUDE_REDUNDANT"] = (
+        "1" if getattr(args, "include_redundant", False) else "0"
+    )
+
     if args.cmd == "run":
         pytest_args = []
         if args.pytest_args:
@@ -1919,6 +1987,7 @@ def cli(argv: list[str] | None = None) -> int:
             recursive_isolated=args.recursive_isolated,
             auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
+            include_redundant=args.include_redundant,
         )
         try:
             asyncio.run(service._run_once(refresh_orphans=args.refresh_orphans))
@@ -1959,6 +2028,7 @@ def cli(argv: list[str] | None = None) -> int:
             recursive_isolated=args.recursive_isolated,
             auto_include_isolated=args.discover_isolated,
             clean_orphans=args.clean_orphans,
+            include_redundant=args.include_redundant,
         )
         try:
             service.run_scheduled(interval=args.interval, refresh_orphans=args.refresh_orphans)
