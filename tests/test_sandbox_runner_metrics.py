@@ -220,7 +220,10 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
     monkeypatch.setitem(
         sys.modules,
         "orphan_analyzer",
-        types.SimpleNamespace(analyze_redundancy=lambda path: False),
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=lambda path: "candidate",
+        ),
     )
 
     monkeypatch.setattr(cycle, "discover_recursive_orphans", lambda repo: {})
@@ -244,7 +247,7 @@ def test_orphan_inclusion_updates_tracker(monkeypatch, tmp_path):
         "orphan_modules_legacy_total",
         "orphan_modules_reclassified_total",
     ):
-        monkeypatch.setattr(cycle, name, DummyMetric())
+        monkeypatch.setattr(cycle, name, DummyMetric(), raising=False)
 
     inner_tracker = ROITracker()
     inner_tracker.roi_history = [0.5]

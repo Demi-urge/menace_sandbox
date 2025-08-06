@@ -13,6 +13,8 @@ class DummyTracker:
 
 def test_recursive_skips_redundant(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     calls: dict[str, object] = {}
 
     (tmp_path / "good.py").write_text("VALUE = 1\n")
@@ -34,14 +36,17 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
 
-    def analyze(path):
+    def classify(path):
         calls.setdefault("analyze", []).append(Path(path).name)
-        return Path(path).name == "bad.py"
+        return "redundant" if Path(path).name == "bad.py" else "candidate"
 
     monkeypatch.setitem(
         sys.modules,
         "orphan_analyzer",
-        types.SimpleNamespace(analyze_redundancy=analyze),
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=classify,
+        ),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -52,7 +57,7 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
     result, tested = env.auto_include_modules(["good.py", "bad.py"])
 
     assert result is tracker
-    assert tested == {"added": ["good.py"], "failed": [], "redundant": ["bad.py"]}
+    assert tested == {"added": ["bad.py", "good.py"], "failed": [], "redundant": ["bad.py"]}
     assert calls["generate"] == ["good.py"]
     assert calls["integrate"] == ["good.py"]
     assert sorted(calls["analyze"]) == ["bad.py", "good.py"]
@@ -61,6 +66,7 @@ def test_recursive_skips_redundant(monkeypatch, tmp_path):
 def test_recursive_validated_integration(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
     calls: dict[str, object] = {}
 
     (tmp_path / "good.py").write_text("VALUE = 1\n")
@@ -81,14 +87,17 @@ def test_recursive_validated_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
 
-    def analyze(path):
+    def classify(path):
         calls.setdefault("analyze", []).append(Path(path).name)
-        return False
+        return "candidate"
 
     monkeypatch.setitem(
         sys.modules,
         "orphan_analyzer",
-        types.SimpleNamespace(analyze_redundancy=analyze),
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=classify,
+        ),
     )
     monkeypatch.setitem(
         sys.modules,
