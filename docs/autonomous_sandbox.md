@@ -279,6 +279,32 @@ also discovers local imports during integration. Modules classified as legacy
 increment the `orphan_modules_legacy_total` Prometheus gauge and the value is
 decremented when those entries are reclassified or integrated.
 
+#### Surfacing orphan chains
+
+`discover_recursive_orphans` starts from the names listed in
+`sandbox_data/orphan_modules.json` and walks their `import` statements
+recursively. The helper returns a mapping where each entry notes which
+`parents` pulled it into the chain so the sandbox can queue every
+dependent module in one pass.
+
+#### Validating and integrating candidates
+
+After discovery, `auto_include_modules` executes the candidate set with
+`SelfTestService`. When validation succeeds the modules and any helpers
+found during recursion are merged into `sandbox_data/module_map.json`
+and patched into existing workflows so future cycles exercise the new
+code.
+
+#### Monitoring orphan module metrics
+
+The inclusion flow records its progress via the Prometheus gauges
+`orphan_modules_tested_total`, `orphan_modules_reintroduced_total`,
+`orphan_modules_failed_total`, `orphan_modules_redundant_total` and
+`orphan_modules_legacy_total`. Start the metrics server with
+`metrics_exporter.start_metrics_server(PORT)` and point Prometheus at
+the port to observe how many orphan modules are tested, reintroduced or
+skipped over time.
+
 Example running a simulation that discovers orphans and includes them
 recursively:
 
@@ -370,6 +396,16 @@ was used, the processed names are removed from
 `sandbox_data/orphan_modules.json`. Add `--auto-include-isolated` and
 `--recursive-isolated` when the starting file is not referenced anywhere
 else so the sandbox discovers isolated modules in the same manner.
+
+### Example: reintroducing a dormant module
+
+```bash
+# assume util.py was previously removed from the workflow system
+echo 'def util(): return 1' > util.py
+echo '["util.py"]' > sandbox_data/orphan_modules.json
+python run_autonomous.py --include-orphans
+# util.py is merged into module_map.json and metrics reflect the reintroduction
+```
 
 Additional API keys such as `OPENAI_API_KEY` may be added to the same `.env` file.
 
