@@ -1483,10 +1483,11 @@ class SelfImprovementEngine:
                 base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                 tracker.update(base, base, metrics=counts)
             try:
-                orphan_modules_tested_total.inc(0)
-                orphan_modules_failed_total.inc(0)
-                orphan_modules_redundant_total.inc(len(redundant))
-                orphan_modules_legacy_total.inc(len(legacy))
+                orphan_modules_tested_total.set(0)
+                orphan_modules_reintroduced_total.set(0)
+                orphan_modules_failed_total.set(0)
+                orphan_modules_redundant_total.set(len(redundant))
+                orphan_modules_legacy_total.set(len(legacy))
             except Exception:
                 pass
             return set()
@@ -1539,10 +1540,11 @@ class SelfImprovementEngine:
                 base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                 tracker.update(base, base, metrics=counts)
             try:
-                orphan_modules_tested_total.inc(len(modules))
-                orphan_modules_failed_total.inc(len(failed_mods))
-                orphan_modules_redundant_total.inc(len(redundant))
-                orphan_modules_legacy_total.inc(len(legacy))
+                orphan_modules_tested_total.set(len(modules))
+                orphan_modules_reintroduced_total.set(len(passed))
+                orphan_modules_failed_total.set(len(failed_mods))
+                orphan_modules_redundant_total.set(len(redundant))
+                orphan_modules_legacy_total.set(len(legacy))
             except Exception:
                 pass
             return passed
@@ -1614,10 +1616,11 @@ class SelfImprovementEngine:
             base = tracker.roi_history[-1] if tracker.roi_history else 0.0
             tracker.update(base, base, metrics=counts)
         try:
-            orphan_modules_tested_total.inc(len(modules))
-            orphan_modules_failed_total.inc(len(failed_mods))
-            orphan_modules_redundant_total.inc(len(redundant))
-            orphan_modules_legacy_total.inc(len(legacy))
+            orphan_modules_tested_total.set(len(modules))
+            orphan_modules_reintroduced_total.set(len(passing))
+            orphan_modules_failed_total.set(len(failed_mods))
+            orphan_modules_redundant_total.set(len(redundant))
+            orphan_modules_legacy_total.set(len(legacy))
         except Exception:
             pass
 
@@ -1651,9 +1654,11 @@ class SelfImprovementEngine:
         """Refresh module index and clusters for newly tested orphan modules.
 
         ``auto_include_modules`` is invoked with ``recursive=True`` so that any
-        dependencies of ``paths`` are automatically included. Newly discovered
-        dependencies trigger a rerun of :meth:`_update_orphan_modules` to
-        continue traversal without manual intervention.
+        dependencies of ``paths`` are automatically included. Integrated modules
+        are also passed to :func:`environment.try_integrate_into_workflows` so
+        related workflows gain the new steps. Newly discovered dependencies
+        trigger a rerun of :meth:`_update_orphan_modules` to continue traversal
+        without manual intervention.
 
         Returns
         -------
@@ -1711,6 +1716,10 @@ class SelfImprovementEngine:
                     sorted(mods), recursive=True, validate=True
                 )
                 try:
+                    environment.try_integrate_into_workflows(sorted(mods))
+                except Exception:  # pragma: no cover - best effort
+                    pass
+                try:
                     self._update_orphan_modules()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
@@ -1757,6 +1766,42 @@ class SelfImprovementEngine:
 
         if modules:
             modules = list(modules)
+            meta_path = data_dir / "orphan_classifications.json"
+            try:
+                existing_meta = (
+                    json.loads(meta_path.read_text()) if meta_path.exists() else {}
+                )
+            except Exception:  # pragma: no cover - best effort
+                existing_meta = {}
+            legacy_mods: list[str] = []
+            filtered: list[str] = []
+            for m in modules:
+                p = Path(m)
+                try:
+                    rel = p.resolve().relative_to(repo).as_posix()
+                except Exception:
+                    rel = str(p)
+                cls = existing_meta.get(rel, {}).get("classification")
+                if cls == "legacy":
+                    legacy_mods.append(rel)
+                    info = self.orphan_traces.setdefault(rel, {"parents": []})
+                    info["classification"] = "legacy"
+                    info["redundant"] = True
+                    continue
+                filtered.append(m)
+            modules = filtered
+            if legacy_mods:
+                try:
+                    orphan_modules_legacy_total.set(len(legacy_mods))
+                except Exception:
+                    pass
+                existing_meta.update({m: {"classification": "legacy"} for m in legacy_mods})
+                try:
+                    meta_path.parent.mkdir(parents=True, exist_ok=True)
+                    meta_path.write_text(json.dumps(existing_meta, indent=2))
+                except Exception:  # pragma: no cover - best effort
+                    self.logger.exception("failed to write orphan classifications")
+
             try:
                 settings = SandboxSettings()
             except Exception:  # pragma: no cover - fallback for tests
@@ -1812,47 +1857,16 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
 
             if passing:
+                abs_paths = [str(repo / p) for p in passing]
+                integrated: set[str] = set()
                 try:
-                    environment.auto_include_modules(
-                        sorted(passing), recursive=True, validate=True
-                    )
+                    integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("auto inclusion failed: %s", exc)
-
-                if self.module_index:
-                    try:
-                        self.module_index.refresh(passing, force=True)
-                        self.module_index.save()
-                        for m in passing:
-                            self.module_clusters[m] = self.module_index.get(m)
-                        self._last_map_refresh = time.time()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "module map refresh failed: %s", exc
-                        )
-
+                    self.logger.exception("orphan integration failed: %s", exc)
                 try:
-                    orphan_modules_reintroduced_total.inc(len(passing))
+                    orphan_modules_reintroduced_total.inc(len(integrated))
                 except Exception:
                     pass
-
-                try:
-                    existing = json.loads(path.read_text()) if path.exists() else []
-                except Exception:  # pragma: no cover - best effort
-                    existing = []
-                keep = [m for m in existing if m not in passing]
-                if len(keep) != len(existing):
-                    try:
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_text(json.dumps(sorted(keep), indent=2))
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception("failed to clean orphan modules")
-                try:
-                    self._update_orphan_modules()
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "post integration orphan update failed: %s", exc
-                    )
             return
 
         try:
@@ -1931,6 +1945,12 @@ class SelfImprovementEngine:
 
         modules = sorted(set(modules))
 
+        meta_path = data_dir / "orphan_classifications.json"
+        try:
+            existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        except Exception:  # pragma: no cover - best effort
+            existing_meta = {}
+
         filtered: list[str] = []
         skipped: list[str] = []
         classifications: dict[str, dict[str, Any]] = {}
@@ -1938,7 +1958,7 @@ class SelfImprovementEngine:
         for m in modules:
             p = Path(m)
             info = self.orphan_traces.setdefault(m, {"parents": []})
-            classification = info.get("classification")
+            classification = info.get("classification") or existing_meta.get(m, {}).get("classification")
             if classification is None:
                 try:
                     classification = classify_module(p)
@@ -1985,13 +2005,8 @@ class SelfImprovementEngine:
                     )
 
         if not filtered:
-            meta_path = data_dir / "orphan_classifications.json"
             try:
-                existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-            except Exception:  # pragma: no cover - best effort
-                existing_meta = {}
-            existing_meta.update(classifications)
-            try:
+                existing_meta.update(classifications)
                 meta_path.parent.mkdir(parents=True, exist_ok=True)
                 meta_path.write_text(json.dumps(existing_meta, indent=2))
             except Exception:  # pragma: no cover - best effort
@@ -2005,13 +2020,6 @@ class SelfImprovementEngine:
         except Exception:  # pragma: no cover - best effort
             repo_mods = filtered
         passing = self._test_orphan_modules(repo_mods)
-        if passing:
-            try:
-                environment.auto_include_modules(
-                    sorted(passing), recursive=True, validate=True
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("auto inclusion failed: %s", exc)
         passing_names = set(passing)
         integrate_candidates = [
             p for p in passing if not self.orphan_traces.get(p, {}).get("redundant")
@@ -2079,11 +2087,7 @@ class SelfImprovementEngine:
 
         meta_path = data_dir / "orphan_classifications.json"
         try:
-            existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
-        except Exception:  # pragma: no cover - best effort
-            existing_meta = {}
-        existing_meta.update(classifications)
-        try:
+            existing_meta.update(classifications)
             meta_path.parent.mkdir(parents=True, exist_ok=True)
             meta_path.write_text(json.dumps(existing_meta, indent=2))
         except Exception:  # pragma: no cover - best effort
