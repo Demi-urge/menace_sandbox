@@ -5508,9 +5508,49 @@ def auto_include_modules(
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
+    traces = None
     if recursive:
         try:
-            deps = collect_local_dependencies(modules)
+            import inspect
+
+            for frame in inspect.stack():  # pragma: no cover - best effort
+                ctx = frame.frame.f_locals.get("ctx")
+                if ctx is not None and hasattr(ctx, "orphan_traces"):
+                    traces = ctx.orphan_traces
+                    break
+        except Exception:  # pragma: no cover - best effort
+            traces = None
+
+        try:
+            initial = (
+                {Path(m).as_posix(): traces.get(Path(m).as_posix(), {}).get("parents", [])
+                 for m in modules}
+                if traces is not None
+                else None
+            )
+
+            def _on_module(rel: str, _path: Path, parents: list[str]) -> None:
+                if traces is None or not parents:
+                    return
+                entry = traces.setdefault(rel, {"parents": []})
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + parents)
+                )
+
+            def _on_dep(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+                if traces is None or not chain:
+                    return
+                entry = traces.setdefault(dep_rel, {"parents": []})
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + chain)
+                )
+
+            deps = collect_local_dependencies(
+                modules,
+                initial_parents=initial,
+                on_module=_on_module if traces is not None else None,
+                on_dependency=_on_dep if traces is not None else None,
+            )
             mod_paths.update(deps)
             mod_paths.difference_update(existing_mods)
         except Exception:
