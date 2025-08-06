@@ -191,11 +191,13 @@ def discover_recursive_orphans(
 
     Modules reported by this function are orphaned within *repo_path* and are
     not known to the optional ``module_map``. Each result entry contains the
-    list of orphan modules importing it under ``parents``.  Redundant modules
-    identified by :func:`orphan_analyzer.analyze_redundancy` are included in the
-    mapping with their ``classification`` so callers can record and report
-    them. Entries labelled ``legacy`` or ``redundant`` should typically be
-    excluded from further processing.
+    chain of orphan modules importing it under ``parents`` so callers can trace
+    the origin of a dependency.  Redundancy and legacy detection is performed
+    via :func:`orphan_analyzer.classify_module` and the resulting
+    classification information is written to ``sandbox_data/orphan_modules.json``
+    and ``sandbox_data/orphan_classifications.json``.  Entries labelled
+    ``legacy`` or ``redundant`` should typically be excluded from further
+    processing.
     """
 
     repo = Path(repo_path).resolve()

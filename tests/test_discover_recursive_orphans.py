@@ -40,8 +40,16 @@ def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
         str(tmp_path), module_map=data_dir / "module_map.json"
     )
     assert res == {
-        "a": {"parents": [], "redundant": False},
-        "b": {"parents": ["a"], "redundant": False},
+        "a": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "b": {
+            "parents": ["a"],
+            "classification": "candidate",
+            "redundant": False,
+        },
     }
 
 
@@ -60,7 +68,15 @@ def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
 
-    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", lambda p: True)
+    monkeypatch.setattr(
+        orphan_analyzer, "classify_module", lambda p: "redundant"
+    )
 
     res = _discover_inner(str(tmp_path), module_map=data_dir / "module_map.json")
-    assert res == {"dup": {"parents": [], "redundant": True}}
+    assert res == {
+        "dup": {
+            "parents": [],
+            "classification": "redundant",
+            "redundant": True,
+        }
+    }
