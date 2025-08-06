@@ -877,13 +877,18 @@ class SelfTestService:
                 norm = _norm(k)
                 if norm in to_remove:
                     redundant = None
+                    cls = None
                     if isinstance(info, dict):
                         redundant = info.get("redundant")
-                    redundant = self.orphan_traces.get(norm, {}).get(
-                        "redundant", redundant
-                    )
+                        cls = info.get("classification")
+                    entry_trace = self.orphan_traces.get(norm, {})
+                    redundant = entry_trace.get("redundant", redundant)
+                    cls = entry_trace.get("classification", cls)
                     if redundant:
-                        remaining_dict[k] = {"redundant": True}
+                        entry = {"redundant": True}
+                        if cls:
+                            entry["classification"] = cls
+                        remaining_dict[k] = entry
                     else:
                         changed = True
                         continue

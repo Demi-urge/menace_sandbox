@@ -121,10 +121,15 @@ def prune_orphan_cache(
     for mod in modules:
         info = data.get(mod, {})
         redundant = info.get("redundant")
+        cls = info.get("classification") if isinstance(info, dict) else None
         if traces and mod in traces:
             redundant = traces[mod].get("redundant", redundant)
+            cls = traces[mod].get("classification", cls)
         if redundant:
-            data[mod] = {"redundant": True}
+            entry = {"redundant": True}
+            if cls:
+                entry["classification"] = cls
+            data[mod] = entry
         elif mod in data:
             del data[mod]
         else:

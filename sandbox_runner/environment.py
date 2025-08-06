@@ -5502,7 +5502,7 @@ def auto_include_modules(
     except Exception:
         pass
     mod_paths.difference_update(existing_mods)
-    redundant_mods: list[str] = []
+    redundant_mods: dict[str, str] = {}
 
     settings = SandboxSettings()
 
@@ -5536,7 +5536,8 @@ def auto_include_modules(
                 candidate_paths.add(path)
                 evaluated.add(path)
                 if info.get("redundant"):
-                    redundant_mods.append(path)
+                    cls = info.get("classification", "redundant")
+                    redundant_mods[path] = cls
                     mod_paths.discard(path)
                 else:
                     mod_paths.add(path)
@@ -5559,11 +5560,12 @@ def auto_include_modules(
                     continue
                 full = repo / path
                 try:
-                    if orphan_analyzer.analyze_redundancy(full):
-                        redundant_mods.append(path.as_posix())
+                    cls = orphan_analyzer.classify_module(full)
+                    if cls != "candidate":
+                        redundant_mods[path.as_posix()] = cls
                         continue
                 except Exception:
-                    redundant_mods.append(path.as_posix())
+                    redundant_mods[path.as_posix()] = "redundant"
                     continue
                 mod_paths.add(path.as_posix())
         except Exception:
@@ -5580,8 +5582,9 @@ def auto_include_modules(
         path = repo / mod
         if mod not in evaluated:
             try:
-                if orphan_analyzer.analyze_redundancy(path):
-                    redundant_mods.append(mod)
+                cls = orphan_analyzer.classify_module(path)
+                if cls != "candidate":
+                    redundant_mods[mod] = cls
                     continue
             except Exception:
                 pass
@@ -5618,9 +5621,10 @@ def auto_include_modules(
                 existing = {}
         except Exception:
             existing = {}
-        for m in redundant_mods:
+        for m, cls in redundant_mods.items():
             info = existing.get(m, {})
-            info["redundant"] = True
+            info["classification"] = cls
+            info["redundant"] = cls != "candidate"
             existing[m] = info
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
