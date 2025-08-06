@@ -1740,16 +1740,21 @@ class SelfImprovementEngine:
             try:
                 data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
                 orphan_path = data_dir / "orphan_modules.json"
-                if orphan_path.exists():
-                    try:
-                        existing = json.loads(orphan_path.read_text()) or []
-                    except Exception:  # pragma: no cover - best effort
-                        existing = []
-                    keep = [p for p in existing if p not in mods]
-                    if len(keep) != len(existing):
-                        orphan_path.write_text(json.dumps(sorted(keep), indent=2))
+                traces = getattr(self, "orphan_traces", {})
+                survivors = [
+                    m
+                    for m, info in traces.items()
+                    if not info.get("redundant") and m not in mods
+                ]
+                if orphan_path.exists() or survivors:
+                    orphan_path.parent.mkdir(parents=True, exist_ok=True)
+                    orphan_path.write_text(json.dumps(sorted(survivors), indent=2))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan modules")
+            try:
+                orphan_modules_reintroduced_total.inc(len(mods))
+            except Exception:
+                pass
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
@@ -1904,10 +1909,6 @@ class SelfImprovementEngine:
                     integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
-                try:
-                    orphan_modules_reintroduced_total.inc(len(integrated))
-                except Exception:
-                    pass
             return
 
         try:
@@ -2084,11 +2085,6 @@ class SelfImprovementEngine:
                             parents=self.orphan_traces.get(m, {}).get("parents", []),
                         ),
                     )
-        try:
-            orphan_modules_reintroduced_total.inc(len(integrated_names))
-        except Exception:
-            pass
-
         for m in modules:
             cls = self.orphan_traces.get(m, {}).get("classification", "candidate")
             classifications.setdefault(m, {"classification": cls})
@@ -2102,39 +2098,16 @@ class SelfImprovementEngine:
                         "legacy module classified", extra=log_record(module=m)
                     )
 
-        try:
-            existing = json.loads(path.read_text()) if path.exists() else {}
-            if isinstance(existing, list):
-                existing = {m: {} for m in existing}
-            elif not isinstance(existing, dict):
-                existing = {}
-        except Exception:  # pragma: no cover - best effort
-            self.logger.exception("failed to load orphan modules")
-            existing = {}
         env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
         if env_clean and env_clean.lower() in ("1", "true", "yes"):
-            for m in passing:
-                existing.pop(m, None)
-            remaining = [m for m in filtered if m not in passing]
+            survivors = [m for m in filtered if m not in passing]
         else:
-            for name in integrated_names:
-                existing.pop(name, None)
-            remaining = [m for m in filtered if Path(m).name not in integrated_names]
-        for m in skipped:
-            info = self.orphan_traces.get(m, {})
-            cls = info.get("classification", "candidate")
-            existing[m] = {"classification": cls, "redundant": cls != "candidate"}
-        for m in remaining:
-            info = self.orphan_traces.get(m, {})
-            if info.get("redundant"):
-                continue
-            cls = info.get("classification", "candidate")
-            existing[m] = {"classification": cls, "redundant": cls != "candidate"}
+            survivors = [m for m in filtered if Path(m).name not in integrated_names]
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(existing, indent=2))
+            path.write_text(json.dumps(sorted(survivors), indent=2))
             self.logger.info(
-                "orphan modules updated", extra=log_record(count=len(existing))
+                "orphan modules updated", extra=log_record(count=len(survivors))
             )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to write orphan modules")
@@ -2198,10 +2171,6 @@ class SelfImprovementEngine:
                     integrated = self._integrate_orphans(abs_paths)
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("orphan integration failed: %s", exc)
-                try:
-                    orphan_modules_reintroduced_total.inc(len(integrated))
-                except Exception:
-                    pass
                 try:
                     self._update_orphan_modules()
                 except Exception as exc:  # pragma: no cover - best effort
@@ -2310,10 +2279,6 @@ class SelfImprovementEngine:
                         "orphan integration failed: %s", exc
                     )
                 try:
-                    orphan_modules_reintroduced_total.inc(len(deps_integrated))
-                except Exception:
-                    pass
-                try:
                     self._update_orphan_modules()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception(
@@ -2357,10 +2322,6 @@ class SelfImprovementEngine:
                         self.logger.exception(
                             "orphan integration failed: %s", exc
                         )
-                    try:
-                        orphan_modules_reintroduced_total.inc(len(integrated))
-                    except Exception:
-                        pass
                     try:
                         self._update_orphan_modules()
                     except Exception as exc:  # pragma: no cover - best effort
