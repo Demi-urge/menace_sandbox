@@ -665,6 +665,54 @@ def test_isolated_cleanup_passed(tmp_path, monkeypatch):
     assert svc.results.get("orphan_passed") == ["foo.py"]
 
 
+def test_orphan_cleanup_passed(tmp_path, monkeypatch):
+    (tmp_path / "sandbox_data").mkdir()
+    (tmp_path / "foo.py").write_text("x = 1\n")
+    (tmp_path / "sandbox_data" / "orphan_modules.json").write_text(
+        json.dumps(["foo.py"])
+    )
+    monkeypatch.chdir(tmp_path)
+
+    async def fake_exec(*cmd, **kwargs):
+        path = None
+        for i, a in enumerate(cmd):
+            s = str(a)
+            if s.startswith("--json-report-file"):
+                path = s.split("=", 1)[1] if "=" in s else cmd[i + 1]
+                break
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                json.dump({"summary": {"passed": 1, "failed": 0}}, fh)
+
+        class P:
+            returncode = 0
+
+            async def communicate(self):
+                return b"", b""
+
+            async def wait(self):
+                return None
+
+        return P()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    import types
+
+    runner = types.ModuleType("sandbox_runner")
+    runner.discover_recursive_orphans = lambda repo, module_map=None: {}
+    monkeypatch.setitem(sys.modules, "sandbox_runner", runner)
+
+    svc = mod.SelfTestService(
+        integration_callback=lambda mods: None, clean_orphans=True
+    )
+    svc.run_once()
+
+    data = json.loads((tmp_path / "sandbox_data" / "orphan_modules.json").read_text())
+    assert data == []
+    assert svc.results.get("orphan_passed") == ["foo.py"]
+
+
 def test_default_integration_reports(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     data_dir = tmp_path / "sandbox_data"
