@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Iterable, List, Dict
 
 import orphan_analyzer
+
+
+logger = logging.getLogger(__name__)
 
 
 def _cache_path(repo: Path | str) -> Path:
@@ -295,6 +299,10 @@ def discover_recursive_orphans(
                 cls = "candidate"
             classifications[mod] = cls
         found.add(mod)
+        if cls in {"legacy", "redundant"}:
+            logger.info("skipping %s module %s", cls, mod)
+            continue
+
         for name in imports.get(mod, set()):
             if name not in modules:
                 continue
@@ -318,6 +326,10 @@ def discover_recursive_orphans(
 
             parents.setdefault(name, set()).add(mod)
             found.add(name)
+
+            if child_cls in {"legacy", "redundant"}:
+                logger.info("skipping %s module %s", child_cls, name)
+                continue
 
             if name not in orphans:
                 orphans.add(name)
