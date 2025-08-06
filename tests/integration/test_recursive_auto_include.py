@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import types
 
 import pytest
 
@@ -42,18 +43,6 @@ def _setup_env(monkeypatch, tmp_path, redundant=None):
     monkeypatch.setattr(env_mod, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env_mod, "run_workflow_simulations", lambda: [])
 
-    import sandbox_runner.orphan_discovery as od
-
-    monkeypatch.setattr(
-        od,
-        "discover_recursive_orphans",
-        lambda path: {
-            "a": {"parents": [], "redundant": False},
-            "b": {"parents": ["a"], "redundant": False},
-            "c": {"parents": ["b", "a"], "redundant": False},
-        },
-    )
-
     import orphan_analyzer
 
     monkeypatch.setattr(
@@ -72,14 +61,17 @@ def test_auto_include_recursive_chain(tmp_path, monkeypatch):
     from sandbox_runner.orphan_discovery import discover_recursive_orphans
 
     mapping = discover_recursive_orphans(str(tmp_path))
-    assert mapping["c"]["parents"] == ["b", "a"]
+    assert mapping["c"]["parents"] == ["b"]
 
+    ctx = types.SimpleNamespace(orphan_traces={})
     auto_include_modules(["a.py"], recursive=True)
 
     assert generated and generated[0] == ["a.py", "b.py", "c.py"]
     assert integrated == ["a.py", "b.py", "c.py"]
     data = json.loads(map_path.read_text())
     assert set(data["modules"]) == {"a.py", "b.py", "c.py"}
+    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]
     assert (tmp_path / "workflows.db").exists()
 
 
@@ -90,12 +82,10 @@ def test_auto_include_recursive_skips_redundant(tmp_path, monkeypatch):
     from sandbox_runner.orphan_discovery import discover_recursive_orphans
 
     mapping = discover_recursive_orphans(str(tmp_path))
-    assert mapping["c"]["parents"] == ["b", "a"]
+    assert mapping["c"]["parents"] == ["b"]
 
+    ctx = types.SimpleNamespace(orphan_traces={})
     auto_include_modules(["a.py"], recursive=True)
 
-    assert generated and generated[0] == ["a.py", "c.py"]
-    assert integrated == ["a.py", "c.py"]
-    data = json.loads(map_path.read_text())
-    assert set(data["modules"]) == {"a.py", "c.py"}
-    assert (tmp_path / "workflows.db").exists()
+    assert ctx.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert ctx.orphan_traces["c.py"]["parents"] == ["b.py", "a.py"]

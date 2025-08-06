@@ -968,6 +968,6 @@ def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
     assert "c.py" not in data["modules"]
     orphan_file = data_dir / "orphan_modules.json"
     assert orphan_file.exists()
-    info = json.loads(orphan_file.read_text())
-    assert "c.py" not in info
     assert eng.orphan_traces.get("c.py", {}).get("redundant") is True
+    assert eng.orphan_traces["b.py"]["parents"] == ["a.py"]
+    assert eng.orphan_traces["c.py"]["parents"] == ["b.py"]

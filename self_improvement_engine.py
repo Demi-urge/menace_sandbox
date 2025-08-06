@@ -1758,9 +1758,39 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
         """Return ``modules`` plus any local imports they depend on recursively."""
+        from pathlib import Path
         from sandbox_runner.dependency_utils import collect_local_dependencies
 
-        return collect_local_dependencies(modules)
+        traces = getattr(self, "orphan_traces", None)
+        initial = (
+            {Path(m).as_posix(): traces.get(Path(m).as_posix(), {}).get("parents", [])
+             for m in modules}
+            if traces is not None
+            else None
+        )
+
+        def _on_module(rel: str, _path: Path, parents: list[str]) -> None:
+            if traces is None or not parents:
+                return
+            entry = traces.setdefault(rel, {"parents": []})
+            entry["parents"] = list(
+                dict.fromkeys(entry.get("parents", []) + parents)
+            )
+
+        def _on_dep(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+            if traces is None or not chain:
+                return
+            entry = traces.setdefault(dep_rel, {"parents": []})
+            entry["parents"] = list(
+                dict.fromkeys(entry.get("parents", []) + chain)
+            )
+
+        return collect_local_dependencies(
+            modules,
+            initial_parents=initial,
+            on_module=_on_module if traces is not None else None,
+            on_dependency=_on_dep if traces is not None else None,
+        )
 
     # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
@@ -1851,11 +1881,7 @@ class SelfImprovementEngine:
                 self.logger.exception("orphan discovery failed: %s", exc)
 
             try:
-                from sandbox_runner.dependency_utils import (
-                    collect_local_dependencies,
-                )
-
-                repo_mods = sorted(collect_local_dependencies(modules))
+                repo_mods = sorted(self._collect_recursive_modules(modules))
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception(
                     "dependency expansion failed: %s", exc
@@ -1865,6 +1891,13 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
 
             if passing:
+                try:
+                    environment.auto_include_modules(
+                        sorted(passing), recursive=True, validate=True
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed: %s", exc)
+
                 abs_paths = [str(repo / p) for p in passing]
                 integrated: set[str] = set()
                 try:
