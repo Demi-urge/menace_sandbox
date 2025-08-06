@@ -265,6 +265,25 @@ database:
 - `SANDBOX_CLEAN_ORPHANS` – drop passing entries from `orphan_modules.json`
   after integration.
 
+### Orphan discovery helpers
+
+`sandbox_runner.discover_recursive_orphans` traces orphan candidates and, when
+`SANDBOX_RECURSIVE_ORPHANS=1`, follows their imports so helper modules are
+queued automatically. The cycle calls `sandbox_runner.cycle.include_orphan_modules`
+to load names from `sandbox_data/orphan_modules.json` and pass them to
+`SelfTestService`. Once a candidate and its dependencies pass,
+`environment.auto_include_modules` merges the files into
+`sandbox_data/module_map.json`. When `recursive=True` (the default when
+`SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1`) the helper
+also discovers local imports during integration.
+
+Example running a simulation that discovers orphans and includes them
+recursively:
+
+```bash
+python run_autonomous.py --discover-orphans --include-orphans --recursive-include
+```
+
 ### Redundant modules
 
 `sandbox_runner.discover_recursive_orphans` returns a mapping where each

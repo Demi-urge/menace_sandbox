@@ -42,6 +42,21 @@ the CLI flags `--no-recursive-include` or `--no-recursive-isolated`. Use
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
 
+During a cycle the sandbox first calls `include_orphan_modules` to load entries
+from `sandbox_data/orphan_modules.json`. Each name is expanded by
+`discover_recursive_orphans`, and the resulting set is executed by
+`SelfTestService`. Passing modules are merged via
+`environment.auto_include_modules`, which writes them to
+`sandbox_data/module_map.json` and, when recursion is enabled through
+`SANDBOX_RECURSIVE_ORPHANS` or `SANDBOX_RECURSIVE_ISOLATED`, also records any
+helpers discovered along the way.
+
+To run a cycle with orphan discovery enabled, use:
+
+```bash
+python run_autonomous.py --include-orphans --recursive-include
+```
+
 ### Environment variables controlling recursion
 
 - `SANDBOX_RECURSIVE_ORPHANS` / `SELF_TEST_RECURSIVE_ORPHANS` – follow orphan
