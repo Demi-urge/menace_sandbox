@@ -18,6 +18,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
 
     def fake_auto_include(mods, recursive=False, validate=False):
         calls.append((list(mods), recursive, validate))
+        return object(), {"added": list(mods), "failed": [], "redundant": []}
 
     monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
     monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
