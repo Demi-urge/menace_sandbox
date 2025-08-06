@@ -40,18 +40,34 @@ def test_discover_recursive_orphans_includes_orphan_deps(monkeypatch, tmp_path):
     (tmp_path / "helper.py").write_text("VALUE = 1\n")
     (tmp_path / "legacy.py").write_text("VALUE = 1\n")
 
-    def fake_analyze(path):
-        return path.name == "legacy.py"
+    def fake_classify(path):
+        return "legacy" if path.name == "legacy.py" else "candidate"
 
-    monkeypatch.setattr(orphan_analyzer, "analyze_redundancy", fake_analyze)
+    monkeypatch.setattr(orphan_analyzer, "classify_module", fake_classify)
 
     result = discover_recursive_orphans(str(tmp_path))
 
     assert result == {
-        "orphan1": {"parents": [], "redundant": False},
-        "orphan2": {"parents": [], "redundant": False},
-        "helper": {"parents": ["orphan1", "orphan2"], "redundant": False},
-        "legacy": {"parents": ["orphan1"], "redundant": True},
+        "orphan1": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "orphan2": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "helper": {
+            "parents": ["orphan1", "orphan2"],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "legacy": {
+            "parents": ["orphan1"],
+            "classification": "legacy",
+            "redundant": True,
+        },
     }
 
 

@@ -14,8 +14,16 @@ def test_recursive_orphan_import(tmp_path, monkeypatch):
 
     res = sr.discover_recursive_orphans(str(tmp_path))
     assert res == {
-        "a": {"parents": [], "redundant": False},
-        "b": {"parents": ["a"], "redundant": False},
+        "a": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "b": {
+            "parents": ["a"],
+            "classification": "candidate",
+            "redundant": False,
+        },
     }
 
 
@@ -32,9 +40,21 @@ def test_recursive_orphan_import_chain(tmp_path, monkeypatch):
 
     res = sr.discover_recursive_orphans(str(tmp_path))
     assert res == {
-        "a": {"parents": [], "redundant": False},
-        "b": {"parents": ["a"], "redundant": False},
-        "c": {"parents": ["b"], "redundant": False},
+        "a": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "b": {
+            "parents": ["a"],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "c": {
+            "parents": ["b"],
+            "classification": "candidate",
+            "redundant": False,
+        },
     }
 
 
@@ -55,6 +75,14 @@ def test_recursive_orphan_import_skips_known(tmp_path, monkeypatch):
     res = sr.discover_recursive_orphans(str(tmp_path))
     # 'b' is tracked in the module map but its dependency 'c' should still be discovered
     assert res == {
-        "a": {"parents": [], "redundant": False},
-        "c": {"parents": ["b"], "redundant": False},
+        "a": {
+            "parents": [],
+            "classification": "candidate",
+            "redundant": False,
+        },
+        "c": {
+            "parents": ["b"],
+            "classification": "candidate",
+            "redundant": False,
+        },
     }
