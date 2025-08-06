@@ -20,6 +20,17 @@ def _cache_path(repo: Path | str) -> Path:
     return cache_dir / "orphan_modules.json"
 
 
+def _classification_path(repo: Path | str) -> Path:
+    """Return path to the orphan classification cache for ``repo``."""
+
+    repo_path = Path(repo)
+    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+    cache_dir = Path(data_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo_path / cache_dir
+    return cache_dir / "orphan_classifications.json"
+
+
 def load_orphan_cache(repo: Path | str) -> Dict[str, Dict[str, Any]]:
     """Load ``orphan_modules.json`` as a mapping.
 
@@ -71,6 +82,33 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
         _save_orphan_cache(repo, data)
 
 
+def append_orphan_classifications(
+    repo: Path | str, entries: Dict[str, Dict[str, Any]]
+) -> None:
+    """Merge ``entries`` into ``orphan_classifications.json`` for ``repo``."""
+
+    if not entries:
+        return
+    path = _classification_path(repo)
+    try:
+        existing = json.loads(path.read_text()) if path.exists() else {}
+    except Exception:  # pragma: no cover - best effort
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    changed = False
+    for key, info in entries.items():
+        if not isinstance(info, dict):
+            continue
+        cls = info.get("classification")
+        if cls:
+            existing[key] = {"classification": cls}
+            changed = True
+    if changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(existing, indent=2, sort_keys=True))
+
+
 def prune_orphan_cache(
     repo: Path | str,
     modules: Iterable[str],
@@ -107,8 +145,8 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
     When ``recursive`` is ``False`` only modules that have no orphan parents are
     returned.  Otherwise all recursively discovered orphan modules are
-    included.  Redundant modules marked by
-    :func:`orphan_analyzer.analyze_redundancy` are always excluded from the
+    included.  Modules classified as ``redundant`` or ``legacy`` by
+    :func:`orphan_analyzer.classify_module` are always excluded from the
     returned list.
     """
 
@@ -132,7 +170,9 @@ def discover_recursive_orphans(
     not known to the optional ``module_map``. Each result entry contains the
     list of orphan modules importing it under ``parents``.  Redundant modules
     identified by :func:`orphan_analyzer.analyze_redundancy` are included in the
-    mapping with ``{"redundant": True}`` so callers can record and report them.
+    mapping with their ``classification`` so callers can record and report
+    them. Entries labelled ``legacy`` or ``redundant`` should typically be
+    excluded from further processing.
     """
 
     repo = Path(repo_path)
@@ -213,7 +253,7 @@ def discover_recursive_orphans(
     queue = list(orphans)
     seen: set[str] = set()
     parents: dict[str, set[str]] = {m: set() for m in orphans}
-    redundant: dict[str, bool] = {}
+    classifications: dict[str, str] = {}
     found: set[str] = set()
 
     while queue:
@@ -228,13 +268,13 @@ def discover_recursive_orphans(
         if not path.exists():
             continue
 
-        is_red = redundant.get(mod)
-        if is_red is None:
+        cls = classifications.get(mod)
+        if cls is None:
             try:
-                is_red = orphan_analyzer.analyze_redundancy(path)
+                cls = orphan_analyzer.classify_module(path)
             except Exception:
-                is_red = False
-            redundant[mod] = is_red
+                cls = "candidate"
+            classifications[mod] = cls
         found.add(mod)
         for name in imports.get(mod, set()):
             if name not in modules:
@@ -249,13 +289,13 @@ def discover_recursive_orphans(
             if not target.exists():
                 continue
 
-            is_red_child = redundant.get(name)
-            if is_red_child is None:
+            child_cls = classifications.get(name)
+            if child_cls is None:
                 try:
-                    is_red_child = orphan_analyzer.analyze_redundancy(target)
+                    child_cls = orphan_analyzer.classify_module(target)
                 except Exception:
-                    is_red_child = False
-                redundant[name] = is_red_child
+                    child_cls = "candidate"
+                classifications[name] = child_cls
 
             parents.setdefault(name, set()).add(mod)
             found.add(name)
@@ -267,23 +307,30 @@ def discover_recursive_orphans(
     result = {
         m: {
             "parents": sorted(parents.get(m, [])),
-            "redundant": redundant.get(m, False),
+            "classification": classifications.get(m, "candidate"),
+            "redundant": classifications.get(m, "candidate") != "candidate",
         }
         for m in sorted(found - known)
     }
 
     try:  # best effort cache
         entries: Dict[str, Dict[str, Any]] = {}
+        class_entries: Dict[str, Dict[str, Any]] = {}
         for name, info in result.items():
             mod_path = Path(*name.split(".")).with_suffix(".py")
             pkg_init = Path(*name.split(".")) / "__init__.py"
             target = mod_path if (repo / mod_path).exists() else pkg_init
             full_path = (repo / target)
-            entries[full_path.relative_to(repo).as_posix()] = {
+            rel = full_path.relative_to(repo).as_posix()
+            entries[rel] = {
                 "parents": info.get("parents", []),
                 "redundant": bool(info.get("redundant")),
             }
+            class_entries[rel] = {
+                "classification": info.get("classification", "candidate")
+            }
         append_orphan_cache(repo, entries)
+        append_orphan_classifications(repo, class_entries)
     except Exception:  # pragma: no cover - best effort
         pass
 

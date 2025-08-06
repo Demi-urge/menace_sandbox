@@ -44,6 +44,7 @@ from metrics_exporter import (
     orphan_modules_tested_total,
     orphan_modules_failed_total,
     orphan_modules_redundant_total,
+    orphan_modules_legacy_total,
 )
 
 from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
@@ -51,6 +52,7 @@ from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
     discover_recursive_orphans,
     append_orphan_cache,
+    append_orphan_classifications,
     prune_orphan_cache,
 )
 
@@ -147,12 +149,14 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             rel_path = path.relative_to(ctx.repo).as_posix()
             if rel_path in module_map or rel_path in traces:
                 continue
+            classification = info.get("classification", "candidate")
             traces[rel_path] = {
                 "parents": info.get("parents", []),
-                "redundant": bool(info.get("redundant")),
+                "classification": classification,
+                "redundant": classification != "candidate",
             }
             trace_details[rel_path] = traces[rel_path]
-            if not traces[rel_path]["redundant"]:
+            if traces[rel_path].get("classification") == "candidate":
                 new_mods.append(rel_path)
 
         for rel_path in discover_isolated_modules(
@@ -160,7 +164,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         ):
             if rel_path in module_map or rel_path in traces:
                 continue
-            traces[rel_path] = {"parents": [], "redundant": False}
+            traces[rel_path] = {
+                "parents": [],
+                "classification": "candidate",
+                "redundant": False,
+            }
             trace_details[rel_path] = traces[rel_path]
             new_mods.append(rel_path)
 
@@ -170,7 +178,9 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 extra=log_record(
                     discovered=sorted(trace_details.keys()),
                     redundant=[
-                        m for m, inf in trace_details.items() if inf.get("redundant")
+                        m
+                        for m, inf in trace_details.items()
+                        if inf.get("classification") in {"legacy", "redundant"}
                     ],
                     parents={
                         m: inf.get("parents", []) for m, inf in trace_details.items()
@@ -191,6 +201,11 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
         try:
             append_orphan_cache(ctx.repo, traces)
+            class_entries = {
+                k: {"classification": v.get("classification", "candidate")}
+                for k, v in traces.items()
+            }
+            append_orphan_classifications(ctx.repo, class_entries)
         except Exception:
             logger.exception("failed to record orphan traces")
 
@@ -286,16 +301,19 @@ def _sandbox_cycle_runner(
         passed: list[str] = []
         failed: list[str] = []
         redundant: list[str] = []
-        tested_count = passed_count = failed_count = redundant_count = 0
+        legacy: list[str] = []
+        tested_count = passed_count = failed_count = redundant_count = legacy_count = 0
         if results:
             passed = results.get("orphan_passed_modules", [])
             failed = results.get("orphan_failed_modules", [])
             redundant = results.get("orphan_redundant_modules", [])
-            tested = sorted(set(passed) | set(failed) | set(redundant))
+            legacy = results.get("orphan_legacy_modules", [])
+            tested = sorted(set(passed) | set(failed) | set(redundant) | set(legacy))
             tested_count = len(tested)
             passed_count = len(passed)
             failed_count = len(failed)
             redundant_count = len(redundant)
+            legacy_count = len(legacy)
             logger.info(
                 "self test results",
                 extra=log_record(
@@ -303,12 +321,14 @@ def _sandbox_cycle_runner(
                     passed=passed,
                     failed=failed,
                     redundant=sorted(redundant),
+                    legacy=sorted(legacy),
                 ),
             )
             orphan_modules_tested_total.inc(tested_count)
             orphan_modules_reintroduced_total.inc(passed_count)
             orphan_modules_failed_total.inc(failed_count)
             orphan_modules_redundant_total.inc(redundant_count)
+            orphan_modules_legacy_total.inc(legacy_count)
         logger.debug("sandbox analysis start", extra={"cycle": idx})
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
