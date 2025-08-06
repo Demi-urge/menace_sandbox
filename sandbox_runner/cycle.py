@@ -45,6 +45,7 @@ from metrics_exporter import (
     orphan_modules_failed_total,
     orphan_modules_redundant_total,
     orphan_modules_legacy_total,
+    orphan_modules_reclassified_total,
 )
 
 from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
@@ -377,6 +378,7 @@ def _sandbox_cycle_runner(
         "orphan_modules_legacy",
     )
     for idx in range(ctx.cycles):
+        # ensure orphan modules are processed before each cycle begins
         include_orphan_modules(ctx)
 
         logger.debug(
