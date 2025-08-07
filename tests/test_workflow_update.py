@@ -44,9 +44,16 @@ def _load_thb():
 class StubIndex:
     def __init__(self, *a, **k):
         self._map = {"a.py": 1, "b.py": 1, "c.py": 2}
+        self.tags = {}
 
     def get(self, name):
         return self._map.get(name, 0)
+
+    def get_tags(self, name):
+        return self.tags.get(name, [])
+
+    def set_tags(self, name, tags):
+        self.tags[name] = list(tags)
 
 
 def test_try_integrate_into_workflows(tmp_path, monkeypatch):
@@ -62,6 +69,17 @@ def test_try_integrate_into_workflows(tmp_path, monkeypatch):
     stub = types.ModuleType("module_index_db")
     stub.ModuleIndexDB = StubIndex
     monkeypatch.setitem(sys.modules, "module_index_db", stub)
+
+    class DummySTS:
+        def __init__(self, *a, **k):
+            pass
+
+        async def _test_orphan_modules(self, paths):
+            return set(paths), set()
+
+    sts_stub = types.ModuleType("self_test_service")
+    sts_stub.SelfTestService = DummySTS
+    monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
     updated = env.try_integrate_into_workflows(["b.py"], workflows_db=db_path)
     recs = {r.wid: r for r in wf_db.fetch(limit=10)}
@@ -80,6 +98,18 @@ def test_try_integrate_no_match(tmp_path, monkeypatch):
     stub = types.ModuleType("module_index_db")
     stub.ModuleIndexDB = StubIndex
     monkeypatch.setitem(sys.modules, "module_index_db", stub)
+
+    class DummySTS:
+        def __init__(self, *a, **k):
+            pass
+
+        async def _test_orphan_modules(self, paths):
+            return set(paths), set()
+
+    sts_stub = types.ModuleType("self_test_service")
+    sts_stub.SelfTestService = DummySTS
+    monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
+
     updated = env.try_integrate_into_workflows(["d.py"], workflows_db=db_path)
     rec = wf_db.fetch(limit=10)[0]
     assert not updated
@@ -101,13 +131,31 @@ def test_try_integrate_duplicate_filenames(tmp_path, monkeypatch):
                 "pkg1/orphan.py": 1,
                 "pkg2/orphan.py": 1,
             }
+            self.tags = {}
 
         def get(self, name):
             return self._map.get(name, 0)
 
+        def get_tags(self, name):
+            return self.tags.get(name, [])
+
+        def set_tags(self, name, tags):
+            self.tags[name] = list(tags)
+
     stub = types.ModuleType("module_index_db")
     stub.ModuleIndexDB = StubDupIndex
     monkeypatch.setitem(sys.modules, "module_index_db", stub)
+
+    class DummySTS:
+        def __init__(self, *a, **k):
+            pass
+
+        async def _test_orphan_modules(self, paths):
+            return set(paths), set()
+
+    sts_stub = types.ModuleType("self_test_service")
+    sts_stub.SelfTestService = DummySTS
+    monkeypatch.setitem(sys.modules, "self_test_service", sts_stub)
 
     mods = ["pkg1/orphan.py", "pkg2/orphan.py"]
     updated = env.try_integrate_into_workflows(mods, workflows_db=db_path)

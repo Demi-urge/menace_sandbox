@@ -5091,8 +5091,10 @@ def try_integrate_into_workflows(
 
     from menace.task_handoff_bot import WorkflowDB
     from module_index_db import ModuleIndexDB
+    from self_test_service import SelfTestService
     import sqlite3
     import ast
+    import asyncio
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
@@ -5134,18 +5136,50 @@ def try_integrate_into_workflows(
                 imps.add(node.module.split(".")[0])
         return imps
 
-    orphan_imports = {
-        n: _imports(repo / n) for n in names
-    }
+    def _features(path: Path) -> tuple[set[int], set[str]]:
+        """Return argument counts and semantic tags for functions in ``path``."""
+        sigs: set[int] = set()
+        tags: set[str] = set()
+        try:
+            src = path.read_text(encoding="utf-8")
+            tree = ast.parse(src)
+        except Exception:
+            return sigs, tags
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                count = len(getattr(node.args, "args", []))
+                count += len(getattr(node.args, "kwonlyargs", []))
+                if getattr(node.args, "vararg", None):
+                    count += 1
+                if getattr(node.args, "kwarg", None):
+                    count += 1
+                sigs.add(count)
+                tags.add(node.name.lower())
+                doc = ast.get_docstring(node) or ""
+                for word in re.findall(r"[a-zA-Z_]+", doc.lower()):
+                    tags.add(word)
+        return sigs, tags
+
+    orphan_imports = {n: _imports(repo / n) for n in names}
+    orphan_features = {n: _features(repo / n) for n in names}
+    for mod, (_, tags) in orphan_features.items():
+        if tags:
+            try:
+                idx.set_tags(mod, tags)
+            except Exception:
+                pass
 
     wf_db = WorkflowDB(Path(workflows_db))
     workflows = wf_db.fetch(limit=1000)
     updated: list[int] = []
+    candidates: dict[int, list[str]] = {}
 
     for wf in workflows:
         step_groups: set[int] = set()
         step_imports: set[str] = set()
         step_names: list[str] = []
+        step_sigs: set[int] = set()
+        step_tags: set[str] = set()
         for step in wf.workflow:
             mod = step.split(":")[0]
             step_names.append(mod)
@@ -5154,36 +5188,72 @@ def try_integrate_into_workflows(
             try:
                 rel = file.resolve().relative_to(repo)
                 step_groups.add(idx.get(rel.as_posix()))
+                sigs, tags = _features(file)
+                step_sigs.update(sigs)
+                if tags:
+                    step_tags.update(tags)
+                    try:
+                        idx.set_tags(rel.as_posix(), tags)
+                    except Exception:
+                        pass
             except Exception:
                 pass
-        changed = False
         existing = set(wf.workflow)
         imported = {Path(s).stem for s in step_names}
+        new_mods: list[str] = []
         for mod, gid in grp_map.items():
             dotted = names[mod]
             if dotted in existing:
                 continue
+            sigs, tags = orphan_features.get(mod, (set(), set()))
             if (
                 gid in step_groups
+                or (tags & step_tags and sigs & step_sigs)
                 or dotted.split(".")[0] in step_imports
                 or orphan_imports[mod] & imported
             ):
-                wf.workflow.append(dotted)
-                existing.add(dotted)
-                changed = True
-        if changed:
-            updated.append(wf.wid)
+                new_mods.append(mod)
+        if new_mods:
+            candidates[wf.wid] = new_mods
 
-    if not updated:
+    if not candidates:
         return []
+
+    test_paths = [
+        (repo / m).as_posix() for mods in candidates.values() for m in mods
+    ]
+    svc = SelfTestService(
+        include_orphans=False,
+        discover_orphans=False,
+        discover_isolated=False,
+        integration_callback=None,
+    )
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        passed, _ = loop.run_until_complete(svc._test_orphan_modules(test_paths))
+    finally:
+        loop.close()
+        asyncio.set_event_loop(None)
+
+    passed_set = {Path(p).resolve().as_posix() for p in passed}
 
     with sqlite3.connect(wf_db.path) as conn:
         for wf in workflows:
-            if wf.wid in updated:
-                conn.execute(
-                    "UPDATE workflows SET workflow=? WHERE id=?",
-                    (",".join(wf.workflow), wf.wid),
-                )
+            mods = [
+                m
+                for m in candidates.get(wf.wid, [])
+                if (repo / m).resolve().as_posix() in passed_set
+            ]
+            if not mods:
+                continue
+            for mod in mods:
+                wf.workflow.append(names[mod])
+            conn.execute(
+                "UPDATE workflows SET workflow=? WHERE id=?",
+                (",".join(wf.workflow), wf.wid),
+            )
+            updated.append(wf.wid)
         conn.commit()
 
     return updated
