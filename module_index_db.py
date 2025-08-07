@@ -25,6 +25,7 @@ class ModuleIndexDB:
             self.path = default_path
         self._map: Dict[str, int] = {}
         self._groups: Dict[str, int] = {}
+        self._tags: Dict[str, list[str]] = {}
 
         auto_env = os.getenv("SANDBOX_AUTO_MAP") == "1"
         legacy_env = os.getenv("SANDBOX_AUTODISCOVER_MODULES") == "1"
@@ -78,6 +79,13 @@ class ModuleIndexDB:
                             }
                         if isinstance(grps, dict):
                             self._groups = {str(k): int(v) for k, v in grps.items()}
+                        tag_data = data.get("tags", {})
+                        if isinstance(tag_data, dict):
+                            self._tags = {
+                                self._norm(str(k)): [str(t) for t in v]
+                                for k, v in tag_data.items()
+                                if isinstance(v, list)
+                            }
                     elif all(isinstance(v, int) for v in data.values()):
                         # ``build_module_map`` writes module -> int mappings
                         self._map = {
@@ -100,10 +108,16 @@ class ModuleIndexDB:
                             key = str(grp)
                             idx = grp_idx.setdefault(key, abs(hash(key)) % 1000)
                             self._groups.setdefault(key, idx)
-                            self._map[self._norm(mod)] = idx
+                                norm = self._norm(mod)
+                                self._map[norm] = idx
+                                if "tags" in data:
+                                    tags = data.get("tags", {}).get(mod)
+                                    if isinstance(tags, list):
+                                        self._tags[norm] = [str(t) for t in tags]
             except Exception:
                 self._map = {}
                 self._groups = {}
+                self._tags = {}
 
     # --------------------------------------------------------------
     def _norm(self, name: str) -> str:
@@ -138,6 +152,18 @@ class ModuleIndexDB:
         self._map[norm] = idx
         self.save()
         return idx
+
+    # --------------------------------------------------------------
+    def get_tags(self, name: str) -> list[str]:
+        """Return stored tags for ``name`` or an empty list."""
+        return list(self._tags.get(self._norm(name), []))
+
+    # --------------------------------------------------------------
+    def set_tags(self, name: str, tags: Iterable[str]) -> None:
+        """Persist ``tags`` for ``name``."""
+        norm = self._norm(name)
+        self._tags[norm] = sorted({str(t) for t in tags})
+        self.save()
 
     # --------------------------------------------------------------
     def group_id(self, group: str) -> int:
@@ -218,7 +244,15 @@ class ModuleIndexDB:
         try:
             tmp = self.path.with_suffix(".tmp")
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump({"modules": self._map, "groups": self._groups}, fh, indent=2)
+                json.dump(
+                    {
+                        "modules": self._map,
+                        "groups": self._groups,
+                        "tags": self._tags,
+                    },
+                    fh,
+                    indent=2,
+                )
             os.replace(tmp, self.path)
         except Exception:
             pass
