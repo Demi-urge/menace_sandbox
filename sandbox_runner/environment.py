@@ -5831,6 +5831,49 @@ def auto_include_modules(
         "redundant": [m for m in redundant_mods if m in derived_mods],
     }
 
+    # Evaluate preliminary ROI for each candidate module and exclude those with
+    # non-positive projections.
+    low_roi: list[str] = []
+    try:  # pragma: no cover - best effort
+        from menace.roi_tracker import ROITracker
+
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        hist_path = data_dir / "roi_history.json"
+        tracker = ROITracker()
+        if hist_path.exists():
+            try:
+                tracker.load_history(str(hist_path))
+            except Exception:
+                pass
+        for m in list(mods):
+            roi_val = sum(tracker.module_deltas.get(m, []))
+            if roi_val <= 0.0:
+                low_roi.append(m)
+        if low_roi:
+            mods = [m for m in mods if m not in low_roi]
+            tested.setdefault("low_roi", []).extend(low_roi)
+            # Update orphan cache with low ROI reason
+            cache = data_dir / "orphan_modules.json"
+            try:
+                existing = json.loads(cache.read_text()) if cache.exists() else {}
+            except Exception:
+                existing = {}
+            if not isinstance(existing, dict):
+                existing = {}
+            for m in low_roi:
+                info = existing.get(m, {})
+                info["reason"] = "low_roi"
+                existing[m] = info
+                if m in tested.get("added", []):
+                    tested["added"].remove(m)
+            try:
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                cache.write_text(json.dumps(existing, indent=2))
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     if not mods:
         res = run_workflow_simulations()
         tracker = res[0] if isinstance(res, tuple) else res
