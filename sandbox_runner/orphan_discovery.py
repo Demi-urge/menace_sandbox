@@ -14,6 +14,34 @@ import orphan_analyzer
 logger = logging.getLogger(__name__)
 
 
+def _extract_module_from_call(node: ast.Call) -> str | None:
+    """Return module name if *node* represents a dynamic import call."""
+
+    if (
+        isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "importlib"
+        and node.func.attr == "import_module"
+        and node.args
+    ):
+        arg = node.args[0]
+        if isinstance(arg, ast.Str):
+            return arg.s
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+    elif (
+        isinstance(node.func, ast.Name)
+        and node.func.id in {"import_module", "__import__"}
+        and node.args
+    ):
+        arg = node.args[0]
+        if isinstance(arg, ast.Str):
+            return arg.s
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            return arg.value
+    return None
+
+
 def _cache_path(repo: Path | str) -> Path:
     """Return path to the orphan module cache for ``repo``."""
 
@@ -249,29 +277,7 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
                     name = ".".join(base_prefix + alias.name.split("."))
                     imports.add(name)
         elif isinstance(node, ast.Call):
-            mod_name: str | None = None
-            if (
-                isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "importlib"
-                and node.func.attr == "import_module"
-                and node.args
-            ):
-                arg = node.args[0]
-                if isinstance(arg, ast.Str):
-                    mod_name = arg.s
-                elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                    mod_name = arg.value
-            elif (
-                isinstance(node.func, ast.Name)
-                and node.func.id in {"import_module", "__import__"}
-                and node.args
-            ):
-                arg = node.args[0]
-                if isinstance(arg, ast.Str):
-                    mod_name = arg.s
-                elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                    mod_name = arg.value
+            mod_name = _extract_module_from_call(node)
             if mod_name:
                 imports.add(mod_name)
 
