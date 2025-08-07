@@ -36,6 +36,7 @@ class _SS:
         self.recursive_isolated = False
         self.auto_include_isolated = True
         self.recursive_orphan_scan = True
+        self.test_redundant_modules = False
 ss_mod.SandboxSettings = _SS
 sys.modules.setdefault("sandbox_settings", ss_mod)
 
@@ -575,3 +576,77 @@ def test_skipped_modules_have_classifications(tmp_path, monkeypatch):
     assert cache["legacy.py"]["redundant"] is True
     assert cache["red.py"]["classification"] == "redundant"
     assert cache["red.py"]["redundant"] is True
+
+
+def test_redundant_modules_integrated_when_enabled(monkeypatch, tmp_path):
+    from tests.test_recursive_orphans import _load_methods
+
+    _integrate_orphans, _, _, _ = _load_methods()
+    g = _integrate_orphans.__globals__
+
+    # enable redundant testing
+    monkeypatch.setitem(
+        g,
+        "SandboxSettings",
+        lambda: types.SimpleNamespace(test_redundant_modules=True),
+    )
+
+    # capture metric updates
+    class DummyMetric:
+        def __init__(self) -> None:
+            self.value = 0
+
+        def inc(self, n: int) -> None:
+            self.value += n
+
+    rein = DummyMetric()
+    red = DummyMetric()
+    monkeypatch.setitem(g, "orphan_modules_reintroduced_total", rein)
+    monkeypatch.setitem(g, "orphan_modules_redundant_total", red)
+    monkeypatch.setitem(g, "orphan_modules_legacy_total", DummyMetric())
+
+    auto_calls: list[list[str]] = []
+    try_calls: list[list[str]] = []
+
+    def fake_auto(mods, recursive=True, validate=True):
+        auto_calls.append(list(mods))
+
+    def fake_try(mods):
+        try_calls.append(list(mods))
+
+    env = types.SimpleNamespace(
+        auto_include_modules=fake_auto,
+        try_integrate_into_workflows=fake_try,
+    )
+    monkeypatch.setitem(g, "environment", env)
+    monkeypatch.setitem(g, "auto_include_modules", fake_auto)
+
+    class DummyIndex:
+        def refresh(self, modules=None, force=False):
+            pass
+
+        def save(self):
+            pass
+
+        def get(self, name):
+            return 1
+
+    logger = types.SimpleNamespace(info=lambda *a, **k: None, exception=lambda *a, **k: None)
+    engine = types.SimpleNamespace(
+        module_index=DummyIndex(),
+        module_clusters={},
+        logger=logger,
+        orphan_traces={"mod.py": {"classification": "redundant"}},
+        _last_map_refresh=0.0,
+    )
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    path = tmp_path / "mod.py"
+    path.write_text("pass\n")
+
+    integrated = _integrate_orphans(engine, [str(path)])
+    assert integrated == {"mod.py"}
+    assert auto_calls and auto_calls[0] == ["mod.py"]
+    assert try_calls and try_calls[0] == ["mod.py"]
+    assert rein.value == 1
+    assert red.value == 1
