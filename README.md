@@ -147,10 +147,14 @@ Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/au
 `discover_recursive_orphans` walks import chains for orphaned modules, while
 `include_orphan_modules` queues names from `sandbox_data/orphan_modules.json`.
 Passing files are merged into `sandbox_data/module_map.json` via
-`auto_include_modules`. See [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md)
+`auto_include_modules`. With `recursive=True` or `SANDBOX_RECURSIVE_ORPHANS=1`
+the helper expands local imports and, when `SANDBOX_AUTO_INCLUDE_ISOLATED=1`,
+adds files returned by `scripts.discover_isolated_modules`. Redundant entries
+remain in `sandbox_data/orphan_modules.json` unless `SANDBOX_TEST_REDUNDANT=1`
+allows integration. See [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md)
 and [docs/self_improvement_engine.md](docs/self_improvement_engine.md) for full
-examples and environment variables such as `SANDBOX_RECURSIVE_ORPHANS` and
-`SANDBOX_RECURSIVE_ISOLATED`.
+examples and environment variables such as `SANDBOX_RECURSIVE_ORPHANS`,
+`SANDBOX_AUTO_INCLUDE_ISOLATED` and `SANDBOX_RECURSIVE_ISOLATED`.
 
 A new `menace` CLI wraps common workflows so you no longer need to remember individual scripts.
 
