@@ -201,33 +201,40 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             )
 
 
-        candidate_mods = [
-            m
-            for m, info in traces.items()
-            if m not in module_map
-            and (
-                getattr(settings, "test_redundant_modules", False)
-                or (
-                    info.get("classification") not in {"redundant", "legacy"}
-                    and not info.get("redundant")
-                )
-            )
-        ]
-        
+        candidate_mods: list[str] = []
+        for m, info in traces.items():
+            if m in module_map:
+                continue
+            cls = info.get("classification")
+            if not getattr(settings, "test_redundant_modules", False):
+                if cls in {"redundant", "legacy"} or info.get("redundant"):
+                    continue
+                if cls == "candidate":
+                    oa = sys.modules.get("orphan_analyzer", orphan_analyzer)
+                    try:
+                        if getattr(oa, "analyze_redundancy", lambda _p: False)(ctx.repo / m):
+                            info["classification"] = "redundant"
+                            info["redundant"] = True
+                            continue
+                    except Exception:
+                        pass
+            candidate_mods.append(m)
+
         pre_mods = set(module_map)
         tested: Dict[str, list[str]] = {"added": [], "failed": [], "redundant": []}
+        tracker = None
         if candidate_mods:
             try:
                 tracker, tested = auto_include_modules(
                     candidate_mods, recursive=True, validate=True
                 )
-                if tracker is not None:
-                    try:
-                        ctx.tracker.merge_history(tracker)
-                    except Exception:
-                        logger.exception("failed to merge orphan metrics")
             except Exception:
                 logger.exception("isolated module auto-inclusion failed")
+            if tracker:
+                try:
+                    ctx.tracker.merge_history(tracker)
+                except Exception:
+                    logger.exception("failed to merge orphan metrics")
         
         added = set(tested.get("added", []))
         failed = set(tested.get("failed", []))
