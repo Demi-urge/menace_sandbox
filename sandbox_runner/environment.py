@@ -5537,7 +5537,8 @@ def auto_include_modules(
     ``discover_isolated=True``. Only modules that pass these self tests are
     considered for integration. Modules that fail validation or are classified
     as redundant after testing are recorded in ``sandbox_data/orphan_modules.json``
-    and integrated only when :class:`sandbox_settings.SandboxSettings` sets
+    while passing entries are pruned from that cache. Redundant modules are
+    integrated only when :class:`sandbox_settings.SandboxSettings` sets
     ``test_redundant_modules``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
@@ -5702,40 +5703,42 @@ def auto_include_modules(
             passed_mods.append(mod)
 
         try:
-            cls = orphan_analyzer.classify_module(path)
-            if cls != "candidate":
-                redundant_mods[mod] = cls
+            if hasattr(orphan_analyzer, "classify_module"):
+                cls = orphan_analyzer.classify_module(path)
+                if cls != "candidate":
+                    redundant_mods[mod] = cls
+            elif hasattr(orphan_analyzer, "analyze_redundancy"):
+                if orphan_analyzer.analyze_redundancy(path):
+                    redundant_mods[mod] = "redundant"
         except Exception:
             pass
 
     cache = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "orphan_modules.json"
-    if redundant_mods or failed_mods:
-        try:
-            existing = json.loads(cache.read_text()) if cache.exists() else {}
-            if not isinstance(existing, dict):
-                existing = {}
-        except Exception:
-            existing = {}
-        for m in set(redundant_mods) | set(failed_mods):
-            info = existing.get(m, {})
-            if m in redundant_mods:
-                cls = redundant_mods[m]
-                info["classification"] = cls
-                info["redundant"] = cls != "candidate"
-            if m in failed_mods:
-                info["failed"] = True
-            existing[m] = info
-        try:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_text(json.dumps(existing, indent=2))
-        except Exception:
-            pass
-    else:
-        try:
-            if cache.exists():
-                cache.write_text(json.dumps({}))
-        except Exception:
-            pass
+    try:
+        existing = json.loads(cache.read_text()) if cache.exists() else {}
+    except Exception:
+        existing = {}
+    if not isinstance(existing, dict):
+        existing = {}
+    # Remove passing modules from the orphan cache
+    for m in passed_mods:
+        if m in existing and m not in redundant_mods and m not in failed_mods:
+            del existing[m]
+    # Record redundant and failed modules
+    for m in set(redundant_mods) | set(failed_mods):
+        info = existing.get(m, {})
+        if m in redundant_mods:
+            cls = redundant_mods[m]
+            info["classification"] = cls
+            info["redundant"] = cls != "candidate"
+        if m in failed_mods:
+            info["failed"] = True
+        existing[m] = info
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(existing, indent=2))
+    except Exception:
+        pass
 
     mods = [
         m
