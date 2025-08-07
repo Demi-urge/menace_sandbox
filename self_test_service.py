@@ -662,6 +662,9 @@ class SelfTestService:
         and their parent chains are captured in :attr:`orphan_traces`.
         """
         from sandbox_runner import discover_recursive_orphans as _discover
+        from scripts.discover_isolated_modules import (
+            discover_isolated_modules as _discover_iso,
+        )
 
         trace = _discover(
             str(Path.cwd()),
@@ -680,10 +683,21 @@ class SelfTestService:
             if isinstance(v, dict) and "redundant" in v:
                 info["redundant"] = bool(v["redundant"])
             self.orphan_traces[str(Path(*k.split(".")).with_suffix(".py"))] = info
+
+        # incorporate isolated modules so dependency chains are complete
+        try:
+            isolated = _discover_iso(Path.cwd(), recursive=True)
+        except Exception:
+            isolated = []
+        for m in isolated:
+            key = str(Path(m))
+            self.orphan_traces.setdefault(
+                key,
+                {"parents": [], "classification": "candidate", "redundant": False},
+            )
+
         roots = list(self.orphan_traces.keys())
-        initial = {
-            m: info.get("parents", []) for m, info in self.orphan_traces.items()
-        }
+        initial = {m: info.get("parents", []) for m, info in self.orphan_traces.items()}
 
         def _on_module(rel: str, path: Path, parents: list[str]) -> None:
             entry = self.orphan_traces.setdefault(
@@ -908,6 +922,37 @@ class SelfTestService:
             self.logger.error("invalid orphan module cache format: %s", type(data))
 
     # ------------------------------------------------------------------
+    async def _test_orphan_modules(self, paths: Iterable[str]) -> tuple[set[str], set[str]]:
+        """Execute tests for *paths* and return passing and failing modules."""
+
+        passed: set[str] = set()
+        failed: set[str] = set()
+        for mod in paths:
+            cmd = [
+                sys.executable,
+                "-m",
+                self.test_runner,
+                "-q",
+                "--json-report",
+                "--json-report-file=-",
+                mod,
+            ]
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await proc.communicate()
+                if proc.returncode == 0:
+                    passed.add(mod)
+                else:
+                    failed.add(mod)
+            except Exception:
+                failed.add(mod)
+        return passed, failed
+
+    # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
         other_args = [a for a in self.pytest_args if a.startswith("-")]
         paths = [a for a in self.pytest_args if not a.startswith("-")]
@@ -958,21 +1003,13 @@ class SelfTestService:
             except Exception:
                 self.logger.exception("failed to discover orphan modules")
 
-        if self.discover_orphans:
+        if self.discover_orphans or self.discover_isolated:
             try:
                 found = self._discover_orphans()
                 discovered.extend(found)
                 orphan_list.extend(found)
             except Exception:
                 self.logger.exception("failed to auto-discover orphan modules")
-
-        if self.discover_isolated:
-            try:
-                found = self._discover_isolated()
-                discovered.extend(found)
-                orphan_list.extend(found)
-            except Exception:
-                self.logger.exception("failed to auto-discover isolated modules")
 
         if orphan_list:
             orphan_list = list(dict.fromkeys(orphan_list))
@@ -1027,6 +1064,14 @@ class SelfTestService:
         if orphan_list and not self.include_redundant:
             orphan_list = [m for m in orphan_list if m not in redundant_list]
 
+        passed_mods: set[str] = set()
+        failed_mods: set[str] = set()
+        if orphan_list:
+            passed_mods, failed_mods = await self._test_orphan_modules(orphan_list)
+            self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
+            self.orphan_failed_modules = sorted(failed_mods)
+            self.orphan_redundant_modules = sorted(set(redundant_list))
+
         combined_file = list(dict.fromkeys(existing + discovered))
         if combined_file or path.exists():
             try:
@@ -1056,15 +1101,10 @@ class SelfTestService:
             coverage_total = 0.0
             runtime_total = 0.0
 
-        # Always include newly discovered modules in the test run.
-        for m in orphan_list:
-            if m not in paths:
-                paths.append(m)
-
         self._state = None
 
         all_orphans = set(orphan_list) | set(redundant_list)
-        orphan_set = set(orphan_list)
+        orphan_set: set[str] = set()
 
         queue: list[str] = [
             p or ""
@@ -1303,10 +1343,6 @@ class SelfTestService:
             stdout_snip = ""
             stderr_snip = ""
             logs_snip = ""
-            orphan_failed: list[str] = []
-            orphan_passed: list[str] = []
-            passed_set: list[str] = []
-
             for (cmd, tmp, is_c, name, p), res in zip(proc_info, results):
                 if isinstance(res, Exception):
                     if first_exc is None:
@@ -1322,13 +1358,9 @@ class SelfTestService:
                     stdout_snip += out_snip
                     stderr_snip += err_snip
                     logs_snip += log_snip
-                    if p in orphan_set:
-                        orphan_failed.append(p)
 
                 if p in queue:
                     queue.remove(p)
-                if p in orphan_set and not failed_flag:
-                    orphan_passed.append(p)
                 self._save_state(queue, passed, failed, coverage_total, runtime_total)
 
                 if self.result_callback:
@@ -1358,11 +1390,9 @@ class SelfTestService:
             }
             passed_set: list[str] = []
             if all_orphans:
-                passed_set = [p for p in orphan_passed if p not in orphan_failed]
-                redundant_set = sorted(set(redundant_list))
-                self.orphan_passed_modules = sorted(passed_set)
-                self.orphan_failed_modules = sorted(orphan_failed)
-                self.orphan_redundant_modules = list(redundant_set)
+                passed_set = list(self.orphan_passed_modules)
+                orphan_failed = list(self.orphan_failed_modules)
+                redundant_set = list(self.orphan_redundant_modules)
                 self.results["orphan_total"] = len(all_orphans)
                 self.results["orphan_failed"] = len(orphan_failed)
                 self.results["orphan_passed"] = self.orphan_passed_modules
