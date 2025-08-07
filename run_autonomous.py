@@ -1045,19 +1045,19 @@ def main(argv: List[str] | None = None) -> None:
         help="reload last ROI and synergy histories before running",
     )
     parser.add_argument(
-        "--recursive-include",
         "--recursive-orphans",
+        "--recursive-include",
         action="store_true",
         dest="recursive_orphans",
         default=None,
         help=(
             "recursively integrate orphan dependency chains (sets "
-            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-orphans)"
+            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-include)"
         ),
     )
     parser.add_argument(
-        "--no-recursive-include",
         "--no-recursive-orphans",
+        "--no-recursive-include",
         action="store_false",
         dest="recursive_orphans",
         help=(
@@ -1198,12 +1198,22 @@ def main(argv: List[str] | None = None) -> None:
     os.environ["SELF_TEST_RECURSIVE_ISOLATED"] = val_iso
     os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
     os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+    include_orphans = True
     if getattr(args, "include_orphans") is False:
+        include_orphans = False
+    args.include_orphans = include_orphans
+    os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if include_orphans else "0"
+    os.environ["SELF_TEST_INCLUDE_ORPHANS"] = "1" if include_orphans else "0"
+    if not include_orphans:
         os.environ["SANDBOX_DISABLE_ORPHANS"] = "1"
-        os.environ["SELF_TEST_DISABLE_ORPHANS"] = "1"
+    discover_orphans = True
     if getattr(args, "discover_orphans") is False:
-        os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1"
-        os.environ["SELF_TEST_DISCOVER_ORPHANS"] = "0"
+        discover_orphans = False
+    args.discover_orphans = discover_orphans
+    os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1" if not discover_orphans else "0"
+    os.environ["SELF_TEST_DISCOVER_ORPHANS"] = (
+        "1" if discover_orphans else "0"
+    )
     if getattr(args, "discover_isolated") is not None:
         val_di = "1" if args.discover_isolated else "0"
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = val_di

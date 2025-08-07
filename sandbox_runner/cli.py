@@ -1075,19 +1075,19 @@ def main(argv: List[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
-        "--recursive-include",
         "--recursive-orphans",
+        "--recursive-include",
         action="store_true",
         dest="recursive_orphans",
         default=None,
         help=(
             "recursively integrate orphan dependency chains (sets "
-            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-orphans)"
+            "SANDBOX_RECURSIVE_ORPHANS=1; alias: --recursive-include)"
         ),
     )
     parser.add_argument(
-        "--no-recursive-include",
         "--no-recursive-orphans",
+        "--no-recursive-include",
         action="store_false",
         dest="recursive_orphans",
         help=(

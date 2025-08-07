@@ -913,13 +913,23 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         include_orphans = env_val.lower() in {"1", "true", "yes"}
     if getattr(args, "include_orphans") is False:
         include_orphans = False
+    args.include_orphans = include_orphans
     os.environ["SANDBOX_INCLUDE_ORPHANS"] = "1" if include_orphans else "0"
+    os.environ["SELF_TEST_INCLUDE_ORPHANS"] = (
+        "1" if include_orphans else "0"
+    )
+    if not include_orphans:
+        os.environ["SANDBOX_DISABLE_ORPHANS"] = "1"
 
     discover_orphans = True
     if os.getenv("SANDBOX_DISABLE_ORPHAN_SCAN") == "1":
         discover_orphans = False
     if getattr(args, "discover_orphans") is False:
         discover_orphans = False
+    args.discover_orphans = discover_orphans
+    os.environ["SELF_TEST_DISCOVER_ORPHANS"] = (
+        "1" if discover_orphans else "0"
+    )
     if getattr(settings, "auto_include_isolated", True):
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
         os.environ["SANDBOX_RECURSIVE_ISOLATED"] = "1"
@@ -938,6 +948,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     arg_rec = getattr(args, "recursive_orphans", None)
     if arg_rec is not None:
         recursive_orphans = arg_rec
+    args.recursive_orphans = recursive_orphans
     val = "1" if recursive_orphans else "0"
     os.environ["SANDBOX_DISABLE_ORPHAN_SCAN"] = "1" if not discover_orphans else "0"
     os.environ["SANDBOX_RECURSIVE_ORPHANS"] = val
