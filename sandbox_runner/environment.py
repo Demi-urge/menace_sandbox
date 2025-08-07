@@ -5190,6 +5190,69 @@ def try_integrate_into_workflows(
 
 
 # ----------------------------------------------------------------------
+def append_orphan_modules_to_workflows(
+    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+) -> list[int]:
+    """Append modules to existing workflows and commit the updates.
+
+    Parameters
+    ----------
+    modules:
+        Iterable of module file paths. Paths may be absolute or repository
+        relative.
+    workflows_db:
+        Location of the workflow database.
+
+    Returns
+    -------
+    list[int]
+        IDs of workflows that were updated.
+    """
+
+    from menace.task_handoff_bot import WorkflowDB
+    import sqlite3
+
+    repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+    steps: list[str] = []
+    for m in modules:
+        p = Path(m)
+        if p.is_absolute():
+            try:
+                rel = p.resolve().relative_to(repo)
+            except Exception:
+                rel = p
+        else:
+            rel = p
+        steps.append(rel.with_suffix("").as_posix().replace("/", "."))
+
+    if not steps:
+        return []
+
+    wf_db = WorkflowDB(Path(workflows_db))
+    workflows = wf_db.fetch(limit=1000)
+    updated: list[int] = []
+
+    with sqlite3.connect(wf_db.path) as conn:
+        for wf in workflows:
+            changed = False
+            existing = set(wf.workflow)
+            for step in steps:
+                if step not in existing:
+                    wf.workflow.append(step)
+                    existing.add(step)
+                    changed = True
+            if changed:
+                conn.execute(
+                    "UPDATE workflows SET workflow=? WHERE id=?",
+                    (",".join(wf.workflow), wf.wid),
+                )
+                updated.append(wf.wid)
+        conn.commit()
+
+    return updated
+
+
+# ----------------------------------------------------------------------
 def run_workflow_simulations(
     workflows_db: str | Path = "workflows.db",
     env_presets: List[Dict[str, Any]] | None = None,
