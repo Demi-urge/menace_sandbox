@@ -2369,6 +2369,48 @@ class SelfImprovementEngine:
         return []
 
     # ------------------------------------------------------------------
+    def retest_redundant_modules(self) -> None:
+        """Re-run self tests for modules previously classified as redundant.
+
+        Modules listed in ``orphan_modules.json`` that have a corresponding
+        classification of ``"redundant"`` in ``orphan_classifications.json``
+        are re-executed via :func:`environment.auto_include_modules` with
+        ``validate=True`` so they can be reintegrated once they start passing
+        their self tests again.
+        """
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        if not data_dir.is_absolute():
+            data_dir = repo / data_dir
+        orphan_path = data_dir / "orphan_modules.json"
+        meta_path = data_dir / "orphan_classifications.json"
+        try:
+            modules = json.loads(orphan_path.read_text()) if orphan_path.exists() else []
+        except Exception:  # pragma: no cover - best effort
+            self.logger.exception("failed to load orphan modules")
+            return
+        try:
+            meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        except Exception:  # pragma: no cover - best effort
+            meta = {}
+
+        redundant = [
+            m
+            for m in modules
+            if isinstance(m, str)
+            and meta.get(m, {}).get("classification") == "redundant"
+        ]
+        if not redundant:
+            return
+        try:
+            environment.auto_include_modules(
+                sorted(redundant), recursive=True, validate=True
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("redundant module recheck failed: %s", exc)
+
+    # ------------------------------------------------------------------
     def _refresh_module_map(self, modules: Iterable[str] | None = None) -> None:
         """Refresh module grouping when new modules appear.
 
@@ -2531,6 +2573,12 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            try:
+                self.retest_redundant_modules()
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "redundant module check failed: %s", exc
+                )
             # refresh orphan data so new modules are considered before policy evaluation
             self._update_orphan_modules()
             orphans = self._load_orphan_candidates()

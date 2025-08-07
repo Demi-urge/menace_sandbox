@@ -57,9 +57,7 @@ class EvolutionScheduler:
                     )
                 error_spikes = []
                 try:
-                    error_spikes = DataBot.detect_anomalies(
-                        df, "errors", metrics_db=self.data_bot.db
-                    )
+                    error_spikes = DataBot.detect_anomalies(df, "errors")
                 except Exception as exc:
                     error_spikes = []
                     self.logger.exception("detect_anomalies failed: %s", exc)
@@ -96,13 +94,7 @@ class EvolutionScheduler:
                     except Exception as exc:
                         self.logger.exception("improvement cycle failed: %s", exc)
                         self.failure_count += 1
-                if (
-                    error_rate > self.orchestrator.triggers.error_rate
-                    or energy < self.orchestrator.triggers.energy_threshold
-                    or anomaly_count >= self.anomaly_threshold
-                    or engagement_trend < self.engagement_threshold
-                ):
-                    self.orchestrator.run_cycle()
+                self.orchestrator.run_cycle()
             except Exception as exc:
                 self.logger.exception("evolution cycle failed: %s", exc)
                 self.failure_count += 1
