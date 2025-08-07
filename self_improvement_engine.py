@@ -1446,8 +1446,16 @@ class SelfImprovementEngine:
             classifications[rel] = {"classification": cls}
             if cls == "legacy":
                 legacy.append(rel)
+                self.logger.info(
+                    "orphan module classified",
+                    extra=log_record(module=rel, classification="legacy"),
+                )
             elif cls == "redundant":
                 redundant.append(rel)
+                self.logger.info(
+                    "orphan module classified",
+                    extra=log_record(module=rel, classification="redundant"),
+                )
             else:
                 candidates.append(rel)
             try:
@@ -1494,12 +1502,12 @@ class SelfImprovementEngine:
                 base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                 tracker.update(base, base, metrics=counts)
             try:
-                orphan_modules_tested_total.set(0)
-                orphan_modules_passed_total.set(0)
-                orphan_modules_failed_total.set(0)
-                orphan_modules_reclassified_total.set(0)
-                orphan_modules_redundant_total.set(len(redundant))
-                orphan_modules_legacy_total.set(len(legacy))
+                orphan_modules_tested_total.inc(0)
+                orphan_modules_passed_total.inc(0)
+                orphan_modules_failed_total.inc(0)
+                orphan_modules_reclassified_total.inc(0)
+                orphan_modules_redundant_total.inc(len(redundant))
+                orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
                 pass
             return set()
@@ -1573,12 +1581,12 @@ class SelfImprovementEngine:
                 base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                 tracker.update(base, base, metrics=counts)
             try:
-                orphan_modules_tested_total.set(len(modules))
-                orphan_modules_passed_total.set(len(passed))
-                orphan_modules_failed_total.set(len(failed_mods))
-                orphan_modules_reclassified_total.set(len(reclassified))
-                orphan_modules_redundant_total.set(len(redundant))
-                orphan_modules_legacy_total.set(len(legacy))
+                orphan_modules_tested_total.inc(len(modules))
+                orphan_modules_passed_total.inc(len(passed))
+                orphan_modules_failed_total.inc(len(failed_mods))
+                orphan_modules_reclassified_total.inc(len(reclassified))
+                orphan_modules_redundant_total.inc(len(redundant))
+                orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
                 pass
             try:
@@ -1675,12 +1683,12 @@ class SelfImprovementEngine:
             base = tracker.roi_history[-1] if tracker.roi_history else 0.0
             tracker.update(base, base, metrics=counts)
         try:
-            orphan_modules_tested_total.set(len(modules))
-            orphan_modules_passed_total.set(len(passing))
-            orphan_modules_failed_total.set(len(failed_mods))
-            orphan_modules_reclassified_total.set(len(reclassified))
-            orphan_modules_redundant_total.set(len(redundant))
-            orphan_modules_legacy_total.set(len(legacy))
+            orphan_modules_tested_total.inc(len(modules))
+            orphan_modules_passed_total.inc(len(passing))
+            orphan_modules_failed_total.inc(len(failed_mods))
+            orphan_modules_reclassified_total.inc(len(reclassified))
+            orphan_modules_redundant_total.inc(len(redundant))
+            orphan_modules_legacy_total.inc(len(legacy))
         except Exception:
             pass
 
@@ -1752,7 +1760,7 @@ class SelfImprovementEngine:
             if cls != "candidate":
                 self.logger.info(
                     "redundant module skipped",
-                    extra=log_record(module=rel),
+                    extra=log_record(module=rel, classification=cls),
                 )
                 try:
                     if cls == "legacy":
@@ -2092,7 +2100,8 @@ class SelfImprovementEngine:
                 info["redundant"] = True
                 skipped.append(m)
                 self.logger.info(
-                    "redundant module skipped", extra=log_record(module=m)
+                    "redundant module skipped",
+                    extra=log_record(module=m, classification=cls),
                 )
                 try:
                     if cls == "legacy":
@@ -2266,7 +2275,8 @@ class SelfImprovementEngine:
                 if cls != "candidate":
                     skipped.add(rel)
                     self.logger.info(
-                        "redundant module skipped", extra=log_record(module=rel)
+                        "redundant module skipped",
+                        extra=log_record(module=rel, classification=cls),
                     )
                     try:
                         if cls == "legacy":
