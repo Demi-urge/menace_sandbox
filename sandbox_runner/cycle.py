@@ -206,15 +206,41 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             if m in module_map:
                 continue
             cls = info.get("classification")
+            path = ctx.repo / m
+            try:
+                cur_mtime = path.stat().st_mtime
+            except Exception:
+                cur_mtime = None
+
+            flagged = info.get("failed") or info.get("redundant") or cls in {"redundant", "legacy"}
+            if flagged:
+                prev_mtime = info.get("mtime")
+                if prev_mtime is None:
+                    if cur_mtime is not None:
+                        info["mtime"] = cur_mtime
+                    continue
+                if cur_mtime is not None and cur_mtime > prev_mtime:
+                    info.pop("failed", None)
+                    info["redundant"] = False
+                    info["classification"] = "candidate"
+                    if cur_mtime is not None:
+                        info["mtime"] = cur_mtime
+                    candidate_mods.append(m)
+                continue
+
             if not getattr(settings, "test_redundant_modules", False):
                 if cls in {"redundant", "legacy"} or info.get("redundant"):
+                    if cur_mtime is not None:
+                        info["mtime"] = cur_mtime
                     continue
                 if cls == "candidate":
                     oa = sys.modules.get("orphan_analyzer", orphan_analyzer)
                     try:
-                        if getattr(oa, "analyze_redundancy", lambda _p: False)(ctx.repo / m):
+                        if getattr(oa, "analyze_redundancy", lambda _p: False)(path):
                             info["classification"] = "redundant"
                             info["redundant"] = True
+                            if cur_mtime is not None:
+                                info["mtime"] = cur_mtime
                             continue
                     except Exception:
                         pass
@@ -259,6 +285,17 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             entry["redundant"] = cls != "candidate"
             if m in failed:
                 entry["failed"] = True
+            else:
+                entry.pop("failed", None)
+            try:
+                mtime = (ctx.repo / m).stat().st_mtime
+            except Exception:
+                mtime = None
+            if m in failed or m in redundant:
+                if mtime is not None:
+                    entry["mtime"] = mtime
+            else:
+                entry.pop("mtime", None)
             try:
                 if prev_cls == "legacy" and cls != "legacy":
                     orphan_modules_legacy_total.dec(1)
@@ -290,9 +327,15 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             try:
                 prune_orphan_cache(ctx.repo, added, traces)
                 for m in added:
-                    if traces.get(m, {}).get("classification") == "legacy":
+                    cls = traces.get(m, {}).get("classification")
+                    if cls == "legacy":
                         try:
                             orphan_modules_legacy_total.dec(1)
+                        except Exception:
+                            pass
+                    elif cls == "redundant":
+                        try:
+                            orphan_modules_redundant_total.dec(1)
                         except Exception:
                             pass
                     traces.pop(m, None)
