@@ -176,7 +176,9 @@ def prune_orphan_cache(
 
 
 
-def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]:
+def discover_orphan_modules(
+    repo_path: str, recursive: bool = True, skip_dirs: Iterable[str] | None = None
+) -> List[str]:
     """Return module names that are never imported by other modules.
 
     This is a thin wrapper around :func:`discover_recursive_orphans`.  The
@@ -188,10 +190,11 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
     returned.  Otherwise all recursively discovered orphan modules are
     included.  Modules classified as ``redundant`` or ``legacy`` by
     :func:`orphan_analyzer.classify_module` are always excluded from the
-    returned list.
+    returned list. Directories listed in ``skip_dirs`` or provided via the
+    ``SANDBOX_SKIP_DIRS`` environment variable are ignored during discovery.
     """
 
-    data = discover_recursive_orphans(repo_path)
+    data = discover_recursive_orphans(repo_path, skip_dirs=skip_dirs)
     if recursive:
         return sorted(m for m, info in data.items() if not info.get("redundant"))
     return sorted(
@@ -203,7 +206,9 @@ def discover_orphan_modules(repo_path: str, recursive: bool = True) -> List[str]
 
 
 def discover_recursive_orphans(
-    repo_path: str, module_map: str | Path | None = None
+    repo_path: str,
+    module_map: str | Path | None = None,
+    skip_dirs: Iterable[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Return orphan modules and their local dependencies.
 
@@ -215,7 +220,8 @@ def discover_recursive_orphans(
     classification information is written to ``sandbox_data/orphan_modules.json``
     and ``sandbox_data/orphan_classifications.json``.  Entries labelled
     ``legacy`` or ``redundant`` should typically be excluded from further
-    processing.
+    processing. Directories listed in ``skip_dirs`` or provided via the
+    ``SANDBOX_SKIP_DIRS`` environment variable are ignored during the scan.
     """
 
     repo = Path(repo_path).resolve()
@@ -241,16 +247,25 @@ def discover_recursive_orphans(
     imported_by: dict[str, set[str]] = {}
     imports: dict[str, set[str]] = {}
 
-    for base, _, files in os.walk(repo_path):
+    skip: set[str] = {"tests", ".git", ".venv"}
+    extra = os.getenv("SANDBOX_SKIP_DIRS")
+    if extra:
+        skip.update(p for p in extra.split(os.pathsep) if p)
+    if skip_dirs:
+        skip.update(skip_dirs)
+
+    for base, dirs, files in os.walk(repo_path):
         rel_base = os.path.relpath(base, repo_path)
-        if rel_base.split(os.sep)[0] == "tests":
+        parts = [] if rel_base in {".", ""} else rel_base.split(os.sep)
+        if parts and parts[0] in skip:
             continue
+        dirs[:] = [d for d in dirs if d not in skip]
         for name in files:
             if not name.endswith(".py") or name == "__init__.py":
                 continue
             path = os.path.join(base, name)
             rel = os.path.relpath(path, repo_path)
-            if rel.split(os.sep)[0] == "tests":
+            if rel.split(os.sep)[0] in skip:
                 continue
             module = os.path.splitext(rel)[0].replace(os.sep, ".")
             try:
