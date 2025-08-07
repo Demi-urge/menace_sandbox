@@ -1504,6 +1504,14 @@ class SelfImprovementEngine:
                 pass
             return set()
 
+        try:
+            environment.auto_include_modules(sorted(modules), recursive=True, validate=True)
+        except Exception:
+            try:
+                environment.auto_include_modules(sorted(modules), recursive=True)
+            except Exception:
+                pass
+
         try:  # pragma: no cover - dynamic imports for isolated tests
             from self_test_service import SelfTestService as _STS
         except Exception:  # pragma: no cover - fallback when service unavailable
@@ -1762,9 +1770,6 @@ class SelfImprovementEngine:
 
         try:
             self.module_index.refresh(mods, force=True)
-            grp_map = {m: self.module_index.get(m) for m in mods}
-            for m, idx in grp_map.items():
-                self.module_clusters[m] = idx
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
@@ -1786,6 +1791,11 @@ class SelfImprovementEngine:
                 environment.try_integrate_into_workflows(sorted(mods))
             except Exception:  # pragma: no cover - best effort
                 pass
+
+            grp_map = {m: self.module_index.get(m) for m in mods}
+            for m, idx in grp_map.items():
+                self.module_clusters[m] = idx
+
             try:
                 self._update_orphan_modules()
             except Exception as exc:  # pragma: no cover - best effort
@@ -1821,36 +1831,50 @@ class SelfImprovementEngine:
         from pathlib import Path
         from sandbox_runner.dependency_utils import collect_local_dependencies
 
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         traces = getattr(self, "orphan_traces", None)
-        initial = (
-            {Path(m).as_posix(): traces.get(Path(m).as_posix(), {}).get("parents", [])
-             for m in modules}
-            if traces is not None
-            else None
-        )
+
+        roots: list[str] = []
+        initial: dict[str, list[str]] = {}
+        for m in modules:
+            p = Path(m)
+            if not p.is_absolute():
+                p = repo / p
+            try:
+                rel = p.resolve().relative_to(repo).as_posix()
+            except Exception:
+                rel = p.as_posix()
+            roots.append(p.as_posix())
+            if traces is not None:
+                parents = list(traces.get(rel, {}).get("parents", []))
+                initial[rel] = parents
+                traces.setdefault(rel, {"parents": parents})
 
         def _on_module(rel: str, _path: Path, parents: list[str]) -> None:
-            if traces is None or not parents:
+            if traces is None:
                 return
             entry = traces.setdefault(rel, {"parents": []})
-            entry["parents"] = list(
-                dict.fromkeys(entry.get("parents", []) + parents)
-            )
+            if parents:
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + parents)
+                )
 
         def _on_dep(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
-            if traces is None or not chain:
+            if traces is None:
                 return
             entry = traces.setdefault(dep_rel, {"parents": []})
-            entry["parents"] = list(
-                dict.fromkeys(entry.get("parents", []) + chain)
-            )
+            if chain:
+                entry["parents"] = list(
+                    dict.fromkeys(entry.get("parents", []) + chain)
+                )
 
-        return collect_local_dependencies(
-            modules,
-            initial_parents=initial,
+        deps = collect_local_dependencies(
+            roots,
+            initial_parents=initial if traces is not None else None,
             on_module=_on_module if traces is not None else None,
             on_dependency=_on_dep if traces is not None else None,
         )
+        return deps | set(initial.keys())
 
     # ------------------------------------------------------------------
     def _update_orphan_modules(self, modules: Iterable[str] | None = None) -> None:
