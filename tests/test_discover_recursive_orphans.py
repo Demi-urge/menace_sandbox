@@ -39,18 +39,12 @@ def test_recursive_import_includes_dependencies(tmp_path, monkeypatch):
     res = discover_recursive_orphans(
         str(tmp_path), module_map=data_dir / "module_map.json"
     )
-    assert res == {
-        "a": {
-            "parents": [],
-            "classification": "candidate",
-            "redundant": False,
-        },
-        "b": {
-            "parents": ["a"],
-            "classification": "candidate",
-            "redundant": False,
-        },
-    }
+    assert set(res.keys()) == {"a", "b"}
+    assert res["a"]["classification"] == "candidate"
+    assert res["b"]["classification"] == "candidate"
+    assert res["b"]["parents"] == ["a"]
+    assert not res["a"]["redundant"]
+    assert not res["b"]["redundant"]
 
 
 def test_public_import(monkeypatch):
@@ -68,18 +62,18 @@ def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
     data_dir.mkdir()
     (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
 
-    monkeypatch.setattr(
-        orphan_analyzer, "classify_module", lambda p: "redundant"
-    )
+    def fake_classify(p, include_meta=False):
+        if include_meta:
+            return "redundant", {}
+        return "redundant"
+
+    monkeypatch.setattr(orphan_analyzer, "classify_module", fake_classify)
 
     res = _discover_inner(str(tmp_path), module_map=data_dir / "module_map.json")
-    assert res == {
-        "dup": {
-            "parents": [],
-            "classification": "redundant",
-            "redundant": True,
-        }
-    }
+    assert list(res.keys()) == ["dup"]
+    info = res["dup"]
+    assert info["classification"] == "redundant"
+    assert info["redundant"] is True
 
 
 def test_skip_dirs_env(tmp_path, monkeypatch):

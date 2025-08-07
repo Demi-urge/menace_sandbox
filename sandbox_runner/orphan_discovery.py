@@ -121,6 +121,9 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
             current["classification"] = cls
         if "redundant" in info:
             current["redundant"] = bool(info["redundant"])
+        for key in ("functions", "complexity", "docstring"):
+            if key in info:
+                current[key] = info[key]
         if "failed" in info:
             if info["failed"]:
                 current["failed"] = True
@@ -176,6 +179,9 @@ def append_orphan_classifications(
             current["classification"] = cls
         if "redundant" in info:
             current["redundant"] = bool(info["redundant"])
+        for key in ("functions", "complexity", "docstring"):
+            if key in info:
+                current[key] = info[key]
         if current:
             existing[key] = current
             changed = True
@@ -396,6 +402,7 @@ def discover_recursive_orphans(
     seen: set[str] = set()
     parents: dict[str, set[str]] = {m: set() for m in orphans}
     classifications: dict[str, str] = {}
+    meta: dict[str, Dict[str, Any]] = {}
     found: set[str] = set()
 
     while queue:
@@ -413,10 +420,11 @@ def discover_recursive_orphans(
         cls = classifications.get(mod)
         if cls is None:
             try:
-                cls = orphan_analyzer.classify_module(path)
+                cls, info = orphan_analyzer.classify_module(path, include_meta=True)
             except Exception:
-                cls = "candidate"
+                cls, info = "candidate", {}
             classifications[mod] = cls
+            meta[mod] = info
         found.add(mod)
         if cls in {"legacy", "redundant"}:
             logger.info("skipping %s module %s", cls, mod)
@@ -438,10 +446,11 @@ def discover_recursive_orphans(
             child_cls = classifications.get(name)
             if child_cls is None:
                 try:
-                    child_cls = orphan_analyzer.classify_module(target)
+                    child_cls, info = orphan_analyzer.classify_module(target, include_meta=True)
                 except Exception:
-                    child_cls = "candidate"
+                    child_cls, info = "candidate", {}
                 classifications[name] = child_cls
+                meta[name] = info
 
             parents.setdefault(name, set()).add(mod)
             found.add(name)
@@ -459,6 +468,7 @@ def discover_recursive_orphans(
             "parents": sorted(parents.get(m, [])),
             "classification": classifications.get(m, "candidate"),
             "redundant": classifications.get(m) in {"legacy", "redundant"},
+            **meta.get(m, {}),
         }
         for m in sorted(found - known)
     }
@@ -478,6 +488,9 @@ def discover_recursive_orphans(
                 "classification": cls,
                 "redundant": cls in {"legacy", "redundant"},
             }
+            for key in ("functions", "complexity", "docstring"):
+                if key in info:
+                    entry[key] = info[key]
             entries[rel] = entry
             class_entries[rel] = dict(entry)
         append_orphan_cache(repo, entries)
