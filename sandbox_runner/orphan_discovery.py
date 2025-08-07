@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any, Iterable, List, Dict
+import concurrent.futures
 
 import orphan_analyzer
 
@@ -204,6 +205,79 @@ def discover_orphan_modules(
     )
 
 
+def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
+    """Parse *path* for imports and return mapping.
+
+    Returns ``None`` if the file cannot be read, parsed or should be skipped
+    (e.g. it contains a ``__main__`` guard).
+    """
+
+    module, path = args
+    try:
+        text = open(path, "r", encoding="utf-8").read()
+    except Exception:
+        return None
+
+    if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
+        return None
+
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return None
+
+    imports: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            pkg_parts = module.split(".")[:-1]
+            if node.level:
+                if node.level - 1 <= len(pkg_parts):
+                    base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
+                else:
+                    base_prefix = []
+            else:
+                base_prefix = pkg_parts
+
+            if node.module:
+                name = ".".join(base_prefix + node.module.split("."))
+                imports.add(name)
+            elif node.names:
+                for alias in node.names:
+                    name = ".".join(base_prefix + alias.name.split("."))
+                    imports.add(name)
+        elif isinstance(node, ast.Call):
+            mod_name: str | None = None
+            if (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "importlib"
+                and node.func.attr == "import_module"
+                and node.args
+            ):
+                arg = node.args[0]
+                if isinstance(arg, ast.Str):
+                    mod_name = arg.s
+                elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    mod_name = arg.value
+            elif (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"import_module", "__import__"}
+                and node.args
+            ):
+                arg = node.args[0]
+                if isinstance(arg, ast.Str):
+                    mod_name = arg.s
+                elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    mod_name = arg.value
+            if mod_name:
+                imports.add(mod_name)
+
+    return module, imports
+
+
 
 def discover_recursive_orphans(
     repo_path: str,
@@ -222,6 +296,8 @@ def discover_recursive_orphans(
     ``legacy`` or ``redundant`` should typically be excluded from further
     processing. Directories listed in ``skip_dirs`` or provided via the
     ``SANDBOX_SKIP_DIRS`` environment variable are ignored during the scan.
+    Parallel AST parsing is controlled via the ``SANDBOX_DISCOVERY_WORKERS``
+    environment variable.
     """
 
     repo = Path(repo_path).resolve()
@@ -255,6 +331,7 @@ def discover_recursive_orphans(
     if skip_dirs:
         skip.update(skip_dirs)
 
+    candidates: list[tuple[str, str]] = []
     for base, dirs, files in os.walk(repo_path):
         rel_base = os.path.relpath(base, repo_path)
         parts = [] if rel_base in {".", ""} else rel_base.split(os.sep)
@@ -269,73 +346,34 @@ def discover_recursive_orphans(
             if rel.split(os.sep)[0] in skip:
                 continue
             module = os.path.splitext(rel)[0].replace(os.sep, ".")
-            try:
-                text = open(path, "r", encoding="utf-8").read()
-            except Exception:
-                continue
-            if "if __name__ == '__main__'" in text or 'if __name__ == "__main__"' in text:
-                continue
+            candidates.append((module, path))
 
-            modules[module] = path
+    workers_env = os.getenv("SANDBOX_DISCOVERY_WORKERS")
+    try:
+        workers = int(workers_env) if workers_env is not None else os.cpu_count() or 1
+    except ValueError:
+        workers = os.cpu_count() or 1
 
-            try:
-                tree = ast.parse(text)
-            except Exception:
-                continue
+    module_paths = {mod: p for mod, p in candidates}
+    parse_iter: Iterable[tuple[str, set[str]] | None]
+    if workers <= 1:
+        parse_iter = (_parse_file(c) for c in candidates)
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as ex:
+            parse_iter = ex.map(_parse_file, candidates)
+            results = list(parse_iter)
+        parse_iter = results
 
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        imports.setdefault(module, set()).add(alias.name)
-                        imported_by.setdefault(alias.name, set()).add(module)
-                elif isinstance(node, ast.ImportFrom):
-                    pkg_parts = module.split(".")[:-1]
-                    if node.level:
-                        if node.level - 1 <= len(pkg_parts):
-                            base_prefix = pkg_parts[: len(pkg_parts) - node.level + 1]
-                        else:
-                            base_prefix = []
-                    else:
-                        base_prefix = pkg_parts
-
-                    if node.module:
-                        name = ".".join(base_prefix + node.module.split("."))
-                        imports.setdefault(module, set()).add(name)
-                        imported_by.setdefault(name, set()).add(module)
-                    elif node.names:
-                        for alias in node.names:
-                            name = ".".join(base_prefix + alias.name.split("."))
-                            imports.setdefault(module, set()).add(name)
-                            imported_by.setdefault(name, set()).add(module)
-                elif isinstance(node, ast.Call):
-                    mod_name: str | None = None
-                    # Detect importlib.import_module("pkg")
-                    if (
-                        isinstance(node.func, ast.Attribute)
-                        and isinstance(node.func.value, ast.Name)
-                        and node.func.value.id == "importlib"
-                        and node.func.attr == "import_module"
-                        and node.args
-                    ):
-                        arg = node.args[0]
-                        if isinstance(arg, ast.Str):
-                            mod_name = arg.s
-                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                            mod_name = arg.value
-                    # Detect import_module("pkg") or __import__("pkg")
-                    elif (
-                        isinstance(node.func, ast.Name)
-                        and node.func.id in {"import_module", "__import__"}
-                        and node.args
-                    ):
-                        arg = node.args[0]
-                        if isinstance(arg, ast.Str):
-                            mod_name = arg.s
-                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                            mod_name = arg.value
-                    if mod_name:
-                        imports.setdefault(module, set()).add(mod_name)
-                        imported_by.setdefault(mod_name, set()).add(module)
+    for result in parse_iter:
+        if not result:
+            continue
+        module, imported = result
+        path = module_paths[module]
+        modules[module] = path
+        if imported:
+            for name in imported:
+                imports.setdefault(module, set()).add(name)
+                imported_by.setdefault(name, set()).add(module)
 
     orphans: set[str] = {m for m in modules if m not in imported_by}
     queue = list(orphans)
