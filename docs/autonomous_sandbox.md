@@ -133,7 +133,8 @@ and their dependencies are discovered recursively by default
 (`SANDBOX_RECURSIVE_ISOLATED=1`). `sandbox_runner.discover_recursive_orphans`
 starts at each orphan and, when `SANDBOX_RECURSIVE_ORPHANS=1`, follows the
 import chain so that helper files are discovered automatically. Each candidate
-module is executed by `SelfTestService`; modules that pass are appended to
+module is executed by `SelfTestService`; all isolated modules run before final
+classification so redundancy is based on runtime behaviour. Modules that pass are appended to
 `sandbox_data/module_map.json` while failures are logged and skipped. Setting
 `SANDBOX_CLEAN_ORPHANS=1` cleans processed names out of
 `sandbox_data/orphan_modules.json` after a successful run. Disable recursion with
@@ -183,6 +184,8 @@ export SANDBOX_RECURSIVE_ORPHANS=0
 export SANDBOX_RECURSIVE_ISOLATED=0
 # force isolated modules to be included recursively
 export SANDBOX_AUTO_INCLUDE_ISOLATED=1
+# disable redundant module tests
+export SANDBOX_TEST_REDUNDANT=0
 ```
 
 Example CLI usage:
@@ -193,6 +196,12 @@ python -m sandbox_runner.cli --no-recursive-orphans --auto-include-isolated
 
 # run a full autonomous cycle with explicit recursion flags
 python run_autonomous.py --recursive-orphans --recursive-isolated
+
+# include modules tagged as redundant or legacy (default)
+python run_autonomous.py --include-redundant
+
+# skip redundant modules during tests
+SANDBOX_TEST_REDUNDANT=0 python run_autonomous.py --discover-orphans
 ```
 
 #### Classification and metrics storage

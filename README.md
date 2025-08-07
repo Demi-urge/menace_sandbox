@@ -77,10 +77,14 @@
   and integrates passing ones into existing workflows. The helper
   `scripts/discover_isolated_modules.py` surfaces standalone files while
   `sandbox_runner.discover_recursive_orphans` walks each candidate's import
-  chain, returning its importing `parents` and a `redundant` flag. The
-  self-test service records this metadata and the improvement engine integrates
-  only modules whose `redundant` flag is false. Run the isolated scan with
-  `SANDBOX_DISCOVER_ISOLATED=1` (or `--discover-isolated`) and pair it with
+  chain, returning its importing `parents` and a `redundant` flag. All isolated
+  modules are executed before final classification. With `SANDBOX_TEST_REDUNDANT=1`
+  (or `--include-redundant`/`--test-redundant`) the self-test service also
+  exercises modules tagged as redundant or legacy so their helper chains are
+  validated; set `SANDBOX_TEST_REDUNDANT=0` to log them without execution. The
+  improvement engine integrates passing modules whose `redundant` flag is false.
+  Run the isolated scan with `SANDBOX_DISCOVER_ISOLATED=1` (or
+  `--discover-isolated`) and pair it with
   `SANDBOX_AUTO_INCLUDE_ISOLATED=1`/`--auto-include-isolated` to test and merge
   the results automatically. Recursion through dependencies is enabled by
   default (`SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
@@ -103,6 +107,14 @@
   python run_autonomous.py --no-recursive-orphans --no-recursive-isolated \
       --discover-isolated --auto-include-isolated --clean-orphans \
       --check-settings
+  ```
+
+  ```bash
+  # Include modules flagged as redundant (default)
+  python run_autonomous.py --include-redundant
+
+  # Skip redundant modules during tests
+  SANDBOX_TEST_REDUNDANT=0 python run_autonomous.py --discover-orphans
   ```
 
   ### Step-by-step: recursive inclusion run
