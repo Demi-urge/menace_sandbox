@@ -5835,6 +5835,9 @@ def auto_include_modules(
         res = run_workflow_simulations()
         tracker = res[0] if isinstance(res, tuple) else res
         return tracker, tested
+    baseline = run_workflow_simulations()
+    baseline_tracker = baseline[0] if isinstance(baseline, tuple) else baseline
+    baseline_roi = sum(float(r) for r in getattr(baseline_tracker, "roi_history", []))
 
     generate_workflows_for_modules(mods)
     try_integrate_into_workflows(mods)
@@ -5842,9 +5845,11 @@ def auto_include_modules(
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
     map_file = data_dir / "module_map.json"
     try:
-        existing = json.loads(map_file.read_text()) if map_file.exists() else {}
+        orig_map_text = map_file.read_text() if map_file.exists() else None
+        existing = json.loads(orig_map_text) if orig_map_text else {}
     except Exception:
         existing = {}
+        orig_map_text = None
     if (
         isinstance(existing, dict)
         and isinstance(existing.get("modules"), dict)
@@ -5870,6 +5875,42 @@ def auto_include_modules(
 
     result = run_workflow_simulations()
     tracker = result[0] if isinstance(result, tuple) else result
+    new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
+    if new_roi < baseline_roi:
+        try:
+            if orig_map_text is not None:
+                map_file.write_text(orig_map_text)
+            elif map_file.exists():
+                map_file.unlink()
+        except Exception:
+            pass
+        cache = data_dir / "orphan_modules.json"
+        try:
+            existing_cache = json.loads(cache.read_text()) if cache.exists() else {}
+        except Exception:
+            existing_cache = {}
+        if not isinstance(existing_cache, dict):
+            existing_cache = {}
+        for m in mods:
+            info = existing_cache.get(m, {})
+            info["rejected"] = True
+            info.setdefault("classification", "rejected")
+            existing_cache[m] = info
+            if m in tested.get("added", []):
+                tested["added"].remove(m)
+        tested["rejected"] = list(mods)
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(existing_cache, indent=2))
+        except Exception:
+            pass
+        try:
+            data_dir.mkdir(parents=True, exist_ok=True)
+            baseline_tracker.save_history(str(data_dir / "roi_history.json"))
+        except Exception:
+            pass
+        return baseline_tracker, tested
+
     try:
         tracker.cluster_map.update(module_map)
     except Exception:
