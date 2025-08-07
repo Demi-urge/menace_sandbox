@@ -5231,7 +5231,7 @@ def try_integrate_into_workflows(
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        passed, _ = loop.run_until_complete(svc._test_orphan_modules(test_paths))
+        passed, _, _ = loop.run_until_complete(svc._test_orphan_modules(test_paths))
     finally:
         loop.close()
         asyncio.set_event_loop(None)

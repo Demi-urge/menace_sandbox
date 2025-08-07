@@ -71,6 +71,28 @@ class SandboxSettings(BaseSettings):
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
 
+    # self test integration scoring knobs
+    integration_score_threshold: float = Field(
+        0.0,
+        env="INTEGRATION_SCORE_THRESHOLD",
+        description="Minimum score required for module auto-integration.",
+    )
+    integration_weight_coverage: float = Field(
+        1.0,
+        env="INTEGRATION_WEIGHT_COVERAGE",
+        description="Weight applied to coverage percentage when scoring modules.",
+    )
+    integration_weight_runtime: float = Field(
+        1.0,
+        env="INTEGRATION_WEIGHT_RUNTIME",
+        description="Weight applied to runtime when scoring modules (higher reduces score).",
+    )
+    integration_weight_failures: float = Field(
+        1.0,
+        env="INTEGRATION_WEIGHT_FAILURES",
+        description="Penalty weight for each failure category detected.",
+    )
+
     model_config = SettingsConfigDict(
         env_file=os.getenv("MENACE_ENV_FILE", ".env"),
         extra="ignore",
