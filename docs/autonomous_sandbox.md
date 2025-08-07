@@ -858,6 +858,8 @@ the learner adjusts the metrics.
 
 ## Orphan and isolated module discovery
 
+### Recursive orphan discovery
+
 Orphan discovery surfaces modules that are not referenced anywhere else so the
 sandbox can test and integrate them instead of leaving potentially useful code
 behind. Before each run `sandbox_runner.discover_recursive_orphans` walks the
@@ -886,7 +888,7 @@ The discovery helpers feed an automated pipeline that promotes passing modules:
 - `recursive_orphan_scan` (`SANDBOX_RECURSIVE_ORPHANS`) follows orphan dependencies.
 - `recursive_isolated` (`SANDBOX_RECURSIVE_ISOLATED`) expands isolated modules through their imports.
 
-### Flags and environment variables
+### Environment variables and CLI flags
 
 Discovery behaviour can be tuned through CLI flags or their environment
 variable counterparts:
@@ -907,6 +909,14 @@ Disable the scans entirely with `SELF_TEST_DISABLE_ORPHANS=1` or
 `SANDBOX_DISABLE_ORPHAN_SCAN=1`. When `SANDBOX_AUTO_INCLUDE_ISOLATED=1`,
 `environment.auto_include_modules` merges passing modules into the module map
 and generates one‑step workflows for them automatically.
+
+### Classification and metrics storage
+
+`discover_recursive_orphans` records classifications in
+`sandbox_data/orphan_classifications.json` alongside the primary cache
+`sandbox_data/orphan_modules.json`. During sandbox cycles `MetricsDB` logs test
+results and module counts to `sandbox_data/metrics.db` so Prometheus exporters
+can expose gauges such as `orphan_modules_tested_total`.
 
 ### Dependency expansion and validation
 

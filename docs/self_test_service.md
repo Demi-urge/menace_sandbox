@@ -76,6 +76,8 @@ cache after each run.
 
 ## Recursive inclusion flow
 
+### Recursive orphan discovery
+
 The service participates in the sandbox's recursive module discovery. During
 discovery the helper `sandbox_runner.discover_recursive_orphans` walks each
 orphan's imports, collects any local dependencies and returns a mapping where
@@ -121,16 +123,17 @@ parameters that mirror `SandboxSettings`. Setting
 enables recursive processing of their dependencies. `recursive_isolated`
 controls whether discovered isolated modules have their imports followed.
 
-### Environment variables controlling recursion
+### Environment variables and CLI flags
 
-- `SELF_TEST_RECURSIVE_ORPHANS` / `SANDBOX_RECURSIVE_ORPHANS` – recurse through
-  orphan modules and their imports.
-- `SELF_TEST_RECURSIVE_ISOLATED` / `SANDBOX_RECURSIVE_ISOLATED` – include
-  dependencies of isolated modules.
-- `SANDBOX_AUTO_INCLUDE_ISOLATED` – force inclusion of modules returned by
-  `discover_isolated_modules`.
-- `SANDBOX_CLEAN_ORPHANS` – remove passing entries from `orphan_modules.json`
-  after integration.
+- `--recursive-include` / `SELF_TEST_RECURSIVE_ORPHANS` /
+  `SANDBOX_RECURSIVE_ORPHANS` – recurse through orphan modules and their
+  imports.
+- `--recursive-isolated` / `SELF_TEST_RECURSIVE_ISOLATED` /
+  `SANDBOX_RECURSIVE_ISOLATED` – include dependencies of isolated modules.
+- `--auto-include-isolated` / `SANDBOX_AUTO_INCLUDE_ISOLATED` – force inclusion
+  of modules returned by `discover_isolated_modules`.
+- `--clean-orphans` / `SANDBOX_CLEAN_ORPHANS` – remove passing entries from
+  `orphan_modules.json` after integration.
 - `SELF_TEST_DISABLE_AUTO_INTEGRATION` – skip automatic merging of passing
   modules into `module_map.json` and workflow updates.
 
@@ -144,6 +147,14 @@ python -m menace.self_test_service run --recursive-include --recursive-isolated
 SELF_TEST_RECURSIVE_ORPHANS=1 SELF_TEST_RECURSIVE_ISOLATED=1 \
   python -m menace.self_test_service run
 ```
+
+### Classification and metrics storage
+
+Classification results from `discover_recursive_orphans` are written to
+`sandbox_data/orphan_classifications.json` alongside the primary orphan cache
+`sandbox_data/orphan_modules.json`. Test coverage and runtime statistics are
+logged via `MetricsDB` in `sandbox_data/metrics.db`, where they back the
+Prometheus gauges such as `orphan_modules_tested_total`.
 
 ### Redundant module handling
 
