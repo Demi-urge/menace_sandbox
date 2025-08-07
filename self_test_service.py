@@ -350,14 +350,39 @@ class SelfTestService:
         self.orphan_failed_modules: list[str] = []
         self.orphan_redundant_modules: list[str] = []
 
-    def _default_integration(self, mods: list[str]) -> dict[str, list[str]]:
+        # captured metrics for modules during the most recent run
+        self.module_metrics: dict[str, dict[str, Any]] = {}
+
+    def _default_integration(
+        self,
+        mods: list[str],
+        metrics: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, list[str]]:
         """Refresh module map and include ``mods`` into workflows.
+
+        Modules are filtered based on *metrics* using weights and thresholds from
+        :class:`~sandbox_settings.SandboxSettings` when provided.
 
         Returns
         -------
         dict[str, list[str]]
             Mapping containing ``integrated`` and ``redundant`` module lists.
         """
+
+        settings = SandboxSettings()
+        if metrics:
+            def _score(m: str) -> float:
+                data = metrics.get(m, {})
+                cov = float(data.get("coverage", 0.0))
+                runtime = float(data.get("runtime", 0.0))
+                fails = len(data.get("categories", []))
+                return (
+                    settings.integration_weight_coverage * cov
+                    - settings.integration_weight_runtime * runtime
+                    - settings.integration_weight_failures * fails
+                )
+
+            mods = [m for m in mods if _score(m) >= settings.integration_score_threshold]
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
         paths: list[str] = []
@@ -990,11 +1015,14 @@ class SelfTestService:
         return stub_path
 
     # ------------------------------------------------------------------
-    async def _test_orphan_modules(self, paths: Iterable[str]) -> tuple[set[str], set[str]]:
-        """Execute tests for *paths* and return passing and failing modules."""
+    async def _test_orphan_modules(
+        self, paths: Iterable[str]
+    ) -> tuple[set[str], set[str], dict[str, dict[str, Any]]]:
+        """Execute tests for *paths* and return passing, failing and metrics."""
 
         passed: set[str] = set()
         failed: set[str] = set()
+        metrics: dict[str, dict[str, Any]] = {}
         for mod in paths:
             stub_path: Path | None = None
             target = mod
@@ -1021,7 +1049,39 @@ class SelfTestService:
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                await proc.communicate()
+                out, _ = await proc.communicate()
+                report: dict[str, Any] = {}
+                try:
+                    report = json.loads(out.decode() or "{}")
+                except Exception:
+                    self.logger.exception("failed to parse test report for %s", mod)
+
+                summary = report.get("summary", {})
+                cov_info = report.get("coverage", {}) or report.get("cov", {})
+                cov = float(
+                    cov_info.get("percent")
+                    or cov_info.get("coverage")
+                    or cov_info.get("percent_covered")
+                    or 0.0
+                )
+                runtime = float(
+                    report.get("duration")
+                    or summary.get("duration")
+                    or summary.get("runtime")
+                    or 0.0
+                )
+                categories: list[str] = []
+                if int(summary.get("failed", 0)):
+                    categories.append("failed")
+                if int(summary.get("error", 0)):
+                    categories.append("error")
+
+                metrics[mod] = {
+                    "coverage": cov,
+                    "runtime": runtime,
+                    "categories": categories,
+                }
+
                 if proc.returncode == 0:
                     passed.add(mod)
                 else:
@@ -1035,7 +1095,7 @@ class SelfTestService:
                         stub_path.parent.rmdir()
                     except Exception:
                         pass
-        return passed, failed
+        return passed, failed, metrics
 
     # ------------------------------------------------------------------
     async def _run_once(self, *, refresh_orphans: bool = False) -> None:
@@ -1073,6 +1133,7 @@ class SelfTestService:
             self.orphan_passed_modules = []
             self.orphan_failed_modules = []
             self.orphan_redundant_modules = []
+            self.module_metrics = {}
     
             cache_repo = Path.cwd()
             path = cache_repo / "sandbox_data" / "orphan_modules.json"
@@ -1159,8 +1220,10 @@ class SelfTestService:
     
             passed_mods: set[str] = set()
             failed_mods: set[str] = set()
+            metrics: dict[str, dict[str, Any]] = {}
             if orphan_list:
-                passed_mods, failed_mods = await self._test_orphan_modules(orphan_list)
+                passed_mods, failed_mods, metrics = await self._test_orphan_modules(orphan_list)
+                self.module_metrics.update(metrics)
                 self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
                 self.orphan_failed_modules = sorted(failed_mods)
                 self.orphan_redundant_modules = sorted(set(redundant_list))
@@ -1510,6 +1573,7 @@ class SelfTestService:
                 "coverage": coverage,
                 "runtime": runtime,
             }
+            self.results["module_metrics"] = self.module_metrics
             passed_set: list[str] = []
             if all_orphans:
                 passed_set = list(self.orphan_passed_modules)
@@ -1602,7 +1666,14 @@ class SelfTestService:
                 integrated_now = 0
                 if self.integration_callback and integrate_mods:
                     try:
-                        info = self.integration_callback(integrate_mods)
+                        metric_subset = {
+                            m: self.module_metrics.get(m, {}) for m in integrate_mods
+                        }
+                        sig = inspect.signature(self.integration_callback)
+                        if len(sig.parameters) > 1:
+                            info = self.integration_callback(integrate_mods, metric_subset)
+                        else:
+                            info = self.integration_callback(integrate_mods)
                     except Exception:
                         self.logger.exception("orphan integration failed")
                     else:
