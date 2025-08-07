@@ -234,7 +234,14 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
             current["classification"] = cls
         if "redundant" in info:
             current["redundant"] = bool(info["redundant"])
-        for key in ("functions", "complexity", "docstring", "calls"):
+        for key in (
+            "functions",
+            "complexity",
+            "docstring",
+            "calls",
+            "exec_success",
+            "warnings",
+        ):
             if key in info:
                 current[key] = info[key]
         if "failed" in info:
@@ -292,7 +299,14 @@ def append_orphan_classifications(
             current["classification"] = cls
         if "redundant" in info:
             current["redundant"] = bool(info["redundant"])
-        for key in ("functions", "complexity", "docstring", "calls"):
+        for key in (
+            "functions",
+            "complexity",
+            "docstring",
+            "calls",
+            "exec_success",
+            "warnings",
+        ):
             if key in info:
                 current[key] = info[key]
         if current:
@@ -618,7 +632,14 @@ def discover_recursive_orphans(
                 "classification": cls,
                 "redundant": cls in {"legacy", "redundant"},
             }
-            for key in ("functions", "complexity", "docstring", "calls"):
+            for key in (
+                "functions",
+                "complexity",
+                "docstring",
+                "calls",
+                "exec_success",
+                "warnings",
+            ):
                 if key in info:
                     entry[key] = info[key]
             entries[rel] = entry

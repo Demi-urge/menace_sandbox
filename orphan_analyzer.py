@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 
 import ast
+import subprocess
+import sys
 
 from module_graph_analyzer import build_import_graph
 
@@ -71,6 +73,33 @@ def _static_metrics(module_path: Path) -> Dict[str, Any]:
     return metrics
 
 
+def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
+    """Execute ``module_path`` in an isolated subprocess and collect metrics.
+
+    The helper records whether execution succeeded and counts warning lines
+    emitted on ``stderr``.  Failures are captured and reflected in the
+    resulting mapping so callers can prioritise modules that execute cleanly.
+    """
+
+    result: Dict[str, Any] = {"exec_success": False, "warnings": 0}
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-I", "-Wdefault", str(module_path)],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=module_path.parent,
+        )
+        result["exec_success"] = proc.returncode == 0
+        if proc.stderr:
+            result["warnings"] = sum(
+                1 for line in proc.stderr.splitlines() if "warning" in line.lower()
+            )
+    except Exception as exc:  # pragma: no cover - best effort
+        result["error"] = str(exc)
+    return result
+
+
 class Classifier(Protocol):
     """Callable classifying ``module_path`` using ``metrics``."""
 
@@ -129,7 +158,8 @@ def classify_module(
     return a specific classification or ``None`` to defer to the next
     strategy.  When all classifiers defer the module is considered a
     ``candidate``.  ``metrics`` always includes ``functions``, ``calls``,
-    ``docstring`` and ``complexity``.
+    ``docstring`` and ``complexity`` and, for candidate modules, additional
+    runtime information such as ``exec_success`` and ``warnings``.
     """
 
     metrics = _static_metrics(module_path)
@@ -142,6 +172,9 @@ def classify_module(
         if result is not None:
             break
     cls: Literal["legacy", "redundant", "candidate"] = result or "candidate"
+
+    if cls == "candidate":
+        metrics.update(_runtime_metrics(module_path))
 
     if include_meta:
         return cls, metrics
