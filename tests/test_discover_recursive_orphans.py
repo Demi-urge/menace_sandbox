@@ -80,3 +80,18 @@ def test_discover_orphans_marks_redundant(tmp_path, monkeypatch):
             "redundant": True,
         }
     }
+
+
+def test_skip_dirs_env(tmp_path, monkeypatch):
+    (tmp_path / "foo").mkdir()
+    (tmp_path / "foo" / "ignore.py").write_text("pass\n")
+    (tmp_path / "keep.py").write_text("pass\n")
+    data_dir = tmp_path / "sandbox_data"
+    data_dir.mkdir()
+    (data_dir / "module_map.json").write_text(json.dumps({"modules": {}}))
+
+    monkeypatch.setenv("SANDBOX_SKIP_DIRS", "foo")
+
+    res = _discover_inner(str(tmp_path), module_map=data_dir / "module_map.json")
+    assert "foo.ignore" not in res
+    assert "keep" in res
