@@ -398,11 +398,13 @@ synergy_adaptation_actions_total = Gauge(
     "Total preset adaptation decisions",
     labelnames=["action"],
 )
-orphan_modules_reintroduced_total = Gauge(
-    "orphan_modules_reintroduced_total",
-    "Total number of orphan modules reintroduced after tests",
+orphan_modules_integrated_total = Gauge(
+    "orphan_modules_integrated_total",
+    "Total number of orphan modules upgraded from orphan to integrated status",
 )
-orphan_modules_passed_total = orphan_modules_reintroduced_total
+# Backwards compatibility aliases
+orphan_modules_reintroduced_total = orphan_modules_integrated_total
+orphan_modules_passed_total = orphan_modules_integrated_total
 orphan_modules_tested_total = Gauge(
     "orphan_modules_tested_total",
     "Total number of orphan modules tested",

@@ -64,6 +64,73 @@ def _classification_path(repo: Path | str) -> Path:
     return cache_dir / "orphan_classifications.json"
 
 
+def _trace_path(repo: Path | str) -> Path:
+    """Return path to the orphan trace history for ``repo``."""
+
+    repo_path = Path(repo)
+    data_dir = os.getenv("SANDBOX_DATA_DIR", "sandbox_data")
+    cache_dir = Path(data_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo_path / cache_dir
+    return cache_dir / "orphan_traces.json"
+
+
+def load_orphan_traces(repo: Path | str) -> Dict[str, Dict[str, Any]]:
+    """Return trace histories stored in ``orphan_traces.json``."""
+
+    path = _trace_path(repo)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text()) or {}
+    except Exception:  # pragma: no cover - best effort
+        return {}
+    if isinstance(data, dict):
+        norm: Dict[str, Dict[str, Any]] = {}
+        for k, v in data.items():
+            if isinstance(v, dict):
+                norm[str(k)] = {
+                    "classification_history": list(
+                        v.get("classification_history", [])
+                    ),
+                    "roi_history": list(v.get("roi_history", [])),
+                }
+        return norm
+    return {}
+
+
+def append_orphan_traces(
+    repo: Path | str, entries: Dict[str, Dict[str, Any]]
+) -> None:
+    """Merge ``entries`` into ``orphan_traces.json`` for ``repo``."""
+
+    if not entries:
+        return
+    data = load_orphan_traces(repo)
+    changed = False
+    for key, info in entries.items():
+        if not isinstance(info, dict):
+            continue
+        current = data.get(key, {}) if isinstance(data.get(key), dict) else {}
+        cls_hist = info.get("classification_history")
+        if cls_hist:
+            existing = list(current.get("classification_history", []))
+            existing.extend(str(c) for c in cls_hist)
+            current["classification_history"] = existing
+        roi_hist = info.get("roi_history")
+        if roi_hist:
+            existing_roi = list(current.get("roi_history", []))
+            existing_roi.extend(float(r) for r in roi_hist)
+            current["roi_history"] = existing_roi
+        if current:
+            data[key] = current
+            changed = True
+    if changed:
+        path = _trace_path(repo)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+
 def load_orphan_cache(repo: Path | str) -> Dict[str, Dict[str, Any]]:
     """Load ``orphan_modules.json`` as a mapping.
 

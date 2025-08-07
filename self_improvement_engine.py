@@ -1445,6 +1445,11 @@ class SelfImprovementEngine:
         legacy: list[str] = []
         redundant: list[str] = []
 
+        traces = getattr(self, "orphan_traces", None)
+        if traces is None:
+            traces = {}
+            setattr(self, "orphan_traces", traces)
+
         for m in all_modules:
             path = Path(m)
             abs_path = path if path.is_absolute() else repo / path
@@ -1457,7 +1462,7 @@ class SelfImprovementEngine:
                 rel = abs_path.resolve().relative_to(repo).as_posix()
             except Exception:
                 rel = str(abs_path)
-            info = self.orphan_traces.setdefault(rel, {"parents": []})
+            info = traces.setdefault(rel, {"parents": []})
             prev_cls = info.get("classification")
             info["classification"] = cls
             info["redundant"] = cls != "candidate"
@@ -1562,7 +1567,9 @@ class SelfImprovementEngine:
             passed: set[str] = set()
             for m in modules:
                 try:
-                    _, details = _sim(str(repo), modules=[m], return_details=True)
+                    tracker_res, details = _sim(
+                        str(repo), modules=[m], return_details=True
+                    )
                 except Exception:
                     continue
                 sec = details.get(m, {}).get("sec", [])
@@ -1571,6 +1578,13 @@ class SelfImprovementEngine:
                     self.logger.info(
                         "self tests failed", extra=log_record(module=m)
                     )
+                    continue
+                roi_total = 0.0
+                try:
+                    roi_total = sum(tracker_res.module_deltas.get(m, []))
+                except Exception:
+                    pass
+                if roi_total < 0:
                     continue
                 passed.add(m)
             reclassified = {m for m in passed if m in legacy or m in redundant}
