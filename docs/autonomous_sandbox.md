@@ -295,6 +295,17 @@ database:
 - `SANDBOX_CLEAN_ORPHANS` – drop passing entries from `orphan_modules.json`
   after integration.
 
+### Recursive inclusion workflow
+
+`environment.auto_include_modules(mods, recursive=True)` expands each entry by
+following its local imports and, when `SANDBOX_AUTO_INCLUDE_ISOLATED=1`, appends
+files reported by `scripts.discover_isolated_modules`. Passing modules and their
+helpers are written to `sandbox_data/module_map.json`. Modules classified as
+redundant are left in `sandbox_data/orphan_modules.json` unless
+`SANDBOX_TEST_REDUNDANT=1` instructs the sandbox to integrate them. Set
+`SANDBOX_RECURSIVE_ORPHANS=0` to disable the import walk or
+`SANDBOX_AUTO_INCLUDE_ISOLATED=0` to skip isolated discovery.
+
 ### Orphan discovery helpers
 
 `sandbox_runner.discover_recursive_orphans` traces orphan candidates and, when
