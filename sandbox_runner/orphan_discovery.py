@@ -121,6 +121,16 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
             current["classification"] = cls
         if "redundant" in info:
             current["redundant"] = bool(info["redundant"])
+        if "failed" in info:
+            if info["failed"]:
+                current["failed"] = True
+            elif "failed" in current:
+                del current["failed"]
+        if "mtime" in info:
+            try:
+                current["mtime"] = float(info["mtime"])
+            except Exception:
+                pass
         data[key] = current
         changed = True
     if changed:
