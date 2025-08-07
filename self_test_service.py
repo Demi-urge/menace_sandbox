@@ -962,170 +962,183 @@ class SelfTestService:
             "SANDBOX_TEST_REDUNDANT": "1" if self.include_redundant else "0",
             "SELF_TEST_INCLUDE_REDUNDANT": "1" if self.include_redundant else "0",
         }
+        original_env = {k: os.environ.get(k) for k in env_flags}
         os.environ.update(env_flags)
 
-        # reset exposed module sets for each run
-        self.orphan_passed_modules = []
-        self.orphan_failed_modules = []
-        self.orphan_redundant_modules = []
+        def _restore_env():
+            for k, v in original_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
-        cache_repo = Path.cwd()
-        path = cache_repo / "sandbox_data" / "orphan_modules.json"
-        existing_map = {} if refresh_orphans else load_orphan_cache(cache_repo)
-        existing = list(existing_map.keys())
-
-        orphan_list: list[str] = existing if self.include_orphans else []
-        discovered: list[str] = []
-        redundant_list: list[str] = []
-
-        if self.include_orphans and (refresh_orphans or not path.exists()):
-            try:
-                found = self._discover_orphans()
-                discovered.extend(found)
-                orphan_list.extend(found)
-            except Exception:
-                self.logger.exception("failed to discover orphan modules")
-
-        if self.discover_orphans or self.discover_isolated:
-            try:
-                found = self._discover_orphans()
-                discovered.extend(found)
-                orphan_list.extend(found)
-            except Exception:
-                self.logger.exception("failed to auto-discover orphan modules")
-
-        if orphan_list:
-            orphan_list = list(dict.fromkeys(orphan_list))
-
-            initial = {
-                m: self.orphan_traces.get(m, {}).get("parents", [])
-                for m in orphan_list
-            }
-
-            def _on_module(rel: str, path: Path, parents: list[str]) -> None:
-                entry = self.orphan_traces.setdefault(
-                    rel,
-                    {"parents": [], "classification": None, "redundant": None},
-                )
-                if parents:
-                    entry["parents"] = list(
-                        dict.fromkeys(entry.get("parents", []) + parents)
-                    )
-                if entry.get("classification") is None:
-                    try:
-                        cls = classify_module(path)
-                    except Exception:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "classification failed for %s", path
-                        )
-                        cls = "candidate"
-                    entry["classification"] = cls
-                    entry["redundant"] = cls != "candidate"
-                    if cls in {"legacy", "redundant"}:
-                        self.logger.info(
-                            "orphan module classified",
-                            extra=log_record(module=rel, classification=cls),
-                        )
-
-            def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
-                dep_entry = self.orphan_traces.setdefault(
-                    dep_rel,
-                    {"parents": [], "classification": None, "redundant": None},
-                )
-                dep_entry["parents"] = list(
-                    dict.fromkeys(dep_entry.get("parents", []) + chain)
-                )
-
-            collected = collect_local_dependencies(
-                orphan_list,
-                initial_parents=initial,
-                on_module=_on_module,
-                on_dependency=_on_dependency,
-            )
-            if not collected:
-                collected = set(orphan_list)
-            orphan_list = [str(Path(p)) for p in sorted(collected)]
-
-        redundant_list = [
-            m for m, info in self.orphan_traces.items() if info.get("redundant")
-        ]
-        if orphan_list and not self.include_redundant:
-            orphan_list = [m for m in orphan_list if m not in redundant_list]
-
-        passed_mods: set[str] = set()
-        failed_mods: set[str] = set()
-        if orphan_list:
-            passed_mods, failed_mods = await self._test_orphan_modules(orphan_list)
-            self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
-            self.orphan_failed_modules = sorted(failed_mods)
-            self.orphan_redundant_modules = sorted(set(redundant_list))
         try:
-            reclassified = {m for m in passed_mods if m in redundant_list}
-            legacy_items = [
-                m
-                for m in redundant_list
-                if self.orphan_traces.get(m, {}).get("classification") == "legacy"
-            ]
-            orphan_modules_tested_total.inc(len(orphan_list))
-            orphan_modules_passed_total.inc(len(passed_mods))
-            orphan_modules_failed_total.inc(len(failed_mods))
-            orphan_modules_reclassified_total.inc(len(reclassified))
-            orphan_modules_redundant_total.inc(len(redundant_list))
-            orphan_modules_legacy_total.inc(len(legacy_items))
-        except Exception:
-            pass
-
-        combined_file = list(dict.fromkeys(existing + discovered))
-        if combined_file or path.exists():
-            entries: dict[str, dict[str, Any]] = {}
-            for m in combined_file:
-                info = self.orphan_traces.get(m, {})
-                cls = info.get("classification", "candidate")
-                entry = {
-                    "parents": info.get("parents", []),
-                    "classification": cls,
-                    "redundant": cls != "candidate",
+            # reset exposed module sets for each run
+            self.orphan_passed_modules = []
+            self.orphan_failed_modules = []
+            self.orphan_redundant_modules = []
+    
+            cache_repo = Path.cwd()
+            path = cache_repo / "sandbox_data" / "orphan_modules.json"
+            existing_map = {} if refresh_orphans else load_orphan_cache(cache_repo)
+            existing = list(existing_map.keys())
+    
+            orphan_list: list[str] = existing if self.include_orphans else []
+            discovered: list[str] = []
+            redundant_list: list[str] = []
+    
+            if self.include_orphans and (refresh_orphans or not path.exists()):
+                try:
+                    found = self._discover_orphans()
+                    discovered.extend(found)
+                    orphan_list.extend(found)
+                except Exception:
+                    self.logger.exception("failed to discover orphan modules")
+    
+            if self.discover_orphans or self.discover_isolated:
+                try:
+                    found = self._discover_orphans()
+                    discovered.extend(found)
+                    orphan_list.extend(found)
+                except Exception:
+                    self.logger.exception("failed to auto-discover orphan modules")
+    
+            if orphan_list:
+                orphan_list = list(dict.fromkeys(orphan_list))
+    
+                initial = {
+                    m: self.orphan_traces.get(m, {}).get("parents", [])
+                    for m in orphan_list
                 }
-                entries[m] = entry
-            try:
-                append_orphan_cache(cache_repo, entries)
-                append_orphan_classifications(cache_repo, entries)
-                new_modules = [m for m in combined_file if m not in existing_map]
-                if new_modules:
-                    self.logger.info(
-                        "Added %d new orphan modules: %s",
-                        len(new_modules),
-                        ", ".join(sorted(new_modules)),
+    
+                def _on_module(rel: str, path: Path, parents: list[str]) -> None:
+                    entry = self.orphan_traces.setdefault(
+                        rel,
+                        {"parents": [], "classification": None, "redundant": None},
                     )
+                    if parents:
+                        entry["parents"] = list(
+                            dict.fromkeys(entry.get("parents", []) + parents)
+                        )
+                    if entry.get("classification") is None:
+                        try:
+                            cls = classify_module(path)
+                        except Exception:  # pragma: no cover - best effort
+                            self.logger.exception(
+                                "classification failed for %s", path
+                            )
+                            cls = "candidate"
+                        entry["classification"] = cls
+                        entry["redundant"] = cls != "candidate"
+                        if cls in {"legacy", "redundant"}:
+                            self.logger.info(
+                                "orphan module classified",
+                                extra=log_record(module=rel, classification=cls),
+                            )
+    
+                def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
+                    dep_entry = self.orphan_traces.setdefault(
+                        dep_rel,
+                        {"parents": [], "classification": None, "redundant": None},
+                    )
+                    dep_entry["parents"] = list(
+                        dict.fromkeys(dep_entry.get("parents", []) + chain)
+                    )
+    
+                collected = collect_local_dependencies(
+                    orphan_list,
+                    initial_parents=initial,
+                    on_module=_on_module,
+                    on_dependency=_on_dependency,
+                )
+                if not collected:
+                    collected = set(orphan_list)
+                orphan_list = [str(Path(p)) for p in sorted(collected)]
+    
+            redundant_list = [
+                m for m, info in self.orphan_traces.items() if info.get("redundant")
+            ]
+            if orphan_list and not self.include_redundant:
+                orphan_list = [m for m in orphan_list if m not in redundant_list]
+    
+            passed_mods: set[str] = set()
+            failed_mods: set[str] = set()
+            if orphan_list:
+                passed_mods, failed_mods = await self._test_orphan_modules(orphan_list)
+                self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
+                self.orphan_failed_modules = sorted(failed_mods)
+                self.orphan_redundant_modules = sorted(set(redundant_list))
+            try:
+                reclassified = {m for m in passed_mods if m in redundant_list}
+                legacy_items = [
+                    m
+                    for m in redundant_list
+                    if self.orphan_traces.get(m, {}).get("classification") == "legacy"
+                ]
+                orphan_modules_tested_total.inc(len(orphan_list))
+                orphan_modules_passed_total.inc(len(passed_mods))
+                orphan_modules_failed_total.inc(len(failed_mods))
+                orphan_modules_reclassified_total.inc(len(reclassified))
+                orphan_modules_redundant_total.inc(len(redundant_list))
+                orphan_modules_legacy_total.inc(len(legacy_items))
             except Exception:
-                self.logger.exception("failed to write orphan modules")
+                pass
+    
+            combined_file = list(dict.fromkeys(existing + discovered))
+            if combined_file or path.exists():
+                entries: dict[str, dict[str, Any]] = {}
+                for m in combined_file:
+                    info = self.orphan_traces.get(m, {})
+                    cls = info.get("classification", "candidate")
+                    entry = {
+                        "parents": info.get("parents", []),
+                        "classification": cls,
+                        "redundant": cls != "candidate",
+                    }
+                    entries[m] = entry
+                try:
+                    append_orphan_cache(cache_repo, entries)
+                    append_orphan_classifications(cache_repo, entries)
+                    new_modules = [m for m in combined_file if m not in existing_map]
+                    if new_modules:
+                        self.logger.info(
+                            "Added %d new orphan modules: %s",
+                            len(new_modules),
+                            ", ".join(sorted(new_modules)),
+                        )
+                except Exception:
+                    self.logger.exception("failed to write orphan modules")
+    
+            if self._state:
+                saved_queue = self._state.get("queue")
+                if saved_queue:
+                    paths = list(saved_queue)
+                passed = int(self._state.get("passed", 0))
+                failed = int(self._state.get("failed", 0))
+                coverage_total = float(self._state.get("coverage_sum", 0.0))
+                runtime_total = float(self._state.get("runtime", 0.0))
+            else:
+                passed = 0
+                failed = 0
+                coverage_total = 0.0
+                runtime_total = 0.0
+    
+            self._state = None
+    
+            all_orphans = set(orphan_list) | set(redundant_list)
+            orphan_set: set[str] = set()
+    
+            queue: list[str] = [
+                p or ""
+                for p in paths
+                if self.include_redundant or not (p and str(Path(p)) in redundant_list)
+            ]
+            self._save_state(queue, passed, failed, coverage_total, runtime_total)
+            proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
+        except Exception:
+            _restore_env()
+            raise
 
-        if self._state:
-            saved_queue = self._state.get("queue")
-            if saved_queue:
-                paths = list(saved_queue)
-            passed = int(self._state.get("passed", 0))
-            failed = int(self._state.get("failed", 0))
-            coverage_total = float(self._state.get("coverage_sum", 0.0))
-            runtime_total = float(self._state.get("runtime", 0.0))
-        else:
-            passed = 0
-            failed = 0
-            coverage_total = 0.0
-            runtime_total = 0.0
-
-        self._state = None
-
-        all_orphans = set(orphan_list) | set(redundant_list)
-        orphan_set: set[str] = set()
-
-        queue: list[str] = [
-            p or ""
-            for p in paths
-            if self.include_redundant or not (p and str(Path(p)) in redundant_list)
-        ]
-        self._save_state(queue, passed, failed, coverage_total, runtime_total)
-        proc_info: list[tuple[list[str], str | None, bool, str | None, str]] = []
 
         use_container = False
         acquired = False
@@ -1564,6 +1577,7 @@ class SelfTestService:
                 except Exception:
                     pass
 
+            _restore_env()
     async def _schedule_loop(self, interval: float, *, refresh_orphans: bool = False) -> None:
         assert self._async_stop is not None
         while not self._async_stop.is_set():

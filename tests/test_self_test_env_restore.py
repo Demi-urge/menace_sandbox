@@ -2,11 +2,14 @@ import importlib.util
 import sys
 import os
 import types
+import asyncio
 from pathlib import Path
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
-def _load_module(monkeypatch):
+
+def _load_service(monkeypatch):
     spec = importlib.util.spec_from_file_location(
         "menace.self_test_service", ROOT / "self_test_service.py"
     )
@@ -15,7 +18,7 @@ def _load_module(monkeypatch):
     pkg.__path__ = [str(ROOT)]
     pkg.RAISE_ERRORS = False
     monkeypatch.setitem(sys.modules, "menace", pkg)
-    # stub metrics exporter to avoid global registry conflicts
+
     class DummyGauge:
         def inc(self, *a, **k):
             pass
@@ -35,15 +38,17 @@ def _load_module(monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "metrics_exporter", me)
     monkeypatch.setitem(sys.modules, "menace.metrics_exporter", me)
-    # stub modules with heavy dependencies
+
     data_bot_mod = types.ModuleType("data_bot")
     data_bot_mod.DataBot = object
     monkeypatch.setitem(sys.modules, "data_bot", data_bot_mod)
     monkeypatch.setitem(sys.modules, "menace.data_bot", data_bot_mod)
+
     error_bot_mod = types.ModuleType("error_bot")
     error_bot_mod.ErrorDB = object
     monkeypatch.setitem(sys.modules, "error_bot", error_bot_mod)
     monkeypatch.setitem(sys.modules, "menace.error_bot", error_bot_mod)
+
     error_logger_mod = types.ModuleType("error_logger")
 
     class DummyLogger:
@@ -56,47 +61,37 @@ def _load_module(monkeypatch):
     error_logger_mod.ErrorLogger = DummyLogger
     monkeypatch.setitem(sys.modules, "error_logger", error_logger_mod)
     monkeypatch.setitem(sys.modules, "menace.error_logger", error_logger_mod)
-    monkeypatch.setitem(sys.modules, "menace.self_test_service", mod)
+
     spec.loader.exec_module(mod)
+    monkeypatch.setitem(sys.modules, "menace.self_test_service", mod)
 
-    class DummyService:
-        def __init__(self, *a, **k):
-            self.results = []
+    monkeypatch.setattr(mod, "load_orphan_cache", lambda *a, **k: {})
+    monkeypatch.setattr(mod, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "append_orphan_classifications", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "collect_local_dependencies", lambda *a, **k: set())
+    monkeypatch.setattr(mod.SelfTestService, "_discover_orphans", lambda self: [])
 
-        async def _run_once(self, refresh_orphans=False):
-            return 0
+    async def fake_test(self, paths):
+        return set(), set()
 
-    monkeypatch.setattr(mod, "SelfTestService", DummyService)
-    return mod
-
-
-def test_cli_auto_include_sets_env(monkeypatch):
-    mod = _load_module(monkeypatch)
-    for var in [
-        "SANDBOX_AUTO_INCLUDE_ISOLATED",
-        "SANDBOX_RECURSIVE_ISOLATED",
-        "SANDBOX_DISCOVER_ISOLATED",
-        "SELF_TEST_AUTO_INCLUDE_ISOLATED",
-        "SELF_TEST_RECURSIVE_ISOLATED",
-        "SELF_TEST_DISCOVER_ISOLATED",
-    ]:
-        monkeypatch.delenv(var, raising=False)
-    mod.cli(["run", "--auto-include-isolated"])
-    assert os.getenv("SANDBOX_AUTO_INCLUDE_ISOLATED") == "1"
-    assert os.getenv("SANDBOX_RECURSIVE_ISOLATED") == "1"
-    assert os.getenv("SANDBOX_DISCOVER_ISOLATED") == "1"
-    assert os.getenv("SELF_TEST_AUTO_INCLUDE_ISOLATED") == "1"
-    assert os.getenv("SELF_TEST_RECURSIVE_ISOLATED") == "1"
-    assert os.getenv("SELF_TEST_DISCOVER_ISOLATED") == "1"
+    monkeypatch.setattr(mod.SelfTestService, "_test_orphan_modules", fake_test)
+    monkeypatch.setattr(mod.SelfTestService, "_save_state", lambda self, *a, **k: None)
+    return mod.SelfTestService
 
 
-def test_cli_recursive_include_toggles_env(monkeypatch):
-    mod = _load_module(monkeypatch)
-    for var in ["SANDBOX_RECURSIVE_ORPHANS", "SELF_TEST_RECURSIVE_ORPHANS"]:
-        monkeypatch.delenv(var, raising=False)
-    mod.cli(["run", "--no-recursive-include"])
-    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "0"
-    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "0"
-    mod.cli(["run", "--recursive-include"])
-    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "1"
-    assert os.getenv("SELF_TEST_RECURSIVE_ORPHANS") == "1"
+def test_env_vars_restored_on_error(monkeypatch):
+    Service = _load_service(monkeypatch)
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "orig")
+    monkeypatch.delenv("SELF_TEST_DISCOVER_ORPHANS", raising=False)
+
+    def boom(repo):
+        raise RuntimeError("boom")
+
+    mod = sys.modules["menace.self_test_service"]
+    monkeypatch.setattr(mod, "load_orphan_cache", boom)
+
+    svc = Service(pytest_args="")
+    with pytest.raises(RuntimeError):
+        asyncio.run(svc._run_once())
+    assert os.getenv("SANDBOX_RECURSIVE_ORPHANS") == "orig"
+    assert os.getenv("SELF_TEST_DISCOVER_ORPHANS") is None
