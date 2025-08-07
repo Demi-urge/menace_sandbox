@@ -34,6 +34,34 @@ Orphan module processing is also exported via Prometheus gauges:
 - `orphan_modules_failed_total` – orphan modules whose tests failed.
 - `orphan_modules_redundant_total` – modules skipped due to redundancy.
 
+## Recursive orphan discovery
+
+`SelfTestService` cooperates with `sandbox_runner` to locate orphan modules and
+their helper files. The process loads names from
+`sandbox_data/orphan_modules.json`, walks each module's imports recursively and
+executes the resulting set inside a temporary sandbox so side effects are
+contained.
+
+### Environment variables and CLI flags
+
+- `SELF_TEST_RECURSIVE_ORPHANS` / `SANDBOX_RECURSIVE_ORPHANS` or the
+  `--recursive-include` flag – follow orphan dependencies.
+- `SELF_TEST_RECURSIVE_ISOLATED` / `SANDBOX_RECURSIVE_ISOLATED` or the
+  `--recursive-isolated` flag – traverse helpers of isolated modules.
+- `SELF_TEST_AUTO_INCLUDE_ISOLATED` / `SANDBOX_AUTO_INCLUDE_ISOLATED` or the
+  `--auto-include-isolated` flag – queue modules from `discover_isolated_modules`.
+- `SANDBOX_CLEAN_ORPHANS` or `--clean-orphans` – drop integrated entries from
+  `orphan_modules.json` after a successful run.
+
+### Classification and metrics storage
+
+`discover_recursive_orphans` writes classifications to
+`sandbox_data/orphan_classifications.json` alongside the main cache
+`sandbox_data/orphan_modules.json`. Modules that pass are appended to
+`sandbox_data/module_map.json` and metrics from each run are stored in
+`sandbox_data/metrics.db`, powering Prometheus gauges like
+`orphan_modules_tested_total`.
+
 ## Return values and integration callbacks
 
 Calling `run_once` returns a tuple `(results, passed_modules)`. `results` is a

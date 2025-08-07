@@ -150,6 +150,8 @@ set so their helper chains are traversed and executed like any other orphan.
 Set `SANDBOX_TEST_REDUNDANT=0` to skip them while still recording their
 classification.
 
+#### Environment variables and CLI flags
+
 The sandbox enables recursion and isolated-module inclusion by default. Key
 flags and their associated environment variables are summarised below:
 
@@ -192,6 +194,14 @@ python -m sandbox_runner.cli --no-recursive-orphans --auto-include-isolated
 # run a full autonomous cycle with explicit recursion flags
 python run_autonomous.py --recursive-orphans --recursive-isolated
 ```
+
+#### Classification and metrics storage
+
+`discover_recursive_orphans` records analysis results in
+`sandbox_data/orphan_classifications.json` alongside the primary orphan list
+`sandbox_data/orphan_modules.json`. Passing modules are appended to
+`sandbox_data/module_map.json` while self‑test statistics and orphan metrics are
+persisted to `sandbox_data/metrics.db` for later inspection.
 
 ### Example: auto‑detecting and integrating an isolated module
 

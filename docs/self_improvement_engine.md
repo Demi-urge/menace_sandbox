@@ -21,9 +21,9 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
-## Recursive inclusion flow
+## Recursive orphan discovery
 
-### Recursive orphan discovery
+### How it works
 
 When invoked by the autonomous sandbox the improvement engine participates in
 the recursive module discovery used by `SelfTestService`. The sandbox follows
