@@ -5652,8 +5652,6 @@ def auto_include_modules(
         except Exception:
             pass
 
-    derived_mods = set(candidate_paths)
-
     include_isolated = recursive or getattr(settings, "auto_include_isolated", True)
     if include_isolated:
         try:
@@ -5661,8 +5659,6 @@ def auto_include_modules(
 
             isolated = discover_isolated_modules(repo, recursive=True)
             for rel in isolated:
-                if rel not in derived_mods:
-                    continue
                 path = Path(rel)
                 if path.as_posix() in existing_mods:
                     continue
@@ -5670,13 +5666,17 @@ def auto_include_modules(
         except Exception:
             pass
 
+    new_paths = set(mod_paths) - candidate_paths
+    derived_mods = set(mod_paths)
+
     mods = sorted(mod_paths)
     passed_mods: list[str] = []
     failed_mods: list[str] = []
 
     for mod in mods:
         path = repo / mod
-        if validate:
+        need_validate = validate or mod in new_paths
+        if need_validate:
             try:
                 from self_test_service import SelfTestService
 
@@ -5687,7 +5687,7 @@ def auto_include_modules(
                     discover_isolated=True,
                     recursive_orphans=True,
                     recursive_isolated=settings.recursive_isolated,
-                    auto_include_isolated=settings.auto_include_isolated,
+                    auto_include_isolated=True,
                     include_redundant=settings.test_redundant_modules,
                     disable_auto_integration=True,
                 )
@@ -5733,10 +5733,20 @@ def auto_include_modules(
             info["redundant"] = cls != "candidate"
         if m in failed_mods:
             info["failed"] = True
+            if "classification" not in info:
+                info["classification"] = "failed"
         existing[m] = info
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_text(json.dumps(existing, indent=2))
+    except Exception:
+        pass
+
+    try:
+        from sandbox_runner.orphan_discovery import append_orphan_classifications
+
+        class_entries = {m: existing[m] for m in set(redundant_mods) | set(failed_mods)}
+        append_orphan_classifications(repo, class_entries)
     except Exception:
         pass
 
