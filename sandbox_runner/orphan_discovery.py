@@ -307,6 +307,35 @@ def discover_recursive_orphans(
                             name = ".".join(base_prefix + alias.name.split("."))
                             imports.setdefault(module, set()).add(name)
                             imported_by.setdefault(name, set()).add(module)
+                elif isinstance(node, ast.Call):
+                    mod_name: str | None = None
+                    # Detect importlib.import_module("pkg")
+                    if (
+                        isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name)
+                        and node.func.value.id == "importlib"
+                        and node.func.attr == "import_module"
+                        and node.args
+                    ):
+                        arg = node.args[0]
+                        if isinstance(arg, ast.Str):
+                            mod_name = arg.s
+                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            mod_name = arg.value
+                    # Detect import_module("pkg") or __import__("pkg")
+                    elif (
+                        isinstance(node.func, ast.Name)
+                        and node.func.id in {"import_module", "__import__"}
+                        and node.args
+                    ):
+                        arg = node.args[0]
+                        if isinstance(arg, ast.Str):
+                            mod_name = arg.s
+                        elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                            mod_name = arg.value
+                    if mod_name:
+                        imports.setdefault(module, set()).add(mod_name)
+                        imported_by.setdefault(mod_name, set()).add(module)
 
     orphans: set[str] = {m for m in modules if m not in imported_by}
     queue = list(orphans)
