@@ -72,6 +72,23 @@ helpers discovered along the way. While scanning, modules tagged as legacy
 increment the `orphan_modules_legacy_total` gauge and it is decremented when
 those modules are later reclassified or integrated.
 
+Legacy helpers can therefore be folded back into the repository when
+`SANDBOX_TEST_REDUNDANT=1` (the default). A minimal cycle might look like:
+
+```bash
+# orphan_modules.json lists a helper previously marked as legacy
+$ cat sandbox_data/orphan_modules.json
+{"old_helper.py": {"classification": "legacy", "parents": [], "redundant": true}}
+
+# The helper is exercised and reintegrated
+$ SANDBOX_TEST_REDUNDANT=1 python run_autonomous.py --include-orphans
+...
+INFO isolated module tests added=['old_helper.py'] legacy=[]
+```
+
+After a successful run the entry is pruned from the orphan cache and the
+`orphan_modules_legacy_total` gauge decreases to reflect the reintegration.
+
 ### Surfacing orphan chains
 
 `discover_recursive_orphans` loads names from
