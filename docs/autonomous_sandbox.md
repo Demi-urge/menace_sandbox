@@ -271,6 +271,7 @@ persisted to `sandbox_data/metrics.db` for later inspection.
 - `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 - `ROI_THRESHOLD` – override the diminishing ROI threshold
 - `ROI_CONFIDENCE` – t-test confidence when flagging modules
+- `MIN_INTEGRATION_ROI` – minimum ROI delta required before adding modules to existing workflows
 - `SYNERGY_THRESHOLD` – fixed synergy convergence threshold
 - `SYNERGY_THRESHOLD_WINDOW` – samples used for adaptive synergy threshold
 - `SYNERGY_THRESHOLD_WEIGHT` – exponential weight for threshold calculation
@@ -331,10 +332,11 @@ dependent module in one pass.
 #### Validating and integrating candidates
 
 After discovery, `auto_include_modules` executes the candidate set with
-`SelfTestService`. When validation succeeds the modules and any helpers
-found during recursion are merged into `sandbox_data/module_map.json`
-and patched into existing workflows so future cycles exercise the new
-code.
+`SelfTestService`. Modules whose simulated ROI increase is below
+`MIN_INTEGRATION_ROI` are skipped. When validation succeeds the modules
+and any helpers found during recursion are merged into
+`sandbox_data/module_map.json` and patched into existing workflows so
+future cycles exercise the new code.
 
 #### Monitoring orphan module metrics
 
