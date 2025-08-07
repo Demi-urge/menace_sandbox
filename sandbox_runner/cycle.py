@@ -149,8 +149,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     traces[k] = dict(info)
         except Exception:
             pass
-        trace_details: Dict[str, Dict[str, Any]] = {}
-        class_groups: Dict[str, list[str]] = {}
+        discovered: list[str] = []
 
         for name, info in trace.items():
             rel = Path(*name.split("."))
@@ -162,97 +161,38 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             rel_path = path.relative_to(ctx.repo).as_posix()
             if rel_path in module_map or rel_path in traces:
                 continue
-            try:
-                classification = orphan_analyzer.classify_module(path)
-            except Exception:
-                classification = "candidate"
-            provided = info.get("classification")
-            if isinstance(provided, str):
-                classification = provided
-            if classification == "candidate":
-                try:
-                    if orphan_analyzer.analyze_redundancy(path):
-                        classification = "redundant"
-                except Exception:
-                    pass
-            prev_cls = traces.get(rel_path, {}).get("classification")
-            traces[rel_path] = {
-                "parents": info.get("parents", []),
-                "classification": classification,
-                "redundant": classification != "candidate",
-            }
-            trace_details[rel_path] = traces[rel_path]
-            class_groups.setdefault(classification, []).append(rel_path)
-            try:
-                if prev_cls == "legacy" and classification != "legacy":
-                    orphan_modules_legacy_total.dec(1)
-                elif prev_cls != "legacy" and classification == "legacy":
-                    orphan_modules_legacy_total.inc(1)
-            except Exception:
-                pass
+            traces[rel_path] = {"parents": info.get("parents", [])}
+            discovered.append(rel_path)
 
         for rel_path in discover_isolated_modules(
             str(ctx.repo), recursive=settings.recursive_isolated
         ):
             if rel_path in module_map:
                 continue
-            path = ctx.repo / rel_path
-            entry = traces.setdefault(rel_path, {"parents": []})
-            prev_cls = entry.get("classification")
-            if prev_cls is None:
-                try:
-                    classification = orphan_analyzer.classify_module(path)
-                except Exception:
-                    classification = "candidate"
-                if classification == "candidate":
-                    try:
-                        if orphan_analyzer.analyze_redundancy(path):
-                            classification = "redundant"
-                    except Exception:
-                        pass
-            else:
-                classification = prev_cls
-            entry.update(
-                {
-                    "classification": classification,
-                    "redundant": classification != "candidate",
-                }
-            )
-            trace_details[rel_path] = entry
-            class_groups.setdefault(classification, []).append(rel_path)
-            try:
-                if prev_cls == "legacy" and classification != "legacy":
-                    orphan_modules_legacy_total.dec(1)
-                elif prev_cls != "legacy" and classification == "legacy":
-                    orphan_modules_legacy_total.inc(1)
-            except Exception:
-                pass
+            traces.setdefault(rel_path, {"parents": []})
+            discovered.append(rel_path)
 
-        if trace_details:
+        if discovered:
             logger.info(
                 "orphan discovery",
                 extra=log_record(
-                    discovered=sorted(trace_details.keys()),
-                    redundant=[
-                        m
-                        for m, inf in trace_details.items()
-                        if inf.get("classification") in {"legacy", "redundant"}
-                    ],
-                    parents={
-                        m: inf.get("parents", []) for m, inf in trace_details.items()
-                    },
-                ),
-            )
-            logger.info(
-                "orphan classifications",
-                extra=log_record(
-                    **{cls: sorted(mods) for cls, mods in class_groups.items()}
+                    discovered=sorted(discovered),
+                    parents={m: traces.get(m, {}).get("parents", []) for m in discovered},
                 ),
             )
 
 
         candidate_mods = [
-            m for m, info in traces.items() if info.get("classification") == "candidate"
+            m
+            for m, info in traces.items()
+            if m not in module_map
+            and (
+                getattr(settings, "test_redundant_modules", False)
+                or (
+                    info.get("classification") not in {"redundant", "legacy"}
+                    and not info.get("redundant")
+                )
+            )
         ]
         
         pre_mods = set(module_map)
@@ -273,22 +213,47 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         added = set(tested.get("added", []))
         failed = set(tested.get("failed", []))
         redundant = set(tested.get("redundant", []))
-        
+
         pre_mods.difference_update(failed | redundant)
         module_map = pre_mods | added
         ctx.module_map = module_map
-        
-        for m in failed:
+
+        post_cache: Dict[str, Dict[str, Any]] = {}
+        try:
+            post_cache = load_orphan_cache(ctx.repo)
+        except Exception:
+            pass
+
+        for m in candidate_mods:
             entry = traces.setdefault(m, {"parents": []})
-            entry["failed"] = True
-        for m in redundant:
-            entry = traces.setdefault(m, {"parents": []})
-            entry["redundant"] = True
+            cache_info = post_cache.get(m, {})
+            prev_cls = entry.get("classification")
+            cls = cache_info.get("classification", prev_cls or "candidate")
+            entry["classification"] = cls
+            entry["redundant"] = cls != "candidate"
+            if m in failed:
+                entry["failed"] = True
+            try:
+                if prev_cls == "legacy" and cls != "legacy":
+                    orphan_modules_legacy_total.dec(1)
+                elif prev_cls != "legacy" and cls == "legacy":
+                    orphan_modules_legacy_total.inc(1)
+            except Exception:
+                pass
+            if prev_cls is not None and prev_cls != cls:
+                try:
+                    orphan_modules_reclassified_total.inc(1)
+                except Exception:
+                    pass
         
         try:
             append_orphan_cache(ctx.repo, traces)
             class_entries = {
-                k: {"classification": v.get("classification", "candidate")}
+                k: {
+                    "parents": v.get("parents", []),
+                    "classification": v.get("classification", "candidate"),
+                    "redundant": v.get("redundant", False),
+                }
                 for k, v in traces.items()
             }
             append_orphan_classifications(ctx.repo, class_entries)
@@ -312,11 +277,14 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         
         tested_count = len(added | failed | redundant)
         if tested_count:
+            legacy = {m for m in redundant if traces.get(m, {}).get("classification") == "legacy"}
+            pure_redundant = redundant - legacy
             try:
                 orphan_modules_tested_total.inc(tested_count)
                 orphan_modules_reintroduced_total.inc(len(added))
                 orphan_modules_failed_total.inc(len(failed))
-                orphan_modules_redundant_total.inc(len(redundant))
+                orphan_modules_redundant_total.inc(len(pure_redundant))
+                orphan_modules_legacy_total.inc(len(legacy))
             except Exception:
                 pass
             logger.info(
@@ -324,7 +292,8 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 extra=log_record(
                     added=sorted(added),
                     failed=sorted(failed),
-                    redundant=sorted(redundant),
+                    redundant=sorted(pure_redundant),
+                    legacy=sorted(legacy),
                 ),
             )
     except Exception:

@@ -58,7 +58,7 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
         repo=tmp_path,
         module_map=set(),
         orphan_traces={"foo.py": {"parents": [], "redundant": True}},
-        tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None),
+        tracker=types.SimpleNamespace(register_metrics=lambda *a, **k: None, merge_history=lambda *a, **k: None),
         models=[],
         module_counts={},
         meta_log=types.SimpleNamespace(last_patch_id=None),
@@ -72,3 +72,72 @@ def test_cycle_skips_redundant_modules(monkeypatch, tmp_path):
 
     assert calls == []
     assert ctx.orphan_traces == {"foo.py": {"parents": [], "redundant": True}}
+
+
+def test_redundant_modules_can_be_tested(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_AUTO_INCLUDE_ISOLATED", raising=False)
+    monkeypatch.delenv("SANDBOX_RECURSIVE_ISOLATED", raising=False)
+
+    calls: list[list[str]] = []
+
+    def fake_auto_include(mods, recursive=False, validate=False):
+        calls.append(list(mods))
+        return object(), {"added": [], "failed": [], "redundant": list(mods)}
+
+    monkeypatch.setattr(cycle, "auto_include_modules", fake_auto_include)
+    monkeypatch.setattr(cycle, "append_orphan_cache", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "append_orphan_classifications", lambda *a, **k: None)
+    monkeypatch.setattr(cycle, "prune_orphan_cache", lambda *a, **k: None)
+
+    cache_vals = [
+        {},
+        {"foo.py": {"classification": "legacy", "redundant": True}},
+    ]
+
+    def fake_load_cache(_repo):
+        return cache_vals.pop(0)
+
+    monkeypatch.setattr(cycle, "load_orphan_cache", fake_load_cache)
+
+    (tmp_path / "foo.py").write_text("pass\n")
+
+    def fake_discover(repo_path):
+        assert Path(repo_path) == tmp_path
+        return {"foo": {"parents": []}}
+
+    monkeypatch.setattr(cycle, "discover_recursive_orphans", fake_discover)
+
+    class DummyMetric:
+        def __init__(self):
+            self.value = 0
+
+        def inc(self, v=1):
+            self.value += v
+
+        def dec(self, v=1):
+            self.value -= v
+
+    for name in [
+        "orphan_modules_tested_total",
+        "orphan_modules_reintroduced_total",
+        "orphan_modules_failed_total",
+        "orphan_modules_redundant_total",
+        "orphan_modules_legacy_total",
+        "orphan_modules_reclassified_total",
+    ]:
+        monkeypatch.setattr(cycle, name, DummyMetric(), raising=False)
+
+    ctx = types.SimpleNamespace(
+        repo=tmp_path,
+        module_map=set(),
+        orphan_traces={"foo.py": {"parents": [], "classification": "redundant", "redundant": True}},
+        tracker=types.SimpleNamespace(merge_history=lambda *a, **k: None),
+        settings=types.SimpleNamespace(
+            auto_include_isolated=True, recursive_isolated=True, test_redundant_modules=True
+        ),
+    )
+
+    cycle.include_orphan_modules(ctx)
+
+    assert calls == [["foo.py"]]
+    assert ctx.orphan_traces["foo.py"]["classification"] == "legacy"
