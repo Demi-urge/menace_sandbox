@@ -23,6 +23,8 @@ Each engine may use its own databases, event bus and automation pipeline allowin
 
 ## Recursive inclusion flow
 
+### Recursive orphan discovery
+
 When invoked by the autonomous sandbox the improvement engine participates in
 the recursive module discovery used by `SelfTestService`. The sandbox follows
 orphan and isolated modules through their import chains and
@@ -92,20 +94,29 @@ To run a cycle with orphan discovery enabled, use:
 python run_autonomous.py --include-orphans --recursive-include
 ```
 
-### Environment variables controlling recursion
+### Environment variables and CLI flags
 
-- `SANDBOX_RECURSIVE_ORPHANS` / `SELF_TEST_RECURSIVE_ORPHANS` – follow orphan
-  modules and their imports.
-- `SANDBOX_RECURSIVE_ISOLATED` / `SELF_TEST_RECURSIVE_ISOLATED` – traverse
-  dependencies of isolated modules.
-- `SANDBOX_DISCOVER_ISOLATED` / `SELF_TEST_DISCOVER_ISOLATED` – run
-  `discover_isolated_modules` during scans.
-- `SANDBOX_AUTO_INCLUDE_ISOLATED` – force discovery of modules returned by
-  `discover_isolated_modules`.
-- `SANDBOX_TEST_REDUNDANT` / `SELF_TEST_INCLUDE_REDUNDANT` – run tests for
+- `--recursive-include` / `SANDBOX_RECURSIVE_ORPHANS` /
+  `SELF_TEST_RECURSIVE_ORPHANS` – follow orphan modules and their imports.
+- `--recursive-isolated` / `SANDBOX_RECURSIVE_ISOLATED` /
+  `SELF_TEST_RECURSIVE_ISOLATED` – traverse dependencies of isolated modules.
+- `--discover-isolated` / `SANDBOX_DISCOVER_ISOLATED` /
+  `SELF_TEST_DISCOVER_ISOLATED` – run `discover_isolated_modules` during scans.
+- `--auto-include-isolated` / `SANDBOX_AUTO_INCLUDE_ISOLATED` – force discovery
+  of modules returned by `discover_isolated_modules`.
+- `--include-redundant` / `--test-redundant` /
+  `SANDBOX_TEST_REDUNDANT` / `SELF_TEST_INCLUDE_REDUNDANT` – run tests for
   modules classified as redundant or legacy.
-- `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
+- `--clean-orphans` / `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
+
+### Classification and metrics storage
+
+`discover_recursive_orphans` writes classification details to
+`sandbox_data/orphan_classifications.json` in parallel with the primary orphan
+cache `sandbox_data/orphan_modules.json`. The improvement engine logs test
+outcomes and integration counts to `sandbox_data/metrics.db` through
+`MetricsDB`, powering Prometheus gauges like `orphan_modules_reintroduced_total`.
 
 ### Redundant module handling
 
