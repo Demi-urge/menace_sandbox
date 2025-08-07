@@ -77,10 +77,22 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
     data = load_orphan_cache(repo)
     changed = False
     for key, info in entries.items():
-        cur = data.get(key, {})
-        if isinstance(info, dict):
-            cur.update(info)
-        data[key] = cur
+        if not isinstance(info, dict):
+            continue
+        current = data.get(key, {}) if isinstance(data.get(key), dict) else {}
+        parents = info.get("parents")
+        if parents is not None:
+            existing = set(current.get("parents", [])) if isinstance(current.get("parents"), list) else set()
+            new_parents = (
+                set(parents) if isinstance(parents, (set, list, tuple)) else {parents}
+            )
+            current["parents"] = sorted(existing | new_parents)
+        cls = info.get("classification")
+        if cls:
+            current["classification"] = cls
+        if "redundant" in info:
+            current["redundant"] = bool(info["redundant"])
+        data[key] = current
         changed = True
     if changed:
         _save_orphan_cache(repo, data)
@@ -113,7 +125,13 @@ def append_orphan_classifications(
         current = existing.get(key, {}) if isinstance(existing.get(key), dict) else {}
         parents = info.get("parents")
         if parents is not None:
-            current["parents"] = list(parents) if isinstance(parents, (set, list, tuple)) else parents
+            existing_parents = (
+                set(current.get("parents", [])) if isinstance(current.get("parents"), list) else set()
+            )
+            new_parents = (
+                set(parents) if isinstance(parents, (set, list, tuple)) else {parents}
+            )
+            current["parents"] = sorted(existing_parents | new_parents)
         cls = info.get("classification")
         if cls:
             current["classification"] = cls
