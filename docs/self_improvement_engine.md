@@ -43,11 +43,23 @@ the CLI flags `--no-recursive-include` or `--no-recursive-isolated`. Use
 `--auto-include-isolated` (or set `SANDBOX_AUTO_INCLUDE_ISOLATED=1`) to force
 isolated discovery and `--clean-orphans`/`SANDBOX_CLEAN_ORPHANS=1` to drop
 passing entries from `orphan_modules.json` after integration.
+All isolated modules are executed before final classification so runtime
+behaviour determines whether they are redundant or ready for integration.
 Modules labelled `redundant` or `legacy` are now also queued for tests. With
 `SANDBOX_TEST_REDUNDANT=1` (the default) or the CLI flag
 `--include-redundant`/`--test-redundant`, their import chains are followed
 recursively so helper code is validated alongside active modules. Set
 `SANDBOX_TEST_REDUNDANT=0` to log them without execution.
+
+Examples:
+
+```bash
+# Include redundant modules in the run (default)
+python run_autonomous.py --include-redundant
+
+# Skip redundant modules during testing
+SANDBOX_TEST_REDUNDANT=0 python run_autonomous.py --discover-orphans
+```
 
 During a cycle the sandbox first calls `include_orphan_modules` to load entries
 from `sandbox_data/orphan_modules.json`. Each name is expanded by
