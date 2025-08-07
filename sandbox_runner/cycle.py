@@ -159,10 +159,29 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             if not path.exists():
                 continue
             rel_path = path.relative_to(ctx.repo).as_posix()
-            if rel_path in module_map or rel_path in traces:
+            if rel_path in module_map:
                 continue
-            traces[rel_path] = {"parents": info.get("parents", [])}
-            discovered.append(rel_path)
+            entry = traces.get(rel_path)
+            if entry:
+                parents = set(entry.get("parents", []))
+                parents.update(info.get("parents", []))
+                entry["parents"] = sorted(parents)
+                cls = info.get("classification")
+                if cls:
+                    entry["classification"] = cls
+                    entry["redundant"] = cls in {"legacy", "redundant"}
+                elif "redundant" in info:
+                    entry["redundant"] = bool(info["redundant"])
+            else:
+                traces[rel_path] = {
+                    "parents": info.get("parents", []),
+                    "classification": info.get("classification", "candidate"),
+                    "redundant": info.get("redundant", False),
+                }
+                discovered.append(rel_path)
+
+        # ensure callers can inspect the updated traces even if no inclusion runs
+        ctx.orphan_traces = traces
 
         for rel_path in discover_isolated_modules(
             str(ctx.repo), recursive=settings.recursive_isolated
