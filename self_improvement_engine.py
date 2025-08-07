@@ -209,7 +209,12 @@ class SynergyWeightLearner:
         logger.info("saved synergy weights", extra=log_record(weights=self.weights))
 
     # ------------------------------------------------------------------
-    def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
+    def update(
+        self,
+        roi_delta: float,
+        deltas: dict[str, float],
+        extra: dict[str, float] | None = None,
+    ) -> None:
         names = [
             "synergy_roi",
             "synergy_efficiency",
@@ -223,6 +228,9 @@ class SynergyWeightLearner:
         q_vals_list: list[float] = []
         for idx, _ in enumerate(names):
             reward = roi_delta * self._state[idx]
+            if extra:
+                reward *= 1.0 + float(extra.get("avg_roi", 0.0))
+                reward *= 1.0 + float(extra.get("pass_rate", 0.0))
             q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
             q_vals_list.append(float(q))
         if hasattr(self.strategy, "predict"):
@@ -338,7 +346,12 @@ class DQNSynergyLearner(SynergyWeightLearner):
             logger.exception("failed to save strategy pickle: %s", exc)
 
     # ------------------------------------------------------------------
-    def update(self, roi_delta: float, deltas: dict[str, float]) -> None:
+    def update(
+        self,
+        roi_delta: float,
+        deltas: dict[str, float],
+        extra: dict[str, float] | None = None,
+    ) -> None:
         names = [
             "synergy_roi",
             "synergy_efficiency",
@@ -352,6 +365,9 @@ class DQNSynergyLearner(SynergyWeightLearner):
         q_vals_list: list[float] = []
         for idx, name in enumerate(names):
             reward = roi_delta * self._state[idx]
+            if extra:
+                reward *= 1.0 + float(extra.get("avg_roi", 0.0))
+                reward *= 1.0 + float(extra.get("pass_rate", 0.0))
             q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
             q_vals_list.append(float(q))
         if hasattr(self.strategy, "predict"):
@@ -1035,7 +1051,8 @@ class SelfImprovementEngine:
         ]
         deltas = {n: self._metric_delta(n) for n in names}
         try:
-            self.synergy_learner.update(roi_delta, deltas)
+            extra = getattr(self, "_last_orphan_metrics", None)
+            self.synergy_learner.update(roi_delta, deltas, extra)
             self.logger.info(
                 "synergy weights updated",
                 extra=log_record(
@@ -1507,6 +1524,7 @@ class SelfImprovementEngine:
                 "orphan_modules_redundant": len(redundant),
                 "orphan_modules_legacy": len(legacy),
             }
+            self._last_orphan_counts = counts
             tracker = getattr(self, "tracker", None)
             if tracker is not None:
                 tracker.register_metrics(*counts.keys())
@@ -1586,6 +1604,7 @@ class SelfImprovementEngine:
                 "orphan_modules_redundant": len(redundant),
                 "orphan_modules_legacy": len(legacy),
             }
+            self._last_orphan_counts = counts
             tracker = getattr(self, "tracker", None)
             if tracker is not None:
                 tracker.register_metrics(*counts.keys())
@@ -1688,6 +1707,7 @@ class SelfImprovementEngine:
             "orphan_modules_redundant": len(redundant),
             "orphan_modules_legacy": len(legacy),
         }
+        self._last_orphan_counts = counts
         tracker = getattr(self, "tracker", None)
         if tracker is not None:
             tracker.register_metrics(*counts.keys())
@@ -1888,6 +1908,59 @@ class SelfImprovementEngine:
                 orphan_modules_reintroduced_total.inc(len(mods))
             except Exception:
                 pass
+            roi_vals: dict[str, float] = {}
+            for m in mods:
+                roi_val = 0.0
+                pre_bot = getattr(self, "pre_roi_bot", None)
+                if pre_bot is not None:
+                    try:
+                        res = pre_bot.predict_model_roi(m, [])
+                        roi_val = float(getattr(res, "roi", 0.0))
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("roi prediction failed for %s", m)
+                roi_vals[m] = roi_val
+                try:
+                    data_bot = getattr(self, "data_bot", None)
+                    if data_bot and getattr(data_bot, "metrics_db", None):
+                        db = data_bot.metrics_db
+                        db.log_eval(m, "orphan_module_roi", roi_val)
+                        db.log_eval(m, "orphan_module_pass", 1.0)
+                        db.log_eval(m, "orphan_module_fail", 0.0)
+                except Exception:  # pragma: no cover - best effort
+                    pass
+                try:
+                    self.logger.info(
+                        "orphan integration stats",
+                        extra=log_record(module=m, roi=float(roi_val), passed=True, failed=False),
+                    )
+                except Exception:
+                    pass
+
+            counts = getattr(self, "_last_orphan_counts", {})
+            tested = float(counts.get("orphan_modules_tested", len(mods)))
+            passed = float(counts.get("orphan_modules_passed", len(mods)))
+            pass_rate = passed / tested if tested else 0.0
+            avg_roi = sum(roi_vals.values()) / len(roi_vals) if roi_vals else 0.0
+            self._last_orphan_metrics = {
+                "pass_rate": float(pass_rate),
+                "avg_roi": float(avg_roi),
+            }
+
+            tracker = getattr(self, "tracker", None)
+            if tracker is not None:
+                try:
+                    tracker.register_metrics("orphan_pass_rate", "orphan_avg_roi")
+                    base = tracker.roi_history[-1] if tracker.roi_history else 0.0
+                    tracker.update(
+                        base,
+                        base,
+                        metrics={
+                            "orphan_pass_rate": pass_rate,
+                            "orphan_avg_roi": avg_roi,
+                        },
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    pass
             return mods
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
