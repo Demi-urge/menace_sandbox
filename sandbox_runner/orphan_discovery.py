@@ -239,7 +239,8 @@ def discover_recursive_orphans(
                         p = Path(str(k))
                         name = p.with_suffix("").as_posix().replace("/", ".")
                         known.add(name)
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to parse module map %s: %s", module_map, exc)
             known = set()
 
     repo_path = str(repo)
