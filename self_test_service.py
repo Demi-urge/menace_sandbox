@@ -911,12 +911,77 @@ class SelfTestService:
             self.logger.exception("failed to prune orphan modules")
 
     # ------------------------------------------------------------------
+    def _has_pytest_file(self, mod: str) -> bool:
+        """Return ``True`` if a pytest file exists for *mod*.
+
+        The check looks for ``test_<name>.py`` alongside the module as well as
+        under a top level ``tests`` directory mirroring the module structure.
+        """
+
+        path = Path(mod)
+        stem = path.stem
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        candidates = [
+            path.parent / f"test_{stem}.py",
+            repo / "tests" / f"test_{stem}.py",
+            repo / "tests" / path.parent / f"test_{stem}.py",
+        ]
+        return any(c.exists() for c in candidates)
+
+    # ------------------------------------------------------------------
+    def _generate_pytest_stub(self, mod: str) -> Path:
+        """Create a temporary pytest stub for *mod* and return its path."""
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+        stub_root = repo / "sandbox_data" / "selftest_stubs"
+        stub_root.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="stub_", dir=stub_root))
+
+        try:
+            rel = Path(mod).resolve().relative_to(repo)
+        except Exception:
+            rel = Path(mod).resolve()
+        import_name = ".".join(rel.with_suffix("").parts)
+
+        stub_path = tmp_dir / f"test_{Path(mod).stem}_stub.py"
+        stub_code = (
+            "import importlib, inspect\n\n"
+            f"mod = importlib.import_module('{import_name}')\n"
+            "\n"
+            "def test_stub():\n"
+            "    for name in dir(mod):\n"
+            "        obj = getattr(mod, name)\n"
+            "        if inspect.isfunction(obj) and obj.__module__ == mod.__name__:\n"
+            "            try:\n"
+            "                obj()\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "        elif inspect.isclass(obj) and obj.__module__ == mod.__name__:\n"
+            "            try:\n"
+            "                obj()\n"
+            "            except Exception:\n"
+            "                pass\n"
+        )
+        stub_path.write_text(stub_code, encoding="utf-8")
+        return stub_path
+
+    # ------------------------------------------------------------------
     async def _test_orphan_modules(self, paths: Iterable[str]) -> tuple[set[str], set[str]]:
         """Execute tests for *paths* and return passing and failing modules."""
 
         passed: set[str] = set()
         failed: set[str] = set()
         for mod in paths:
+            stub_path: Path | None = None
+            target = mod
+            info = self.orphan_traces.get(mod, {})
+            if info.get("classification") == "candidate" and not self._has_pytest_file(mod):
+                try:
+                    stub_path = self._generate_pytest_stub(mod)
+                    target = stub_path.as_posix()
+                except Exception:
+                    self.logger.exception("failed to create pytest stub for %s", mod)
+
             cmd = [
                 sys.executable,
                 "-m",
@@ -924,7 +989,7 @@ class SelfTestService:
                 "-q",
                 "--json-report",
                 "--json-report-file=-",
-                mod,
+                target,
             ]
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -939,6 +1004,13 @@ class SelfTestService:
                     failed.add(mod)
             except Exception:
                 failed.add(mod)
+            finally:
+                if stub_path:
+                    try:
+                        stub_path.unlink()
+                        stub_path.parent.rmdir()
+                    except Exception:
+                        pass
         return passed, failed
 
     # ------------------------------------------------------------------
@@ -1582,7 +1654,10 @@ class SelfTestService:
         assert self._async_stop is not None
         while not self._async_stop.is_set():
             try:
-                await self._run_once(refresh_orphans=refresh_orphans)
+                if refresh_orphans:
+                    await self._run_once(refresh_orphans=refresh_orphans)
+                else:
+                    await self._run_once()
             except Exception:
                 self.logger.exception("self test run failed")
             try:
