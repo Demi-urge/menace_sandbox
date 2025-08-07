@@ -1404,12 +1404,13 @@ class SelfImprovementEngine:
 
         Modules are classified via :func:`orphan_analyzer.classify_module` and
         the classification is stored in ``self.orphan_traces`` as well as the
-        ``orphan_classifications.json`` cache.  Modules classified as
-        ``legacy`` or ``redundant`` are skipped.  Remaining modules are executed
-        via :class:`SelfTestService` with orphan discovery enabled. Basic
-        metrics about the run are logged and stored via ``data_bot`` when
-        available. Actual integration of passing modules is handled by the
-        caller.
+        ``orphan_classifications.json`` cache. Modules classified as
+        ``legacy`` or ``redundant`` are skipped unless
+        :attr:`SandboxSettings.test_redundant_modules` is enabled. Remaining
+        modules are executed via :class:`SelfTestService` with orphan discovery
+        enabled. Basic metrics about the run are logged and stored via
+        ``data_bot`` when available. Actual integration of passing modules is
+        handled by the caller.
         """
 
         all_modules = [str(p) for p in paths]
@@ -1477,7 +1478,17 @@ class SelfImprovementEngine:
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to write orphan classifications")
 
-        modules = [*candidates, *legacy, *redundant]
+        try:
+            settings = SandboxSettings()
+        except Exception:  # pragma: no cover - fallback for tests
+            from sandbox_settings import SandboxSettings as _SS  # type: ignore
+            settings = _SS()
+
+        modules = (
+            [*candidates, *legacy, *redundant]
+            if getattr(settings, "test_redundant_modules", False)
+            else [*candidates]
+        )
         self.logger.info(
             "self test start",
             extra=log_record(
@@ -1903,7 +1914,14 @@ class SelfImprovementEngine:
                 )
             except Exception:  # pragma: no cover - best effort
                 existing_meta = {}
+            try:
+                settings = SandboxSettings()
+            except Exception:  # pragma: no cover - fallback for tests
+                from sandbox_settings import SandboxSettings as _SS  # type: ignore
+                settings = _SS()
+
             legacy_mods: list[str] = []
+            redundant_mods: list[str] = []
             filtered: list[str] = []
             for m in modules:
                 p = Path(m)
@@ -1912,31 +1930,33 @@ class SelfImprovementEngine:
                 except Exception:
                     rel = str(p)
                 cls = existing_meta.get(rel, {}).get("classification")
-                if cls == "legacy":
-                    legacy_mods.append(rel)
-                    info = self.orphan_traces.setdefault(rel, {"parents": []})
-                    info["classification"] = "legacy"
+                info = self.orphan_traces.setdefault(rel, {"parents": []})
+                if cls in {"legacy", "redundant"}:
+                    info["classification"] = cls
                     info["redundant"] = True
-                    continue
+                    if not getattr(settings, "test_redundant_modules", False):
+                        if cls == "legacy":
+                            legacy_mods.append(rel)
+                        else:
+                            redundant_mods.append(rel)
+                        continue
                 filtered.append(m)
             modules = filtered
-            if legacy_mods:
+            if legacy_mods or redundant_mods:
                 try:
-                    orphan_modules_legacy_total.set(len(legacy_mods))
+                    if legacy_mods:
+                        orphan_modules_legacy_total.set(len(legacy_mods))
+                    if redundant_mods:
+                        orphan_modules_redundant_total.set(len(redundant_mods))
                 except Exception:
                     pass
                 existing_meta.update({m: {"classification": "legacy"} for m in legacy_mods})
+                existing_meta.update({m: {"classification": "redundant"} for m in redundant_mods})
                 try:
                     meta_path.parent.mkdir(parents=True, exist_ok=True)
                     meta_path.write_text(json.dumps(existing_meta, indent=2))
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to write orphan classifications")
-
-            try:
-                settings = SandboxSettings()
-            except Exception:  # pragma: no cover - fallback for tests
-                from sandbox_settings import SandboxSettings as _SS  # type: ignore
-                settings = _SS()
 
             if getattr(settings, "auto_include_isolated", True):
                 try:
@@ -2095,7 +2115,8 @@ class SelfImprovementEngine:
                 redundant = analyze_redundancy(p)
             except Exception:  # pragma: no cover - best effort
                 redundant = False
-            if redundant:
+            is_redundant = redundant or cls in {"legacy", "redundant"}
+            if is_redundant and not getattr(settings, "test_redundant_modules", False):
                 info["classification"] = cls
                 info["redundant"] = True
                 skipped.append(m)
@@ -2111,6 +2132,9 @@ class SelfImprovementEngine:
                 except Exception:
                     pass
                 continue
+            if is_redundant:
+                info["classification"] = cls
+                info["redundant"] = True
             filtered.append(m)
 
         if skipped:

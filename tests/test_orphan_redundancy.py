@@ -125,7 +125,7 @@ def test_module_integrated(tmp_path, monkeypatch):
     assert engine.module_clusters.get("ok.py") == 1
 
 
-def test_update_orphan_modules_filters(monkeypatch, tmp_path):
+def test_update_orphan_modules_skips_redundant_when_disabled(monkeypatch, tmp_path):
     from tests.test_recursive_orphans import _load_methods
 
     _, update, _, _ = _load_methods()
@@ -137,6 +137,15 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
+    ss_mod = types.ModuleType("sandbox_settings")
+    class _SS:
+        def __init__(self) -> None:
+            self.auto_include_isolated = True
+            self.recursive_isolated = True
+            self.recursive_orphan_scan = True
+            self.test_redundant_modules = False
+    ss_mod.SandboxSettings = _SS
+    monkeypatch.setitem(sys.modules, "sandbox_settings", ss_mod)
 
     calls: list[Path] = []
 
@@ -146,7 +155,13 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
 
     update.__globals__["analyze_redundancy"] = fake_analyze
 
-    eng = types.SimpleNamespace(logger=DummyLogger())
+    tested: list[list[str]] = []
+
+    def fake_test(paths):
+        tested.append(list(paths))
+        return set()
+
+    eng = types.SimpleNamespace(logger=DummyLogger(), _test_orphan_modules=fake_test)
 
     update(eng)
 
@@ -154,8 +169,67 @@ def test_update_orphan_modules_filters(monkeypatch, tmp_path):
     data = json.loads(mod_file.read_text()) if mod_file.exists() else []
     assert "foo.py" not in data
     assert calls and calls[0].name == "foo.py"
+    assert tested == [[]]
     assert "redundant module skipped" in eng.logger.info_msgs
     assert "redundant modules skipped" in eng.logger.info_msgs
+
+
+def test_update_orphan_modules_tests_redundant_when_enabled(monkeypatch, tmp_path):
+    from tests.test_recursive_orphans import _load_methods
+
+    _, update, _, _ = _load_methods()
+
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    ss_mod = types.ModuleType("sandbox_settings")
+    class _SS:
+        def __init__(self) -> None:
+            self.auto_include_isolated = True
+            self.recursive_isolated = True
+            self.recursive_orphan_scan = True
+            self.test_redundant_modules = True
+    ss_mod.SandboxSettings = _SS
+    monkeypatch.setitem(sys.modules, "sandbox_settings", ss_mod)
+
+    module_path = tmp_path / "dup.py"
+    module_path.write_text("pass\n")
+
+    meta = tmp_path / "orphan_classifications.json"
+    meta.write_text(json.dumps({"dup.py": {"classification": "redundant"}}))
+
+    sr = types.ModuleType("sandbox_runner")
+    sr.discover_recursive_orphans = lambda repo, module_map=None: {}
+    monkeypatch.setitem(sys.modules, "sandbox_runner", sr)
+
+    calls: list[list[str]] = []
+
+    def fake_test(paths):
+        calls.append([str(p) for p in paths])
+        return {Path(p).name for p in paths}
+
+    integrated: list[str] = []
+
+    def fake_integrate(paths):
+        integrated.extend(list(paths))
+        return {Path(p).name for p in paths}
+
+    env = types.SimpleNamespace(
+        auto_include_modules=lambda mods, recursive=True, validate=True: None,
+        try_integrate_into_workflows=lambda mods: None,
+    )
+    update.__globals__["environment"] = env
+
+    eng = types.SimpleNamespace(
+        logger=DummyLogger(),
+        _test_orphan_modules=fake_test,
+        _integrate_orphans=fake_integrate,
+        _refresh_module_map=lambda modules: None,
+    )
+
+    update(eng, modules=[str(module_path)])
+
+    assert calls and Path(calls[0][0]).name == "dup.py"
+    assert integrated and Path(integrated[0]).name == "dup.py"
 
 
 def test_discover_orphans_filters_recursive(monkeypatch, tmp_path):
