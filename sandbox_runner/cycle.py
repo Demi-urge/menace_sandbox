@@ -56,6 +56,8 @@ from .orphan_discovery import (
     append_orphan_classifications,
     prune_orphan_cache,
     load_orphan_cache,
+    load_orphan_traces,
+    append_orphan_traces,
 )
 import orphan_analyzer
 
@@ -139,6 +141,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
         module_map = set(getattr(ctx, "module_map", set()))
         traces = getattr(ctx, "orphan_traces", {})
+        history_updates: Dict[str, Dict[str, Any]] = {}
         try:
             cached = load_orphan_cache(ctx.repo)
             for k, info in cached.items():
@@ -147,6 +150,16 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     cur.update(info)
                 else:
                     traces[k] = dict(info)
+        except Exception:
+            pass
+        try:
+            hist = load_orphan_traces(ctx.repo)
+            for k, info in hist.items():
+                cur = traces.setdefault(k, {"parents": []})
+                if "classification_history" not in cur and info.get("classification_history"):
+                    cur["classification_history"] = list(info.get("classification_history", []))
+                if "roi_history" not in cur and info.get("roi_history"):
+                    cur["roi_history"] = list(info.get("roi_history", []))
         except Exception:
             pass
         discovered: list[str] = []
@@ -162,22 +175,38 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             if rel_path in module_map:
                 continue
             entry = traces.get(rel_path)
+            cls = info.get("classification")
             if entry:
                 parents = set(entry.get("parents", []))
                 parents.update(info.get("parents", []))
                 entry["parents"] = sorted(parents)
-                cls = info.get("classification")
                 if cls:
-                    entry["classification"] = cls
-                    entry["redundant"] = cls in {"legacy", "redundant"}
+                    if entry.get("classification") != cls:
+                        entry["classification"] = cls
+                        entry["redundant"] = cls in {"legacy", "redundant"}
+                        hist = entry.setdefault("classification_history", [])
+                        if not hist or hist[-1] != cls:
+                            hist.append(cls)
+                            history_updates.setdefault(rel_path, {}).setdefault(
+                                "classification_history", []
+                            ).append(cls)
+                    else:
+                        entry["classification"] = cls
+                        entry["redundant"] = cls in {"legacy", "redundant"}
                 elif "redundant" in info:
                     entry["redundant"] = bool(info["redundant"])
             else:
+                cls_val = info.get("classification", "candidate")
                 traces[rel_path] = {
                     "parents": info.get("parents", []),
-                    "classification": info.get("classification", "candidate"),
+                    "classification": cls_val,
                     "redundant": info.get("redundant", False),
+                    "classification_history": [cls_val],
+                    "roi_history": [],
                 }
+                history_updates.setdefault(rel_path, {}).setdefault(
+                    "classification_history", []
+                ).append(cls_val)
                 discovered.append(rel_path)
 
         # ensure callers can inspect the updated traces even if no inclusion runs
@@ -212,12 +241,13 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
             except Exception:
                 cur_mtime = None
 
-            flagged = info.get("failed") or info.get("redundant") or cls in {"redundant", "legacy"}
+            flagged = info.get("failed") or (
+                (info.get("redundant") or cls in {"redundant", "legacy"})
+                and not getattr(settings, "test_redundant_modules", False)
+            )
             if flagged:
                 prev_mtime = info.get("mtime")
                 if prev_mtime is None:
-                    if cur_mtime is not None:
-                        info["mtime"] = cur_mtime
                     continue
                 if cur_mtime is not None and cur_mtime > prev_mtime:
                     info.pop("failed", None)
@@ -261,7 +291,9 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     ctx.tracker.merge_history(tracker)
                 except Exception:
                     logger.exception("failed to merge orphan metrics")
-        
+
+        roi_map = getattr(tracker, "module_deltas", {}) if tracker else {}
+
         added = set(tested.get("added", []))
         failed = set(tested.get("failed", []))
         redundant = set(tested.get("redundant", []))
@@ -308,9 +340,44 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     orphan_modules_reclassified_total.inc(1)
                 except Exception:
                     pass
+
+            hist = entry.setdefault("classification_history", [])
+            if not hist or hist[-1] != cls:
+                hist.append(cls)
+                history_updates.setdefault(m, {}).setdefault(
+                    "classification_history", []
+                ).append(cls)
+            roi_vals = roi_map.get(m)
+            if roi_vals:
+                entry.setdefault("roi_history", []).extend(
+                    float(x) for x in roi_vals
+                )
+                history_updates.setdefault(m, {}).setdefault(
+                    "roi_history", []
+                ).extend(float(x) for x in roi_vals)
         
         try:
-            append_orphan_cache(ctx.repo, traces)
+            cache_updates = {
+                k: {
+                    "parents": v.get("parents", []),
+                    "classification": v.get("classification", "candidate"),
+                    "redundant": v.get("redundant", False),
+                    **({"failed": True} if v.get("failed") else {}),
+                    **({"mtime": v.get("mtime")} if v.get("mtime") is not None else {}),
+                }
+                for k, v in traces.items()
+            }
+            append_orphan_cache(ctx.repo, cache_updates)
+            try:
+                explicit_path = ctx.repo / "sandbox_data" / "orphan_modules.json"
+                existing = {}
+                if explicit_path.exists():
+                    existing = json.loads(explicit_path.read_text()) or {}
+                existing.update(cache_updates)
+                explicit_path.parent.mkdir(parents=True, exist_ok=True)
+                explicit_path.write_text(json.dumps(existing, indent=2, sort_keys=True))
+            except Exception:
+                pass
             class_entries = {
                 k: {
                     "parents": v.get("parents", []),
@@ -320,6 +387,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 for k, v in traces.items()
             }
             append_orphan_classifications(ctx.repo, class_entries)
+            append_orphan_traces(ctx.repo, history_updates)
         except Exception:
             logger.exception("failed to record orphan traces")
         
