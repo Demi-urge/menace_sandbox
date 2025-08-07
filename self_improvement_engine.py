@@ -1748,6 +1748,14 @@ class SelfImprovementEngine:
 
         if not self.module_index:
             return set()
+        try:
+            settings = SandboxSettings()
+        except Exception:  # pragma: no cover - fallback for tests
+            try:
+                from sandbox_settings import SandboxSettings as _SS  # type: ignore
+                settings = _SS()  # type: ignore
+            except Exception:  # pragma: no cover - last resort
+                settings = type("_SS", (), {"test_redundant_modules": False})()
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
         mods: set[str] = set()
@@ -1768,19 +1776,32 @@ class SelfImprovementEngine:
                         "classification failed for %s: %s", path, exc
                     )
                     cls = "candidate"
-            if cls != "candidate":
+            if cls == "legacy":
                 self.logger.info(
                     "redundant module skipped",
                     extra=log_record(module=rel, classification=cls),
                 )
                 try:
-                    if cls == "legacy":
-                        orphan_modules_legacy_total.inc(1)
-                    else:
-                        orphan_modules_redundant_total.inc(1)
+                    orphan_modules_legacy_total.inc(1)
                 except Exception:
                     pass
                 continue
+            if cls == "redundant":
+                allow = getattr(settings, "test_redundant_modules", False)
+                if not allow:
+                    self.logger.info(
+                        "redundant module skipped",
+                        extra=log_record(module=rel, classification=cls),
+                    )
+                    try:
+                        orphan_modules_redundant_total.inc(1)
+                    except Exception:
+                        pass
+                    continue
+                try:
+                    orphan_modules_redundant_total.inc(1)
+                except Exception:
+                    pass
             mods.add(rel)
 
         unknown = [m for m in mods if m not in self.module_clusters]
