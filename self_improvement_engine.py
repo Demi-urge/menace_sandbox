@@ -1730,61 +1730,82 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _integrate_orphans(self, paths: Iterable[str]) -> set[str]:
-        """Refresh module index and clusters for newly tested orphan modules.
+        """Integrate tested orphan modules and refresh module mappings.
 
-        ``auto_include_modules`` is invoked with ``recursive=True`` so that any
-        dependencies of ``paths`` are automatically included. Integrated modules
-        are also passed to :func:`environment.try_integrate_into_workflows` so
-        related workflows gain the new steps. Newly discovered dependencies
-        trigger a rerun of :meth:`_update_orphan_modules` to continue traversal
-        without manual intervention.
+        Candidate modules from ``paths`` are merged with isolates discovered by
+        :mod:`scripts.discover_isolated_modules` and expanded through
+        :func:`collect_local_dependencies`. The resulting module set is passed to
+        :func:`environment.auto_include_modules` with ``recursive=True`` and
+        ``validate=True``. After inclusion, ``module_index`` and
+        ``module_clusters`` are refreshed, orphan tracking files are cleaned and a
+        new orphan discovery round is scheduled so that newly uncovered
+        dependencies are evaluated automatically.
 
         Returns
         -------
         set[str]
-            Names of modules that were successfully integrated. Returned set is
-            empty if no updates occurred or an error was encountered.
+            Names of modules that were successfully integrated.
         """
 
         if not self.module_index:
             return set()
-        try:
-            settings = SandboxSettings()
-        except Exception:  # pragma: no cover - fallback for tests
-            try:
-                from sandbox_settings import SandboxSettings as _SS  # type: ignore
-                settings = _SS()  # type: ignore
-            except Exception:  # pragma: no cover - last resort
-                settings = type("_SS", (), {"test_redundant_modules": False})()
 
         repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-        mods: set[str] = set()
-        traces = getattr(self, "orphan_traces", {})
+
+        candidates: set[str] = set()
         for p in paths:
             path = Path(p)
             try:
                 rel = path.resolve().relative_to(repo).as_posix()
             except Exception:
                 rel = path.name
+            candidates.add(rel)
+
+        try:
+            from scripts.discover_isolated_modules import discover_isolated_modules
+            iso = discover_isolated_modules(str(repo), recursive=True)
+            candidates.update(iso)
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("isolated module discovery failed: %s", exc)
+
+        try:
+            from sandbox_runner.dependency_utils import collect_local_dependencies
+            expanded = collect_local_dependencies(sorted(candidates))
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("dependency expansion failed: %s", exc)
+            expanded = set(candidates)
+
+        try:
+            settings = SandboxSettings()
+        except Exception:
+            try:
+                from sandbox_settings import SandboxSettings as _SS  # type: ignore
+                settings = _SS()  # type: ignore
+            except Exception:  # pragma: no cover - last resort
+                settings = type("_SS", (), {"test_redundant_modules": False})()
+
+        traces = getattr(self, "orphan_traces", {})
+        mods: set[str] = set()
+        legacy = 0
+        redundant = 0
+        for rel in expanded:
+            path = repo / rel
             info = traces.get(rel, {})
             cls = info.get("classification")
             if cls is None:
                 try:
                     cls = classify_module(path)
                 except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "classification failed for %s: %s", path, exc
-                    )
+                    self.logger.exception("classification failed for %s: %s", path, exc)
                     cls = "candidate"
+                info["classification"] = cls
+                traces[rel] = info
             if cls == "legacy":
                 self.logger.info(
                     "redundant module skipped",
                     extra=log_record(module=rel, classification=cls),
                 )
-                try:
-                    orphan_modules_legacy_total.inc(1)
-                except Exception:
-                    pass
+                legacy += 1
                 continue
             if cls == "redundant":
                 allow = getattr(settings, "test_redundant_modules", False)
@@ -1793,16 +1814,18 @@ class SelfImprovementEngine:
                         "redundant module skipped",
                         extra=log_record(module=rel, classification=cls),
                     )
-                    try:
-                        orphan_modules_redundant_total.inc(1)
-                    except Exception:
-                        pass
+                    redundant += 1
                     continue
-                try:
-                    orphan_modules_redundant_total.inc(1)
-                except Exception:
-                    pass
+                redundant += 1
             mods.add(rel)
+
+        try:
+            if legacy:
+                orphan_modules_legacy_total.inc(legacy)
+            if redundant:
+                orphan_modules_redundant_total.inc(redundant)
+        except Exception:
+            pass
 
         unknown = [m for m in mods if m not in self.module_clusters]
         if not unknown:
@@ -1813,20 +1836,9 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
-                environment.auto_include_modules(
-                    sorted(mods), recursive=True, validate=True
-                )
-            except Exception:
-                try:
-                    auto_include_modules(
-                        sorted(mods), recursive=True, validate=True
-                    )
-                except TypeError:
-                    auto_include_modules(sorted(mods), recursive=True)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "auto inclusion failed: %s", exc
-                    )
+                environment.auto_include_modules(sorted(mods), recursive=True, validate=True)
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception("auto inclusion failed: %s", exc)
             try:
                 environment.try_integrate_into_workflows(sorted(mods))
             except Exception:  # pragma: no cover - best effort
@@ -1839,23 +1851,39 @@ class SelfImprovementEngine:
             try:
                 self._update_orphan_modules()
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "recursive orphan update failed: %s", exc
-                )
+                self.logger.exception("recursive orphan update failed: %s", exc)
+
+            data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+            orphan_path = data_dir / "orphan_modules.json"
+            meta_path = data_dir / "orphan_classifications.json"
+            survivors = [
+                m
+                for m, info in traces.items()
+                if not info.get("redundant") and m not in mods
+            ]
             try:
-                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
-                orphan_path = data_dir / "orphan_modules.json"
-                traces = getattr(self, "orphan_traces", {})
-                survivors = [
-                    m
-                    for m, info in traces.items()
-                    if not info.get("redundant") and m not in mods
-                ]
                 if orphan_path.exists() or survivors:
                     orphan_path.parent.mkdir(parents=True, exist_ok=True)
                     orphan_path.write_text(json.dumps(sorted(survivors), indent=2))
             except Exception:  # pragma: no cover - best effort
                 self.logger.exception("failed to clean orphan modules")
+            try:
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text())
+                else:
+                    meta = {}
+                changed = False
+                for m in mods:
+                    if m in meta:
+                        meta.pop(m, None)
+                        changed = True
+                if changed:
+                    if meta:
+                        meta_path.write_text(json.dumps(meta, indent=2))
+                    else:
+                        meta_path.unlink()
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to clean orphan classifications")
             try:
                 orphan_modules_reintroduced_total.inc(len(mods))
             except Exception:
@@ -1864,8 +1892,6 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
             return set()
-
-    # ------------------------------------------------------------------
     def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
         """Return ``modules`` plus any local imports they depend on recursively."""
         from pathlib import Path
@@ -1979,18 +2005,17 @@ class SelfImprovementEngine:
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to write orphan classifications")
 
-            if getattr(settings, "auto_include_isolated", True):
-                try:
-                    from scripts.discover_isolated_modules import discover_isolated_modules
+            try:
+                from scripts.discover_isolated_modules import discover_isolated_modules
 
-                    iso_mods = discover_isolated_modules(
-                        str(repo), recursive=getattr(settings, "recursive_isolated", True)
-                    )
-                    modules.extend(sorted(iso_mods))
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "isolated module discovery failed: %s", exc
-                    )
+                iso_mods = discover_isolated_modules(
+                    str(repo), recursive=getattr(settings, "recursive_isolated", True)
+                )
+                modules.extend(sorted(iso_mods))
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "isolated module discovery failed: %s", exc
+                )
 
             try:
                 from sandbox_runner import discover_recursive_orphans as _discover
@@ -2053,6 +2078,19 @@ class SelfImprovementEngine:
                     survivors = [m for m in modules if Path(m).name not in integrated]
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(json.dumps(sorted(survivors), indent=2))
+                    meta_path = data_dir / "orphan_classifications.json"
+                    if meta_path.exists():
+                        meta = json.loads(meta_path.read_text())
+                        changed = False
+                        for m in integrated:
+                            if m in meta:
+                                meta.pop(m, None)
+                                changed = True
+                        if changed:
+                            if meta:
+                                meta_path.write_text(json.dumps(meta, indent=2))
+                            else:
+                                meta_path.unlink()
                 except Exception:  # pragma: no cover - best effort
                     self.logger.exception("failed to write orphan modules")
             return
