@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Iterable, List, Dict
+from typing import Any, Iterable, List, Dict, Mapping, Sequence
 import concurrent.futures
 
 import orphan_analyzer
@@ -14,7 +14,60 @@ import orphan_analyzer
 logger = logging.getLogger(__name__)
 
 
-def _extract_module_from_call(node: ast.Call) -> str | None:
+def _resolve_assignment(
+    assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], name: str, lineno: int
+) -> ast.AST | None:
+    """Return the value node for ``name`` assigned prior to ``lineno``."""
+
+    values = assignments.get(name)
+    if not values:
+        return None
+    # ``values`` is sorted in visitation order; choose last assignment before lineno
+    candidate: ast.AST | None = None
+    best_line = -1
+    for line, node in values:
+        if line < lineno and line > best_line:
+            candidate, best_line = node, line
+    return candidate
+
+
+def _eval_simple(
+    node: ast.AST, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], lineno: int
+) -> str | None:
+    """Evaluate *node* to a string if it consists of simple constants."""
+
+    if isinstance(node, ast.Str):
+        return node.s
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        assigned = _resolve_assignment(assignments, node.id, lineno)
+        if assigned is not None:
+            return _eval_simple(assigned, assignments, lineno)
+        return None
+    if isinstance(node, ast.JoinedStr):  # f-string
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.FormattedValue):
+                part = _eval_simple(value.value, assignments, lineno)
+            else:
+                part = _eval_simple(value, assignments, lineno)
+            if part is None:
+                return None
+            parts.append(part)
+        return "".join(parts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _eval_simple(node.left, assignments, lineno)
+        right = _eval_simple(node.right, assignments, lineno)
+        if left is not None and right is not None:
+            return left + right
+        return None
+    return None
+
+
+def _extract_module_from_call(
+    node: ast.Call, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]] | None = None
+) -> str | None:
     """Return module name if *node* represents a dynamic import call."""
 
     if (
@@ -23,22 +76,15 @@ def _extract_module_from_call(node: ast.Call) -> str | None:
         and node.func.value.id == "importlib"
         and node.func.attr == "import_module"
         and node.args
-    ):
-        arg = node.args[0]
-        if isinstance(arg, ast.Str):
-            return arg.s
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
-    elif (
+    ) or (
         isinstance(node.func, ast.Name)
         and node.func.id in {"import_module", "__import__"}
         and node.args
     ):
         arg = node.args[0]
-        if isinstance(arg, ast.Str):
-            return arg.s
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            return arg.value
+        resolved = _eval_simple(arg, assignments or {}, node.lineno)
+        if isinstance(resolved, str):
+            return resolved
     return None
 
 
@@ -337,6 +383,23 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
     except Exception:
         return None
 
+    # Collect simple assignments for later resolution of import targets
+    assignments: dict[str, list[tuple[int, ast.AST]]] = {}
+
+    class _AssignVisitor(ast.NodeVisitor):
+        def visit_Assign(self, node: ast.Assign) -> None:  # type: ignore[override]
+            if len(node.targets) != 1:
+                return
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assignments.setdefault(target.id, []).append((node.lineno, node.value))
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # type: ignore[override]
+            if isinstance(node.target, ast.Name) and node.value is not None:
+                assignments.setdefault(node.target.id, []).append((node.lineno, node.value))
+
+    _AssignVisitor().visit(tree)
+
     imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -360,7 +423,7 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
                     name = ".".join(base_prefix + alias.name.split("."))
                     imports.add(name)
         elif isinstance(node, ast.Call):
-            mod_name = _extract_module_from_call(node)
+            mod_name = _extract_module_from_call(node, assignments)
             if mod_name:
                 imports.add(mod_name)
 
