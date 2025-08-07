@@ -22,6 +22,7 @@ import inspect
 
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
+from logging_utils import log_record
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
     from logging_utils import setup_logging
@@ -49,6 +50,14 @@ try:
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - package may not be available
     import metrics_exporter as _me  # type: ignore
+
+orphan_modules_reintroduced_total = _me.orphan_modules_reintroduced_total
+orphan_modules_passed_total = _me.orphan_modules_passed_total
+orphan_modules_tested_total = _me.orphan_modules_tested_total
+orphan_modules_failed_total = _me.orphan_modules_failed_total
+orphan_modules_reclassified_total = _me.orphan_modules_reclassified_total
+orphan_modules_redundant_total = _me.orphan_modules_redundant_total
+orphan_modules_legacy_total = _me.orphan_modules_legacy_total
 
 self_test_passed_total = _me.Gauge(
     "self_test_passed_total", "Total number of passed self tests"
@@ -97,6 +106,21 @@ except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
                 except Exception:
                     pass
         return set(paths)
+
+try:
+    from sandbox_runner.orphan_discovery import (
+        append_orphan_cache,
+        append_orphan_classifications,
+        prune_orphan_cache,
+        load_orphan_cache,
+    )
+except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
+    from orphan_discovery import (
+        append_orphan_cache,
+        append_orphan_classifications,
+        prune_orphan_cache,
+        load_orphan_cache,
+    )
 
 
 class SelfTestService:
@@ -716,6 +740,11 @@ class SelfTestService:
                     cls = "candidate"
                 entry["classification"] = cls
                 entry["redundant"] = cls != "candidate"
+                if cls in {"legacy", "redundant"}:
+                    self.logger.info(
+                        "orphan module classified",
+                        extra=log_record(module=rel, classification=cls),
+                    )
 
         def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
             dep_entry = self.orphan_traces.setdefault(
@@ -759,7 +788,7 @@ class SelfTestService:
                 self.logger.info(
                     "%s module skipped",
                     classification,
-                    extra={"module": m},
+                    extra=log_record(module=m, classification=classification),
                 )
                 continue
             filtered.append(m)
@@ -810,6 +839,11 @@ class SelfTestService:
                     cls = "candidate"
                 entry["classification"] = cls
                 entry["redundant"] = cls != "candidate"
+                if cls in {"legacy", "redundant"}:
+                    self.logger.info(
+                        "orphan module classified",
+                        extra=log_record(module=rel, classification=cls),
+                    )
 
         def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
             dep_entry = self.orphan_traces.setdefault(
@@ -833,10 +867,11 @@ class SelfTestService:
         for m in discovered:
             info = self.orphan_traces.get(m, {})
             if info.get("redundant") and not self.include_redundant:
+                cls = info.get("classification", "redundant")
                 self.logger.info(
                     "%s module skipped",
-                    info.get("classification", "redundant"),
-                    extra={"module": m},
+                    cls,
+                    extra=log_record(module=m, classification=cls),
                 )
                 continue
             filtered.append(m)
@@ -852,11 +887,6 @@ class SelfTestService:
         modules are also removed from the orphan list.  Entries marked
         ``{"redundant": true}`` are preserved for later auditing.
         """
-
-        path = Path("sandbox_data") / "orphan_modules.json"
-        if not path.exists():
-            return
-
         repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
         def _norm(p: str) -> str:
@@ -876,50 +906,9 @@ class SelfTestService:
                 to_remove.add(mod)
 
         try:
-            with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh) or []
+            prune_orphan_cache(repo, to_remove, self.orphan_traces)
         except Exception:
-            self.logger.exception("failed to load orphan modules")
-            return
-
-        changed = False
-        if isinstance(data, list):
-            remaining: list[str] = []
-            for m in data:
-                norm = _norm(m)
-                if norm in to_remove and not self.orphan_traces.get(norm, {}).get("redundant"):
-                    changed = True
-                    continue
-                remaining.append(m)
-            if changed:
-                path.write_text(json.dumps(sorted(set(remaining)), indent=2))
-        elif isinstance(data, dict):
-            remaining_dict: dict[str, Any] = {}
-            for k, info in data.items():
-                norm = _norm(k)
-                if norm in to_remove:
-                    redundant = None
-                    cls = None
-                    if isinstance(info, dict):
-                        redundant = info.get("redundant")
-                        cls = info.get("classification")
-                    entry_trace = self.orphan_traces.get(norm, {})
-                    redundant = entry_trace.get("redundant", redundant)
-                    cls = entry_trace.get("classification", cls)
-                    if redundant:
-                        entry = {"redundant": True}
-                        if cls:
-                            entry["classification"] = cls
-                        remaining_dict[k] = entry
-                    else:
-                        changed = True
-                        continue
-                else:
-                    remaining_dict[k] = info
-            if changed:
-                path.write_text(json.dumps(remaining_dict, indent=2, sort_keys=True))
-        else:  # pragma: no cover - unexpected structure
-            self.logger.error("invalid orphan module cache format: %s", type(data))
+            self.logger.exception("failed to prune orphan modules")
 
     # ------------------------------------------------------------------
     async def _test_orphan_modules(self, paths: Iterable[str]) -> tuple[set[str], set[str]]:
@@ -980,16 +969,10 @@ class SelfTestService:
         self.orphan_failed_modules = []
         self.orphan_redundant_modules = []
 
-        path = Path("sandbox_data") / "orphan_modules.json"
-        existing: list[str] = []
-        if path.exists() and not refresh_orphans:
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh) or []
-                    if isinstance(data, list):
-                        existing = [str(p) for p in data]
-            except Exception:
-                self.logger.exception("failed to load orphan modules")
+        cache_repo = Path.cwd()
+        path = cache_repo / "sandbox_data" / "orphan_modules.json"
+        existing_map = {} if refresh_orphans else load_orphan_cache(cache_repo)
+        existing = list(existing_map.keys())
 
         orphan_list: list[str] = existing if self.include_orphans else []
         discovered: list[str] = []
@@ -1038,6 +1021,11 @@ class SelfTestService:
                         cls = "candidate"
                     entry["classification"] = cls
                     entry["redundant"] = cls != "candidate"
+                    if cls in {"legacy", "redundant"}:
+                        self.logger.info(
+                            "orphan module classified",
+                            extra=log_record(module=rel, classification=cls),
+                        )
 
             def _on_dependency(dep_rel: str, _parent_rel: str, chain: list[str]) -> None:
                 dep_entry = self.orphan_traces.setdefault(
@@ -1071,13 +1059,38 @@ class SelfTestService:
             self.orphan_passed_modules = sorted(passed_mods - set(redundant_list))
             self.orphan_failed_modules = sorted(failed_mods)
             self.orphan_redundant_modules = sorted(set(redundant_list))
+        try:
+            reclassified = {m for m in passed_mods if m in redundant_list}
+            legacy_items = [
+                m
+                for m in redundant_list
+                if self.orphan_traces.get(m, {}).get("classification") == "legacy"
+            ]
+            orphan_modules_tested_total.inc(len(orphan_list))
+            orphan_modules_passed_total.inc(len(passed_mods))
+            orphan_modules_failed_total.inc(len(failed_mods))
+            orphan_modules_reclassified_total.inc(len(reclassified))
+            orphan_modules_redundant_total.inc(len(redundant_list))
+            orphan_modules_legacy_total.inc(len(legacy_items))
+        except Exception:
+            pass
 
         combined_file = list(dict.fromkeys(existing + discovered))
         if combined_file or path.exists():
+            entries: dict[str, dict[str, Any]] = {}
+            for m in combined_file:
+                info = self.orphan_traces.get(m, {})
+                cls = info.get("classification", "candidate")
+                entry = {
+                    "parents": info.get("parents", []),
+                    "classification": cls,
+                    "redundant": cls != "candidate",
+                }
+                entries[m] = entry
             try:
-                path.parent.mkdir(exist_ok=True)
-                path.write_text(json.dumps(combined_file, indent=2))
-                new_modules = [m for m in combined_file if m not in existing]
+                append_orphan_cache(cache_repo, entries)
+                append_orphan_classifications(cache_repo, entries)
+                new_modules = [m for m in combined_file if m not in existing_map]
                 if new_modules:
                     self.logger.info(
                         "Added %d new orphan modules: %s",
@@ -1477,6 +1490,7 @@ class SelfTestService:
 
                 cleaned = False
                 info: dict[str, list[str]] | None = None
+                integrated_now = 0
                 if self.integration_callback and integrate_mods:
                     try:
                         info = self.integration_callback(integrate_mods)
@@ -1485,17 +1499,19 @@ class SelfTestService:
                     else:
                         cleaned = self.integration_callback is self._default_integration
                         if isinstance(info, dict):
-                            self.integration_details["integrated"].extend(
-                                info.get("integrated", integrate_mods)
-                            )
+                            integrated = info.get("integrated", integrate_mods)
+                            self.integration_details["integrated"].extend(integrated)
                             self.integration_details["redundant"].extend(
                                 info.get("redundant", [])
                             )
+                            integrated_now = len(integrated)
                         else:
                             self.integration_details["integrated"].extend(integrate_mods)
+                            integrated_now = len(integrate_mods)
                 elif integrate_mods:
                     # No callback but still record integrated modules
                     self.integration_details["integrated"].extend(integrate_mods)
+                    integrated_now = len(integrate_mods)
 
                 if self.clean_orphans and integrate_mods and not cleaned:
                     try:
@@ -1507,6 +1523,11 @@ class SelfTestService:
                     self.integration_details["redundant"].extend(
                         self.orphan_redundant_modules
                     )
+
+                try:
+                    orphan_modules_reintroduced_total.inc(integrated_now)
+                except Exception:
+                    pass
 
             if self.results is not None:
                 self.results["integration"] = self.get_integration_details()
