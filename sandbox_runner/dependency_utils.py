@@ -175,6 +175,48 @@ def collect_local_dependencies(
                                 except Exception:  # pragma: no cover - best effort
                                     pass
                             queue.append((dep, dep_parents))
+            elif isinstance(node, ast.Call):
+                mod_name: str | None = None
+                if (
+                    isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "importlib"
+                    and node.func.attr == "import_module"
+                    and node.args
+                ):
+                    arg = node.args[0]
+                    if isinstance(arg, ast.Str):
+                        mod_name = arg.s
+                    elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        mod_name = arg.value
+                elif (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id in {"import_module", "__import__"}
+                    and node.args
+                ):
+                    arg = node.args[0]
+                    if isinstance(arg, ast.Str):
+                        mod_name = arg.s
+                    elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        mod_name = arg.value
+                if mod_name:
+                    parts = mod_name.split(".")
+                    mod_path = repo / Path(*parts).with_suffix(".py")
+                    pkg_init = repo / Path(*parts) / "__init__.py"
+                    dep = (
+                        mod_path
+                        if mod_path.exists()
+                        else pkg_init if pkg_init.exists() else None
+                    )
+                    if dep is not None:
+                        dep_rel = dep.relative_to(repo).as_posix()
+                        dep_parents = [rel] + parents
+                        if on_dependency is not None:
+                            try:
+                                on_dependency(dep_rel, rel, dep_parents)
+                            except Exception:  # pragma: no cover - best effort
+                                pass
+                        queue.append((dep, dep_parents))
 
     return seen
 
