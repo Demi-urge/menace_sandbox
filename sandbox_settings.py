@@ -53,6 +53,11 @@ class SandboxSettings(BaseSettings):
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
     synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
+    min_integration_roi: float = Field(
+        0.0,
+        env="MIN_INTEGRATION_ROI",
+        description="Minimum ROI increase required for module auto-integration.",
+    )
     synergy_threshold_window: int | None = Field(None, env="SYNERGY_THRESHOLD_WINDOW")
     synergy_threshold_weight: float | None = Field(None, env="SYNERGY_THRESHOLD_WEIGHT")
     synergy_ma_window: int | None = Field(None, env="SYNERGY_MA_WINDOW")

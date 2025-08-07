@@ -5607,9 +5607,10 @@ def auto_include_modules(
     ``discover_isolated=True``. Only modules that pass these self tests are
     considered for integration. Modules that fail validation or are classified
     as redundant after testing are recorded in ``sandbox_data/orphan_modules.json``
-    while passing entries are pruned from that cache. Redundant modules are
-    integrated only when :class:`sandbox_settings.SandboxSettings` sets
-    ``test_redundant_modules``.
+    while passing entries are pruned from that cache. Modules whose simulated
+    ROI increase is below ``SandboxSettings.min_integration_roi`` are discarded
+    prior to workflow integration. Redundant modules are integrated only when
+    :class:`sandbox_settings.SandboxSettings` sets ``test_redundant_modules``.
 
     The return value from :func:`run_workflow_simulations` is forwarded to the
     caller alongside a mapping of tested modules and the resulting ROI metrics
@@ -5642,6 +5643,7 @@ def auto_include_modules(
     redundant_mods: dict[str, str] = {}
 
     settings = SandboxSettings()
+    min_roi = getattr(settings, "min_integration_roi", 0.0)
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
@@ -5847,7 +5849,7 @@ def auto_include_modules(
                 pass
         for m in list(mods):
             roi_val = sum(tracker.module_deltas.get(m, []))
-            if roi_val <= 0.0:
+            if roi_val < min_roi:
                 low_roi.append(m)
         if low_roi:
             mods = [m for m in mods if m not in low_roi]
@@ -5874,15 +5876,68 @@ def auto_include_modules(
     except Exception:
         pass
 
-    if not mods:
-        res = run_workflow_simulations()
-        tracker = res[0] if isinstance(res, tuple) else res
-        return tracker, tested
-    baseline = run_workflow_simulations()
-    baseline_tracker = baseline[0] if isinstance(baseline, tuple) else baseline
+    baseline_result = run_workflow_simulations()
+    baseline_tracker = (
+        baseline_result[0] if isinstance(baseline_result, tuple) else baseline_result
+    )
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        baseline_tracker.save_history(str(data_dir / "roi_history.json"))
+    except Exception:
+        pass
     baseline_roi = sum(float(r) for r in getattr(baseline_tracker, "roi_history", []))
 
-    generate_workflows_for_modules(mods)
+    if not mods:
+        return baseline_tracker, tested
+
+    accepted: list[str] = []
+    low_roi_mods: list[str] = []
+    for mod in mods:
+        ids = generate_workflows_for_modules([mod])
+        result = run_workflow_simulations()
+        tracker = result[0] if isinstance(result, tuple) else result
+        new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
+        delta = new_roi - baseline_roi
+        if delta >= min_roi:
+            accepted.append(mod)
+            baseline_roi = new_roi
+            baseline_tracker = tracker
+        else:
+            low_roi_mods.append(mod)
+            try:
+                import sqlite3
+
+                with sqlite3.connect("workflows.db") as conn:
+                    for wid in ids:
+                        conn.execute("DELETE FROM workflows WHERE id=?", (wid,))
+                    conn.commit()
+            except Exception:
+                pass
+    if low_roi_mods:
+        tested.setdefault("low_roi", []).extend(low_roi_mods)
+        tested["added"] = [m for m in tested.get("added", []) if m not in low_roi_mods]
+        cache = data_dir / "orphan_modules.json"
+        try:
+            existing = json.loads(cache.read_text()) if cache.exists() else {}
+        except Exception:
+            existing = {}
+        if not isinstance(existing, dict):
+            existing = {}
+        for m in low_roi_mods:
+            info = existing.get(m, {})
+            info["reason"] = "low_roi"
+            existing[m] = info
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(existing, indent=2))
+        except Exception:
+            pass
+    mods = accepted
+    if not mods:
+        return baseline_tracker, tested
+
+    pre_integrate_roi = baseline_roi
     try_integrate_into_workflows(mods)
 
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
@@ -5919,7 +5974,7 @@ def auto_include_modules(
     result = run_workflow_simulations()
     tracker = result[0] if isinstance(result, tuple) else result
     new_roi = sum(float(r) for r in getattr(tracker, "roi_history", []))
-    if new_roi < baseline_roi:
+    if new_roi < pre_integrate_roi:
         try:
             if orig_map_text is not None:
                 map_file.write_text(orig_map_text)

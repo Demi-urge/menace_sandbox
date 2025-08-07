@@ -15,6 +15,7 @@ class DummyTracker:
 
 def test_auto_include_updates_module_map(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_RECURSIVE_ORPHANS", "0")
 
     def fake_generate(mods, workflows_db="workflows.db"):
         return [1]
@@ -30,6 +31,22 @@ def test_auto_include_updates_module_map(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
     monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
     monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
+    class DummyROITracker:
+        def __init__(self):
+            self.module_deltas = {"mod.py": [20.0]}
+            self.roi_history = []
+
+        def load_history(self, path: str) -> None:
+            pass
+
+        def save_history(self, path: str) -> None:
+            Path(path).write_text(json.dumps({"roi_history": self.roi_history}))
+
+    monkeypatch.setitem(
+        sys.modules,
+        "menace.roi_tracker",
+        types.SimpleNamespace(ROITracker=DummyROITracker),
+    )
     monkeypatch.setitem(
         sys.modules,
         "orphan_analyzer",
@@ -236,3 +253,61 @@ def test_redundant_module_integrated_when_flag_set(monkeypatch, tmp_path):
         data = data["modules"]
     assert "mod.py" in data
     assert tested == {"added": ["mod.py"], "failed": [], "redundant": ["mod.py"]}
+
+
+def test_module_skipped_below_roi_threshold(monkeypatch, tmp_path):
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path))
+
+    calls: dict[str, list[list[str]]] = {"generate": [], "integrate": []}
+
+    def fake_generate(mods, workflows_db="workflows.db"):
+        calls["generate"].append(list(mods))
+        return [1]
+
+    def fake_integrate(mods):
+        calls["integrate"].append(list(mods))
+        return [1]
+
+    class Tracker:
+        def __init__(self, roi: float) -> None:
+            self.roi_history = [roi]
+
+        def save_history(self, path: str) -> None:
+            Path(path).write_text(json.dumps({"roi_history": self.roi_history}))
+
+    run_count = {"calls": 0}
+
+    def fake_run():
+        run_count["calls"] += 1
+        return Tracker(0 if run_count["calls"] == 1 else 5)
+
+    monkeypatch.setattr(env, "generate_workflows_for_modules", fake_generate)
+    monkeypatch.setattr(env, "try_integrate_into_workflows", fake_integrate)
+    monkeypatch.setattr(env, "run_workflow_simulations", fake_run)
+    monkeypatch.setitem(
+        sys.modules,
+        "sandbox_settings",
+        types.SimpleNamespace(
+            SandboxSettings=lambda: types.SimpleNamespace(
+                auto_include_isolated=False,
+                recursive_isolated=False,
+                test_redundant_modules=True,
+                min_integration_roi=10.0,
+            )
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "orphan_analyzer",
+        types.SimpleNamespace(
+            analyze_redundancy=lambda path: False,
+            classify_module=lambda path: "candidate",
+        ),
+    )
+
+    result, tested = env.auto_include_modules(["mod.py"])
+
+    assert calls["integrate"] == []
+    map_path = Path(tmp_path, "module_map.json")
+    assert not map_path.exists()
+    assert "mod.py" in tested.get("low_roi", [])
