@@ -79,10 +79,10 @@ def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
 
     In addition to recording execution success and emitted warnings, the helper
     counts side effects such as attempted file writes, process creation,
-    environment mutations and network connections.  Access is denied for these
-    operations so modules can be inspected without mutating the environment.
-    Failures are captured and reflected in the resulting mapping so callers can
-    prioritise modules that execute cleanly.
+    thread creation, environment mutations and network connections.  Access is
+    denied for these operations so modules can be inspected without mutating
+    the environment.  Failures are captured and reflected in the resulting
+    mapping so callers can prioritise modules that execute cleanly.
     """
 
     result: Dict[str, Any] = {
@@ -92,16 +92,18 @@ def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
         "network_calls": 0,
         "process_calls": 0,
         "env_writes": 0,
+        "threads_started": 0,
     }
     try:
         # Instrumented runner that blocks and counts side effects.
         runner = f"""
-import builtins, json, runpy, socket, os, subprocess
+import builtins, json, runpy, socket, os, subprocess, threading
 
 files_written = 0
 network_calls = 0
 process_calls = 0
 env_writes = 0
+threads_started = 0
 
 _open = builtins.open
 def open_wrapper(file, mode='r', *args, **kwargs):
@@ -142,12 +144,19 @@ def env_set_wrapper(self, key, value):
     return _env_set(self, key, value)
 _env_cls.__setitem__ = env_set_wrapper
 
+_thread_start = threading.Thread.start
+def start_wrapper(self, *a, **k):
+    global threads_started
+    threads_started += 1
+    raise PermissionError('thread start disabled')
+threading.Thread.start = start_wrapper
+
 err = None
 try:
     runpy.run_path({repr(str(module_path))}, run_name='__main__')
 except Exception as exc:  # pragma: no cover - best effort
     err = str(exc)
-print(json.dumps({{'files_written': files_written, 'network_calls': network_calls, 'process_calls': process_calls, 'env_writes': env_writes, 'error': err}}))
+print(json.dumps({{'files_written': files_written, 'network_calls': network_calls, 'process_calls': process_calls, 'env_writes': env_writes, 'threads_started': threads_started, 'error': err}}))
 """
         proc = subprocess.run(
             [sys.executable, "-I", "-Wdefault", "-c", runner],
@@ -165,6 +174,7 @@ print(json.dumps({{'files_written': files_written, 'network_calls': network_call
                         "network_calls": info.get("network_calls", 0),
                         "process_calls": info.get("process_calls", 0),
                         "env_writes": info.get("env_writes", 0),
+                        "threads_started": info.get("threads_started", 0),
                     }
                 )
                 if info.get("error"):
@@ -242,7 +252,7 @@ def classify_module(
     ``candidate``.  ``metrics`` always includes ``functions``, ``calls``,
     ``docstring`` and ``complexity`` and, for candidate modules, additional
     runtime information such as ``exec_success``, ``warnings``, ``files_written``,
-    ``network_calls``, ``process_calls`` and ``env_writes``.
+    ``network_calls``, ``process_calls``, ``threads_started`` and ``env_writes``.
     """
 
     metrics = _static_metrics(module_path)

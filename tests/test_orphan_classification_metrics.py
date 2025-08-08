@@ -38,6 +38,7 @@ def test_non_trivial_module_candidate(tmp_path):
     assert meta["warnings"] == 0
     assert meta["process_calls"] == 0
     assert meta["env_writes"] == 0
+    assert meta["threads_started"] == 0
 
 
 def test_orphan_discovery_records_metrics(tmp_path):
@@ -53,6 +54,7 @@ def test_orphan_discovery_records_metrics(tmp_path):
     assert info["warnings"] == 0
     assert info["process_calls"] == 0
     assert info["env_writes"] == 0
+    assert info["threads_started"] == 0
     cache = load_orphan_cache(tmp_path)
     entry = cache[next(iter(cache))]
     assert entry["functions"] == 1
@@ -62,6 +64,7 @@ def test_orphan_discovery_records_metrics(tmp_path):
     assert entry["warnings"] == 0
     assert entry.get("process_calls") == 0
     assert entry.get("env_writes") == 0
+    assert entry.get("threads_started") == 0
 
 
 def test_custom_classifier_override(tmp_path):
