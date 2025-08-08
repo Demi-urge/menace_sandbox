@@ -66,19 +66,24 @@ def _eval_simple(
 
 
 def _extract_module_from_call(
-    node: ast.Call, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]] | None = None
+    node: ast.Call,
+    assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]] | None = None,
+    importlib_aliases: Iterable[str] | None = None,
+    import_module_aliases: Iterable[str] | None = None,
 ) -> str | None:
     """Return module name if *node* represents a dynamic import call."""
 
+    importlib_names = set(importlib_aliases or {"importlib"})
+    import_module_names = set(import_module_aliases or {"import_module"})
     if (
         isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "importlib"
+        and node.func.value.id in importlib_names
         and node.func.attr == "import_module"
         and node.args
     ) or (
         isinstance(node.func, ast.Name)
-        and node.func.id in {"import_module", "__import__"}
+        and node.func.id in import_module_names.union({"__import__"})
         and node.args
     ):
         arg = node.args[0]
@@ -414,8 +419,21 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
 
     _AssignVisitor().visit(tree)
 
+    nodes = list(ast.walk(tree))
+    importlib_aliases = {"importlib"}
+    import_module_aliases = {"import_module"}
+    for n in nodes:
+        if isinstance(n, ast.Import):
+            for alias in n.names:
+                if alias.name == "importlib":
+                    importlib_aliases.add(alias.asname or alias.name)
+        elif isinstance(n, ast.ImportFrom) and n.module == "importlib":
+            for alias in n.names:
+                if alias.name == "import_module":
+                    import_module_aliases.add(alias.asname or alias.name)
+
     imports: set[str] = set()
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 imports.add(alias.name)
@@ -437,7 +455,9 @@ def _parse_file(args: tuple[str, str]) -> tuple[str, set[str]] | None:
                     name = ".".join(base_prefix + alias.name.split("."))
                     imports.add(name)
         elif isinstance(node, ast.Call):
-            mod_name = _extract_module_from_call(node, assignments)
+            mod_name = _extract_module_from_call(
+                node, assignments, importlib_aliases, import_module_aliases
+            )
             if mod_name:
                 imports.add(mod_name)
 
