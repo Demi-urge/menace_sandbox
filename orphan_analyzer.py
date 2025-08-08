@@ -1,14 +1,38 @@
 from __future__ import annotations
 
-"""Helpers for analysing orphan modules before integration."""
+"""Helpers for analysing orphan modules before integration.
+
+Plugins can extend :data:`DEFAULT_CLASSIFIERS` by exposing additional
+callables.  Two mechanisms are supported:
+
+``ORPHAN_ANALYZER_CLASSIFIERS``
+    Environment variable containing a comma separated list of
+    ``"module:function"`` specifications.  Each referenced callable must
+    implement :class:`Classifier`.
+
+``orphan_analyzer.classifiers`` entry points
+    External packages may advertise classifiers via the standard entry point
+    registry.  Each entry point in this group should resolve to a callable
+    conforming to :class:`Classifier`.
+
+Loaded classifiers are appended to :data:`DEFAULT_CLASSIFIERS` and participate
+in :func:`classify_module` evaluation.
+"""
 
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 
 import ast
+import importlib
+import json
+import os
 import subprocess
 import sys
-import json
+
+try:  # Python 3.8+ standard library
+    from importlib import metadata as importlib_metadata
+except Exception:  # pragma: no cover - fallback for older versions
+    import importlib_metadata  # type: ignore
 
 from module_graph_analyzer import build_import_graph
 
@@ -235,6 +259,43 @@ DEFAULT_CLASSIFIERS: Tuple[Classifier, ...] = (
 )
 
 
+def _load_external_classifiers() -> Tuple[Classifier, ...]:
+    """Return classifiers provided via environment variables or entry points."""
+
+    classifiers: list[Classifier] = []
+
+    env = os.environ.get("ORPHAN_ANALYZER_CLASSIFIERS")
+    if env:
+        for spec in env.split(","):
+            spec = spec.strip()
+            if not spec:
+                continue
+            try:
+                module_name, func_name = spec.split(":", 1)
+                mod = importlib.import_module(module_name)
+                classifiers.append(getattr(mod, func_name))
+            except Exception:  # pragma: no cover - best effort
+                continue
+
+    try:
+        eps = importlib_metadata.entry_points(group="orphan_analyzer.classifiers")
+    except TypeError:  # pragma: no cover - legacy API
+        eps = importlib_metadata.entry_points().get("orphan_analyzer.classifiers", [])
+    except Exception:  # pragma: no cover - best effort
+        eps = []
+    for ep in eps:
+        try:
+            classifiers.append(ep.load())
+        except Exception:  # pragma: no cover - best effort
+            continue
+
+    return tuple(classifiers)
+
+
+EXTERNAL_CLASSIFIERS: Tuple[Classifier, ...] = _load_external_classifiers()
+ALL_CLASSIFIERS: Tuple[Classifier, ...] = DEFAULT_CLASSIFIERS + EXTERNAL_CLASSIFIERS
+
+
 def classify_module(
     module_path: Path,
     *,
@@ -257,7 +318,7 @@ def classify_module(
 
     metrics = _static_metrics(module_path)
     result: Literal["legacy", "redundant"] | None = None
-    for classifier in classifiers or DEFAULT_CLASSIFIERS:
+    for classifier in classifiers or ALL_CLASSIFIERS:
         try:
             result = classifier(module_path, metrics)
         except Exception:  # pragma: no cover - best effort
