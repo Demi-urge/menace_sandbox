@@ -164,7 +164,7 @@ def test_telemetry_summary_updates_training(tmp_path):
             self.telemetry.append(ev)
             if self.event_bus:
                 self.event_bus.publish(
-                    "telemetry:new", {"error_type": ev.error_type}
+                    "telemetry:new", {"error_type": str(ev.error_type)}
                 )
 
     class DummyErrorBot:
@@ -196,6 +196,11 @@ def test_telemetry_summary_updates_training(tmp_path):
         summary_interval=1,
     )
     coord.start()
-    edb.add_telemetry(elog.TelemetryEvent(error_type="io", resolution_status="fatal"))
+    edb.add_telemetry(
+        elog.TelemetryEvent(
+            error_type=elog.ErrorType.RUNTIME_FAULT,
+            resolution_status="fatal",
+        )
+    )
     assert len(engine.records) >= 2
 

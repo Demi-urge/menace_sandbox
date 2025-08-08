@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .data_bot import MetricsDB, DataBot
 from .error_forecaster import ErrorForecaster
 from .error_logger import TelemetryEvent, ErrorLogger
+from .error_ontology import ErrorType
 from .knowledge_graph import KnowledgeGraph
 from .database_router import DatabaseRouter
 from .admin_bot_base import AdminBotBase
@@ -312,7 +313,7 @@ class ErrorDB:
             (
                 event.task_id,
                 event.bot_id,
-                event.error_type,
+                getattr(event.error_type, "value", event.error_type),
                 event.stack_trace,
                 event.root_module,
                 event.timestamp,
@@ -327,7 +328,7 @@ class ErrorDB:
             {
                 "task_id": event.task_id,
                 "bot_id": event.bot_id,
-                "error_type": event.error_type,
+                "error_type": str(event.error_type),
                 "stack_trace": event.stack_trace,
                 "root_module": event.root_module,
                 "ts": event.timestamp,
@@ -651,7 +652,7 @@ class ErrorBot(AdminBotBase):
                     TelemetryEvent(
                         task_id=None,
                         bot_id=";".join(bot_ids or []),
-                        error_type="runtime",
+                        error_type=ErrorType.RUNTIME_FAULT,
                         stack_trace=stack_trace,
                         root_module=__name__,
                         timestamp=datetime.utcnow().isoformat(),

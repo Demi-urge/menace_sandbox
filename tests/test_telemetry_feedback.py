@@ -27,7 +27,13 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     trace = "Traceback...\nKeyError: boom"
     for _ in range(3):
-        db.add_telemetry(elog.TelemetryEvent(error_type="runtime", stack_trace=trace, root_module="bot"))
+        db.add_telemetry(
+            elog.TelemetryEvent(
+                error_type=elog.ErrorType.RUNTIME_FAULT,
+                stack_trace=trace,
+                root_module="bot",
+            )
+        )
     fb = tf.TelemetryFeedback(logger, engine, threshold=3)
     fb.check()
     assert engine.calls and engine.calls[0][0] == Path("bot.py")
@@ -40,7 +46,13 @@ def test_feedback_threshold(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     trace = "Traceback...\nKeyError: boom"
     for _ in range(2):
-        db.add_telemetry(elog.TelemetryEvent(error_type="runtime", stack_trace=trace, root_module="bot"))
+        db.add_telemetry(
+            elog.TelemetryEvent(
+                error_type=elog.ErrorType.RUNTIME_FAULT,
+                stack_trace=trace,
+                root_module="bot",
+            )
+        )
     fb = tf.TelemetryFeedback(logger, engine, threshold=3)
     fb.check()
     assert not engine.calls
