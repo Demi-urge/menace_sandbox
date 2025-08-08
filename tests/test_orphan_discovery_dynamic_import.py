@@ -128,3 +128,45 @@ def test_env_var_imports(tmp_path, monkeypatch):
     mapping = discover_recursive_orphans(str(tmp_path))
     assert mapping["dynamic_source"]["parents"] == []
     assert mapping["dmod_env"]["parents"] == ["dynamic_source"]
+
+
+def test_spec_from_file_location(tmp_path, monkeypatch):
+    (tmp_path / "dynamic_source.py").write_text(
+        textwrap.dedent(
+            '''
+            import importlib.util
+
+            def load():
+                spec = importlib.util.spec_from_file_location("dmod_spec", "dmod_spec.py")
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+            '''
+        )
+    )
+    (tmp_path / "dmod_spec.py").write_text("x = 10\n")
+
+    monkeypatch.setattr(orphan_analyzer, "classify_module", lambda p: "candidate")
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["dynamic_source"]["parents"] == []
+    assert mapping["dmod_spec"]["parents"] == ["dynamic_source"]
+
+
+def test_source_file_loader(tmp_path, monkeypatch):
+    (tmp_path / "dynamic_source.py").write_text(
+        textwrap.dedent(
+            '''
+            import importlib.machinery
+
+            def load():
+                importlib.machinery.SourceFileLoader("dmod_loader", "dmod_loader.py").load_module()
+            '''
+        )
+    )
+    (tmp_path / "dmod_loader.py").write_text("x = 11\n")
+
+    monkeypatch.setattr(orphan_analyzer, "classify_module", lambda p: "candidate")
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["dynamic_source"]["parents"] == []
+    assert mapping["dmod_loader"]["parents"] == ["dynamic_source"]

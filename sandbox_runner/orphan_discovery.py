@@ -177,6 +177,19 @@ def _extract_module_from_call(
 
     importlib_names = set(importlib_aliases or {"importlib"})
     import_module_names = set(import_module_aliases or {"import_module"})
+    assigns = assignments or {}
+
+    def _attr_parts(expr: ast.AST) -> List[str]:
+        parts: List[str] = []
+        while isinstance(expr, ast.Attribute):
+            parts.append(expr.attr)
+            expr = expr.value
+        if isinstance(expr, ast.Name):
+            parts.append(expr.id)
+            parts.reverse()
+            return parts
+        return []
+
     if (
         isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
@@ -189,7 +202,6 @@ def _extract_module_from_call(
         and node.args
     ):
         arg = node.args[0]
-        assigns = assignments or {}
         # Attempt a generic evaluation first which now includes environment
         # variable lookups handled by ``_eval_simple``.
         resolved = _eval_simple(arg, assigns, node.lineno)
@@ -250,6 +262,33 @@ def _extract_module_from_call(
                     return fmt.format(*args, **kwargs)
                 except Exception:  # pragma: no cover - best effort
                     return None
+
+    parts = _attr_parts(node.func)
+    if parts:
+        root = parts[0]
+        if (
+            parts[-1] in {"spec_from_file_location", "spec_from_loader"}
+            and (
+                (len(parts) >= 3 and parts[-2] == "util" and root in importlib_names)
+                or len(parts) == 1
+            )
+            and node.args
+        ):
+            mod = _eval_simple(node.args[0], assigns, node.lineno)
+            if isinstance(mod, str):
+                return mod
+        loader_names = {"SourceFileLoader", "SourcelessFileLoader", "ExtensionFileLoader"}
+        if (
+            parts[-1] in loader_names
+            and (
+                (len(parts) >= 3 and parts[-2] == "machinery" and root in importlib_names)
+                or len(parts) == 1
+            )
+            and node.args
+        ):
+            mod = _eval_simple(node.args[0], assigns, node.lineno)
+            if isinstance(mod, str):
+                return mod
     return None
 
 
