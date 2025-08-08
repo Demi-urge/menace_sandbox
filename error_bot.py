@@ -150,6 +150,14 @@ class ErrorDB:
         )
         self.conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS error_clusters(
+                error_type TEXT PRIMARY KEY,
+                cluster_id INTEGER
+            )
+            """
+        )
+        self.conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS safe_mode(
                 module TEXT PRIMARY KEY,
                 active INTEGER
@@ -377,6 +385,41 @@ class ErrorDB:
             {"error_type": row[0], "module": row[1], "count": row[2]}
             for row in cur.fetchall()
         ]
+
+    # ------------------------------------------------------------------
+    def set_error_clusters(self, clusters: dict[str, int]) -> None:
+        """Persist ``error_type`` → ``cluster_id`` mappings."""
+        self.conn.executemany(
+            "INSERT OR REPLACE INTO error_clusters(error_type, cluster_id) VALUES(?, ?)",
+            list(clusters.items()),
+        )
+        self.conn.commit()
+
+    def get_error_clusters(self) -> dict[str, int]:
+        """Return mapping of ``error_type`` to ``cluster_id``."""
+        cur = self.conn.execute(
+            "SELECT error_type, cluster_id FROM error_clusters"
+        )
+        return {row[0]: int(row[1]) for row in cur.fetchall()}
+
+    def get_bot_error_types(self, bot_id: str) -> list[str]:
+        """Return distinct error types recorded for ``bot_id``."""
+        cur = self.conn.execute(
+            "SELECT DISTINCT error_type FROM telemetry WHERE bot_id = ?",
+            (bot_id,),
+        )
+        return [row[0] for row in cur.fetchall()]
+
+    def get_error_types_for_clusters(self, cluster_ids: list[int]) -> list[str]:
+        """Return error types that belong to any of ``cluster_ids``."""
+        if not cluster_ids:
+            return []
+        placeholders = ",".join(["?"] * len(cluster_ids))
+        cur = self.conn.execute(
+            f"SELECT error_type FROM error_clusters WHERE cluster_id IN ({placeholders})",
+            tuple(cluster_ids),
+        )
+        return [row[0] for row in cur.fetchall()]
 
     def add_test_result(self, passed: int, failed: int) -> None:
         """Record test suite execution results."""
