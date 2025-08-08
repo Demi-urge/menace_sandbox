@@ -341,6 +341,7 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
             "calls",
             "exec_success",
             "warnings",
+            "threads_started",
             "process_calls",
             "env_writes",
         ):
@@ -408,6 +409,7 @@ def append_orphan_classifications(
             "calls",
             "exec_success",
             "warnings",
+            "threads_started",
             "process_calls",
             "env_writes",
         ):
@@ -758,6 +760,7 @@ def discover_recursive_orphans(
                 "calls",
                 "exec_success",
                 "warnings",
+                "threads_started",
                 "process_calls",
                 "env_writes",
             ):
