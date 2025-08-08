@@ -341,7 +341,7 @@ def append_orphan_cache(repo: Path | str, entries: Dict[str, Dict[str, Any]]) ->
             "calls",
             "exec_success",
             "warnings",
-            "spawn_attempts",
+            "process_calls",
             "env_writes",
         ):
             if key in info:
@@ -408,7 +408,7 @@ def append_orphan_classifications(
             "calls",
             "exec_success",
             "warnings",
-            "spawn_attempts",
+            "process_calls",
             "env_writes",
         ):
             if key in info:
@@ -758,7 +758,7 @@ def discover_recursive_orphans(
                 "calls",
                 "exec_success",
                 "warnings",
-                "spawn_attempts",
+                "process_calls",
                 "env_writes",
             ):
                 if key in info:
