@@ -33,7 +33,16 @@ import signal
 import weakref
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Callable, Iterable, get_origin, get_args
+from typing import (
+    Any,
+    Dict,
+    List,
+    Callable,
+    Iterable,
+    Mapping,
+    get_origin,
+    get_args,
+)
 from contextlib import asynccontextmanager, suppress
 from filelock import FileLock
 
@@ -5079,14 +5088,18 @@ def generate_workflows_for_modules(
 
 # ----------------------------------------------------------------------
 def try_integrate_into_workflows(
-    modules: Iterable[str], workflows_db: str | Path = "workflows.db"
+    modules: Iterable[str],
+    workflows_db: str | Path = "workflows.db",
+    side_effects: Mapping[str, float] | None = None,
+    side_effect_threshold: float = 10,
 ) -> list[int]:
     """Append orphan ``modules`` to related workflows if possible.
 
     Modules are identified by their repository-relative paths to avoid
     filename collisions. Workflows already containing tasks from the same
     module group will receive the orphan module as an additional step. The list
-    of updated workflow IDs is returned.
+    of updated workflow IDs is returned. Modules with heavy side-effect metrics
+    are skipped based on ``side_effect_threshold``.
     """
 
     from menace.task_handoff_bot import WorkflowDB
@@ -5098,6 +5111,7 @@ def try_integrate_into_workflows(
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
+    side_effects = side_effects or {}
     names: dict[str, str] = {}
     for m in modules:
         p = Path(m)
@@ -5109,6 +5123,12 @@ def try_integrate_into_workflows(
         else:
             rel = p
         rel_str = rel.as_posix()
+        metric = side_effects.get(rel_str) or side_effects.get(str(p), 0)
+        if metric and metric > side_effect_threshold:
+            logger.info(
+                "skipping %s due to side effects score %.2f", rel_str, metric
+            )
+            continue
         names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
         return []
