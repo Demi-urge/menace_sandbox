@@ -106,3 +106,25 @@ def test_percent_format_imports(tmp_path, monkeypatch):
     assert mapping["dynamic_source"]["parents"] == []
     assert mapping["dmod7"]["parents"] == ["dynamic_source"]
     assert mapping["dmod8"]["parents"] == ["dynamic_source"]
+
+
+def test_env_var_imports(tmp_path, monkeypatch):
+    (tmp_path / "dynamic_source.py").write_text(
+        textwrap.dedent(
+            '''
+            import importlib
+            import os
+
+            def load():
+                importlib.import_module(os.getenv("MOD_NAME"))
+            '''
+        )
+    )
+    (tmp_path / "dmod_env.py").write_text("z = 9\n")
+
+    monkeypatch.setenv("MOD_NAME", "dmod_env")
+    monkeypatch.setattr(orphan_analyzer, "classify_module", lambda p: "candidate")
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["dynamic_source"]["parents"] == []
+    assert mapping["dmod_env"]["parents"] == ["dynamic_source"]
