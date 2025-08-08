@@ -64,12 +64,24 @@ def _eval_simple(
                 return None
             parts.append(part)
         return "".join(parts)
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        left = _eval_simple(node.left, assignments, lineno)
-        right = _eval_simple(node.right, assignments, lineno)
-        if left is not None and right is not None:
-            return left + right
-        return None
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.Add):
+            left = _eval_simple(node.left, assignments, lineno)
+            right = _eval_simple(node.right, assignments, lineno)
+            if left is not None and right is not None:
+                return left + right
+            return None
+        if isinstance(node.op, ast.Mod):
+            left = _eval_simple(node.left, assignments, lineno)
+            right = _eval_simple(node.right, assignments, lineno)
+            if not isinstance(left, str) or right is None:
+                return None
+            try:
+                if isinstance(right, list):
+                    return left % tuple(right)
+                return left % right
+            except Exception:  # pragma: no cover - best effort
+                return None
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Attribute):
@@ -141,11 +153,22 @@ def _extract_module_from_call(
         resolved = _eval_simple(arg, assigns, node.lineno)
         if isinstance(resolved, str):
             return resolved
-        if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
-            left = _eval_simple(arg.left, assigns, node.lineno)
-            right = _eval_simple(arg.right, assigns, node.lineno)
-            if isinstance(left, str) and isinstance(right, str):
-                return left + right
+        if isinstance(arg, ast.BinOp):
+            if isinstance(arg.op, ast.Add):
+                left = _eval_simple(arg.left, assigns, node.lineno)
+                right = _eval_simple(arg.right, assigns, node.lineno)
+                if isinstance(left, str) and isinstance(right, str):
+                    return left + right
+            if isinstance(arg.op, ast.Mod):
+                left = _eval_simple(arg.left, assigns, node.lineno)
+                right = _eval_simple(arg.right, assigns, node.lineno)
+                if isinstance(left, str) and right is not None:
+                    try:
+                        if isinstance(right, list):
+                            return left % tuple(right)
+                        return left % right
+                    except Exception:  # pragma: no cover - best effort
+                        return None
         if (
             isinstance(arg, ast.Call)
             and isinstance(arg.func, ast.Attribute)

@@ -80,3 +80,29 @@ def test_concat_and_chained_format_imports(tmp_path, monkeypatch):
     assert mapping["dynamic_source"]["parents"] == []
     assert mapping["dmod5"]["parents"] == ["dynamic_source"]
     assert mapping["dmod6"]["parents"] == ["dynamic_source"]
+
+
+def test_percent_format_imports(tmp_path, monkeypatch):
+    (tmp_path / "dynamic_source.py").write_text(
+        textwrap.dedent(
+            '''
+            import importlib
+
+            suffix = "7"
+            parts = ("dmod", "8")
+
+            def load():
+                importlib.import_module("dmod%s" % suffix)
+                importlib.import_module("%s%s" % parts)
+            '''
+        )
+    )
+    (tmp_path / "dmod7.py").write_text("x = 7\n")
+    (tmp_path / "dmod8.py").write_text("y = 8\n")
+
+    monkeypatch.setattr(orphan_analyzer, "classify_module", lambda p: "candidate")
+
+    mapping = discover_recursive_orphans(str(tmp_path))
+    assert mapping["dynamic_source"]["parents"] == []
+    assert mapping["dmod7"]["parents"] == ["dynamic_source"]
+    assert mapping["dmod8"]["parents"] == ["dynamic_source"]
