@@ -86,6 +86,46 @@ def _eval_simple(
         func = node.func
         if isinstance(func, ast.Attribute):
             base = _eval_simple(func.value, assignments, lineno)
+            # Handle environment variable lookups like os.getenv("KEY", "default")
+            if (
+                isinstance(func.value, ast.Name)
+                and func.value.id == "os"
+                and func.attr == "getenv"
+                and not node.keywords
+                and node.args
+                and len(node.args) <= 2
+            ):
+                key = _eval_simple(node.args[0], assignments, lineno)
+                if not isinstance(key, str):
+                    return None
+                default: str | None = None
+                if len(node.args) == 2:
+                    default_val = _eval_simple(node.args[1], assignments, lineno)
+                    if not isinstance(default_val, str):
+                        return None
+                    default = default_val
+                return os.getenv(key, default)
+            # Handle os.environ.get("KEY", "default")
+            if (
+                isinstance(func.value, ast.Attribute)
+                and isinstance(func.value.value, ast.Name)
+                and func.value.value.id == "os"
+                and func.value.attr == "environ"
+                and func.attr == "get"
+                and not node.keywords
+                and node.args
+                and len(node.args) <= 2
+            ):
+                key = _eval_simple(node.args[0], assignments, lineno)
+                if not isinstance(key, str):
+                    return None
+                default: str | None = None
+                if len(node.args) == 2:
+                    default_val = _eval_simple(node.args[1], assignments, lineno)
+                    if not isinstance(default_val, str):
+                        return None
+                    default = default_val
+                return os.environ.get(key, default)
             if func.attr == "format" and not any(
                 isinstance(a, ast.Starred) for a in node.args
             ):
@@ -150,6 +190,8 @@ def _extract_module_from_call(
     ):
         arg = node.args[0]
         assigns = assignments or {}
+        # Attempt a generic evaluation first which now includes environment
+        # variable lookups handled by ``_eval_simple``.
         resolved = _eval_simple(arg, assigns, node.lineno)
         if isinstance(resolved, str):
             return resolved
