@@ -33,8 +33,8 @@ def _resolve_assignment(
 
 def _eval_simple(
     node: ast.AST, assignments: Mapping[str, Sequence[Tuple[int, ast.AST]]], lineno: int
-) -> str | None:
-    """Evaluate *node* to a string if it consists of simple constants."""
+) -> str | List[str] | None:
+    """Evaluate *node* to a string or list of strings if possible."""
 
     if isinstance(node, ast.Str):
         return node.s
@@ -45,6 +45,14 @@ def _eval_simple(
         if assigned is not None:
             return _eval_simple(assigned, assignments, lineno)
         return None
+    if isinstance(node, (ast.Tuple, ast.List)):
+        items: List[str] = []
+        for elt in node.elts:
+            val = _eval_simple(elt, assignments, lineno)
+            if not isinstance(val, str):
+                return None
+            items.append(val)
+        return items
     if isinstance(node, ast.JoinedStr):  # f-string
         parts: list[str] = []
         for value in node.values:
@@ -62,6 +70,34 @@ def _eval_simple(
         if left is not None and right is not None:
             return left + right
         return None
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (
+            isinstance(func, ast.Attribute)
+            and func.attr == "format"
+            and not any(isinstance(a, ast.Starred) for a in node.args)
+        ):
+            fmt = _eval_simple(func.value, assignments, lineno)
+            if not isinstance(fmt, str):
+                return None
+            args: List[str] = []
+            for arg in node.args:
+                val = _eval_simple(arg, assignments, lineno)
+                if not isinstance(val, str):
+                    return None
+                args.append(val)
+            kwargs: Dict[str, str] = {}
+            for kw in node.keywords:
+                if kw.arg is None:
+                    return None
+                val = _eval_simple(kw.value, assignments, lineno)
+                if not isinstance(val, str):
+                    return None
+                kwargs[kw.arg] = val
+            try:
+                return fmt.format(*args, **kwargs)
+            except Exception:  # pragma: no cover - best effort
+                return None
     return None
 
 
@@ -87,9 +123,22 @@ def _extract_module_from_call(
         and node.args
     ):
         arg = node.args[0]
-        resolved = _eval_simple(arg, assignments or {}, node.lineno)
+        assigns = assignments or {}
+        resolved = _eval_simple(arg, assigns, node.lineno)
         if isinstance(resolved, str):
             return resolved
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Attribute)
+            and arg.func.attr == "join"
+            and not arg.keywords
+            and len(arg.args) == 1
+        ):
+            sep = _eval_simple(arg.func.value, assigns, node.lineno)
+            parts = _eval_simple(arg.args[0], assigns, node.lineno)
+            if isinstance(sep, str) and isinstance(parts, list):
+                if all(isinstance(p, str) for p in parts):
+                    return sep.join(parts)
     return None
 
 
