@@ -42,6 +42,7 @@ from .metrics_exporter import (
 )
 from alert_dispatcher import dispatch_alert
 import json
+import inspect
 import sqlite3
 import pickle
 import io
@@ -61,6 +62,7 @@ import contextlib
 logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
+SIDE_EFFECT_THRESHOLD = 10
 
 
 # Default synergy weight values used when no valid file is available
@@ -2149,50 +2151,72 @@ class SelfImprovementEngine:
             passing = self._test_orphan_modules(repo_mods)
 
             if passing:
-                try:
-                    environment.auto_include_modules(
-                        sorted(passing), recursive=True, validate=True
-                    )
+                metrics = {
+                    m: self.orphan_traces.get(m, {}).get("side_effects", 0)
+                    for m in passing
+                }
+                safe: list[str] = []
+                for m in passing:
+                    if metrics.get(m, 0) > SIDE_EFFECT_THRESHOLD:
+                        info = self.orphan_traces.setdefault(m, {"parents": []})
+                        info["heavy_side_effects"] = True
+                    else:
+                        safe.append(m)
+                if safe:
                     try:
-                        environment.try_integrate_into_workflows(
-                            sorted(passing)
+                        environment.auto_include_modules(
+                            sorted(safe), recursive=True, validate=True
                         )
-                    except Exception:  # pragma: no cover - best effort
-                        pass
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("auto inclusion failed: %s", exc)
+                        try:
+                            kwargs: dict[str, object] = {}
+                            try:
+                                if "side_effects" in inspect.signature(
+                                    environment.try_integrate_into_workflows
+                                ).parameters:
+                                    kwargs["side_effects"] = {
+                                        m: metrics.get(m, 0) for m in safe
+                                    }
+                            except Exception:
+                                pass
+                            environment.try_integrate_into_workflows(
+                                sorted(safe), **kwargs
+                            )
+                        except Exception:  # pragma: no cover - best effort
+                            pass
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception("auto inclusion failed: %s", exc)
 
-                abs_paths = [str(repo / p) for p in passing]
-                integrated: set[str] = set()
-                try:
-                    integrated = self._integrate_orphans(abs_paths)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception("orphan integration failed: %s", exc)
-                try:
-                    self._refresh_module_map(passing)
-                except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "module map refresh failed: %s", exc
-                    )
-                try:
-                    survivors = [m for m in modules if Path(m).name not in integrated]
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(json.dumps(sorted(survivors), indent=2))
-                    meta_path = data_dir / "orphan_classifications.json"
-                    if meta_path.exists():
-                        meta = json.loads(meta_path.read_text())
-                        changed = False
-                        for m in integrated:
-                            if m in meta:
-                                meta.pop(m, None)
-                                changed = True
-                        if changed:
-                            if meta:
-                                meta_path.write_text(json.dumps(meta, indent=2))
-                            else:
-                                meta_path.unlink()
-                except Exception:  # pragma: no cover - best effort
-                    self.logger.exception("failed to write orphan modules")
+                    abs_paths = [str(repo / p) for p in safe]
+                    integrated: set[str] = set()
+                    try:
+                        integrated = self._integrate_orphans(abs_paths)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception("orphan integration failed: %s", exc)
+                    try:
+                        self._refresh_module_map(safe)
+                    except Exception as exc:  # pragma: no cover - best effort
+                        self.logger.exception(
+                            "module map refresh failed: %s", exc
+                        )
+                    try:
+                        survivors = [m for m in modules if Path(m).name not in integrated]
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text(json.dumps(sorted(survivors), indent=2))
+                        meta_path = data_dir / "orphan_classifications.json"
+                        if meta_path.exists():
+                            meta = json.loads(meta_path.read_text())
+                            changed = False
+                            for m in integrated:
+                                if m in meta:
+                                    meta.pop(m, None)
+                                    changed = True
+                            if changed:
+                                if meta:
+                                    meta_path.write_text(json.dumps(meta, indent=2))
+                                else:
+                                    meta_path.unlink()
+                    except Exception:  # pragma: no cover - best effort
+                        self.logger.exception("failed to write orphan modules")
             return
 
         try:
@@ -2321,27 +2345,51 @@ class SelfImprovementEngine:
         passing = self._test_orphan_modules(repo_mods)
         integrated: set[str] = set()
         if passing:
-            try:
-                environment.auto_include_modules(
-                    sorted(passing), recursive=True, validate=True
-                )
+            metrics = {
+                m: self.orphan_traces.get(m, {}).get("side_effects", 0)
+                for m in passing
+            }
+            safe: list[str] = []
+            for m in passing:
+                if metrics.get(m, 0) > SIDE_EFFECT_THRESHOLD:
+                    info = self.orphan_traces.setdefault(m, {"parents": []})
+                    info["heavy_side_effects"] = True
+                else:
+                    safe.append(m)
+            if safe:
                 try:
-                    environment.try_integrate_into_workflows(sorted(passing))
-                except Exception:  # pragma: no cover - best effort
-                    pass
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("auto inclusion failed: %s", exc)
+                    environment.auto_include_modules(
+                        sorted(safe), recursive=True, validate=True
+                    )
+                    try:
+                        kwargs: dict[str, object] = {}
+                        try:
+                            if "side_effects" in inspect.signature(
+                                environment.try_integrate_into_workflows
+                            ).parameters:
+                                kwargs["side_effects"] = {
+                                    m: metrics.get(m, 0) for m in safe
+                                }
+                        except Exception:
+                            pass
+                        environment.try_integrate_into_workflows(
+                            sorted(safe), **kwargs
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        pass
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("auto inclusion failed: %s", exc)
 
-            repo_paths = [str(repo / p) for p in passing]
-            try:
-                integrated = self._integrate_orphans(repo_paths)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("orphan integration failed: %s", exc)
-            try:
-                if hasattr(self, "_refresh_module_map"):
-                    self._refresh_module_map(passing)
-            except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception("module map refresh failed: %s", exc)
+                repo_paths = [str(repo / p) for p in safe]
+                try:
+                    integrated = self._integrate_orphans(repo_paths)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("orphan integration failed: %s", exc)
+                try:
+                    if hasattr(self, "_refresh_module_map"):
+                        self._refresh_module_map(safe)
+                except Exception as exc:  # pragma: no cover - best effort
+                    self.logger.exception("module map refresh failed: %s", exc)
 
         env_clean = os.getenv("SANDBOX_CLEAN_ORPHANS")
         if env_clean and env_clean.lower() in ("1", "true", "yes"):
