@@ -36,6 +36,8 @@ def test_non_trivial_module_candidate(tmp_path):
     assert meta["calls"] == 1
     assert meta["exec_success"] is True
     assert meta["warnings"] == 0
+    assert meta["spawn_attempts"] == 0
+    assert meta["env_writes"] == 0
 
 
 def test_orphan_discovery_records_metrics(tmp_path):
@@ -49,6 +51,8 @@ def test_orphan_discovery_records_metrics(tmp_path):
     assert info["calls"] == 1
     assert info["exec_success"] is True
     assert info["warnings"] == 0
+    assert info["spawn_attempts"] == 0
+    assert info["env_writes"] == 0
     cache = load_orphan_cache(tmp_path)
     entry = cache[next(iter(cache))]
     assert entry["functions"] == 1
@@ -56,6 +60,8 @@ def test_orphan_discovery_records_metrics(tmp_path):
     assert entry["calls"] == 1
     assert entry["exec_success"] is True
     assert entry["warnings"] == 0
+    assert entry.get("spawn_attempts") == 0
+    assert entry.get("env_writes") == 0
 
 
 def test_custom_classifier_override(tmp_path):

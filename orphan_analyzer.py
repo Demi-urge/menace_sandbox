@@ -78,10 +78,11 @@ def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
     """Execute ``module_path`` in a restricted subprocess and collect metrics.
 
     In addition to recording execution success and emitted warnings, the helper
-    counts side effects such as attempted file writes and network connections.
-    Access is denied for these operations so modules can be inspected without
-    mutating the environment.  Failures are captured and reflected in the
-    resulting mapping so callers can prioritise modules that execute cleanly.
+    counts side effects such as attempted file writes, process spawning,
+    environment mutations and network connections.  Access is denied for these
+    operations so modules can be inspected without mutating the environment.
+    Failures are captured and reflected in the resulting mapping so callers can
+    prioritise modules that execute cleanly.
     """
 
     result: Dict[str, Any] = {
@@ -89,14 +90,18 @@ def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
         "warnings": 0,
         "files_written": 0,
         "network_calls": 0,
+        "spawn_attempts": 0,
+        "env_writes": 0,
     }
     try:
         # Instrumented runner that blocks and counts side effects.
         runner = f"""
-import builtins, json, runpy, socket
+import builtins, json, runpy, socket, os, subprocess
 
 files_written = 0
 network_calls = 0
+spawn_attempts = 0
+env_writes = 0
 
 _open = builtins.open
 def open_wrapper(file, mode='r', *args, **kwargs):
@@ -115,12 +120,51 @@ def connect_wrapper(self, *a, **k):
     raise PermissionError('network access disabled')
 socket.socket.connect = connect_wrapper
 
+_popen = subprocess.Popen
+def popen_wrapper(*a, **k):
+    global spawn_attempts
+    spawn_attempts += 1
+    raise PermissionError('process spawning disabled')
+subprocess.Popen = popen_wrapper
+
+class _EnvWrapper(dict):
+    def __setitem__(self, key, value):
+        global env_writes
+        env_writes += 1
+        return super().__setitem__(key, value)
+    def __delitem__(self, key):
+        global env_writes
+        env_writes += 1
+        return super().__delitem__(key)
+    def update(self, *a, **k):
+        global env_writes
+        env_writes += len(dict(*a, **k))
+        return super().update(*a, **k)
+    def pop(self, *a, **k):
+        global env_writes
+        env_writes += 1
+        return super().pop(*a, **k)
+    def popitem(self):
+        global env_writes
+        env_writes += 1
+        return super().popitem()
+    def clear(self):
+        global env_writes
+        env_writes += len(self)
+        return super().clear()
+    def setdefault(self, key, default=None):
+        global env_writes
+        if key not in self:
+            env_writes += 1
+        return super().setdefault(key, default)
+os.environ = _EnvWrapper(os.environ)
+
 err = None
 try:
     runpy.run_path({repr(str(module_path))}, run_name='__main__')
 except Exception as exc:  # pragma: no cover - best effort
     err = str(exc)
-print(json.dumps({{'files_written': files_written, 'network_calls': network_calls, 'error': err}}))
+print(json.dumps({{'files_written': files_written, 'network_calls': network_calls, 'spawn_attempts': spawn_attempts, 'env_writes': env_writes, 'error': err}}))
 """
         proc = subprocess.run(
             [sys.executable, "-I", "-Wdefault", "-c", runner],
@@ -136,6 +180,8 @@ print(json.dumps({{'files_written': files_written, 'network_calls': network_call
                     {
                         "files_written": info.get("files_written", 0),
                         "network_calls": info.get("network_calls", 0),
+                        "spawn_attempts": info.get("spawn_attempts", 0),
+                        "env_writes": info.get("env_writes", 0),
                     }
                 )
                 if info.get("error"):
@@ -212,8 +258,8 @@ def classify_module(
     strategy.  When all classifiers defer the module is considered a
     ``candidate``.  ``metrics`` always includes ``functions``, ``calls``,
     ``docstring`` and ``complexity`` and, for candidate modules, additional
-    runtime information such as ``exec_success``, ``warnings``, ``files_written``
-    and ``network_calls``.
+    runtime information such as ``exec_success``, ``warnings``, ``files_written``,
+    ``network_calls``, ``spawn_attempts`` and ``env_writes``.
     """
 
     metrics = _static_metrics(module_path)
