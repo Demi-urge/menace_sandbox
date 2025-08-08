@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, Literal, Tuple, Protocol
 import ast
 import subprocess
 import sys
+import json
 
 from module_graph_analyzer import build_import_graph
 
@@ -74,23 +75,75 @@ def _static_metrics(module_path: Path) -> Dict[str, Any]:
 
 
 def _runtime_metrics(module_path: Path) -> Dict[str, Any]:
-    """Execute ``module_path`` in an isolated subprocess and collect metrics.
+    """Execute ``module_path`` in a restricted subprocess and collect metrics.
 
-    The helper records whether execution succeeded and counts warning lines
-    emitted on ``stderr``.  Failures are captured and reflected in the
+    In addition to recording execution success and emitted warnings, the helper
+    counts side effects such as attempted file writes and network connections.
+    Access is denied for these operations so modules can be inspected without
+    mutating the environment.  Failures are captured and reflected in the
     resulting mapping so callers can prioritise modules that execute cleanly.
     """
 
-    result: Dict[str, Any] = {"exec_success": False, "warnings": 0}
+    result: Dict[str, Any] = {
+        "exec_success": False,
+        "warnings": 0,
+        "files_written": 0,
+        "network_calls": 0,
+    }
     try:
+        # Instrumented runner that blocks and counts side effects.
+        runner = f"""
+import builtins, json, runpy, socket
+
+files_written = 0
+network_calls = 0
+
+_open = builtins.open
+def open_wrapper(file, mode='r', *args, **kwargs):
+    global files_written
+    if any(m in mode for m in ('w', 'a', 'x', '+')):
+        # ignore Python's own bytecode caching
+        if not str(file).endswith('.pyc'):
+            files_written += 1
+    return _open(file, mode, *args, **kwargs)
+builtins.open = open_wrapper
+
+_connect = socket.socket.connect
+def connect_wrapper(self, *a, **k):
+    global network_calls
+    network_calls += 1
+    raise PermissionError('network access disabled')
+socket.socket.connect = connect_wrapper
+
+err = None
+try:
+    runpy.run_path({repr(str(module_path))}, run_name='__main__')
+except Exception as exc:  # pragma: no cover - best effort
+    err = str(exc)
+print(json.dumps({{'files_written': files_written, 'network_calls': network_calls, 'error': err}}))
+"""
         proc = subprocess.run(
-            [sys.executable, "-I", "-Wdefault", str(module_path)],
+            [sys.executable, "-I", "-Wdefault", "-c", runner],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=module_path.parent,
         )
-        result["exec_success"] = proc.returncode == 0
+        if proc.stdout:
+            try:
+                info = json.loads(proc.stdout.splitlines()[-1])
+                result.update(
+                    {
+                        "files_written": info.get("files_written", 0),
+                        "network_calls": info.get("network_calls", 0),
+                    }
+                )
+                if info.get("error"):
+                    result["error"] = info["error"]
+                else:
+                    result["exec_success"] = True
+            except Exception:  # pragma: no cover - best effort
+                pass
         if proc.stderr:
             result["warnings"] = sum(
                 1 for line in proc.stderr.splitlines() if "warning" in line.lower()
@@ -159,7 +212,8 @@ def classify_module(
     strategy.  When all classifiers defer the module is considered a
     ``candidate``.  ``metrics`` always includes ``functions``, ``calls``,
     ``docstring`` and ``complexity`` and, for candidate modules, additional
-    runtime information such as ``exec_success`` and ``warnings``.
+    runtime information such as ``exec_success``, ``warnings``, ``files_written``
+    and ``network_calls``.
     """
 
     metrics = _static_metrics(module_path)
