@@ -120,6 +120,8 @@ class ErrorDB:
                 error_type TEXT,
                 stack_trace TEXT,
                 root_module TEXT,
+                module TEXT,
+                inferred_cause TEXT,
                 ts TEXT,
                 resolution_status TEXT,
                 patch_id INTEGER,
@@ -132,6 +134,20 @@ class ErrorDB:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN patch_id INTEGER")
         if "deploy_id" not in cols:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN deploy_id INTEGER")
+        if "module" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN module TEXT")
+        if "inferred_cause" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN inferred_cause TEXT")
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS error_stats(
+                error_type TEXT,
+                module TEXT,
+                count INTEGER,
+                PRIMARY KEY (error_type, module)
+            )
+            """
+        )
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS safe_mode(
@@ -307,8 +323,8 @@ class ErrorDB:
         """Insert a high-resolution error telemetry entry."""
         self.conn.execute(
             """
-            INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, ts, resolution_status, patch_id, deploy_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, module, inferred_cause, ts, resolution_status, patch_id, deploy_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.task_id,
@@ -316,10 +332,22 @@ class ErrorDB:
                 getattr(event.error_type, "value", event.error_type),
                 event.stack_trace,
                 event.root_module,
+                event.module,
+                event.inferred_cause,
                 event.timestamp,
                 event.resolution_status,
                 event.patch_id,
                 event.deploy_id,
+            ),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO error_stats(error_type, module, count) VALUES(?,?,1)
+            ON CONFLICT(error_type, module) DO UPDATE SET count=count+1
+            """,
+            (
+                getattr(event.error_type, "value", event.error_type),
+                event.module,
             ),
         )
         self.conn.commit()
@@ -331,12 +359,24 @@ class ErrorDB:
                 "error_type": str(event.error_type),
                 "stack_trace": event.stack_trace,
                 "root_module": event.root_module,
+                "module": event.module,
+                "inferred_cause": event.inferred_cause,
                 "ts": event.timestamp,
                 "resolution_status": event.resolution_status,
                 "patch_id": event.patch_id,
                 "deploy_id": event.deploy_id,
             },
         )
+
+    def get_error_stats(self) -> list[dict[str, int]]:
+        """Return aggregated error counts grouped by type and module."""
+        cur = self.conn.execute(
+            "SELECT error_type, module, count FROM error_stats"
+        )
+        return [
+            {"error_type": row[0], "module": row[1], "count": row[2]}
+            for row in cur.fetchall()
+        ]
 
     def add_test_result(self, passed: int, failed: int) -> None:
         """Record test suite execution results."""
