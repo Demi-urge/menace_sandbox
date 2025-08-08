@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 import threading
 import inspect
+import subprocess
 
 from orphan_analyzer import classify_module
 from sandbox_settings import SandboxSettings
@@ -816,6 +817,12 @@ class SelfTestService:
                     extra=log_record(module=m, classification=classification),
                 )
                 continue
+            passed, warnings, metrics = self._run_module_harness(m)
+            info["test_passed"] = passed
+            if warnings:
+                info["warnings"] = warnings
+            if metrics:
+                self.module_metrics[m] = metrics
             filtered.append(m)
 
         return filtered
@@ -899,6 +906,12 @@ class SelfTestService:
                     extra=log_record(module=m, classification=cls),
                 )
                 continue
+            passed, warnings, metrics = self._run_module_harness(m)
+            info["test_passed"] = passed
+            if warnings:
+                info["warnings"] = warnings
+            if metrics:
+                self.module_metrics[m] = metrics
             filtered.append(m)
 
         return filtered
@@ -1013,6 +1026,82 @@ class SelfTestService:
         )
         stub_path.write_text(stub_code, encoding="utf-8")
         return stub_path
+
+    # ------------------------------------------------------------------
+    def _run_module_harness(self, mod: str) -> tuple[bool, list[Any], dict[str, Any]]:
+        """Run the test harness for *mod* synchronously and return results.
+
+        Returns a tuple ``(passed, warnings, metrics)`` where *passed* is a
+        boolean indicating if the harness exited successfully, *warnings* is a
+        list of reported warnings and *metrics* contains runtime information
+        compatible with :meth:`_test_orphan_modules`.
+        """
+
+        stub_path: Path | None = None
+        target = mod
+        info = self.orphan_traces.get(mod, {})
+        if info.get("classification") == "candidate" and not self._has_pytest_file(mod):
+            try:
+                stub_path = self._generate_pytest_stub(mod)
+                target = stub_path.as_posix()
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to create pytest stub for %s", mod)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            self.test_runner,
+            "-q",
+            "--json-report",
+            "--json-report-file=-",
+            target,
+        ]
+
+        passed = False
+        warnings: list[Any] = []
+        metrics: dict[str, Any] = {}
+        try:
+            proc = subprocess.run(cmd, capture_output=True)
+            out = proc.stdout.decode() if isinstance(proc.stdout, bytes) else proc.stdout
+            report: dict[str, Any] = {}
+            try:
+                report = json.loads(out or "{}")
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("failed to parse test report for %s", mod)
+
+            summary = report.get("summary", {})
+            warnings = report.get("warnings", []) or []
+            cov_info = report.get("coverage", {}) or report.get("cov", {}) or {}
+            cov = float(
+                cov_info.get("percent")
+                or cov_info.get("coverage")
+                or cov_info.get("percent_covered")
+                or 0.0
+            )
+            runtime = float(
+                report.get("duration")
+                or summary.get("duration")
+                or summary.get("runtime")
+                or 0.0
+            )
+            categories: list[str] = []
+            if int(summary.get("failed", 0)):
+                categories.append("failed")
+            if int(summary.get("error", 0)):
+                categories.append("error")
+
+            metrics = {"coverage": cov, "runtime": runtime, "categories": categories}
+            passed = proc.returncode == 0
+        except Exception:  # pragma: no cover - best effort
+            passed = False
+        finally:
+            if stub_path:
+                try:
+                    stub_path.unlink()
+                    stub_path.parent.rmdir()
+                except Exception:
+                    pass
+        return passed, warnings, metrics
 
     # ------------------------------------------------------------------
     async def _test_orphan_modules(
@@ -1254,6 +1343,10 @@ class SelfTestService:
                         "classification": cls,
                         "redundant": cls != "candidate",
                     }
+                    if "test_passed" in info:
+                        entry["test_passed"] = bool(info["test_passed"])
+                    if info.get("warnings"):
+                        entry["warnings"] = info.get("warnings")
                     entries[m] = entry
                 try:
                     append_orphan_cache(cache_repo, entries)
