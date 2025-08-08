@@ -5652,8 +5652,13 @@ def auto_include_modules(
     import json
     from sandbox_settings import SandboxSettings
     from .dependency_utils import collect_local_dependencies
+    try:
+        from . import metrics_exporter as _me
+    except Exception:  # pragma: no cover - fallback import
+        import metrics_exporter as _me  # type: ignore
 
     mod_paths = {Path(m).as_posix() for m in modules}
+    isolated_mods: set[str] = set()
 
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
     map_file = data_dir / "module_map.json"
@@ -5760,9 +5765,15 @@ def auto_include_modules(
             isolated = discover_isolated_modules(repo, recursive=True)
             for rel in isolated:
                 path = Path(rel)
-                if path.as_posix() in existing_mods:
+                rel_posix = path.as_posix()
+                if rel_posix in existing_mods:
                     continue
-                mod_paths.add(path.as_posix())
+                mod_paths.add(rel_posix)
+                isolated_mods.add(rel_posix)
+                try:
+                    _me.isolated_modules_discovered_total.inc()
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -5967,6 +5978,12 @@ def auto_include_modules(
 
     pre_integrate_roi = baseline_roi
     try_integrate_into_workflows(mods)
+    for mod in mods:
+        if mod in isolated_mods:
+            try:
+                _me.isolated_modules_integrated_total.inc()
+            except Exception:
+                pass
 
     data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
     map_file = data_dir / "module_map.json"
