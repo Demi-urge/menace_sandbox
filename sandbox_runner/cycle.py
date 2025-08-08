@@ -60,6 +60,7 @@ from .orphan_discovery import (
     append_orphan_traces,
 )
 import orphan_analyzer
+import module_graph_analyzer
 
 
 def map_module_identifier(name: str, repo: Path) -> str:
@@ -278,21 +279,42 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
 
         pre_mods = set(module_map)
         tested: Dict[str, list[str]] = {"added": [], "failed": [], "redundant": []}
-        tracker = None
+        roi_map: Dict[str, list[float]] = {}
         if candidate_mods:
+            clusters: Dict[int, list[str]] = {0: list(candidate_mods)}
             try:
-                tracker, tested = auto_include_modules(
-                    candidate_mods, recursive=True, validate=True
-                )
+                id_map = {map_module_identifier(m, ctx.repo): m for m in candidate_mods}
+                graph = module_graph_analyzer.build_import_graph(ctx.repo)
+                sub_graph = graph.subgraph(id_map.keys()).copy()
+                mapping = module_graph_analyzer.cluster_modules(sub_graph)
+                clusters = {}
+                for mod in candidate_mods:
+                    cid = mapping.get(map_module_identifier(mod, ctx.repo), 0)
+                    clusters.setdefault(cid, []).append(mod)
             except Exception:
-                logger.exception("isolated module auto-inclusion failed")
-            if tracker:
+                logger.exception("module clustering failed")
+            for cid in sorted(clusters):
+                mods = clusters[cid]
+                logger.info(
+                    "orphan cluster integration",
+                    extra=log_record(cluster=cid, modules=mods),
+                )
                 try:
-                    ctx.tracker.merge_history(tracker)
+                    cluster_tracker, cluster_tested = auto_include_modules(
+                        mods, recursive=True, validate=True
+                    )
                 except Exception:
-                    logger.exception("failed to merge orphan metrics")
-
-        roi_map = getattr(tracker, "module_deltas", {}) if tracker else {}
+                    logger.exception("isolated module auto-inclusion failed")
+                    continue
+                for k in tested:
+                    tested[k].extend(cluster_tested.get(k, []))
+                if cluster_tracker:
+                    try:
+                        ctx.tracker.merge_history(cluster_tracker)
+                    except Exception:
+                        logger.exception("failed to merge orphan metrics")
+                    for m, vals in getattr(cluster_tracker, "module_deltas", {}).items():
+                        roi_map.setdefault(m, []).extend(vals)
 
         added = set(tested.get("added", []))
         failed = set(tested.get("failed", []))
