@@ -46,6 +46,7 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_TEST_REDUNDANT",
         description="Integrate modules classified as redundant after validation.",
     )
+    side_effect_threshold: int = Field(10, env="SANDBOX_SIDE_EFFECT_THRESHOLD")
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")

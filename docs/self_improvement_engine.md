@@ -138,6 +138,8 @@ python run_autonomous.py --include-orphans --recursive-include
   modules classified as redundant or legacy.
 - `--clean-orphans` / `SANDBOX_CLEAN_ORPHANS` – prune passing entries from
   `orphan_modules.json` after integration.
+- `SANDBOX_SIDE_EFFECT_THRESHOLD` – side-effect score above which modules are
+  tagged as `heavy_side_effects` and skipped during integration (default `10`).
 
 ### Classification and metrics storage
 
@@ -173,8 +175,8 @@ and only integrates modules exceeding at least one of these thresholds.
 `orphan_analyzer` executes each candidate inside a restricted subprocess that
 counts attempted file writes and network connections. The resulting
 side-effect score is stored under ``side_effects`` and modules exceeding the
-``SIDE_EFFECT_THRESHOLD`` are marked ``heavy_side_effects`` and skipped during
-automatic workflow integration.
+``SANDBOX_SIDE_EFFECT_THRESHOLD`` value are marked ``heavy_side_effects`` and
+skipped during automatic workflow integration.
 
 Enable side-effect capture during autonomous runs and combine it with
 isolated-module discovery to validate helpers individually:

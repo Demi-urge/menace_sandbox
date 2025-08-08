@@ -62,7 +62,6 @@ import contextlib
 logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
-SIDE_EFFECT_THRESHOLD = 10
 
 
 # Default synergy weight values used when no valid file is available
@@ -2172,8 +2171,9 @@ class SelfImprovementEngine:
                     for m in passing
                 }
                 safe: list[str] = []
+                threshold = SandboxSettings().side_effect_threshold
                 for m in passing:
-                    if metrics.get(m, 0) > SIDE_EFFECT_THRESHOLD:
+                    if metrics.get(m, 0) > threshold:
                         info = self.orphan_traces.setdefault(m, {"parents": []})
                         info["heavy_side_effects"] = True
                     else:
@@ -2366,8 +2366,9 @@ class SelfImprovementEngine:
                 for m in passing
             }
             safe: list[str] = []
+            threshold = SandboxSettings().side_effect_threshold
             for m in passing:
-                if metrics.get(m, 0) > SIDE_EFFECT_THRESHOLD:
+                if metrics.get(m, 0) > threshold:
                     info = self.orphan_traces.setdefault(m, {"parents": []})
                     info["heavy_side_effects"] = True
                 else:
