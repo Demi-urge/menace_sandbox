@@ -429,6 +429,14 @@ orphan_modules_side_effects_total = Gauge(
     "orphan_modules_side_effects_total",
     "Total number of orphan modules skipped due to side effect scores",
 )
+isolated_modules_discovered_total = Gauge(
+    "isolated_modules_discovered_total",
+    "Total number of isolated modules discovered for potential inclusion",
+)
+isolated_modules_integrated_total = Gauge(
+    "isolated_modules_integrated_total",
+    "Total number of isolated modules successfully integrated",
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )
@@ -599,6 +607,8 @@ __all__ = [
     "visual_agent_queue_depth",
     "visual_agent_recoveries_total",
     "visual_agent_watchdog_recoveries_total",
+    "isolated_modules_discovered_total",
+    "isolated_modules_integrated_total",
     "sandbox_restart_total",
     "sandbox_last_failure_ts",
     "cleanup_idle",

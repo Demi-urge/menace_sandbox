@@ -114,6 +114,11 @@ Progress through the orphan workflow is exposed via Prometheus gauges:
 - `orphan_modules_redundant_total`
 - `orphan_modules_legacy_total`
 
+Discovery and integration of isolated modules are tracked separately:
+
+- `isolated_modules_discovered_total`
+- `isolated_modules_integrated_total`
+
 Start the exporter with `metrics_exporter.start_metrics_server(8001)` and
 configure Prometheus to scrape the port to monitor these values over time.
 
