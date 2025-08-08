@@ -1440,6 +1440,11 @@ class SelfImprovementEngine:
             data_dir = repo / data_dir
         meta_path = data_dir / "orphan_classifications.json"
 
+        try:  # pragma: no cover - dynamic import
+            from self_test_service import SelfTestService as _STS
+        except Exception:  # pragma: no cover - service unavailable
+            _STS = None
+
         classifications: dict[str, dict[str, Any]] = {}
         candidates: list[str] = []
         legacy: list[str] = []
@@ -1506,6 +1511,19 @@ class SelfImprovementEngine:
             from sandbox_settings import SandboxSettings as _SS  # type: ignore
             settings = _SS()
 
+        past_results: dict[str, dict[str, Any]] = {}
+        if _STS is not None:
+            try:
+                past_results = _STS.orphan_summary()
+            except Exception:
+                past_results = {}
+        if past_results:
+            def _ok(m: str) -> bool:
+                return past_results.get(m, {}).get("roi_delta", 0.0) >= 0
+            candidates[:] = [m for m in candidates if _ok(m)]
+            legacy[:] = [m for m in legacy if _ok(m)]
+            redundant[:] = [m for m in redundant if _ok(m)]
+
         modules = (
             [*candidates, *legacy, *redundant]
             if getattr(settings, "test_redundant_modules", False)
@@ -1553,11 +1571,6 @@ class SelfImprovementEngine:
                 environment.auto_include_modules(sorted(modules), recursive=True)
             except Exception:
                 pass
-
-        try:  # pragma: no cover - dynamic imports for isolated tests
-            from self_test_service import SelfTestService as _STS
-        except Exception:  # pragma: no cover - fallback when service unavailable
-            _STS = None
 
         if _STS is None:
             try:
