@@ -11,7 +11,15 @@ def test_data_routes(tmp_path):
     edb = eh.EvolutionHistoryDB(tmp_path / "e.db")
     edb.add(eh.EvolutionEvent(action="a", before_metric=1.0, after_metric=2.0, roi=1.0))
     errdb = eb.ErrorDB(tmp_path / "err.db")
-    errdb.add_telemetry(eb.TelemetryEvent(bot_id="b", task_id="t", error_type="X", stack_trace="", root_module="m"))
+    errdb.add_telemetry(
+        eb.TelemetryEvent(
+            bot_id="b",
+            task_id="t",
+            error_type=eb.ErrorType.RUNTIME_FAULT,
+            stack_trace="",
+            root_module="m",
+        )
+    )
     dash = md.MonitoringDashboard(mdb, edb, errdb)
     client = dash.app.test_client()
     resp = client.get("/metrics_data")

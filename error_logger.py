@@ -10,7 +10,7 @@ import json
 import hashlib
 from datetime import datetime
 from functools import wraps
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Optional
 
 from .sentry_client import SentryClient
 
@@ -22,6 +22,8 @@ except Exception:  # pragma: no cover - optional
 from pydantic import BaseModel
 
 from typing import TYPE_CHECKING
+
+from .error_ontology import ErrorType
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .error_bot import ErrorDB
@@ -38,7 +40,7 @@ class TelemetryEvent(BaseModel):
 
     task_id: str | None = None
     bot_id: str | None = None
-    error_type: str = ""
+    error_type: ErrorType = ErrorType.UNKNOWN
     stack_trace: str = ""
     root_module: str = ""
     timestamp: str = datetime.utcnow().isoformat()
@@ -52,14 +54,23 @@ class ErrorClassifier:
     """Categorise errors via regex and semantic matching."""
 
     regex_map = {
-        r"KeyError": "Runtime/Reference",
-        r"IndexError": "Runtime/Index",
-        r"FileNotFoundError": "Runtime/IO",
+        r"KeyError": ErrorType.RUNTIME_FAULT,
+        r"IndexError": ErrorType.RUNTIME_FAULT,
+        r"FileNotFoundError": ErrorType.RUNTIME_FAULT,
+        r"ModuleNotFoundError|ImportError": ErrorType.DEPENDENCY_MISMATCH,
+        r"AssertionError": ErrorType.LOGIC_MISFIRE,
+        r"TypeError": ErrorType.SEMANTIC_BUG,
     }
     semantic_map = {
-        "missing key": "Runtime/Reference",
-        "key not found": "Runtime/Reference",
-        "not in index": "Runtime/Index",
+        "missing key": ErrorType.RUNTIME_FAULT,
+        "key not found": ErrorType.RUNTIME_FAULT,
+        "not in index": ErrorType.RUNTIME_FAULT,
+        "module not found": ErrorType.DEPENDENCY_MISMATCH,
+        "dependency missing": ErrorType.DEPENDENCY_MISMATCH,
+        "assertion failed": ErrorType.LOGIC_MISFIRE,
+        "not implemented": ErrorType.LOGIC_MISFIRE,
+        "unexpected type": ErrorType.SEMANTIC_BUG,
+        "wrong type": ErrorType.SEMANTIC_BUG,
     }
 
     def __init__(self) -> None:
@@ -72,7 +83,7 @@ class ErrorClassifier:
         else:
             self.model = None
 
-    def classify(self, stack: str) -> str:
+    def classify(self, stack: str) -> ErrorType:
         for pattern, label in self.regex_map.items():
             if re.search(pattern, stack, re.IGNORECASE):
                 return label
@@ -84,17 +95,17 @@ class ErrorClassifier:
             try:
                 emb = self.model.encode([low])[0]
                 best_score = 0.0
-                best_label = "unknown"
+                best_label: ErrorType | None = None
                 for phrase, label in self.semantic_map.items():
                     sim = float(util.cos_sim(emb, self.model.encode([phrase])[0]))
                     if sim > best_score:
                         best_score = sim
                         best_label = label
-                if best_score > 0.5:
+                if best_label and best_score > 0.5:
                     return best_label
             except Exception as e:  # pragma: no cover - runtime issues
                 self.logger.warning("semantic classification failed: %s", e)
-        return "unknown"
+        return ErrorType.UNKNOWN
 
 
 class ErrorLogger:
