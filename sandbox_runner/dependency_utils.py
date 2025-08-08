@@ -31,6 +31,7 @@ def collect_local_dependencies(
     initial_parents: Mapping[str, List[str]] | None = None,
     on_module: ModuleCallback | None = None,
     on_dependency: DependencyCallback | None = None,
+    max_depth: int | None = None,
 ) -> Set[str]:
     """Return modules reachable from ``paths`` following local imports.
 
@@ -47,6 +48,9 @@ def collect_local_dependencies(
         Optional callback invoked when a dependency is discovered. Receives
         ``(dep_rel_path, parent_rel_path, chain)`` where ``chain`` represents the
         import lineage from the original roots to ``dep_rel_path``.
+    max_depth:
+        Optional maximum dependency chain length. When set, traversal stops once
+        the chain of parents reaches this depth. ``None`` means unlimited.
     """
 
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
@@ -82,6 +86,9 @@ def collect_local_dependencies(
         if rel in seen:
             continue
         seen.add(rel)
+
+        if max_depth is not None and len(parents) >= max_depth:
+            continue
 
         try:
             src = path.read_text(encoding="utf-8")

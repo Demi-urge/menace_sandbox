@@ -41,6 +41,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_RECURSIVE_ISOLATED",
         description="Recursively resolve local imports when auto-including isolated modules.",
     )
+    max_recursion_depth: int | None = Field(
+        None,
+        env="SANDBOX_MAX_RECURSION_DEPTH",
+        description="Maximum depth when resolving dependencies recursively (default unlimited).",
+    )
     test_redundant_modules: bool = Field(
         True,
         env="SANDBOX_TEST_REDUNDANT",

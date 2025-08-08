@@ -5724,6 +5724,7 @@ def auto_include_modules(
                 initial_parents=initial,
                 on_module=_on_module if traces is not None else None,
                 on_dependency=_on_dep if traces is not None else None,
+                max_depth=getattr(settings, "max_recursion_depth", None),
             )
             mod_paths.update(deps)
             mod_paths.difference_update(existing_mods)

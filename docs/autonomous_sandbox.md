@@ -956,7 +956,8 @@ can expose gauges such as `orphan_modules_tested_total`.
 candidate by calling `dependency_utils.collect_local_dependencies`. When
 `SANDBOX_RECURSIVE_ORPHANS=1` or `SANDBOX_RECURSIVE_ISOLATED=1`, this walk
 follows each import chain so supporting files are queued alongside the target
-module. The collected set is executed by `SelfTestService`, which validates the
+module. Use `SANDBOX_MAX_RECURSION_DEPTH` or `--max-recursion-depth` to cap how
+deep these chains are explored. The collected set is executed by `SelfTestService`, which validates the
 isolated module and only forwards passing paths back to
 `auto_include_modules` for integration into `sandbox_data/module_map.json`.
 

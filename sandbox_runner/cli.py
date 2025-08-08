@@ -1034,6 +1034,12 @@ def main(argv: List[str] | None = None) -> None:
         "--summary-depth", type=int, help="lines to keep when summarising snippets"
     )
     parser.add_argument(
+        "--max-recursion-depth",
+        type=int,
+        default=os.getenv("SANDBOX_MAX_RECURSION_DEPTH"),
+        help="maximum depth when resolving dependency chains",
+    )
+    parser.add_argument(
         "--discover-orphans",
         action="store_false",
         dest="discover_orphans",
@@ -1386,6 +1392,8 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["GPT_SECTION_PROMPT_MAX_LENGTH"] = str(args.max_prompt_length)
     if args.summary_depth is not None:
         os.environ["GPT_SECTION_SUMMARY_DEPTH"] = str(args.summary_depth)
+    if args.max_recursion_depth is not None:
+        os.environ["SANDBOX_MAX_RECURSION_DEPTH"] = str(args.max_recursion_depth)
 
     if getattr(args, "purge_stale", False):
         from sandbox_runner.environment import purge_leftovers

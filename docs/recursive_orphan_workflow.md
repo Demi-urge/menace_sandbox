@@ -15,6 +15,7 @@ These environment variables control the behaviour:
 | `SANDBOX_AUTO_INCLUDE_ISOLATED` | `1` | Automatically include isolated modules returned by `discover_isolated_modules`. |
 | `SANDBOX_RECURSIVE_ISOLATED` | `1` | Recursively resolve local imports when auto‑including isolated modules. |
 | `SANDBOX_TEST_REDUNDANT` | `1` | Execute modules marked as redundant before deciding whether to integrate them. |
+| `SANDBOX_MAX_RECURSION_DEPTH` | unlimited | Maximum depth when following dependency chains. |
 
 All flags are enabled by default via `SandboxSettings` so operators receive the
 full orphan scan without additional configuration. Set any variable to `0` to
@@ -45,6 +46,7 @@ These variables are also surfaced as CLI flags:
 - `--recursive-isolated` / `--no-recursive-isolated`
 - `--auto-include-isolated`
 - `--include-redundant` / `--no-include-redundant`
+- `--max-recursion-depth`
 
 Refer to [`sandbox_settings.py`](../sandbox_settings.py) for more details on the
 default configuration.

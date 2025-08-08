@@ -90,7 +90,9 @@
   default (`SELF_TEST_RECURSIVE_ORPHANS=1`, `SELF_TEST_RECURSIVE_ISOLATED=1`,
   `SANDBOX_RECURSIVE_ORPHANS=1`, `SANDBOX_RECURSIVE_ISOLATED=1`); the CLI
   aliases are `--recursive-include`/`--no-recursive-include` and
-  `--recursive-isolated`/`--no-recursive-isolated`. Use
+  `--recursive-isolated`/`--no-recursive-isolated`. Limit how far helper
+  chains are followed with `SANDBOX_MAX_RECURSION_DEPTH` or
+  `--max-recursion-depth`. Use
   `SANDBOX_CLEAN_ORPHANS=1` (or `--clean-orphans`) to prune processed names from
   `sandbox_data/orphan_modules.json`. Environment flags are mirrored to matching
   `SELF_TEST_*` variables so the self-test service honours the same behaviour.
