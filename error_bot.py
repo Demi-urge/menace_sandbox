@@ -702,6 +702,11 @@ class ErrorBot(AdminBotBase):
                 for b in bot_ids or []:
                     if self.graph:
                         self.graph.add_telemetry_event(b, "runtime", __name__)
+                if self.graph:
+                    try:
+                        self.graph.update_error_stats(self.db)
+                    except Exception as exc:
+                        self.logger.exception("error stats update failed: %s", exc)
             except Exception as exc:
                 self.logger.exception("telemetry logging failed: %s", exc)
                 if error_bot_exceptions:

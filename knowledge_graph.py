@@ -300,7 +300,13 @@ class KnowledgeGraph:
         patch_id: int | None = None,
         deploy_id: int | None = None,
     ) -> None:
-        """Add telemetry relationship from error type to bot."""
+        """Add telemetry relationship from error type to bot.
+
+        Error nodes track their occurrence frequency via the ``weight``
+        attribute.  Edges from an error ``cause`` (``error_type``) to the
+        affected ``module`` also store a ``weight`` representing how often the
+        pair has been observed.
+        """
 
         if self.graph is None:
             return
@@ -310,11 +316,14 @@ class KnowledgeGraph:
         if error_type:
             enode = f"error_type:{error_type}"
             self.graph.add_node(enode)
+            # increment node weight for frequency of this error type
+            self.graph.nodes[enode]["weight"] = self.graph.nodes[enode].get("weight", 0) + 1
             self.graph.add_edge(enode, bnode, type="telemetry")
             if root_module:
                 mnode = f"module:{root_module}"
                 self.graph.add_node(mnode)
-                self.graph.add_edge(enode, mnode, type="module")
+                prev = self.graph.get_edge_data(enode, mnode, {}).get("weight", 0)
+                self.graph.add_edge(enode, mnode, type="module", weight=prev + 1)
             if patch_id is not None:
                 pnode = f"patch:{patch_id}"
                 self.graph.add_node(pnode)
@@ -323,6 +332,41 @@ class KnowledgeGraph:
                 dnode = f"deploy:{deploy_id}"
                 self.graph.add_node(dnode)
                 self.graph.add_edge(enode, dnode, type="deploy")
+
+    def update_error_stats(self, err_db: object) -> None:
+        """Synchronise error statistics from ``err_db``.
+
+        The :class:`ErrorDB` aggregates telemetry into an ``error_stats`` table
+        with counts for ``(error_type, module)`` pairs.  This method updates the
+        corresponding edges and node weights in the graph.
+        """
+
+        if self.graph is None:
+            return
+
+        try:
+            stats = err_db.get_error_stats()  # type: ignore[call-arg]
+        except Exception:
+            return
+
+        totals: Dict[str, int] = {}
+        for row in stats:
+            try:
+                etype = row["error_type"]
+                module = row["module"]
+                count = int(row["count"])
+            except Exception:
+                continue
+
+            enode = f"error_type:{etype}"
+            mnode = f"module:{module}"
+            self.graph.add_node(enode)
+            self.graph.add_node(mnode)
+            self.graph.add_edge(enode, mnode, type="module", weight=count)
+            totals[enode] = totals.get(enode, 0) + count
+
+        for enode, weight in totals.items():
+            self.graph.nodes[enode]["weight"] = weight
 
     def ingest_error_db(self, err_db: object, code_db: object | None = None) -> None:
         """Load errors and telemetry from ``err_db``."""
