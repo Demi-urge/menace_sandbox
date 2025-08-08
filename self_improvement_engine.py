@@ -1573,6 +1573,53 @@ class SelfImprovementEngine:
             except Exception:
                 pass
 
+        reuse_scores: dict[str, float] = {}
+        try:
+            from module_index_db import ModuleIndexDB
+            from task_handoff_bot import WorkflowDB
+
+            idx = getattr(self, "module_index", None) or ModuleIndexDB()
+            wf_db = WorkflowDB(Path(os.getenv("WORKFLOWS_DB", "workflows.db")))
+            workflows = wf_db.fetch(limit=1000)
+            total_wf = len(workflows)
+            grp_counts: dict[int, int] = {}
+            if total_wf:
+                for wf in workflows:
+                    seen: set[int] = set()
+                    for step in getattr(wf, "workflow", []):
+                        mod = step.split(":")[0]
+                        file = repo / (mod.replace(".", "/") + ".py")
+                        try:
+                            gid = idx.get(file.as_posix())
+                        except Exception:
+                            try:
+                                gid = idx.get(mod)
+                            except Exception:
+                                continue
+                        seen.add(gid)
+                    for g in seen:
+                        grp_counts[g] = grp_counts.get(g, 0) + 1
+            for mod in modules:
+                try:
+                    gid = idx.get(mod)
+                except Exception:
+                    reuse_scores[mod] = 0.0
+                    continue
+                reuse_scores[mod] = (
+                    grp_counts.get(gid, 0) / total_wf if total_wf else 0.0
+                )
+        except Exception:
+            reuse_scores = {m: 0.0 for m in modules}
+
+        for mod, score in reuse_scores.items():
+            info = self.orphan_traces.setdefault(mod, {"parents": []})
+            info["reuse_score"] = score
+
+        try:
+            reuse_threshold = float(os.getenv("ORPHAN_REUSE_THRESHOLD", "0"))
+        except Exception:
+            reuse_threshold = 0.0
+
         if _STS is None:
             try:
                 from sandbox_runner import run_repo_section_simulations as _sim
@@ -1600,6 +1647,8 @@ class SelfImprovementEngine:
                     pass
                 if roi_total < 0:
                     continue
+                if reuse_scores.get(m, 0.0) < reuse_threshold:
+                    continue
                 passed.add(m)
             reclassified = {m for m in passed if m in legacy or m in redundant}
             for name in sorted(reclassified):
@@ -1622,6 +1671,7 @@ class SelfImprovementEngine:
                     failed=failed_mods,
                     redundant=sorted(redundant),
                     legacy=sorted(legacy),
+                    reuse_scores={m: reuse_scores.get(m, 0.0) for m in modules},
                 ),
             )
             counts = {
@@ -1691,6 +1741,8 @@ class SelfImprovementEngine:
             new_redundant = set(results.get("orphan_redundant", []))
             passing = {p for p in passed if p not in new_redundant}
 
+        passing = {p for p in passing if reuse_scores.get(p, 0.0) >= reuse_threshold}
+
         if new_redundant:
             for name in new_redundant:
                 classifications[name] = {"classification": "redundant"}
@@ -1724,6 +1776,7 @@ class SelfImprovementEngine:
                 failed_count=len(failed_mods),
                 redundant_count=len(redundant),
                 legacy_count=len(legacy),
+                reuse_scores={m: reuse_scores.get(m, 0.0) for m in modules},
             ),
         )
 
