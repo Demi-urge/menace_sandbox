@@ -168,6 +168,25 @@ returns after sandbox simulations:
 The engine logs the measured ROI and synergy metrics for each candidate
 and only integrates modules exceeding at least one of these thresholds.
 
+### Side-effect capture and isolated-module execution
+
+`orphan_analyzer` executes each candidate inside a restricted subprocess that
+counts attempted file writes and network connections. The resulting
+side-effect score is stored under ``side_effects`` and modules exceeding the
+``SIDE_EFFECT_THRESHOLD`` are marked ``heavy_side_effects`` and skipped during
+automatic workflow integration.
+
+Enable side-effect capture during autonomous runs and combine it with
+isolated-module discovery to validate helpers individually:
+
+```bash
+# Record side effects for candidate modules
+SANDBOX_CAPTURE_SIDE_EFFECTS=1 python run_autonomous.py --include-orphans
+
+# Execute isolated modules and capture their side effects
+SANDBOX_CAPTURE_SIDE_EFFECTS=1 python run_autonomous.py --discover-isolated --auto-include-isolated
+```
+
 `run_autonomous.py` mirrors the `SANDBOX_*` values to the corresponding
 `SELF_TEST_*` variables so the improvement engine and `SelfTestService` apply the
 same recursion rules. Passing modules are appended to `module_map.json`, and
