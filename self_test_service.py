@@ -1816,10 +1816,91 @@ class SelfTestService:
                 _me.stop_metrics_server()
                 self._metrics_started = False
 
+        # Collect orphan metrics for future reference
+        if self.results is not None:
+            try:
+                self._record_orphan_results()
+            except Exception:
+                # best effort – failures here should not break callers
+                self.logger.exception("failed to record orphan results")
+
         passed_modules: list[str] = []
         if self.results is not None:
             passed_modules = list(self.results.get("orphan_passed_modules", []))
         return self.results or {}, passed_modules
+
+    # ------------------------------------------------------------------
+    def _record_orphan_results(self) -> None:
+        """Persist metrics and classifications for tested orphan modules."""
+
+        modules = set(self.orphan_passed_modules) | set(self.orphan_failed_modules)
+        if not modules:
+            return
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        if not data_dir.is_absolute():
+            data_dir = repo / data_dir
+        result_path = data_dir / "orphan_results.json"
+
+        roi_map: dict[str, float] = {}
+        try:  # pragma: no cover - optional dependency
+            from roi_tracker import ROITracker  # type: ignore
+
+            tracker = ROITracker()
+            roi_file = data_dir / "roi_history.json"
+            if roi_file.exists():
+                tracker.load_history(str(roi_file))
+                roi_map = {
+                    m: float(sum(tracker.module_deltas.get(m, []))) for m in modules
+                }
+        except Exception:
+            roi_map = {}
+
+        results: dict[str, dict[str, Any]] = {}
+        for m in modules:
+            info = self.module_metrics.get(m, {})
+            classification = self.orphan_traces.get(m, {}).get("classification")
+            results[m] = {
+                "coverage": float(info.get("coverage", 0.0)),
+                "roi_delta": float(roi_map.get(m, 0.0)),
+                "classification": classification,
+            }
+
+        self.results.setdefault("orphan_results", {}).update(results)
+
+        try:
+            existing = (
+                json.loads(result_path.read_text()) if result_path.exists() else {}
+            )
+            if not isinstance(existing, dict):
+                existing = {}
+        except Exception:
+            existing = {}
+        existing.update(results)
+        try:
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+            result_path.write_text(json.dumps(existing, indent=2))
+        except Exception:  # pragma: no cover - best effort
+            pass
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def orphan_summary(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
+        """Return stored orphan testing metrics."""
+
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+        if not data_dir.is_absolute():
+            data_dir = repo / data_dir
+        target = Path(path) if path else data_dir / "orphan_results.json"
+        try:
+            data = json.loads(target.read_text()) if target.exists() else {}
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        return {}
 
     # ------------------------------------------------------------------
     def run_continuous(
