@@ -5112,6 +5112,10 @@ def try_integrate_into_workflows(
     repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
 
     side_effects = side_effects or {}
+    try:
+        from . import metrics_exporter as _me
+    except Exception:
+        import metrics_exporter as _me  # type: ignore
     names: dict[str, str] = {}
     for m in modules:
         p = Path(m)
@@ -5128,6 +5132,10 @@ def try_integrate_into_workflows(
             logger.info(
                 "skipping %s due to side effects score %.2f", rel_str, metric
             )
+            try:
+                _me.orphan_modules_side_effects_total.inc()
+            except Exception:
+                pass
             continue
         names[rel_str] = rel.with_suffix("").as_posix().replace("/", ".")
     if not names:
