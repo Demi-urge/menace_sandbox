@@ -1440,6 +1440,7 @@ class SelfImprovementEngine:
         if not data_dir.is_absolute():
             data_dir = repo / data_dir
         meta_path = data_dir / "orphan_classifications.json"
+        orphan_path = data_dir / "orphan_modules.json"
 
         try:  # pragma: no cover - dynamic import
             from self_test_service import SelfTestService as _STS
@@ -1456,14 +1457,18 @@ class SelfImprovementEngine:
             traces = {}
             setattr(self, "orphan_traces", traces)
 
+        threshold = SandboxSettings().side_effect_threshold
+
         for m in all_modules:
             path = Path(m)
             abs_path = path if path.is_absolute() else repo / path
             try:
-                cls = classify_module(abs_path)
+                res = classify_module(abs_path, include_meta=True)
+                cls, meta = res if isinstance(res, tuple) else (res, {})
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("classification failed for %s: %s", abs_path, exc)
-                cls = "candidate"
+                cls, meta = "candidate", {}
+            score = float(meta.get("side_effects", 0))
             try:
                 rel = abs_path.resolve().relative_to(repo).as_posix()
             except Exception:
@@ -1472,7 +1477,32 @@ class SelfImprovementEngine:
             prev_cls = info.get("classification")
             info["classification"] = cls
             info["redundant"] = cls != "candidate"
-            classifications[rel] = {"classification": cls}
+            info["side_effects"] = score
+            classifications[rel] = {"classification": cls, "side_effects": score}
+            if score > threshold:
+                info["heavy_side_effects"] = True
+                self.logger.info(
+                    "orphan module skipped due to side effects",
+                    extra=log_record(module=rel, side_effects=score),
+                )
+                try:
+                    existing = (
+                        json.loads(orphan_path.read_text()) if orphan_path.exists() else {}
+                    )
+                except Exception:
+                    existing = {}
+                if not isinstance(existing, dict):
+                    existing = {}
+                entry = existing.get(rel, {})
+                entry["reason"] = "heavy_side_effects"
+                entry["side_effects"] = score
+                existing[rel] = entry
+                try:
+                    orphan_path.parent.mkdir(parents=True, exist_ok=True)
+                    orphan_path.write_text(json.dumps(existing, indent=2))
+                except Exception:
+                    pass
+                continue
             if cls == "legacy":
                 legacy.append(rel)
                 self.logger.info(

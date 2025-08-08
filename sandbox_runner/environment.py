@@ -5784,6 +5784,7 @@ def auto_include_modules(
     mods = sorted(mod_paths)
     passed_mods: list[str] = []
     failed_mods: list[str] = []
+    heavy_side_effects: dict[str, float] = {}
 
     for mod in mods:
         path = repo / mod
@@ -5816,8 +5817,18 @@ def auto_include_modules(
 
         try:
             if hasattr(orphan_analyzer, "classify_module"):
-                cls = orphan_analyzer.classify_module(path)
-                if cls != "candidate":
+                res = orphan_analyzer.classify_module(path, include_meta=True)
+                cls, meta = res if isinstance(res, tuple) else (res, {})
+                score = float(meta.get("side_effects", 0))
+                if score > getattr(settings, "side_effect_threshold", 10):
+                    logger.info(
+                        "skipping %s due to side effects score %.2f", mod, score
+                    )
+                    heavy_side_effects[mod] = score
+                    if mod in passed_mods:
+                        passed_mods.remove(mod)
+                    failed_mods.append(mod)
+                elif cls != "candidate":
                     redundant_mods[mod] = cls
             elif hasattr(orphan_analyzer, "analyze_redundancy"):
                 if orphan_analyzer.analyze_redundancy(path):
@@ -5836,8 +5847,8 @@ def auto_include_modules(
     for m in passed_mods:
         if m in existing and m not in redundant_mods and m not in failed_mods:
             del existing[m]
-    # Record redundant and failed modules
-    for m in set(redundant_mods) | set(failed_mods):
+    # Record redundant, failed and heavy side-effect modules
+    for m in set(redundant_mods) | set(failed_mods) | set(heavy_side_effects):
         info = existing.get(m, {})
         if m in redundant_mods:
             cls = redundant_mods[m]
@@ -5847,6 +5858,9 @@ def auto_include_modules(
             info["failed"] = True
             if "classification" not in info:
                 info["classification"] = "failed"
+        if m in heavy_side_effects:
+            info["reason"] = "heavy_side_effects"
+            info["side_effects"] = heavy_side_effects[m]
         existing[m] = info
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
@@ -5857,7 +5871,10 @@ def auto_include_modules(
     try:
         from sandbox_runner.orphan_discovery import append_orphan_classifications
 
-        class_entries = {m: existing[m] for m in set(redundant_mods) | set(failed_mods)}
+        class_entries = {
+            m: existing[m]
+            for m in set(redundant_mods) | set(failed_mods) | set(heavy_side_effects)
+        }
         append_orphan_classifications(repo, class_entries)
     except Exception:
         pass
