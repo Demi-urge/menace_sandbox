@@ -144,6 +144,9 @@ Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/au
 
 ### Orphan discovery helpers
 
+See [docs/recursive_orphan_workflow.md](docs/recursive_orphan_workflow.md) for a
+summary of the flags controlling the orphan workflow.
+
 `discover_recursive_orphans` walks import chains for orphaned modules, while
 `include_orphan_modules` queues names from `sandbox_data/orphan_modules.json`.
 Passing files are merged into `sandbox_data/module_map.json` via
@@ -155,6 +158,18 @@ allows integration. See [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md)
 and [docs/self_improvement_engine.md](docs/self_improvement_engine.md) for full
 examples and environment variables such as `SANDBOX_RECURSIVE_ORPHANS`,
 `SANDBOX_AUTO_INCLUDE_ISOLATED` and `SANDBOX_RECURSIVE_ISOLATED`.
+
+Example `sandbox_data/orphan_modules.json`:
+
+```json
+{
+  "detached/util.py": {"source": "static-analysis"},
+  "legacy/task.py":   {"source": "runtime"}
+}
+```
+
+`include_orphan_modules` reads each key and passes them to
+`auto_include_modules` for validation and potential integration.
 
 A new `menace` CLI wraps common workflows so you no longer need to remember individual scripts.
 
