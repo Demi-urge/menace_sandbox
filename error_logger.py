@@ -43,6 +43,8 @@ class TelemetryEvent(BaseModel):
     error_type: ErrorType = ErrorType.UNKNOWN
     stack_trace: str = ""
     root_module: str = ""
+    module: str = ""
+    inferred_cause: str = ""
     timestamp: str = datetime.utcnow().isoformat()
     resolution_status: str = "unresolved"
     patch_id: int | None = None
@@ -146,6 +148,11 @@ class ErrorLogger:
         deploy_id: Optional[int] = None,
     ) -> None:
         stack = traceback.format_exc()
+        module = ""
+        tb = traceback.extract_tb(exc.__traceback__)
+        if tb:
+            module = os.path.splitext(os.path.basename(tb[-1].filename))[0]
+        cause = str(exc)
         if patch_id is None:
             env = os.getenv("PATCH_ID")
             if env and env.isdigit():
@@ -160,6 +167,8 @@ class ErrorLogger:
             error_type=self.classifier.classify(stack),
             stack_trace=stack,
             root_module=exc.__class__.__module__.split(".")[0],
+            module=module,
+            inferred_cause=cause,
             timestamp=datetime.utcnow().isoformat(),
             resolution_status="unresolved",
             patch_id=patch_id,
