@@ -1888,10 +1888,26 @@ class SelfImprovementEngine:
                 environment.auto_include_modules(sorted(mods), recursive=True, validate=True)
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
+            updated_wfs: list[int] = []
             try:
-                environment.try_integrate_into_workflows(sorted(mods))
+                updated_wfs = environment.try_integrate_into_workflows(sorted(mods)) or []
             except Exception:  # pragma: no cover - best effort
-                pass
+                updated_wfs = []
+            if updated_wfs:
+                try:
+                    self.logger.info(
+                        "workflows updated",
+                        extra=log_record(modules=sorted(mods), workflows=updated_wfs),
+                    )
+                except Exception:
+                    pass
+                for m in mods:
+                    info = traces.setdefault(m, {})
+                    info.setdefault("workflows", [])
+                    info["workflows"].extend(updated_wfs)
+            counts = getattr(self, "_last_orphan_counts", {})
+            counts["workflows_updated"] = len(updated_wfs)
+            self._last_orphan_counts = counts
 
             grp_map = {m: self.module_index.get(m) for m in mods}
             for m, idx in grp_map.items():
