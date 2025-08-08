@@ -425,6 +425,10 @@ orphan_modules_legacy_total = Gauge(
     "orphan_modules_legacy_total",
     "Total number of orphan modules marked legacy",
 )
+orphan_modules_side_effects_total = Gauge(
+    "orphan_modules_side_effects_total",
+    "Total number of orphan modules skipped due to side effect scores",
+)
 sandbox_restart_total = Gauge(
     "sandbox_restart_total", "Total number of sandbox restarts"
 )

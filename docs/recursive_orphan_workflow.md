@@ -70,3 +70,11 @@ are reconsidered on the next run.
 See [`include_orphan_modules`](../sandbox_runner/cycle.py) and
 [`auto_include_modules`](../sandbox_runner/environment.py) for full integration
 details.
+
+## Metrics
+
+The orphan integration flow exposes Prometheus gauges for observability. The
+`orphan_modules_side_effects_total` gauge counts modules skipped during workflow
+integration because their side-effect score exceeded the configured threshold.
+Tracking this metric helps operators monitor how often potentially risky modules
+are filtered out.

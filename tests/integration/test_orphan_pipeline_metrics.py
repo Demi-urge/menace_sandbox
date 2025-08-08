@@ -205,3 +205,36 @@ def test_orphan_pipelines_prune_and_record_metrics(tmp_path, monkeypatch):
     assert engine._last_orphan_metrics["avg_roi"] == 1.0
     assert engine.tracker.metrics and engine.tracker.metrics[-1]["orphan_pass_rate"] == pytest.approx(4 / 6)
     assert engine.tracker.metrics[-1]["orphan_avg_roi"] == 1.0
+
+
+def test_side_effect_metric_increments(monkeypatch, tmp_path):
+    """`try_integrate_into_workflows` should record skipped modules."""
+
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    monkeypatch.setenv("SANDBOX_REPO_PATH", str(tmp_path))
+    monkeypatch.setenv("SANDBOX_DATA_DIR", str(tmp_path / "sandbox_data"))
+    (tmp_path / "sandbox_data").mkdir()
+    mod = tmp_path / "skip.py"
+    mod.write_text("VALUE = 1\n")
+
+    stub_mod = types.ModuleType("module_index_db")
+    stub_mod.ModuleIndexDB = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "module_index_db", stub_mod)
+    stub_th = types.ModuleType("menace.task_handoff_bot")
+    stub_th.WorkflowDB = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "menace.task_handoff_bot", stub_th)
+    stub_sts = types.ModuleType("self_test_service")
+    stub_sts.SelfTestService = lambda *a, **k: None
+    monkeypatch.setitem(sys.modules, "self_test_service", stub_sts)
+
+    metrics_exporter.orphan_modules_side_effects_total.set(0)
+
+    monkeypatch.delitem(sys.modules, "sandbox_runner.environment", raising=False)
+    env = importlib.import_module("sandbox_runner.environment")
+
+    res = env.try_integrate_into_workflows(
+        [str(mod)], side_effects={"skip.py": 11}, side_effect_threshold=10
+    )
+
+    assert res == []
+    assert metrics_exporter.orphan_modules_side_effects_total._value.get() == 1
