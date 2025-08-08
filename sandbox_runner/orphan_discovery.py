@@ -72,32 +72,46 @@ def _eval_simple(
         return None
     if isinstance(node, ast.Call):
         func = node.func
-        if (
-            isinstance(func, ast.Attribute)
-            and func.attr == "format"
-            and not any(isinstance(a, ast.Starred) for a in node.args)
-        ):
-            fmt = _eval_simple(func.value, assignments, lineno)
-            if not isinstance(fmt, str):
-                return None
-            args: List[str] = []
-            for arg in node.args:
-                val = _eval_simple(arg, assignments, lineno)
-                if not isinstance(val, str):
+        if isinstance(func, ast.Attribute):
+            base = _eval_simple(func.value, assignments, lineno)
+            if func.attr == "format" and not any(
+                isinstance(a, ast.Starred) for a in node.args
+            ):
+                if not isinstance(base, str):
                     return None
-                args.append(val)
-            kwargs: Dict[str, str] = {}
-            for kw in node.keywords:
-                if kw.arg is None:
+                args: List[str] = []
+                for arg in node.args:
+                    val = _eval_simple(arg, assignments, lineno)
+                    if not isinstance(val, str):
+                        return None
+                    args.append(val)
+                kwargs: Dict[str, str] = {}
+                for kw in node.keywords:
+                    if kw.arg is None:
+                        return None
+                    val = _eval_simple(kw.value, assignments, lineno)
+                    if not isinstance(val, str):
+                        return None
+                    kwargs[kw.arg] = val
+                try:
+                    return base.format(*args, **kwargs)
+                except Exception:  # pragma: no cover - best effort
                     return None
-                val = _eval_simple(kw.value, assignments, lineno)
-                if not isinstance(val, str):
-                    return None
-                kwargs[kw.arg] = val
-            try:
-                return fmt.format(*args, **kwargs)
-            except Exception:  # pragma: no cover - best effort
-                return None
+            if isinstance(base, str):
+                if func.attr in {"lower", "upper", "strip", "lstrip", "rstrip"} and not node.args and not node.keywords:
+                    return getattr(base, func.attr)()
+                if func.attr == "replace" and not node.keywords and 2 <= len(node.args) <= 3:
+                    old = _eval_simple(node.args[0], assignments, lineno)
+                    new = _eval_simple(node.args[1], assignments, lineno)
+                    if not isinstance(old, str) or not isinstance(new, str):
+                        return None
+                    if len(node.args) == 3:
+                        count = _eval_simple(node.args[2], assignments, lineno)
+                        if not isinstance(count, int):
+                            return None
+                        return base.replace(old, new, count)
+                    return base.replace(old, new)
+        return None
     return None
 
 
@@ -127,6 +141,11 @@ def _extract_module_from_call(
         resolved = _eval_simple(arg, assigns, node.lineno)
         if isinstance(resolved, str):
             return resolved
+        if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
+            left = _eval_simple(arg.left, assigns, node.lineno)
+            right = _eval_simple(arg.right, assigns, node.lineno)
+            if isinstance(left, str) and isinstance(right, str):
+                return left + right
         if (
             isinstance(arg, ast.Call)
             and isinstance(arg.func, ast.Attribute)
@@ -139,6 +158,33 @@ def _extract_module_from_call(
             if isinstance(sep, str) and isinstance(parts, list):
                 if all(isinstance(p, str) for p in parts):
                     return sep.join(parts)
+        if (
+            isinstance(arg, ast.Call)
+            and isinstance(arg.func, ast.Attribute)
+            and arg.func.attr == "format"
+        ):
+            fmt = _eval_simple(arg.func.value, assigns, node.lineno)
+            if isinstance(fmt, str) and not any(
+                isinstance(a, ast.Starred) for a in arg.args
+            ):
+                args: List[str] = []
+                for a in arg.args:
+                    val = _eval_simple(a, assigns, node.lineno)
+                    if not isinstance(val, str):
+                        return None
+                    args.append(val)
+                kwargs: Dict[str, str] = {}
+                for kw in arg.keywords:
+                    if kw.arg is None:
+                        return None
+                    val = _eval_simple(kw.value, assigns, node.lineno)
+                    if not isinstance(val, str):
+                        return None
+                    kwargs[kw.arg] = val
+                try:
+                    return fmt.format(*args, **kwargs)
+                except Exception:  # pragma: no cover - best effort
+                    return None
     return None
 
 
