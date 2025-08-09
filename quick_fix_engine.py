@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import subprocess
-from typing import Tuple
+from typing import Tuple, Iterable
 
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
@@ -67,11 +67,13 @@ class QuickFixEngine:
         *,
         threshold: int = 3,
         graph: KnowledgeGraph | None = None,
+        risk_threshold: float = 0.5,
     ) -> None:
         self.db = error_db
         self.manager = manager
         self.threshold = threshold
         self.graph = graph or KnowledgeGraph()
+        self.risk_threshold = risk_threshold
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
@@ -109,6 +111,47 @@ class QuickFixEngine:
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
             raise
+
+    # ------------------------------------------------------------------
+    def preemptive_patch_modules(
+        self,
+        modules: Iterable[tuple[str, float]],
+        *,
+        risk_threshold: float | None = None,
+    ) -> None:
+        """Proactively patch ``modules`` that exceed ``risk_threshold``.
+
+        Parameters
+        ----------
+        modules:
+            Iterable of ``(module, risk_score)`` pairs as produced by
+            :meth:`~error_cluster_predictor.ErrorClusterPredictor.predict_high_risk_modules`.
+        risk_threshold:
+            Minimum risk score required to trigger a patch.  Defaults to the
+            instance's ``risk_threshold`` attribute.
+        """
+
+        thresh = self.risk_threshold if risk_threshold is None else risk_threshold
+        for module, risk in modules:
+            if risk < thresh:
+                continue
+            path = Path(f"{module}.py")
+            if not path.exists():
+                continue
+            patch_id = None
+            try:
+                result = self.manager.run_patch(path, "preemptive_patch")
+                patch_id = getattr(result, "patch_id", None)
+            except Exception as exc:  # pragma: no cover - runtime issues
+                self.logger.error("preemptive patch failed for %s: %s", module, exc)
+                try:
+                    patch_id = generate_patch(module, getattr(self.manager, "engine", None))
+                except Exception:
+                    patch_id = None
+            try:
+                self.db.log_preemptive_patch(module, risk, patch_id)
+            except Exception as exc:  # pragma: no cover - db issues
+                self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
 
     # ------------------------------------------------------------------
     def run_and_validate(self, bot: str) -> None:
