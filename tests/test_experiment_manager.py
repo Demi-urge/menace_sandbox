@@ -1,5 +1,6 @@
 import types
 import sys
+import asyncio
 
 dummy_mods = {
     'menace.model_automation_pipeline': types.SimpleNamespace(ModelAutomationPipeline=object, AutomationResult=object),
@@ -11,6 +12,7 @@ sys.modules.update(dummy_mods)
 
 from menace.experiment_manager import ExperimentManager, ExperimentResult
 from menace.experiment_history_db import ExperimentHistoryDB
+from menace.evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 
 class DummyDataBot:
     def __init__(self):
@@ -40,3 +42,24 @@ def test_best_variant_not_significant(tmp_path):
     ]
     best = mgr.best_variant(res)
     assert best is None
+
+
+def test_run_experiments_from_parent(tmp_path):
+    hist = EvolutionHistoryDB(tmp_path / "h.db")
+    root_id = hist.add(EvolutionEvent("root", 0, 1, 1.0, workflow_id=1))
+    hist.spawn_variant(root_id, "A")
+    hist.spawn_variant(root_id, "B")
+
+    class DummyPipeline:
+        def run(self, name, energy=1):
+            return types.SimpleNamespace(roi=types.SimpleNamespace(roi=1.0))
+
+    mgr = ExperimentManager(
+        DummyDataBot(),
+        DummyCapitalBot(),
+        pipeline=DummyPipeline(),
+        experiment_db=ExperimentHistoryDB(tmp_path / "e3.db"),
+        lineage=types.SimpleNamespace(history_db=hist),
+    )
+    res = asyncio.run(mgr.run_experiments_from_parent(root_id))
+    assert {r.variant for r in res} == {"A", "B"}
