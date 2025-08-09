@@ -602,6 +602,8 @@ class SelfImprovementEngine:
             else settings.synergy_weights_lr
         )
         self.auto_patch_high_risk = getattr(settings, "auto_patch_high_risk", True)
+        if getattr(settings, "menace_mode", "").lower() == "autonomous":
+            self.auto_patch_high_risk = True
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -2829,6 +2831,53 @@ class SelfImprovementEngine:
                     "preemptive fix failed", extra=log_record(module=mod)
                 )
 
+    def _apply_high_risk_patches(self) -> None:
+        """Predict high-risk modules and attempt preemptive fixes."""
+        if not (self.error_predictor and self.auto_patch_high_risk):
+            return
+        try:
+            high_risk = self.error_predictor.predict_high_risk_modules()
+            self.error_predictor.graph.update_error_stats(self.error_bot.db)
+            if not high_risk:
+                return
+            self.logger.info("high risk modules", extra=log_record(modules=high_risk))
+            for mod in high_risk:
+                try:
+                    patch_id = generate_patch(mod, self.self_coding_engine)
+                    if self.error_bot and hasattr(self.error_bot, "db"):
+                        try:
+                            self.error_bot.db.add_telemetry(
+                                TelemetryEvent(
+                                    module=str(mod),
+                                    patch_id=patch_id,
+                                    resolution_status="attempted",
+                                )
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "telemetry record failed", extra=log_record(module=mod)
+                            )
+                    if self.error_predictor:
+                        try:
+                            self.error_predictor.graph.add_telemetry_event(
+                                self.bot_name,
+                                "preemptive_patch",
+                                str(mod),
+                                patch_id=patch_id,
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "graph patch record failed", extra=log_record(module=mod)
+                            )
+                except Exception:
+                    self.logger.exception(
+                        "preemptive fix failed", extra=log_record(module=mod)
+                    )
+        except Exception as exc:
+            self.logger.exception(
+                "high risk module prediction failed: %s", exc
+            )
+
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
@@ -2939,53 +2988,7 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "proactive prediction patching failed: %s", exc
                     )
-            if self.error_predictor and self.auto_patch_high_risk:
-                try:
-                    high_risk = self.error_predictor.predict_high_risk_modules()
-                    self.error_predictor.graph.update_error_stats(self.error_bot.db)
-                    if high_risk:
-                        self.logger.info(
-                            "high risk modules",
-                            extra=log_record(modules=high_risk),
-                        )
-                        for mod in high_risk:
-                            try:
-                                patch_id = generate_patch(mod, self.self_coding_engine)
-                                if self.error_bot and hasattr(self.error_bot, "db"):
-                                    try:
-                                        self.error_bot.db.add_telemetry(
-                                            TelemetryEvent(
-                                                module=str(mod),
-                                                patch_id=patch_id,
-                                                resolution_status="attempted",
-                                            )
-                                        )
-                                    except Exception:
-                                        self.logger.exception(
-                                            "telemetry record failed",
-                                            extra=log_record(module=mod),
-                                        )
-                                if self.error_predictor:
-                                    try:
-                                        self.error_predictor.graph.add_telemetry_event(
-                                            self.bot_name,
-                                            "preemptive_patch",
-                                            str(mod),
-                                            patch_id=patch_id,
-                                        )
-                                    except Exception:
-                                        self.logger.exception(
-                                            "graph patch record failed",
-                                            extra=log_record(module=mod),
-                                        )
-                            except Exception:
-                                self.logger.exception(
-                                    "preemptive fix failed", extra=log_record(module=mod)
-                                )
-                except Exception as exc:
-                    self.logger.exception(
-                        "high risk module prediction failed: %s", exc
-                    )
+            self._apply_high_risk_patches()
             state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
             predicted = self.policy.score(state) if self.policy else 0.0
             roi_pred: float | None = None
