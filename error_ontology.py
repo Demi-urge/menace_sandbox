@@ -3,19 +3,96 @@ from __future__ import annotations
 """Centralised error taxonomy for Menace."""
 
 from enum import Enum
+from typing import Mapping, Type
 
 
-class ErrorType(str, Enum):
+class ErrorCategory(str, Enum):
     """High level categories for error classification."""
 
-    UNKNOWN = "unknown"
-    SEMANTIC_BUG = "semantic_bug"
-    RUNTIME_FAULT = "runtime_fault"
-    DEPENDENCY_MISMATCH = "dependency_mismatch"
-    LOGIC_MISFIRE = "logic_misfire"
+    SemanticBug = "semantic_bug"
+    RuntimeFault = "runtime_fault"
+    DependencyMismatch = "dependency_mismatch"
+    LogicMisfire = "logic_misfire"
+    Unknown = "unknown"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
         return self.value
 
+    # Legacy uppercase aliases for backwards compatibility
+    SEMANTIC_BUG = SemanticBug
+    RUNTIME_FAULT = RuntimeFault
+    DEPENDENCY_MISMATCH = DependencyMismatch
+    LOGIC_MISFIRE = LogicMisfire
+    UNKNOWN = Unknown
 
-__all__ = ["ErrorType"]
+
+# Backwards compatibility for legacy imports
+ErrorType = ErrorCategory
+
+# Exception, keyword and module mappings for classification
+EXCEPTION_TYPE_MAP: Mapping[Type[BaseException], ErrorCategory] = {
+    AssertionError: ErrorCategory.LogicMisfire,
+    KeyError: ErrorCategory.RuntimeFault,
+    IndexError: ErrorCategory.RuntimeFault,
+    FileNotFoundError: ErrorCategory.RuntimeFault,
+    ImportError: ErrorCategory.DependencyMismatch,
+    ModuleNotFoundError: ErrorCategory.DependencyMismatch,
+    TypeError: ErrorCategory.SemanticBug,
+    ValueError: ErrorCategory.SemanticBug,
+}
+
+KEYWORD_MAP: Mapping[str, ErrorCategory] = {
+    "dependency missing": ErrorCategory.DependencyMismatch,
+    "module not found": ErrorCategory.DependencyMismatch,
+    "missing dependency": ErrorCategory.DependencyMismatch,
+    "not implemented": ErrorCategory.LogicMisfire,
+    "assertion failed": ErrorCategory.LogicMisfire,
+    "unexpected type": ErrorCategory.SemanticBug,
+    "wrong type": ErrorCategory.SemanticBug,
+}
+
+MODULE_MAP: Mapping[str, ErrorCategory] = {
+    "importlib": ErrorCategory.DependencyMismatch,
+}
+
+
+def classify_exception(exc: Exception, stack: str) -> ErrorCategory:
+    """Best effort classification of an exception.
+
+    Parameters
+    ----------
+    exc:
+        The raised exception instance.
+    stack:
+        A formatted stack trace or textual context.
+    """
+
+    # Match by explicit exception type
+    for etype, category in EXCEPTION_TYPE_MAP.items():
+        if isinstance(exc, etype):
+            return category
+
+    low = stack.lower()
+
+    # Match by simple keyword search
+    for phrase, category in KEYWORD_MAP.items():
+        if phrase in low:
+            return category
+
+    # Match by module signals
+    module = getattr(exc, "__module__", "")
+    for mod, category in MODULE_MAP.items():
+        if mod in module or mod in low:
+            return category
+
+    return ErrorCategory.Unknown
+
+
+__all__ = [
+    "ErrorCategory",
+    "ErrorType",
+    "classify_exception",
+    "EXCEPTION_TYPE_MAP",
+    "KEYWORD_MAP",
+    "MODULE_MAP",
+]
