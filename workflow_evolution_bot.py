@@ -3,9 +3,10 @@ from __future__ import annotations
 """Analyse pathway data to propose new workflow sequences."""
 
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Dict, Iterable, List
 
 from .neuroplasticity import PathwayDB
+from . import mutation_logger as MutationLogger
 
 
 @dataclass
@@ -19,6 +20,9 @@ class WorkflowEvolutionBot:
 
     def __init__(self, pathway_db: PathwayDB | None = None) -> None:
         self.db = pathway_db or PathwayDB()
+        # Track mutation events for rearranged sequences so benchmarking
+        # results can be fed back once available.
+        self._rearranged_events: Dict[str, int] = {}
 
     def analyse(self, limit: int = 5) -> List[WorkflowSuggestion]:
         seqs = self.db.top_sequences(3, limit=limit)
@@ -35,11 +39,45 @@ class WorkflowEvolutionBot:
             suggestions.append(WorkflowSuggestion(sequence=seq, expected_roi=expected))
         return suggestions
 
-    def propose_rearrangements(self, limit: int = 5) -> Iterable[str]:
-        """Return alternative sequences with reversed order."""
+    def propose_rearrangements(
+        self,
+        limit: int = 5,
+        *,
+        workflow_id: int = 0,
+        parent_event_id: int | None = None,
+    ) -> Iterable[str]:
+        """Yield rearranged sequences and log mutation events.
+
+        Each rearranged sequence is recorded via :mod:`mutation_logger` with a
+        placeholder performance value.  The returned strings can later be
+        associated with benchmarking results via :meth:`record_benchmark`.
+        """
         for suggestion in self.analyse(limit):
             parts = suggestion.sequence.split("-")
-            yield "-".join(reversed(parts))
+            seq = "-".join(reversed(parts))
+            yield seq
+            event_id = MutationLogger.log_mutation(
+                change=seq,
+                reason="rearrangement",
+                trigger="workflow_evolution_bot",
+                performance=0.0,
+                workflow_id=workflow_id,
+                parent_id=parent_event_id,
+            )
+            self._rearranged_events[seq] = event_id
+
+    def record_benchmark(
+        self, sequence: str, *, after_metric: float, roi: float, performance: float
+    ) -> None:
+        """Update performance metrics for a previously proposed sequence."""
+        event_id = self._rearranged_events.get(sequence)
+        if event_id is not None:
+            MutationLogger._history_db.record_outcome(
+                event_id,
+                after_metric=after_metric,
+                roi=roi,
+                performance=performance,
+            )
 
 
 __all__ = ["WorkflowEvolutionBot", "WorkflowSuggestion"]
