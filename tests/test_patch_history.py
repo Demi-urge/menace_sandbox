@@ -40,6 +40,25 @@ def test_patch_history_roundtrip(tmp_path):
     assert rate == 0.5
 
 
+def test_branch_retrieval(tmp_path):
+    db = cd.PatchHistoryDB(tmp_path / "p.db")
+    parent_id = db.add(cd.PatchRecord("a.py", "p", 1.0, 2.0))
+    db.add(
+        cd.PatchRecord(
+            "b.py",
+            "c",
+            2.0,
+            3.0,
+            parent_patch_id=parent_id,
+            reason="improve",
+            trigger="auto",
+        )
+    )
+    children = db.filter(parent_patch_id=parent_id)
+    assert len(children) == 1
+    assert children[0].reason == "improve"
+
+
 def test_keyword_features(tmp_path):
     db = cd.PatchHistoryDB(tmp_path / "p.db")
     db.add(cd.PatchRecord("a.py", "topic ai development", 1.0, 2.0, trending_topic="AI"))
