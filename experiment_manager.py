@@ -9,6 +9,8 @@ import math
 import logging
 from scipy import stats
 
+from .mutation_lineage import MutationLineage
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,6 +41,7 @@ class ExperimentManager:
         prediction_manager: PredictionManager | None = None,
         experiment_db: ExperimentHistoryDB | None = None,
         p_threshold: float = 0.05,
+        lineage: MutationLineage | None = None,
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
@@ -46,9 +49,28 @@ class ExperimentManager:
         self.prediction_manager = prediction_manager
         self.experiment_db = experiment_db or ExperimentHistoryDB()
         self.p_threshold = p_threshold
+        self.lineage = lineage or MutationLineage()
 
     async def _run_variant(self, name: str, energy: int) -> AutomationResult:
         return await asyncio.to_thread(self.pipeline.run, name, energy=energy)
+
+    # ------------------------------------------------------------------
+    # lineage helpers
+    def backtrack_failed_path(self, patch_id: int) -> List[int]:
+        """Return patch lineage from ``patch_id`` back to last successful patch."""
+        try:
+            return self.lineage.backtrack_failed_path(patch_id)
+        except Exception as exc:
+            logger.warning("failed backtracking lineage: %s", exc)
+            return []
+
+    def clone_branch_for_ab_test(self, patch_id: int, description: str) -> int | None:
+        """Clone a patch branch for A/B testing and return new patch id."""
+        try:
+            return self.lineage.clone_branch_for_ab_test(patch_id, description)
+        except Exception as exc:
+            logger.warning("failed cloning branch for A/B test: %s", exc)
+            return None
 
     async def run_experiments(self, variants: Iterable[str], energy: int = 1) -> List[ExperimentResult]:
         results: List[ExperimentResult] = []
