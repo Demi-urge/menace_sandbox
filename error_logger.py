@@ -234,7 +234,7 @@ class ErrorLogger:
         *,
         patch_id: Optional[int] = None,
         deploy_id: Optional[int] = None,
-    ) -> None:
+    ) -> TelemetryEvent:
         stack = traceback.format_exc()
         module = ""
         module_counts: dict[str, int] = {}
@@ -288,7 +288,7 @@ class ErrorLogger:
                 self.sentry.capture_exception(exc)
             except Exception as e:
                 self.logger.warning("failed to send exception to Sentry: %s", e)
-
+        return event
     def __call__(self, func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:

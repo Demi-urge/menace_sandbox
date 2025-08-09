@@ -117,6 +117,8 @@ from sandbox_runner.orphan_discovery import (
 from menace.discrepancy_detection_bot import DiscrepancyDetectionBot
 from jinja2 import Template
 from sandbox_settings import SandboxSettings
+from menace.error_logger import ErrorLogger
+from menace.knowledge_graph import KnowledgeGraph
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -570,6 +572,7 @@ class SandboxContext:
     engine: Any
     dd_bot: DiscrepancyDetectionBot
     data_bot: DataBot
+    telem_db: ErrorDB
     plugins: list
     extra_metrics: Dict[str, float]
     cycles: int
@@ -1015,6 +1018,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         engine=engine,
         dd_bot=dd_bot,
         data_bot=data_bot,
+        telem_db=telem_db,
         plugins=plugins,
         extra_metrics=extra_metrics,
         cycles=cycles,
@@ -1052,6 +1056,23 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+    err_logger = getattr(ctx.sandbox, "error_logger", None)
+    if err_logger:
+        try:
+            if getattr(err_logger, "replicator", None):
+                err_logger.replicator.flush()
+        except Exception:
+            logger.exception("telemetry flush failed")
+        try:
+            db_conn = getattr(getattr(err_logger, "db", None), "conn", None)
+            if db_conn:
+                db_conn.commit()
+        except Exception:
+            logger.exception("telemetry db commit failed")
+    try:
+        ctx.telem_db.conn.commit()
+    except Exception:
+        logger.exception("telemetry db commit failed")
     ctx.event_bus.close()
     shutil.rmtree(ctx.tmp)
     logger.info(
@@ -1070,6 +1091,8 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     global SANDBOX_ENV_PRESETS
     logger.info("starting sandbox run", extra=log_record(preset=preset))
     ctx = _sandbox_init(preset, args)
+    err_logger = getattr(ctx.sandbox, "error_logger", ErrorLogger())
+    graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
 
     def _cycle(
         section: str | None,
@@ -1077,7 +1100,22 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         tracker: "ROITracker",
         scenario: str | None = None,
     ) -> None:
-        _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
+        try:
+            _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
+        except Exception as exc:
+            event = err_logger.log(exc, section, "sandbox_runner")
+            try:
+                graph.add_telemetry_event(
+                    "sandbox_runner",
+                    getattr(event.error_type, "value", str(event.error_type)),
+                    event.root_module,
+                    event.module_counts,
+                    patch_id=event.patch_id,
+                    deploy_id=event.deploy_id,
+                )
+            except Exception:
+                logger.exception("telemetry graph update failed")
+            raise
 
     switched = False
     section_results: dict[str, dict[str, list]] = {}
