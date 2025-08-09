@@ -12,6 +12,51 @@ from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
 
 
+def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int | None:
+    """Attempt a quick patch for *module* and return the patch id.
+
+    Parameters
+    ----------
+    module:
+        Target module path or module name without ``.py``.
+    engine:
+        Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
+        provided, a minimal engine is instantiated on demand.  The function
+        tolerates missing dependencies and simply returns ``None`` on failure.
+    """
+
+    logger = logging.getLogger("QuickFixEngine")
+    path = Path(module)
+    if path.suffix == "":
+        path = path.with_suffix(".py")
+    if not path.exists():
+        logger.error("module not found: %s", module)
+        return None
+
+    if engine is None:
+        try:  # pragma: no cover - heavy dependencies
+            from .self_coding_engine import SelfCodingEngine
+            from .code_database import CodeDB
+            from .menace_memory_manager import MenaceMemoryManager
+
+            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+        except Exception as exc:  # pragma: no cover - optional deps
+            logger.error("self coding engine unavailable: %s", exc)
+            return None
+
+    try:
+        patch_id: int | None
+        try:
+            patch_id, _, _ = engine.apply_patch(path, "preemptive_fix")
+        except AttributeError:
+            engine.patch_file(path, "preemptive_fix")
+            patch_id = None
+        return patch_id
+    except Exception as exc:  # pragma: no cover - runtime issues
+        logger.error("quick fix generation failed for %s: %s", module, exc)
+        return None
+
+
 class QuickFixEngine:
     """Analyse frequent errors and trigger small patches."""
 
@@ -75,4 +120,4 @@ class QuickFixEngine:
             self.logger.error("quick fix validation failed: %s", exc)
 
 
-__all__ = ["QuickFixEngine"]
+__all__ = ["QuickFixEngine", "generate_patch"]

@@ -63,6 +63,8 @@ import numpy as np
 import socket
 import contextlib
 from .error_cluster_predictor import ErrorClusterPredictor
+from .quick_fix_engine import generate_patch
+from .error_logger import TelemetryEvent
 
 logger = get_logger(__name__)
 
@@ -599,6 +601,7 @@ class SelfImprovementEngine:
             if synergy_weights_lr is not None
             else settings.synergy_weights_lr
         )
+        self.auto_patch_high_risk = getattr(settings, "auto_patch_high_risk", True)
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -2860,7 +2863,7 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "proactive prediction patching failed: %s", exc
                     )
-            if self.error_predictor and self.self_coding_engine:
+            if self.error_predictor and self.auto_patch_high_risk:
                 try:
                     high_risk = self.error_predictor.predict_high_risk_modules()
                     if high_risk:
@@ -2870,7 +2873,21 @@ class SelfImprovementEngine:
                         )
                         for mod in high_risk:
                             try:
-                                self.self_coding_engine.patch_file(Path(mod), "preemptive_fix")
+                                patch_id = generate_patch(mod, self.self_coding_engine)
+                                if self.error_bot and hasattr(self.error_bot, "db"):
+                                    try:
+                                        self.error_bot.db.add_telemetry(
+                                            TelemetryEvent(
+                                                module=str(mod),
+                                                patch_id=patch_id,
+                                                resolution_status="attempted",
+                                            )
+                                        )
+                                    except Exception:
+                                        self.logger.exception(
+                                            "telemetry record failed",
+                                            extra=log_record(module=mod),
+                                        )
                             except Exception:
                                 self.logger.exception(
                                     "preemptive fix failed", extra=log_record(module=mod)
