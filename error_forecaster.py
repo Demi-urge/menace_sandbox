@@ -36,6 +36,7 @@ class ErrorForecaster:
         model: str = "lstm",
         error_db: "ErrorDB | None" = None,
         include_clusters: bool = False,
+        graph: KnowledgeGraph | None = None,
     ) -> None:
         self.metrics_db = metrics_db
         self.seq_len = seq_len
@@ -44,6 +45,8 @@ class ErrorForecaster:
         self.extra_features = extra_features
         self.error_db = error_db
         self.include_clusters = include_clusters and error_db is not None
+        self.graph = graph
+        self.include_graph = graph is not None
         self.use_torch = torch is not None and nn is not None
         self.model_type = model
         self.default_rate = 0.0
@@ -51,7 +54,12 @@ class ErrorForecaster:
         self.lstm = None
         if self.use_torch:
             # features per timestep: errors, cpu, memory, ROI and extra signals
-            input_size = 7 + (1 if self.include_clusters else 0) + (2 if extra_features else 0)
+            input_size = (
+                7
+                + (1 if self.include_clusters else 0)
+                + (2 if extra_features else 0)
+                + (2 if self.include_graph else 0)
+            )
             self.dropout = nn.Dropout(dropout)
             if model == "transformer":
                 layer = nn.TransformerEncoderLayer(d_model=input_size, nhead=1, dropout=dropout)
@@ -81,6 +89,7 @@ class ErrorForecaster:
                 wf_val = float(len(str(bot)))
                 bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
                 cluster_feat = self._cluster_feature(str(bot))
+                graph_feat = self._graph_features(str(bot))
                 for i in range(len(errs) - self.seq_len):
                     seq = []
                     for j in range(i, i + self.seq_len):
@@ -95,6 +104,8 @@ class ErrorForecaster:
                         ]
                         if self.include_clusters:
                             row.append(cluster_feat)
+                        if self.include_graph:
+                            row.extend(graph_feat)
                         if self.extra_features and j > 0:
                             row.extend([
                                 float(cpu[j]) - float(cpu[j - 1]),
@@ -115,6 +126,7 @@ class ErrorForecaster:
                     wf_val = float(len(str(bot)))
                     bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
                     cluster_feat = self._cluster_feature(bot)
+                    graph_feat = self._graph_features(bot)
                     disks = [float(r.get("disk_io", 0.0)) for r in rows]
                     nets = [float(r.get("net_io", 0.0)) for r in rows]
                     for i in range(len(rows) - self.seq_len):
@@ -131,6 +143,8 @@ class ErrorForecaster:
                             ]
                             if self.include_clusters:
                                 row.append(cluster_feat)
+                            if self.include_graph:
+                                row.extend(graph_feat)
                             if self.extra_features and j > 0:
                                 prev = rows[i + j - 1]
                                 row.extend([
@@ -157,6 +171,28 @@ class ErrorForecaster:
             return 0.0
         ids = [clusters[e] for e in errs if e in clusters]
         return float(ids[0]) if ids else 0.0
+
+    def _graph_features(self, bot: str) -> Tuple[float, float]:
+        """Return average error node frequency and module count for ``bot``."""
+        if not self.include_graph or not self.graph or not getattr(self.graph, "graph", None):
+            return (0.0, 0.0)
+        g = self.graph.graph
+        bnode = f"bot:{bot}"
+        if bnode not in g:
+            return (0.0, 0.0)
+        freqs: List[float] = []
+        modules: set[str] = set()
+        for enode, _, _ in g.in_edges(bnode, data=True):
+            if not enode.startswith("error_type:"):
+                continue
+            freqs.append(
+                float(g.nodes[enode].get("frequency", g.nodes[enode].get("weight", 0.0)))
+            )
+            for _, mnode, d in g.out_edges(enode, data=True):
+                if mnode.startswith("module:"):
+                    modules.add(mnode)
+        avg_freq = float(sum(freqs) / len(freqs)) if freqs else 0.0
+        return avg_freq, float(len(modules))
 
     def train(self) -> bool:
         data = self._dataset()
@@ -190,6 +226,7 @@ class ErrorForecaster:
         df = self.metrics_db.fetch(self.seq_len)
         seq: List[List[float]] = []
         cluster_feat = self._cluster_feature(bot)
+        graph_feat = self._graph_features(bot)
         if hasattr(df, "empty"):
             group = df[df["bot"] == bot].sort_values("ts")
             rows = group[["errors", "cpu", "memory", "disk_io", "net_io", "revenue", "expense"]].to_dict("records")
@@ -208,6 +245,8 @@ class ErrorForecaster:
                 ]
                 if self.include_clusters:
                     row.append(cluster_feat)
+                if self.include_graph:
+                    row.extend(graph_feat)
                 if self.extra_features and idx > 0:
                     prev = rows[-self.seq_len + idx - 1]
                     row.extend([
@@ -237,6 +276,8 @@ class ErrorForecaster:
                 ]
                 if self.include_clusters:
                     row.append(cluster_feat)
+                if self.include_graph:
+                    row.extend(graph_feat)
                 if self.extra_features and idx > 0:
                     prev = rows[-self.seq_len + idx - 1]
                     row.extend([
@@ -247,7 +288,12 @@ class ErrorForecaster:
                     row.extend([0.0, 0.0])
                 seq.append(row)
         if len(seq) < self.seq_len:
-            feat_len = 7 + (1 if self.include_clusters else 0) + (2 if self.extra_features else 0)
+            feat_len = (
+                7
+                + (1 if self.include_clusters else 0)
+                + (2 if self.extra_features else 0)
+                + (2 if self.include_graph else 0)
+            )
             pad = [[0.0] * feat_len] * (self.seq_len - len(seq))
             seq = pad + seq
         return seq
@@ -260,6 +306,7 @@ class ErrorForecaster:
         wf_val = float(len(str(bot)))
         bot_id = float(abs(hash(str(bot))) % 1000) / 1000.0
         cluster_feat = self._cluster_feature(bot)
+        graph_feat = self._graph_features(bot)
         preds: List[float] = []
         for _ in range(steps):
             if self.use_torch:
@@ -280,6 +327,8 @@ class ErrorForecaster:
             pad = [prob, 0.0, 0.0, 0.0, wf_val, 0.0, bot_id]
             if self.include_clusters:
                 pad.append(cluster_feat)
+            if self.include_graph:
+                pad.extend(graph_feat)
             if self.extra_features:
                 pad.extend([0.0, 0.0])
             seq = seq[1:] + [pad]
