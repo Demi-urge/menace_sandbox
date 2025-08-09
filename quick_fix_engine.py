@@ -7,6 +7,8 @@ import logging
 import subprocess
 from typing import Tuple, Iterable
 
+from .error_cluster_predictor import ErrorClusterPredictor
+
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
@@ -68,12 +70,14 @@ class QuickFixEngine:
         threshold: int = 3,
         graph: KnowledgeGraph | None = None,
         risk_threshold: float = 0.5,
+        predictor: ErrorClusterPredictor | None = None,
     ) -> None:
         self.db = error_db
         self.manager = manager
         self.threshold = threshold
         self.graph = graph or KnowledgeGraph()
         self.risk_threshold = risk_threshold
+        self.predictor = predictor
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
@@ -91,6 +95,19 @@ class QuickFixEngine:
 
     def run(self, bot: str) -> None:
         """Attempt a quick patch for the most frequent error of ``bot``."""
+        if self.predictor is not None:
+            try:
+                modules = self.predictor.predict_high_risk_modules()
+            except Exception as exc:
+                self.logger.error("high risk prediction failed: %s", exc)
+                modules = []
+            if modules:
+                if isinstance(modules[0], str):
+                    modules_with_scores = [(m, 1.0) for m in modules]
+                else:
+                    modules_with_scores = modules  # type: ignore[assignment]
+                self.preemptive_patch_modules(modules_with_scores)
+
         info = self._top_error(bot)
         if not info:
             return
@@ -125,7 +142,7 @@ class QuickFixEngine:
     # ------------------------------------------------------------------
     def preemptive_patch_modules(
         self,
-        modules: Iterable[tuple[str, float]],
+        modules: Iterable[tuple[str, float]] | Iterable[str],
         *,
         risk_threshold: float | None = None,
     ) -> None:
@@ -142,7 +159,11 @@ class QuickFixEngine:
         """
 
         thresh = self.risk_threshold if risk_threshold is None else risk_threshold
-        for module, risk in modules:
+        for item in modules:
+            if isinstance(item, tuple):
+                module, risk = item
+            else:
+                module, risk = item, 1.0
             if risk < thresh:
                 continue
             path = Path(f"{module}.py")
@@ -158,6 +179,18 @@ class QuickFixEngine:
                     patch_id = generate_patch(module, getattr(self.manager, "engine", None))
                 except Exception:
                     patch_id = None
+            try:
+                self.graph.add_telemetry_event(
+                    "predictor",
+                    "predicted_high_risk",
+                    module,
+                    None,
+                    patch_id=patch_id,
+                )
+            except Exception as exc:  # pragma: no cover - graph issues
+                self.logger.error(
+                    "failed to record telemetry for %s: %s", module, exc
+                )
             try:
                 self.db.log_preemptive_patch(module, risk, patch_id)
             except Exception as exc:  # pragma: no cover - db issues
