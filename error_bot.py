@@ -95,10 +95,20 @@ class ErrorDB:
                 type TEXT,
                 description TEXT,
                 resolution TEXT,
-                ts TEXT
+                ts TEXT,
+                category TEXT,
+                cause TEXT,
+                frequency INTEGER
             )
             """
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(errors)").fetchall()]
+        if "category" not in cols:
+            self.conn.execute("ALTER TABLE errors ADD COLUMN category TEXT")
+        if "cause" not in cols:
+            self.conn.execute("ALTER TABLE errors ADD COLUMN cause TEXT")
+        if "frequency" not in cols:
+            self.conn.execute("ALTER TABLE errors ADD COLUMN frequency INTEGER")
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS error_model(error_id INTEGER, model_id INTEGER)"
         )
@@ -118,6 +128,8 @@ class ErrorDB:
                 task_id TEXT,
                 bot_id TEXT,
                 error_type TEXT,
+                category TEXT,
+                cause TEXT,
                 stack_trace TEXT,
                 root_module TEXT,
                 module TEXT,
@@ -126,7 +138,8 @@ class ErrorDB:
                 ts TEXT,
                 resolution_status TEXT,
                 patch_id INTEGER,
-                deploy_id INTEGER
+                deploy_id INTEGER,
+                frequency INTEGER
             )
             """
         )
@@ -141,16 +154,27 @@ class ErrorDB:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN inferred_cause TEXT")
         if "module_counts" not in cols:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN module_counts TEXT")
+        if "category" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN category TEXT")
+        if "cause" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN cause TEXT")
+        if "frequency" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN frequency INTEGER")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS error_stats(
-                error_type TEXT,
+                category TEXT,
                 module TEXT,
                 count INTEGER,
-                PRIMARY KEY (error_type, module)
+                PRIMARY KEY (category, module)
             )
             """
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(error_stats)").fetchall()]
+        if "category" not in cols and "error_type" in cols:
+            self.conn.execute(
+                "ALTER TABLE error_stats RENAME COLUMN error_type TO category"
+            )
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS error_clusters(
@@ -333,6 +357,7 @@ class ErrorDB:
     def add_telemetry(self, event: "TelemetryEvent") -> None:
         """Insert a high-resolution error telemetry entry."""
         mods = event.module_counts or ({event.module: 1} if event.module else {})
+        freq = sum(mods.values()) if mods else 1
         self.conn.execute(
             """
             INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, module, module_counts, inferred_cause, ts, resolution_status, patch_id, deploy_id)
@@ -356,11 +381,11 @@ class ErrorDB:
         for mod, count in mods.items():
             self.conn.execute(
                 """
-                INSERT INTO error_stats(error_type, module, count) VALUES(?,?,?)
-                ON CONFLICT(error_type, module) DO UPDATE SET count=count+excluded.count
+                INSERT INTO error_stats(category, module, count) VALUES(?,?,?)
+                ON CONFLICT(category, module) DO UPDATE SET count=count+excluded.count
                 """,
                 (
-                    getattr(event.error_type, "value", event.error_type),
+                    getattr(event.category, "value", event.category),
                     mod,
                     count,
                 ),
@@ -372,6 +397,8 @@ class ErrorDB:
                 "task_id": event.task_id,
                 "bot_id": event.bot_id,
                 "error_type": str(event.error_type),
+                "category": getattr(event.category, "value", event.category),
+                "cause": event.root_cause,
                 "stack_trace": event.stack_trace,
                 "root_module": event.root_module,
                 "module": event.module,
@@ -381,18 +408,34 @@ class ErrorDB:
                 "resolution_status": event.resolution_status,
                 "patch_id": event.patch_id,
                 "deploy_id": event.deploy_id,
+                "frequency": freq,
             },
         )
 
-    def get_error_stats(self) -> list[dict[str, int]]:
-        """Return aggregated error counts grouped by type and module."""
+    def fetch_error_stats(self) -> list[dict[str, int]]:
+        """Return aggregated error counts grouped by category and module."""
         cur = self.conn.execute(
-            "SELECT error_type, module, count FROM error_stats"
+            "SELECT category, module, count FROM error_stats"
         )
         return [
-            {"error_type": row[0], "module": row[1], "count": row[2]}
+            {"category": row[0], "module": row[1], "count": row[2]}
             for row in cur.fetchall()
         ]
+
+    def get_error_stats(self) -> list[dict[str, int]]:
+        """Backward compatible wrapper for ``fetch_error_stats``."""
+        return self.fetch_error_stats()
+
+    def record_error_occurrence(self, category: str, module: str) -> None:
+        """Increment the occurrence count for a ``(category, module)`` pair."""
+        self.conn.execute(
+            """
+            INSERT INTO error_stats(category, module, count) VALUES(?,?,1)
+            ON CONFLICT(category, module) DO UPDATE SET count=count+1
+            """,
+            (category, module),
+        )
+        self.conn.commit()
 
     def top_error_module(
         self, bot_id: str | None = None, *, unresolved_only: bool = False
