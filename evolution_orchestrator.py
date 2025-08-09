@@ -81,6 +81,7 @@ class EvolutionOrchestrator:
         self._benchmark_interval = 3600
         self._workflow_roi_history: dict[str, list[float]] = {}
         self._last_mutation_id: int | None = None
+        self._workflow_event_ids: dict[int | str, int] = {}
         if self.event_bus:
             try:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
@@ -145,22 +146,78 @@ class EvolutionOrchestrator:
         result_roi = before_roi
         close = lambda val, thr: abs(val - thr) <= abs(thr) * 0.1
         candidates: list[str] = []
-        if (
-            error_rate > self.triggers.error_rate
-            or pred_err > self.triggers.error_rate
-            or close(error_rate, self.triggers.error_rate)
-        ):
+        action_reasons: dict[str, list[str]] = {}
+        action_triggers: dict[str, list[str]] = {}
+
+        # determine triggers for self improvement
+        sim_reasons: list[str] = []
+        sim_triggers: list[str] = []
+        if error_rate > self.triggers.error_rate:
+            sim_reasons.append(
+                f"error_rate {error_rate:.2f} > {self.triggers.error_rate:.2f}"
+            )
+            sim_triggers.append("error_rate")
+        if pred_err > self.triggers.error_rate:
+            sim_reasons.append(
+                f"pred_error_rate {pred_err:.2f} > {self.triggers.error_rate:.2f}"
+            )
+            sim_triggers.append("pred_error_rate")
+        if close(error_rate, self.triggers.error_rate):
+            sim_reasons.append(
+                f"error_rate {error_rate:.2f} ~ {self.triggers.error_rate:.2f}"
+            )
+            sim_triggers.append("error_rate")
+        if sim_reasons:
             candidates.append("self_improvement")
-        if (
-            delta_roi <= self.triggers.roi_drop
-            or pred_roi - before_roi <= self.triggers.roi_drop
-            or energy < self.triggers.energy_threshold
-            or close(delta_roi, self.triggers.roi_drop)
-            or close(energy, self.triggers.energy_threshold)
-        ):
+            action_reasons["self_improvement"] = sim_reasons
+            action_triggers["self_improvement"] = sim_triggers
+
+        # determine triggers for system evolution
+        sys_reasons: list[str] = []
+        sys_triggers: list[str] = []
+        if delta_roi <= self.triggers.roi_drop:
+            sys_reasons.append(
+                f"roi_drop {delta_roi:.2f} <= {self.triggers.roi_drop:.2f}"
+            )
+            sys_triggers.append("roi_drop")
+        if pred_roi - before_roi <= self.triggers.roi_drop:
+            sys_reasons.append(
+                f"pred_roi_drop {pred_roi - before_roi:.2f} <= {self.triggers.roi_drop:.2f}"
+            )
+            sys_triggers.append("pred_roi_drop")
+        if energy < self.triggers.energy_threshold:
+            sys_reasons.append(
+                f"energy {energy:.2f} < {self.triggers.energy_threshold:.2f}"
+            )
+            sys_triggers.append("energy")
+        if close(delta_roi, self.triggers.roi_drop):
+            sys_reasons.append(
+                f"roi_drop {delta_roi:.2f} ~ {self.triggers.roi_drop:.2f}"
+            )
+            sys_triggers.append("roi_drop")
+        if close(energy, self.triggers.energy_threshold):
+            sys_reasons.append(
+                f"energy {energy:.2f} ~ {self.triggers.energy_threshold:.2f}"
+            )
+            sys_triggers.append("energy")
+        if sys_reasons:
             candidates.append("system_evolution")
+            action_reasons["system_evolution"] = sys_reasons
+            action_triggers["system_evolution"] = sys_triggers
+
+        # determine triggers for bot creation
+        bc_reasons: list[str] = []
+        bc_triggers: list[str] = []
         if delta_roi > abs(self.triggers.roi_drop) and self.bot_creator:
+            bc_reasons.append(
+                f"roi_increase {delta_roi:.2f} > {abs(self.triggers.roi_drop):.2f}"
+            )
+            bc_triggers.append("roi_increase")
+        if bc_reasons:
             candidates.append("bot_creation")
+            action_reasons["bot_creation"] = bc_reasons
+            action_triggers["bot_creation"] = bc_triggers
+
         candidates = list(dict.fromkeys(candidates))
         predictions: dict[str, float] = {}
         variances: dict[str, float] = {}
@@ -283,6 +340,19 @@ class EvolutionOrchestrator:
                 sum(result_values) / len(result_values) if result_values else before_roi
             )
             after_roi = self._latest_roi()
+
+            reason_parts: list[str] = []
+            trigger_metrics: list[str] = []
+            for act in sequence:
+                rs = action_reasons.get(act, [])
+                if rs:
+                    reason_parts.append(f"{act}:{' & '.join(rs)}")
+                trigger_metrics.extend(action_triggers.get(act, []))
+            reason_str = "; ".join(reason_parts)
+            trigger_str = ",".join(dict.fromkeys(trigger_metrics))
+
+            workflow_id = 0
+            parent_event_id = self._workflow_event_ids.get(workflow_id)
             event = EvolutionEvent(
                 action=action_seq,
                 before_metric=before_roi,
@@ -291,8 +361,13 @@ class EvolutionOrchestrator:
                 predicted_roi=predicted_action_roi,
                 ts=datetime.utcnow().isoformat(),
                 trending_topic=trending_topic,
+                reason=reason_str,
+                trigger=trigger_str,
+                parent_event_id=parent_event_id,
+                workflow_id=workflow_id,
             )
-            self.history.add(event)
+            event_id = self.history.add(event)
+            self._workflow_event_ids[workflow_id] = event_id
             try:
                 eff = bottleneck = 0.0
                 try:
@@ -320,9 +395,9 @@ class EvolutionOrchestrator:
                     efficiency=eff,
                     bottleneck=bottleneck,
                     trending_topic=trending_topic,
-                    reason="evolution cycle",
-                    trigger=",".join(candidates),
-                    parent_event_id=self._last_mutation_id,
+                    reason=reason_str,
+                    trigger=trigger_str,
+                    parent_event_id=event_id,
                 )
                 if self.capital_bot:
                     try:
@@ -344,8 +419,8 @@ class EvolutionOrchestrator:
                 self.logger.exception("metrics export failed")
             event_id = MutationLogger.log_mutation(
                 change=action_seq,
-                reason="evolution cycle",
-                trigger=",".join(candidates),
+                reason=reason_str,
+                trigger=trigger_str,
                 performance=after_roi - before_roi,
                 workflow_id=0,
                 parent_id=self._last_mutation_id,
@@ -444,15 +519,22 @@ class EvolutionOrchestrator:
             self.logger.exception("workflow DB update failed")
         for res in results:
             try:
-                self.history.add(
+                wf_key = getattr(res, "workflow_id", res.variant)
+                parent = self._workflow_event_ids.get(wf_key)
+                event_id = self.history.add(
                     EvolutionEvent(
                         action=f"experiment:{res.variant}",
                         before_metric=base_roi,
                         after_metric=res.roi,
                         roi=res.roi - base_roi,
                         trending_topic=getattr(res, "trending_topic", None),
+                        reason="workflow experiment",
+                        trigger="experiment",
+                        parent_event_id=parent,
+                        workflow_id=wf_key if isinstance(wf_key, int) else None,
                     )
                 )
+                self._workflow_event_ids[wf_key] = event_id
                 vals = self._workflow_roi_history.setdefault(res.variant, [])
                 vals.append(res.roi)
                 if len(vals) > 5:
@@ -492,15 +574,22 @@ class EvolutionOrchestrator:
             return
         try:
             base_roi = self._latest_roi()
-            self.history.add(
+            wf_key = getattr(res, "workflow_id", res.variant)
+            parent = self._workflow_event_ids.get(wf_key)
+            event_id = self.history.add(
                 EvolutionEvent(
                     action=f"bot_experiment:{res.variant}",
                     before_metric=base_roi,
                     after_metric=res.roi,
                     roi=res.roi - base_roi,
                     trending_topic=getattr(res, "trending_topic", None),
+                    reason="bot experiment",
+                    trigger="experiment",
+                    parent_event_id=parent,
+                    workflow_id=wf_key if isinstance(wf_key, int) else None,
                 )
             )
+            self._workflow_event_ids[wf_key] = event_id
         except Exception:
             self.logger.exception("record bot experiment failed")
 

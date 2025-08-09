@@ -63,17 +63,30 @@ def test_full_loop(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "sqlalchemy.engine", engine_stub)
     stub = types.ModuleType("stub")
     stub.stats = object
+    stub.DiGraph = object
+    stub.log2 = lambda *a, **k: 0.0
     for mod in ("psutil", "networkx", "pandas", "pulp", "scipy"):
         monkeypatch.setitem(sys.modules, mod, stub)
     for mod in ("numpy", "git"):
         monkeypatch.setitem(sys.modules, mod, stub)
     stub.Repo = object
+    git_exc = types.ModuleType("git.exc")
+    git_exc.GitCommandError = Exception
+    git_exc.InvalidGitRepositoryError = Exception
+    git_exc.NoSuchPathError = Exception
+    monkeypatch.setitem(sys.modules, "git.exc", git_exc)
     matplotlib_stub = types.ModuleType("matplotlib")
     plt_stub = types.ModuleType("pyplot")
     matplotlib_stub.pyplot = plt_stub
     monkeypatch.setitem(sys.modules, "matplotlib", matplotlib_stub)
     monkeypatch.setitem(sys.modules, "matplotlib.pyplot", plt_stub)
-    monkeypatch.setitem(sys.modules, "dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: None))
+    monkeypatch.setitem(
+        sys.modules,
+        "dotenv",
+        types.SimpleNamespace(
+            load_dotenv=lambda *a, **k: None, dotenv_values=lambda *a, **k: {}
+        ),
+    )
     monkeypatch.setitem(sys.modules, "prometheus_client", stub)
     stub.CollectorRegistry = object
     stub.Counter = object
