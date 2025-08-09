@@ -101,12 +101,22 @@ class QuickFixEngine:
         if not path.exists():
             return
         desc = f"quick fix {etype}"
+        patch_id = None
         try:
-            self.manager.run_patch(path, desc)
+            result = self.manager.run_patch(path, desc)
+            patch_id = getattr(result, "patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
+        tests_ok = True
         try:
-            self.graph.add_telemetry_event(bot, etype, module, mods)
+            subprocess.run(["pytest", "-q"], check=True)
+        except Exception as exc:
+            tests_ok = False
+            self.logger.error("quick fix validation failed: %s", exc)
+        try:
+            self.graph.add_telemetry_event(
+                bot, etype, module, mods, patch_id=patch_id, resolved=tests_ok
+            )
             self.graph.update_error_stats(self.db)
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
@@ -157,10 +167,6 @@ class QuickFixEngine:
     def run_and_validate(self, bot: str) -> None:
         """Run :meth:`run` then execute the test suite."""
         self.run(bot)
-        try:
-            subprocess.run(["pytest", "-q"], check=True)
-        except Exception as exc:
-            self.logger.error("quick fix validation failed: %s", exc)
 
 
 __all__ = ["QuickFixEngine", "generate_patch"]

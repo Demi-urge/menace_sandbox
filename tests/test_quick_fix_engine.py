@@ -57,6 +57,7 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
     (tmp_path / "bot.py").write_text("x = 1\n")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "bot", {}, 1))
+    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
         engine.run("bot")
@@ -89,9 +90,11 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
     )
     (tmp_path / "b.py").write_text("x=1\n")
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
     engine.run("bot")
     assert engine.manager.calls[0][0] == Path("b.py")
     assert engine.graph.events[0][0][2] == "b"
+    assert engine.graph.events[0][1]["resolved"] is True
     assert engine.graph.updated is engine.db
 
 

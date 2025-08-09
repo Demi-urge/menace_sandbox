@@ -24,14 +24,17 @@ _TEMPLATE = """
 <canvas id="by_category" width="400" height="200"></canvas>
 <canvas id="by_module" width="400" height="200"></canvas>
 <canvas id="by_cause" width="400" height="200"></canvas>
+<canvas id="success_by_category" width="400" height="200"></canvas>
 <script>
 async function load(){
   const c = await fetch('/category_data').then(r=>r.json());
   const m = await fetch('/module_data').then(r=>r.json());
   const k = await fetch('/cause_data').then(r=>r.json());
+  const s = await fetch('/category_success').then(r=>r.json());
   new Chart(document.getElementById('by_category'), {type:'bar',data:{labels:c.labels,datasets:[{label:'Count',data:c.count}]}});
   new Chart(document.getElementById('by_module'), {type:'bar',data:{labels:m.labels,datasets:[{label:'Count',data:m.count}]}});
   new Chart(document.getElementById('by_cause'), {type:'bar',data:{labels:k.labels,datasets:[{label:'Count',data:k.count}]}});
+  new Chart(document.getElementById('success_by_category'), {type:'bar',data:{labels:s.labels,datasets:[{label:'Success Rate',data:s.rate}]},options:{scales:{y:{beginAtZero:true,max:1}}}});
 }
 load();
 </script>
@@ -57,6 +60,7 @@ class ErrorOntologyDashboard(MetricsDashboard):
         self.app.add_url_rule('/category_data', 'category_data', self.category_data)
         self.app.add_url_rule('/module_data', 'module_data', self.module_data)
         self.app.add_url_rule('/cause_data', 'cause_data', self.cause_data)
+        self.app.add_url_rule('/category_success', 'category_success', self.category_success)
 
     # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
@@ -88,6 +92,15 @@ class ErrorOntologyDashboard(MetricsDashboard):
         labels = [r[0] for r in rows]
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
+
+    def category_success(self) -> tuple[str, int]:
+        cur = self.error_db.conn.execute(
+            "SELECT COALESCE(category, ''), AVG(CASE WHEN resolution_status='successful' THEN 1.0 ELSE 0.0 END) FROM telemetry GROUP BY category"
+        )
+        rows = cur.fetchall()
+        labels = [r[0] for r in rows]
+        rate = [float(r[1] or 0.0) for r in rows]
+        return jsonify({'labels': labels, 'rate': rate}), 200
 
     def generate_report(self, path: str | Path = 'error_ontology_report.json') -> Path:
         """Generate a JSON report of error counts."""
