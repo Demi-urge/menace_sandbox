@@ -3312,6 +3312,9 @@ class SelfImprovementEngine:
                         patch_id=patch_id,
                         trending_topic=trending_topic,
                         reverted=reverted,
+                        reason="cycle complete",
+                        trigger="run_cycle",
+                        parent_event_id=self._last_mutation_id,
                     )
                     self.logger.info(
                         "cycle metrics",
