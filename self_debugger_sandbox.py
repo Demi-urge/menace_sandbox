@@ -45,6 +45,7 @@ from .code_database import PatchHistoryDB, _hash_code
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 from typing import Callable, Mapping
+from .error_cluster_predictor import ErrorClusterPredictor
 
 
 class SelfDebuggerSandbox(AutomatedDebugger):
@@ -63,6 +64,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         audit_trail: AuditTrail | None = None,
         policy: SelfImprovementPolicy | None = None,
         state_getter: Callable[[], tuple[int, ...]] | None = None,
+        error_predictor: ErrorClusterPredictor | None = None,
         *,
         score_threshold: float = 0.5,
         score_weights: tuple[float, float, float, float, float, float] | None = None,
@@ -73,6 +75,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self.audit_trail = audit_trail or getattr(engine, "audit_trail", None)
         self.policy = policy
         self.state_getter = state_getter
+        self.error_predictor = error_predictor
         self._bad_hashes: set[str] = set()
         self.score_threshold = score_threshold
         self.score_weights = score_weights or (1.0, 1.0, 1.0, 1.0, 1.0, 1.0)
@@ -167,6 +170,23 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_weights_update = 0.0
         self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
+
+    # ------------------------------------------------------------------
+    def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
+        """Apply fixes for modules predicted to be high risk."""
+        if not self.error_predictor:
+            return
+        try:
+            modules = self.error_predictor.predict_high_risk_modules(top_n=limit)
+        except Exception:
+            self.logger.exception("high risk prediction failed")
+            return
+        for mod in modules:
+            try:
+                self.engine.patch_file(Path(mod), "preemptive_fix")
+                self.logger.info("preemptive patch applied", extra=log_record(module=mod))
+            except Exception:
+                self.logger.exception("preemptive fix failed", extra=log_record(module=mod))
 
     # ------------------------------------------------------------------
     async def _coverage_percent(
@@ -954,6 +974,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         """
 
         self._score_db = patch_db
+        self.preemptive_fix_high_risk_modules()
         for _ in range(max(1, int(limit))):
             logs = list(self._recent_logs())
             if not logs:

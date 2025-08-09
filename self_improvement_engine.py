@@ -62,6 +62,7 @@ from orphan_analyzer import classify_module, analyze_redundancy
 import numpy as np
 import socket
 import contextlib
+from .error_cluster_predictor import ErrorClusterPredictor
 
 logger = get_logger(__name__)
 
@@ -510,6 +511,7 @@ class SelfImprovementEngine:
         synergy_weights_lr: float | None = None,
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
         score_backend: PatchScoreBackend | None = None,
+        error_predictor: ErrorClusterPredictor | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -654,6 +656,7 @@ class SelfImprovementEngine:
         else:
             self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.state_path = Path(state_path) if state_path else None
+        self.error_predictor = error_predictor
         self.roi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
@@ -2856,6 +2859,25 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception(
                         "proactive prediction patching failed: %s", exc
+                    )
+            if self.error_predictor and self.self_coding_engine:
+                try:
+                    high_risk = self.error_predictor.predict_high_risk_modules()
+                    if high_risk:
+                        self.logger.info(
+                            "high risk modules",
+                            extra=log_record(modules=high_risk),
+                        )
+                        for mod in high_risk:
+                            try:
+                                self.self_coding_engine.patch_file(Path(mod), "preemptive_fix")
+                            except Exception:
+                                self.logger.exception(
+                                    "preemptive fix failed", extra=log_record(module=mod)
+                                )
+                except Exception as exc:
+                    self.logger.exception(
+                        "high risk module prediction failed: %s", exc
                     )
             state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
             predicted = self.policy.score(state) if self.policy else 0.0
