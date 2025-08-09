@@ -5,13 +5,14 @@ from __future__ import annotations
 import threading
 from typing import Iterable, Optional
 
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 from .metrics_dashboard import MetricsDashboard
 from .data_bot import MetricsDB
 from .evolution_history_db import EvolutionHistoryDB
 from .error_bot import ErrorDB
 from .report_generation_bot import ReportGenerationBot, ReportOptions
+from .lineage_tracker import LineageTracker
 
 
 _TEMPLATE = """
@@ -25,14 +26,29 @@ _TEMPLATE = """
 <canvas id="metrics" width="400" height="200"></canvas>
 <canvas id="evolution" width="400" height="200"></canvas>
 <canvas id="errors" width="400" height="200"></canvas>
+<div id="lineage"></div>
 <script>
 async function load() {
   const m = await fetch('/metrics_data').then(r=>r.json());
   const e = await fetch('/evolution_data').then(r=>r.json());
   const err = await fetch('/error_data').then(r=>r.json());
+  const lin = await fetch('/lineage_data').then(r=>r.json());
   new Chart(document.getElementById('metrics'), {type:'line',data:{labels:m.labels,datasets:[{label:'CPU',data:m.cpu},{label:'Errors',data:m.errors}]}});
   new Chart(document.getElementById('evolution'), {type:'line',data:{labels:e.labels,datasets:[{label:'ROI',data:e.roi}]}});
   new Chart(document.getElementById('errors'), {type:'bar',data:{labels:err.labels,datasets:[{label:'Count',data:err.count}]}});
+  function render(nodes){
+    const ul=document.createElement('ul');
+    nodes.forEach(n=>{
+      const li=document.createElement('li');
+      li.textContent=`${n.action} (id=${n.rowid})`;
+      if(n.children && n.children.length){
+        li.appendChild(render(n.children));
+      }
+      ul.appendChild(li);
+    });
+    return ul;
+  }
+  document.getElementById('lineage').appendChild(render(lin));
 }
 load();
 </script>
@@ -56,11 +72,13 @@ class MonitoringDashboard(MetricsDashboard):
         self.metrics_db = metrics_db or MetricsDB()
         self.evolution_db = evolution_db or EvolutionHistoryDB()
         self.error_db = error_db or ErrorDB()
+        self.lineage_tracker = LineageTracker(self.evolution_db)
         self.reporter = ReportGenerationBot(self.metrics_db)
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/metrics_data', 'metrics_data', self.metrics_data)
         self.app.add_url_rule('/evolution_data', 'evolution_data', self.evolution_data)
         self.app.add_url_rule('/error_data', 'error_data', self.error_data)
+        self.app.add_url_rule('/lineage_data', 'lineage_data', self.lineage_data)
         self.app.add_url_rule('/status', 'status', self.status)
         self.orchestrator = orchestrator
         self._report_timer: Optional[threading.Timer] = None
@@ -94,6 +112,11 @@ class MonitoringDashboard(MetricsDashboard):
         labels = [r[0] if r[0] is not None else '' for r in rows]
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
+
+    def lineage_data(self) -> tuple[str, int]:
+        workflow_id = request.args.get('workflow_id', type=int)
+        data = self.lineage_tracker.build_tree(workflow_id)
+        return jsonify(data), 200
 
     def status(self) -> tuple[str, int]:
         if self.orchestrator and hasattr(self.orchestrator, 'status_summary'):
