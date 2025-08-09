@@ -119,6 +119,7 @@ from jinja2 import Template
 from sandbox_settings import SandboxSettings
 from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
+from menace.error_forecaster import ErrorForecaster
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -732,8 +733,16 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     )
     meta_log.module_index = improver.module_index
 
-    telem_db = ErrorDB(Path(tmp) / "errors.db")
-    improver.error_bot = ErrorBot(telem_db, MetricsDB())
+    graph = KnowledgeGraph()
+    telem_db = ErrorDB(Path(tmp) / "errors.db", graph=graph)
+    forecaster = ErrorForecaster(metrics_db, graph=graph)
+    improver.error_bot = ErrorBot(
+        telem_db,
+        metrics_db,
+        graph=graph,
+        forecaster=forecaster,
+        improvement_engine=improver,
+    )
     settings = SandboxSettings()
 
     class _TelemProxy:
@@ -801,6 +810,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         state_getter=improver._policy_state,
     )
+    sandbox.error_logger = improver.error_bot.error_logger
+    sandbox.error_forecaster = forecaster
+    sandbox.graph = graph
     tester = SelfTestService(
         telem_db,
         include_orphans=include_orphans,

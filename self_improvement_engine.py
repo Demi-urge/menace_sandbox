@@ -731,6 +731,8 @@ class SelfImprovementEngine:
         # finds new modules. Maps module paths to metadata such as parents and
         # redundancy classification.
         self.orphan_traces: dict[str, dict[str, Any]] = {}
+        # queue of modules needing preventative fixes
+        self._preventative_queue: list[str] = []
 
         if module_groups is None:
             try:
@@ -2780,6 +2782,53 @@ class SelfImprovementEngine:
             self.logger.exception("module map refresh failed: %s", exc)
 
     # ------------------------------------------------------------------
+    def enqueue_preventative_fixes(self, modules: Iterable[str]) -> None:
+        """Queue modules for preventative patch generation."""
+        for mod in modules:
+            m = str(mod)
+            if m and m not in self._preventative_queue:
+                self._preventative_queue.append(m)
+
+    def _process_preventative_queue(self) -> None:
+        """Generate patches for queued modules."""
+        if not self._preventative_queue or not self.self_coding_engine:
+            self._preventative_queue.clear()
+            return
+        queue = list(self._preventative_queue)
+        self._preventative_queue.clear()
+        for mod in queue:
+            try:
+                patch_id = generate_patch(mod, self.self_coding_engine)
+                if self.error_bot and hasattr(self.error_bot, "db"):
+                    try:
+                        self.error_bot.db.add_telemetry(
+                            TelemetryEvent(
+                                module=str(mod),
+                                patch_id=patch_id,
+                                resolution_status="attempted",
+                            )
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "telemetry record failed", extra=log_record(module=mod)
+                        )
+                if self.error_predictor:
+                    try:
+                        self.error_predictor.graph.add_telemetry_event(
+                            self.bot_name,
+                            "preemptive_patch",
+                            str(mod),
+                            patch_id=patch_id,
+                        )
+                    except Exception:
+                        self.logger.exception(
+                            "graph patch record failed", extra=log_record(module=mod)
+                        )
+            except Exception:
+                self.logger.exception(
+                    "preemptive fix failed", extra=log_record(module=mod)
+                )
+
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
@@ -2817,6 +2866,7 @@ class SelfImprovementEngine:
                             "post integration orphan update failed: %s", exc
                         )
             self._refresh_module_map()
+            self._process_preventative_queue()
             if self.error_bot:
                 try:
                     predictions = (

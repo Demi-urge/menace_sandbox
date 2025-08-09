@@ -45,6 +45,7 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .contrarian_db import ContrarianDB
     from .conversation_manager_bot import ConversationManagerBot
     from .self_coding_engine import SelfCodingEngine
+    from .self_improvement_engine import SelfImprovementEngine
 
 try:
     from prometheus_client import Summary  # type: ignore
@@ -560,6 +561,7 @@ class ErrorBot(AdminBotBase):
         graph: KnowledgeGraph | None = None,
         forecaster: ErrorForecaster | None = None,
         self_coding_engine: "SelfCodingEngine" | None = None,
+        improvement_engine: "SelfImprovementEngine" | None = None,
     ) -> None:
         super().__init__(db_router=db_router)
         self.name = "ErrorBot"
@@ -609,6 +611,7 @@ class ErrorBot(AdminBotBase):
             self.metrics_db, graph=self.graph
         )
         self.self_coding_engine = self_coding_engine
+        self.improvement_engine = improvement_engine
         self.last_forecast_chains: dict[str, list[str]] = {}
         self.generated_runbooks: dict[str, str] = {}
         self.last_error_event: object | None = None
@@ -1013,18 +1016,23 @@ class ErrorBot(AdminBotBase):
                             self.logger.exception("auto patch failed: %s", exc)
                             if error_bot_exceptions:
                                 error_bot_exceptions.inc()
-                    if self.graph:
-                        chain = self.graph.cascading_effects(f"bot:{b}")
-                        if chain:
-                            full_chain = [f"bot:{b}"] + chain
+                    modules_for_fix: list[str] = []
+                    if self.forecaster and self.graph:
+                        try:
+                            chain_nodes = self.forecaster.predict_failure_chain(b, self.graph, steps=3)
+                        except Exception as exc:  # pragma: no cover - runtime issues
+                            self.logger.warning("failure chain prediction failed: %s", exc)
+                            chain_nodes = []
+                        if chain_nodes:
+                            full_chain = [f"bot:{b}"] + chain_nodes
                             self.last_forecast_chains[b] = full_chain
                             preds.append(" -> ".join(full_chain))
-                            modules = [n.split(":", 1)[1] for n in chain if n.startswith("module:")]
-                            if modules:
+                            modules_for_fix = [n.split(":", 1)[1] for n in chain_nodes if n.startswith("module:")]
+                            if modules_for_fix:
                                 runbook = {
                                     "bot": b,
                                     "failure_chain": full_chain,
-                                    "affected_modules": modules,
+                                    "affected_modules": modules_for_fix,
                                     "mitigation": "restart affected modules and review logs",
                                 }
                                 path = Path(
@@ -1033,6 +1041,11 @@ class ErrorBot(AdminBotBase):
                                 path.write_text(json.dumps(runbook, indent=2))
                                 self.generated_runbooks[b] = str(path)
                                 preds.append(str(path))
+                    if modules_for_fix and self.improvement_engine:
+                        try:
+                            self.improvement_engine.enqueue_preventative_fixes(modules_for_fix)
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.exception("queue preventative fixes failed: %s", exc)
             except Exception as e:  # pragma: no cover - runtime issues
                 self.logger.warning("forecast failed: %s", e)
         return preds
