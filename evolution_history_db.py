@@ -239,6 +239,15 @@ class EvolutionHistoryDB:
         )
         return self.add(event)
 
+    def record_outcome(self, event_id: int, *, after_metric: float, roi: float, performance: float) -> None:
+        """Update outcome metrics for an evolution event."""
+
+        self.conn.execute(
+            "UPDATE evolution_history SET after_metric=?, roi=?, performance=? WHERE rowid=?",
+            (after_metric, roi, performance, event_id),
+        )
+        self.conn.commit()
+
     def lineage_tree(self, workflow_id: int) -> List[dict]:
         cur = self.conn.execute(
             'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE workflow_id=?',

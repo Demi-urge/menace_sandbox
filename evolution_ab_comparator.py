@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""Compare evolution snapshots for behavioral drift and alignment degradation."""
+"""Compare evolution snapshots and track lineage-based workflow variants.
+
+This module originally compared behavior logs between two versions.  It now
+also exposes lightweight helpers to spawn mutation variants for A/B testing and
+to analyse their performance along the evolution lineage.
+"""
 
 import json
 import os
@@ -9,6 +14,8 @@ from datetime import datetime
 from collections import Counter
 from statistics import mean, pstdev
 from typing import Any, Dict, Iterable, List, Tuple
+
+from evolution_history_db import EvolutionHistoryDB
 
 # Path to optional threshold configuration
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -232,11 +239,62 @@ def generate_comparison_report(metrics_diff: Dict[str, Any], drift_signals: List
                 fh.write(f"- {sig}\n")
 
 
+# ---------------------------------------------------------------------------
+def spawn_variant(parent_event_id: int, action: str, db_path: str = "evolution_history.db") -> int:
+    """Spawn a mutation variant tied to ``parent_event_id``.
+
+    Returns the new event id created in :class:`EvolutionHistoryDB`.
+    """
+
+    db = EvolutionHistoryDB(db_path)
+    return db.spawn_variant(parent_event_id, action)
+
+
+def record_variant_outcome(
+    event_id: int,
+    after_metric: float,
+    roi: float,
+    performance: float,
+    db_path: str = "evolution_history.db",
+) -> None:
+    """Record outcome metrics for a previously spawned variant."""
+
+    db = EvolutionHistoryDB(db_path)
+    db.record_outcome(event_id, after_metric=after_metric, roi=roi, performance=performance)
+
+
+def compare_variant_paths(parent_event_id: int, db_path: str = "evolution_history.db") -> Dict[str, Any]:
+    """Return summary of variant outcomes for ``parent_event_id``.
+
+    The function reads lineage data and identifies the best-performing mutation
+    path among the direct children of ``parent_event_id``.
+    """
+
+    db = EvolutionHistoryDB(db_path)
+    rows = db.fetch_children(parent_event_id)
+    variants: List[Dict[str, Any]] = []
+    for row in rows:
+        variants.append(
+            {
+                "event_id": row[0],
+                "action": row[1],
+                "roi": row[4],
+                "performance": row[14],
+            }
+        )
+    best = None
+    if variants:
+        best = max(variants, key=lambda r: (r["performance"], r["roi"]))
+    return {"parent_event_id": parent_event_id, "variants": variants, "best": best}
+
 __all__ = [
     "load_behavior_logs",
     "compare_behavioral_metrics",
     "detect_behavioral_drift",
     "generate_comparison_report",
+    "spawn_variant",
+    "record_variant_outcome",
+    "compare_variant_paths",
     "THRESHOLDS",
     "CONFIG_PATH",
 ]

@@ -106,3 +106,20 @@ def test_log_read_warning(tmp_path, monkeypatch, caplog):
     logs_a, logs_b = eac.load_behavior_logs(str(data_file), str(data_file))
     assert not logs_a and not logs_b
     assert "failed to read" in caplog.text
+
+
+def test_spawn_and_compare_variants(tmp_path):
+    from evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+
+    db_path = tmp_path / "evol.db"
+    db = EvolutionHistoryDB(db_path)
+    root_id = db.add(EvolutionEvent(action="root", before_metric=0.0, after_metric=0.0, roi=0.0))
+
+    var_a = eac.spawn_variant(root_id, "A", db_path=str(db_path))
+    eac.record_variant_outcome(var_a, after_metric=1.0, roi=0.5, performance=1.5, db_path=str(db_path))
+    var_b = eac.spawn_variant(root_id, "B", db_path=str(db_path))
+    eac.record_variant_outcome(var_b, after_metric=1.0, roi=0.3, performance=1.0, db_path=str(db_path))
+
+    report = eac.compare_variant_paths(root_id, db_path=str(db_path))
+    assert len(report["variants"]) == 2
+    assert report["best"]["event_id"] == var_a
