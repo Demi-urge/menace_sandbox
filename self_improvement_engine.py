@@ -659,7 +659,23 @@ class SelfImprovementEngine:
         else:
             self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.state_path = Path(state_path) if state_path else None
-        self.error_predictor = error_predictor
+        if error_predictor is None:
+            graph = getattr(getattr(self.error_bot, "error_logger", None), "graph", None)
+            if graph is None:
+                graph = getattr(self.error_bot, "graph", None)
+            if graph is not None and hasattr(self.error_bot, "db"):
+                try:
+                    self.error_predictor = ErrorClusterPredictor(graph, self.error_bot.db)
+                except Exception:
+                    logger.exception(
+                        "error predictor init failed",
+                        extra=log_record(component="ErrorClusterPredictor"),
+                    )
+                    self.error_predictor = None
+            else:
+                self.error_predictor = None
+        else:
+            self.error_predictor = error_predictor
         self.roi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
@@ -2840,6 +2856,16 @@ class SelfImprovementEngine:
                             ),
                         )
                         self.error_bot.auto_patch_recurrent_errors()
+                        if self.error_predictor:
+                            try:
+                                self.error_predictor.graph.update_error_stats(
+                                    self.error_bot.db
+                                )
+                            except Exception:
+                                self.logger.exception(
+                                    "knowledge graph update failed",
+                                    extra=log_record(action="auto_patch_recurrent"),
+                                )
                         after = {
                             item.get("error_type", ""): float(item.get("count", 0.0))
                             for item in (
@@ -2866,6 +2892,7 @@ class SelfImprovementEngine:
             if self.error_predictor and self.auto_patch_high_risk:
                 try:
                     high_risk = self.error_predictor.predict_high_risk_modules()
+                    self.error_predictor.graph.update_error_stats(self.error_bot.db)
                     if high_risk:
                         self.logger.info(
                             "high risk modules",
@@ -2886,6 +2913,19 @@ class SelfImprovementEngine:
                                     except Exception:
                                         self.logger.exception(
                                             "telemetry record failed",
+                                            extra=log_record(module=mod),
+                                        )
+                                if self.error_predictor:
+                                    try:
+                                        self.error_predictor.graph.add_telemetry_event(
+                                            self.bot_name,
+                                            "preemptive_patch",
+                                            str(mod),
+                                            patch_id=patch_id,
+                                        )
+                                    except Exception:
+                                        self.logger.exception(
+                                            "graph patch record failed",
                                             extra=log_record(module=mod),
                                         )
                             except Exception:
@@ -3081,6 +3121,16 @@ class SelfImprovementEngine:
             if self.error_bot:
                 try:
                     self.error_bot.auto_patch_recurrent_errors()
+                    if self.error_predictor:
+                        try:
+                            self.error_predictor.graph.update_error_stats(
+                                self.error_bot.db
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "knowledge graph update failed",
+                                extra=log_record(action="auto_patch_recurrent"),
+                            )
                     self.logger.info("error auto-patching complete")
                 except Exception as exc:
                     self.logger.exception("auto patch recurrent errors failed: %s", exc)
