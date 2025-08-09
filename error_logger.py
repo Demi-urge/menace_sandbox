@@ -52,31 +52,61 @@ class TelemetryEvent(BaseModel):
     checksum: str = ""
 
 
+DEFAULT_CLASSIFICATION_RULES = {
+    "RuntimeFault": {
+        "regex": [r"KeyError", r"IndexError", r"FileNotFoundError"],
+        "semantic": ["missing key", "key not found", "not in index"],
+    },
+    "DependencyMismatch": {
+        "regex": [r"ModuleNotFoundError|ImportError"],
+        "semantic": ["module not found", "dependency missing"],
+    },
+    "LogicMisfire": {
+        "regex": [r"AssertionError"],
+        "semantic": ["assertion failed", "not implemented"],
+    },
+    "SemanticBug": {
+        "regex": [r"TypeError"],
+        "semantic": ["unexpected type", "wrong type"],
+    },
+}
+
+
 class ErrorClassifier:
     """Categorise errors via regex and semantic matching."""
 
-    regex_map = {
-        r"KeyError": ErrorType.RUNTIME_FAULT,
-        r"IndexError": ErrorType.RUNTIME_FAULT,
-        r"FileNotFoundError": ErrorType.RUNTIME_FAULT,
-        r"ModuleNotFoundError|ImportError": ErrorType.DEPENDENCY_MISMATCH,
-        r"AssertionError": ErrorType.LOGIC_MISFIRE,
-        r"TypeError": ErrorType.SEMANTIC_BUG,
-    }
-    semantic_map = {
-        "missing key": ErrorType.RUNTIME_FAULT,
-        "key not found": ErrorType.RUNTIME_FAULT,
-        "not in index": ErrorType.RUNTIME_FAULT,
-        "module not found": ErrorType.DEPENDENCY_MISMATCH,
-        "dependency missing": ErrorType.DEPENDENCY_MISMATCH,
-        "assertion failed": ErrorType.LOGIC_MISFIRE,
-        "not implemented": ErrorType.LOGIC_MISFIRE,
-        "unexpected type": ErrorType.SEMANTIC_BUG,
-        "wrong type": ErrorType.SEMANTIC_BUG,
-    }
-
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any] | None = None,
+        *,
+        config_path: str | None = None,
+    ) -> None:
         self.logger = logging.getLogger("ErrorClassifier")
+        if config is None:
+            if config_path is None:
+                config_path = os.getenv("ERROR_CLASSIFIER_CONFIG")
+            if config_path and os.path.exists(config_path):
+                try:
+                    with open(config_path, "r", encoding="utf-8") as fh:
+                        config = json.load(fh)
+                except Exception as e:  # pragma: no cover - configuration errors
+                    self.logger.warning("failed to load config %s: %s", config_path, e)
+                    config = DEFAULT_CLASSIFICATION_RULES
+            else:
+                config = DEFAULT_CLASSIFICATION_RULES
+
+        self.regex_map: dict[str, ErrorType] = {}
+        self.semantic_map: dict[str, ErrorType] = {}
+
+        for name, rules in config.items():
+            err_type = self._parse_type(name)
+            if not err_type:
+                continue
+            for pattern in rules.get("regex", []):
+                self.regex_map[pattern] = err_type
+            for phrase in rules.get("semantic", []):
+                self.semantic_map[phrase.lower()] = err_type
+
         if SentenceTransformer and util:
             try:
                 self.model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
@@ -84,6 +114,20 @@ class ErrorClassifier:
                 self.model = None
         else:
             self.model = None
+
+    @staticmethod
+    def _parse_type(name: str) -> ErrorType | None:
+        import re
+
+        key = re.sub(r"(?<!^)(?=[A-Z])", "_", name)
+        key = key.replace("-", "_").replace(" ", "_").upper()
+        try:
+            return ErrorType[key]
+        except KeyError:
+            try:
+                return ErrorType(name.lower())
+            except Exception:  # pragma: no cover - unknown type
+                return None
 
     def classify(self, stack: str) -> ErrorType:
         for pattern, label in self.regex_map.items():
