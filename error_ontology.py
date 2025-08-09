@@ -3,7 +3,19 @@ from __future__ import annotations
 """Centralised error taxonomy for Menace."""
 
 from enum import Enum
-from typing import Mapping, Type
+from typing import Dict, Mapping, Type
+
+from urllib.error import HTTPError
+
+try:  # pragma: no cover - optional dependency
+    from requests.exceptions import HTTPError as RequestsHTTPError  # type: ignore
+except Exception:  # pragma: no cover - requests may not be installed
+    RequestsHTTPError = None  # type: ignore
+
+try:  # pragma: no cover - support running as module or package
+    from .sandbox_recovery_manager import SandboxRecoveryError
+except Exception:  # pragma: no cover - module not a package
+    from sandbox_recovery_manager import SandboxRecoveryError  # type: ignore
 
 
 class ErrorCategory(str, Enum):
@@ -36,7 +48,7 @@ class ErrorCategory(str, Enum):
 ErrorType = ErrorCategory
 
 # Exception, keyword and module mappings for classification
-EXCEPTION_TYPE_MAP: Mapping[Type[BaseException], ErrorCategory] = {
+EXCEPTION_TYPE_MAP: Dict[Type[BaseException], ErrorCategory] = {
     AssertionError: ErrorCategory.LogicMisfire,
     KeyError: ErrorCategory.RuntimeFault,
     IndexError: ErrorCategory.RuntimeFault,
@@ -45,13 +57,19 @@ EXCEPTION_TYPE_MAP: Mapping[Type[BaseException], ErrorCategory] = {
     ModuleNotFoundError: ErrorCategory.DependencyMismatch,
     ZeroDivisionError: ErrorCategory.RuntimeFault,
     AttributeError: ErrorCategory.RuntimeFault,
+    PermissionError: ErrorCategory.RuntimeFault,
     MemoryError: ErrorCategory.ResourceLimit,
     TimeoutError: ErrorCategory.Timeout,
     ConnectionError: ErrorCategory.ExternalAPI,
+    HTTPError: ErrorCategory.ExternalAPI,
     OSError: ErrorCategory.DependencyMismatch,
+    SandboxRecoveryError: ErrorCategory.RuntimeFault,
     TypeError: ErrorCategory.SemanticBug,
     ValueError: ErrorCategory.SemanticBug,
 }
+
+if RequestsHTTPError is not None:
+    EXCEPTION_TYPE_MAP[RequestsHTTPError] = ErrorCategory.ExternalAPI  # type: ignore[index]
 
 KEYWORD_MAP: Mapping[str, ErrorCategory] = {
     "dependency missing": ErrorCategory.DependencyMismatch,
@@ -76,6 +94,19 @@ KEYWORD_MAP: Mapping[str, ErrorCategory] = {
     "external api": ErrorCategory.ExternalAPI,
     "service unavailable": ErrorCategory.ExternalAPI,
     "connection refused": ErrorCategory.ExternalAPI,
+    "permission denied": ErrorCategory.RuntimeFault,
+    "access denied": ErrorCategory.RuntimeFault,
+    "401 unauthorized": ErrorCategory.ExternalAPI,
+    "403 forbidden": ErrorCategory.ExternalAPI,
+    "404 not found": ErrorCategory.ExternalAPI,
+    "429 too many requests": ErrorCategory.ExternalAPI,
+    "500 internal server error": ErrorCategory.ExternalAPI,
+    "502 bad gateway": ErrorCategory.ExternalAPI,
+    "504 gateway timeout": ErrorCategory.Timeout,
+    "cuda error": ErrorCategory.ResourceLimit,
+    "gpu error": ErrorCategory.ResourceLimit,
+    "gpu out of memory": ErrorCategory.ResourceLimit,
+    "accelerator error": ErrorCategory.ResourceLimit,
 }
 
 MODULE_MAP: Mapping[str, ErrorCategory] = {
