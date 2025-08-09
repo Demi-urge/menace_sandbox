@@ -19,6 +19,7 @@ from .resource_allocation_optimizer import ResourceAllocationOptimizer
 from .workflow_evolution_bot import WorkflowEvolutionBot
 from .experiment_manager import ExperimentManager
 from .evolution_analysis_bot import EvolutionAnalysisBot
+from . import mutation_logger as MutationLogger
 
 
 @dataclass
@@ -79,6 +80,7 @@ class EvolutionOrchestrator:
         self._last_workflow_benchmark = 0.0
         self._benchmark_interval = 3600
         self._workflow_roi_history: dict[str, list[float]] = {}
+        self._last_mutation_id: int | None = None
         if self.event_bus:
             try:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
@@ -337,6 +339,15 @@ class EvolutionOrchestrator:
                     evolution_cycle_count.inc()
             except Exception:
                 self.logger.exception("metrics export failed")
+            event_id = MutationLogger.log_mutation(
+                change=action_seq,
+                reason="evolution cycle",
+                trigger=",".join(candidates),
+                performance=after_roi - before_roi,
+                workflow_id=0,
+                parent_id=self._last_mutation_id,
+            )
+            self._last_mutation_id = event_id
         self._run_bot_experiments()
         self._run_workflow_experiments()
         self._cycles += 1

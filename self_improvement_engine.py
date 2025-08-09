@@ -65,6 +65,7 @@ import contextlib
 from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
+from . import mutation_logger as MutationLogger
 
 logger = get_logger(__name__)
 
@@ -784,6 +785,7 @@ class SelfImprovementEngine:
         self._trainer_stop: threading.Event | None = None
         self._trainer_thread: threading.Thread | None = None
         self._cycle_count = 0
+        self._last_mutation_id: int | None = None
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -1146,6 +1148,15 @@ class SelfImprovementEngine:
             "synergy weights after update",
             extra=log_record(weights=self.synergy_learner.weights, roi_delta=roi_delta),
         )
+        event_id = MutationLogger.log_mutation(
+            change="synergy_weights_updated",
+            reason="roi_delta adjustment",
+            trigger="roi_delta",
+            performance=roi_delta,
+            workflow_id=0,
+            parent_id=self._last_mutation_id,
+        )
+        self._last_mutation_id = event_id
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:
@@ -3138,6 +3149,15 @@ class SelfImprovementEngine:
                         "helper",
                         trending_topic=trending_topic,
                     )
+                    event_id = MutationLogger.log_mutation(
+                        change=f"helper_patch_{patch_id}",
+                        reason="self-improvement helper patch",
+                        trigger="automation_cycle",
+                        performance=delta,
+                        workflow_id=0,
+                        parent_id=self._last_mutation_id,
+                    )
+                    self._last_mutation_id = event_id
                     if self.policy:
                         try:
                             self.logger.info(
@@ -3400,6 +3420,15 @@ class SelfImprovementEngine:
                     self.policy.save()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("policy save failed: %s", exc)
+            event_id = MutationLogger.log_mutation(
+                change="self_improvement_cycle",
+                reason="cycle complete",
+                trigger="run_cycle",
+                performance=delta,
+                workflow_id=0,
+                parent_id=self._last_mutation_id,
+            )
+            self._last_mutation_id = event_id
             self.logger.info("cycle complete", extra=log_record(roi=roi_value))
             return result
         finally:
