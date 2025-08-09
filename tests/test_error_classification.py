@@ -12,6 +12,9 @@ def test_classifier_identifies_taxonomy():
     assert clf.classify("operation failed due to unexpected type") is ErrorType.SEMANTIC_BUG
     assert clf.classify("ZeroDivisionError: divide by zero") is ErrorType.RUNTIME_FAULT
     assert clf.classify("cannot import name foo") is ErrorType.DEPENDENCY_MISMATCH
+    assert clf.classify("MemoryError: cannot allocate") is ErrorType.RESOURCE_LIMIT
+    assert clf.classify("request timed out after 5s") is ErrorType.TIMEOUT
+    assert clf.classify("ConnectionError: external api down") is ErrorType.EXTERNAL_API
 
 
 def test_classifier_custom_rules(tmp_path):

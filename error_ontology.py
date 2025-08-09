@@ -13,6 +13,9 @@ class ErrorCategory(str, Enum):
     RuntimeFault = "runtime_fault"
     DependencyMismatch = "dependency_mismatch"
     LogicMisfire = "logic_misfire"
+    ResourceLimit = "resource_limit"
+    Timeout = "timeout"
+    ExternalAPI = "external_api"
     Unknown = "unknown"
 
     def __str__(self) -> str:  # pragma: no cover - trivial
@@ -23,6 +26,9 @@ class ErrorCategory(str, Enum):
     RUNTIME_FAULT = RuntimeFault
     DEPENDENCY_MISMATCH = DependencyMismatch
     LOGIC_MISFIRE = LogicMisfire
+    RESOURCE_LIMIT = ResourceLimit
+    TIMEOUT = Timeout
+    EXTERNAL_API = ExternalAPI
     UNKNOWN = Unknown
 
 
@@ -39,6 +45,9 @@ EXCEPTION_TYPE_MAP: Mapping[Type[BaseException], ErrorCategory] = {
     ModuleNotFoundError: ErrorCategory.DependencyMismatch,
     ZeroDivisionError: ErrorCategory.RuntimeFault,
     AttributeError: ErrorCategory.RuntimeFault,
+    MemoryError: ErrorCategory.ResourceLimit,
+    TimeoutError: ErrorCategory.Timeout,
+    ConnectionError: ErrorCategory.ExternalAPI,
     OSError: ErrorCategory.DependencyMismatch,
     TypeError: ErrorCategory.SemanticBug,
     ValueError: ErrorCategory.SemanticBug,
@@ -60,12 +69,22 @@ KEYWORD_MAP: Mapping[str, ErrorCategory] = {
     "attribute not found": ErrorCategory.RuntimeFault,
     "unexpected type": ErrorCategory.SemanticBug,
     "wrong type": ErrorCategory.SemanticBug,
+    "out of memory": ErrorCategory.ResourceLimit,
+    "memory limit": ErrorCategory.ResourceLimit,
+    "timed out": ErrorCategory.Timeout,
+    "timeout": ErrorCategory.Timeout,
+    "external api": ErrorCategory.ExternalAPI,
+    "service unavailable": ErrorCategory.ExternalAPI,
+    "connection refused": ErrorCategory.ExternalAPI,
 }
 
 MODULE_MAP: Mapping[str, ErrorCategory] = {
     "importlib": ErrorCategory.DependencyMismatch,
     "pkg_resources": ErrorCategory.DependencyMismatch,
     "pip": ErrorCategory.DependencyMismatch,
+    "psutil": ErrorCategory.ResourceLimit,
+    "asyncio": ErrorCategory.Timeout,
+    "requests": ErrorCategory.ExternalAPI,
 }
 
 

@@ -122,6 +122,18 @@ DEFAULT_CLASSIFICATION_RULES = {
         "regex": [r"TypeError", r"ValueError"],
         "semantic": ["unexpected type", "wrong type", "invalid value"],
     },
+    "ResourceLimit": {
+        "regex": [r"MemoryError"],
+        "semantic": ["out of memory", "memory limit"],
+    },
+    "Timeout": {
+        "regex": [r"TimeoutError"],
+        "semantic": ["timed out", "timeout"],
+    },
+    "ExternalAPI": {
+        "regex": [r"ConnectionError", r"HTTPError"],
+        "semantic": ["external api", "service unavailable", "connection refused"],
+    },
 }
 
 
@@ -155,7 +167,7 @@ class ErrorClassifier:
     def _parse_type(name: str) -> ErrorCategory | None:
         import re
 
-        key = re.sub(r"(?<!^)(?=[A-Z])", "_", name)
+        key = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
         key = key.replace("-", "_").replace(" ", "_").upper()
         try:
             return ErrorCategory[key]

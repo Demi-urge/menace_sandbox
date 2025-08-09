@@ -30,6 +30,22 @@ def test_classify_by_keyword():
     assert classify_exception(err, stack) is ErrorCategory.DependencyMismatch
 
 
+def test_keyword_new_categories():
+    err = Exception("boom")
+    assert (
+        classify_exception(err, "processing halted, out of memory")
+        is ErrorCategory.ResourceLimit
+    )
+    assert (
+        classify_exception(err, "request timed out after 5s")
+        is ErrorCategory.Timeout
+    )
+    assert (
+        classify_exception(err, "external api returned 500")
+        is ErrorCategory.ExternalAPI
+    )
+
+
 def test_extended_keyword_and_module():
     err = Exception("boom")
     stack = "cannot import name xyz from foo"
@@ -48,6 +64,17 @@ def test_classify_by_module():
 
     err = ImportLibError("bad import")
     assert classify_exception(err, "") is ErrorCategory.DependencyMismatch
+
+
+def test_new_categories_by_type_and_module():
+    assert classify_exception(MemoryError("oom"), "") is ErrorCategory.ResourceLimit
+    assert classify_exception(TimeoutError("slow"), "") is ErrorCategory.Timeout
+
+    class RequestsError(Exception):
+        __module__ = "requests"
+
+    err = RequestsError("bad response")
+    assert classify_exception(err, "") is ErrorCategory.ExternalAPI
 
 
 def test_classify_unknown():
