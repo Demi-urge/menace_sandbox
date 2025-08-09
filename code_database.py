@@ -665,6 +665,9 @@ class PatchRecord:
     code_hash: str | None = None
     source_bot: str | None = None
     version: str | None = None
+    parent_patch_id: int | None = None
+    reason: str | None = None
+    trigger: str | None = None
 
     def __post_init__(self) -> None:
         assert self.filename, "filename cannot be empty"
@@ -707,7 +710,10 @@ class PatchHistoryDB:
                 source_bot TEXT,
                 version TEXT,
                 code_id INTEGER,
-                code_hash TEXT
+                code_hash TEXT,
+                parent_patch_id INTEGER,
+                reason TEXT,
+                trigger TEXT
             )
             """
             )
@@ -754,6 +760,9 @@ class PatchHistoryDB:
                 "version": "ALTER TABLE patch_history ADD COLUMN version TEXT",
                 "code_id": "ALTER TABLE patch_history ADD COLUMN code_id INTEGER",
                 "code_hash": "ALTER TABLE patch_history ADD COLUMN code_hash TEXT",
+                "parent_patch_id": "ALTER TABLE patch_history ADD COLUMN parent_patch_id INTEGER",
+                "reason": "ALTER TABLE patch_history ADD COLUMN reason TEXT",
+                "trigger": "ALTER TABLE patch_history ADD COLUMN trigger TEXT",
             }
             for name, stmt in migrations.items():
                 if name not in cols:
@@ -764,6 +773,9 @@ class PatchHistoryDB:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_patch_ts ON patch_history(ts)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patch_roi_delta ON patch_history(roi_delta)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patch_parent ON patch_history(parent_patch_id)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_flaky_file ON flakiness_history(filename)"
@@ -821,7 +833,7 @@ class PatchHistoryDB:
                     pass
 
             cur = conn.execute(
-                "INSERT INTO patch_history(filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO patch_history(filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     rec.filename,
                     rec.description,
@@ -842,6 +854,9 @@ class PatchHistoryDB:
                     rec.code_hash,
                     rec.source_bot,
                     rec.version,
+                    rec.parent_patch_id,
+                    rec.reason,
+                    rec.trigger,
                 ),
             )
 
@@ -860,7 +875,7 @@ class PatchHistoryDB:
                 "patch stored",
                 extra={
                     "patch_id": patch_id,
-                    "filename": rec.filename,
+                    "file": rec.filename,
                     "code_id": rec.code_id,
                 },
             )
@@ -872,7 +887,7 @@ class PatchHistoryDB:
         """Return the highest ROI patches."""
         with self._connect() as conn:
             cur = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history ORDER BY roi_delta DESC LIMIT ?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history ORDER BY roi_delta DESC LIMIT ?",
                 (limit,),
             )
             rows = cur.fetchall()
@@ -906,14 +921,15 @@ class PatchHistoryDB:
         *,
         filename: str | None = None,
         reverted: bool | None = None,
+        parent_patch_id: int | None = None,
     ) -> List[PatchRecord]:
-        """Filter patches by filename and reverted flag."""
+        """Filter patches by filename, reverted flag, and lineage."""
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             base = (
                 "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, "
                 "roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, "
-                "predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history"
+                "predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history"
             )
             clauses: List[str] = []
             params: List[Any] = []
@@ -923,6 +939,9 @@ class PatchHistoryDB:
             if reverted is not None:
                 clauses.append("reverted = ?")
                 params.append(int(reverted))
+            if parent_patch_id is not None:
+                clauses.append("parent_patch_id = ?")
+                params.append(parent_patch_id)
             if clauses:
                 base += " WHERE " + " AND ".join(clauses)
             rows = conn.execute(base, params).fetchall()
@@ -930,7 +949,7 @@ class PatchHistoryDB:
             logger.info(
                 "patch filter",
                 extra={
-                    "filename": filename,
+                    "file": filename,
                     "reverted": reverted,
                     "count": len(patches),
                 },
@@ -945,7 +964,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
                 (pattern, pattern),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
@@ -959,7 +978,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history WHERE ts BETWEEN ? AND ?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE ts BETWEEN ? AND ?",
                 (start.isoformat(), end.isoformat()),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
@@ -980,7 +999,7 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> List[PatchRecord]:
             rows = conn.execute(
-                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version FROM patch_history WHERE code_hash=?",
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE code_hash=?",
                 (code_hash,),
             ).fetchall()
             patches = [PatchRecord(*row) for row in rows]
