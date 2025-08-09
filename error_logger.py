@@ -217,6 +217,78 @@ class ErrorClassifier:
             config = self._load_config()
             self._build_maps(config)
 
+    def update_rules_from_db(
+        self, db: "ErrorDB", *, min_count: int = 5
+    ) -> None:
+        """Learn frequent error phrases from telemetry and persist rules.
+
+        Parameters:
+            db: ``ErrorDB`` instance providing a ``conn`` attribute.
+            min_count: minimum occurrences required before adding a rule.
+        """
+
+        try:
+            cur = db.conn.execute(
+                (
+                    "SELECT category, COALESCE(cause, inferred_cause) AS phrase, "
+                    "COUNT(*) AS c FROM telemetry "
+                    "WHERE COALESCE(cause, inferred_cause) IS NOT NULL "
+                    "AND TRIM(COALESCE(cause, inferred_cause)) != '' "
+                    "GROUP BY category, phrase HAVING c >= ?"
+                ),
+                (min_count,),
+            )
+            rows = cur.fetchall()
+        except Exception as exc:  # pragma: no cover - db failures
+            self.logger.warning("rule learning failed: %s", exc)
+            return
+
+        if not rows:
+            return
+
+        config: dict[str, Any] = (
+            self._load_config() if self.config_path else DEFAULT_CLASSIFICATION_RULES.copy()
+        )
+        updated = False
+        for category, phrase, _cnt in rows:
+            err_type = self._parse_type(category or "")
+            if not err_type:
+                continue
+            if not phrase:
+                continue
+            phrase = str(phrase)
+            lower = phrase.lower()
+
+            # Add as regex if it looks like an Error subclass name
+            if re.match(r"^[A-Za-z_]*Error$", phrase) and phrase not in self.regex_map:
+                self.regex_map[phrase] = err_type
+                rules = config.setdefault(err_type.name, {})
+                regex_list = rules.setdefault("regex", [])
+                if phrase not in regex_list:
+                    regex_list.append(phrase)
+                    updated = True
+            elif lower not in self.semantic_map:
+                self.semantic_map[lower] = err_type
+                rules = config.setdefault(err_type.name, {})
+                sem_list = rules.setdefault("semantic", [])
+                if phrase not in sem_list:
+                    sem_list.append(phrase)
+                    updated = True
+
+        if updated and self.config_path:
+            try:
+                with open(self.config_path, "w", encoding="utf-8") as fh:
+                    if self.config_path.endswith((".yml", ".yaml")) and yaml:
+                        yaml.safe_dump(config, fh, sort_keys=False)
+                    else:
+                        json.dump(config, fh, indent=2)
+                self.config_mtime = os.path.getmtime(self.config_path)
+            except Exception as exc:  # pragma: no cover - write errors
+                self.logger.warning("failed to persist learned rules: %s", exc)
+
+        if updated:
+            self.logger.info("learned %d new error rules", len(rows))
+
     def classify(self, stack: str, exc: Exception | None = None) -> ErrorCategory:
         """Classify a stack trace, prioritising ontology categories."""
         self._maybe_reload()
@@ -286,6 +358,10 @@ class ErrorLogger:
         self.sentry = sentry
         self.graph = knowledge_graph
         self.replicator = None
+        self._unknown_counter = 0
+        self._update_threshold = int(
+            os.getenv("ERROR_RULE_UPDATE_THRESHOLD", "10")
+        )
         if TelemetryReplicator:
             hosts = os.getenv("KAFKA_HOSTS")
             disk = os.getenv("TELEMETRY_LOG", "telemetry.log")
@@ -372,6 +448,14 @@ class ErrorLogger:
                 self.replicator.replicate(event)
             except Exception as e:  # pragma: no cover - network issues
                 self.logger.error("failed to replicate telemetry: %s", e)
+        if category is ErrorCategory.Unknown:
+            self._unknown_counter += 1
+            if self._unknown_counter >= self._update_threshold:
+                try:
+                    self.classifier.update_rules_from_db(self.db)
+                except Exception as e:
+                    self.logger.warning("rule update failed: %s", e)
+                self._unknown_counter = 0
         if self.sentry:
             try:
                 self.sentry.capture_exception(exc)
