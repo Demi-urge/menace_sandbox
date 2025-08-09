@@ -118,6 +118,7 @@ __all__ = [
     "code_database",
     "error_bot",
     "error_forecaster",
+    "error_cluster_predictor",
     "ipo_implementation_pipeline",
     "database_steward_bot",
     "database_management_bot",
