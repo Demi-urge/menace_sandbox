@@ -7,6 +7,8 @@ for mod in ("psutil", "networkx", "pandas", "pulp", "scipy"):
     if mod not in sys.modules:
         sys.modules[mod] = stub
 stub.stats = object
+stub.DiGraph = object
+stub.log2 = lambda *a, **k: 0.0
 try:
     import jinja2 as _j2  # noqa: F401
 except Exception:
@@ -30,6 +32,11 @@ for mod in ("numpy", "git"):
     if mod not in sys.modules:
         sys.modules[mod] = stub
 stub.Repo = object
+git_exc = types.ModuleType("git.exc")
+git_exc.GitCommandError = Exception
+git_exc.InvalidGitRepositoryError = Exception
+git_exc.NoSuchPathError = Exception
+sys.modules["git.exc"] = git_exc
 
 matplotlib_stub = types.ModuleType("matplotlib")
 plt_stub = types.ModuleType("pyplot")
@@ -41,6 +48,7 @@ if "matplotlib.pyplot" not in sys.modules:
 
 dotenv_stub = types.ModuleType("dotenv")
 dotenv_stub.load_dotenv = lambda *a, **k: None
+dotenv_stub.dotenv_values = lambda *a, **k: {}
 if "dotenv" not in sys.modules:
     sys.modules["dotenv"] = dotenv_stub
 if "prometheus_client" not in sys.modules:
@@ -55,14 +63,14 @@ stub.TfidfVectorizer = object
 sys.modules.setdefault("sklearn.cluster", stub)
 stub.KMeans = object
 sys.modules.setdefault("sklearn.linear_model", stub)
-stub.LinearRegression = object
+stub.LinearRegression = type("LinearRegression", (), {"__init__": lambda self, *a, **k: None})
 sys.modules.setdefault("sklearn.model_selection", stub)
 stub.train_test_split = lambda *a, **k: ([], [])
 sys.modules.setdefault("sklearn.metrics", stub)
 stub.accuracy_score = lambda *a, **k: 0.0
-stub.LogisticRegression = object
+stub.LogisticRegression = type("LogisticRegression", (), {"__init__": lambda self, *a, **k: None})
 sys.modules.setdefault("sklearn.ensemble", stub)
-stub.RandomForestClassifier = object
+stub.RandomForestClassifier = type("RandomForestClassifier", (), {"__init__": lambda self, *a, **k: None})
 
 from menace.evolution_orchestrator import EvolutionOrchestrator, EvolutionTrigger
 from menace.evolution_history_db import EvolutionHistoryDB
@@ -71,7 +79,7 @@ from menace.evolution_history_db import EvolutionHistoryDB
 def make_orchestrator(tmp_path, energy, analysis_predict, seq_predict=None):
     data_bot = types.SimpleNamespace(
         db=types.SimpleNamespace(fetch=lambda limit=50: []),
-        log_evolution_cycle=lambda *a: None,
+        log_evolution_cycle=lambda *a, **k: None,
     )
     cap_bot = types.SimpleNamespace(energy_score=lambda **k: energy)
     improver = types.SimpleNamespace(run_cycle=lambda: types.SimpleNamespace(roi=None))
@@ -143,4 +151,31 @@ def test_ensemble_predictor(monkeypatch, tmp_path):
     rows = hist.fetch()
     assert rows and rows[0][0] == "self_improvement"
     assert ens.trained == 1
+
+
+def test_reason_and_parent_lineage(monkeypatch, tmp_path):
+    def predict(_action, _metric):
+        return 0.0
+
+    orch, hist = make_orchestrator(tmp_path, 0.5, predict)
+    monkeypatch.setattr(orch, "_latest_roi", lambda: 1.0)
+    orch.prev_roi = 1.0
+    monkeypatch.setattr(orch, "_error_rate", lambda: 0.5)
+
+    orch.run_cycle()
+    first_id = hist.conn.execute("SELECT max(rowid) FROM evolution_history").fetchone()[0]
+    row1 = hist.conn.execute(
+        'SELECT reason, "trigger", parent_event_id FROM evolution_history WHERE rowid=?',
+        (first_id,),
+    ).fetchone()
+    assert "error_rate" in row1[0]
+    assert "error_rate" in row1[1]
+    assert row1[2] is None
+
+    orch.run_cycle()
+    second_id = hist.conn.execute("SELECT max(rowid) FROM evolution_history").fetchone()[0]
+    row2 = hist.conn.execute(
+        'SELECT parent_event_id FROM evolution_history WHERE rowid=?', (second_id,)
+    ).fetchone()
+    assert row2[0] == first_id
 
