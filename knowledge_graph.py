@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Callable, List, Dict
 import logging
+from pathlib import Path
+import atexit
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +68,55 @@ class _SimpleKMeans:
 class KnowledgeGraph:
     """Lightweight wrapper around ``networkx`` to record entities."""
 
-    def __init__(self) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.graph = nx.DiGraph() if nx else None
+        self.path = Path(path) if path else Path("knowledge_graph.gpickle")
+        # attempt to load any existing graph so historical links persist
+        if self.graph is not None:
+            try:
+                self.load(self.path)
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("failed to load knowledge graph: %s", exc)
+        atexit.register(self._shutdown_save)
+
+    def _shutdown_save(self) -> None:  # pragma: no cover - best effort
+        try:
+            self.save(self.path)
+        except Exception:
+            pass
+
+    def save(self, path: str | Path) -> None:
+        """Persist the graph to ``path`` using ``pickle`` format."""
+        if self.graph is None:
+            return
+        p = Path(path)
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            import pickle
+
+            with p.open("wb") as fh:
+                pickle.dump(self.graph, fh)
+        except Exception as exc:  # pragma: no cover - best effort
+            try:
+                logger.warning("failed to save knowledge graph to %s: %s", p, exc)
+            except Exception:
+                pass
+
+    def load(self, path: str | Path) -> None:
+        """Load graph state from ``path`` if it exists."""
+        p = Path(path)
+        if not p.exists():
+            return
+        try:
+            import pickle
+
+            with p.open("rb") as fh:
+                self.graph = pickle.load(fh)
+        except Exception as exc:  # pragma: no cover - best effort
+            try:
+                logger.warning("failed to load knowledge graph from %s: %s", p, exc)
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     def register_service_dependency(self, bot: str, service: str) -> None:

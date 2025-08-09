@@ -64,11 +64,18 @@ class ErrorRecord:
 class ErrorDB:
     """SQLite-backed storage for known errors and discrepancies."""
 
-    def __init__(self, path: Path | str = "errors.db", *, event_bus: Optional[EventBus] = None) -> None:
+    def __init__(
+        self,
+        path: Path | str = "errors.db",
+        *,
+        event_bus: Optional[EventBus] = None,
+        graph: KnowledgeGraph | None = None,
+    ) -> None:
         self.path = Path(path)
         # Allow connection sharing across threads
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.event_bus = event_bus
+        self.graph = graph
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS known_errors(
@@ -391,6 +398,11 @@ class ErrorDB:
                 ),
             )
         self.conn.commit()
+        if self.graph:
+            try:  # pragma: no cover - best effort
+                self.graph.save(self.graph.path)
+            except Exception:
+                pass
         self._publish(
             "telemetry:new",
             {
@@ -582,6 +594,16 @@ class ErrorBot(AdminBotBase):
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
         self.graph = graph or KnowledgeGraph()
+        # ensure DB has access to the graph for persistence
+        try:
+            self.db.graph = self.graph
+        except Exception:  # pragma: no cover - legacy DB without attribute
+            pass
+        # load persisted graph before processing new telemetry
+        try:
+            self.graph.load(self.graph.path)
+        except Exception:  # pragma: no cover - best effort
+            pass
         self.forecaster = forecaster or ErrorForecaster(
             self.metrics_db, graph=self.graph
         )
