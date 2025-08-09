@@ -172,29 +172,17 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_weights_update = 0.0
         self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
-        self.error_logger = ErrorLogger()
         self.graph = KnowledgeGraph()
+        self.error_logger = ErrorLogger(graph=self.graph)
 
     # ------------------------------------------------------------------
     def _record_exception(self, exc: Exception) -> TelemetryEvent:
         """Log ``exc`` and record telemetry in the knowledge graph."""
-        event = self.error_logger.log(
+        return self.error_logger.log(
             exc,
             None,
             getattr(self.engine, "name", None),
         )
-        try:
-            self.graph.add_telemetry_event(
-                getattr(self.engine, "name", "sandbox"),
-                getattr(event.error_type, "value", str(event.error_type)),
-                event.root_module,
-                event.module_counts,
-                patch_id=event.patch_id,
-                deploy_id=event.deploy_id,
-            )
-        except Exception:
-            self.logger.exception("telemetry graph update failed")
-        return event
 
     # ------------------------------------------------------------------
     def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
