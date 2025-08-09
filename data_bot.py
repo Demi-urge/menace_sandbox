@@ -622,6 +622,9 @@ class DataBot:
         workflow_id: int | None = None,
         trending_topic: str | None = None,
         reverted: bool | None = None,
+        reason: str = "",
+        trigger: str = "",
+        parent_event_id: int | None = None,
     ) -> None:
         """Record an evolution event via the connected database and metrics DB."""
         if not self.evolution_db:
@@ -639,6 +642,9 @@ class DataBot:
                     patch_id=patch_id,
                     workflow_id=workflow_id,
                     trending_topic=trending_topic,
+                    reason=reason,
+                    trigger=trigger,
+                    parent_event_id=parent_event_id,
                 )
             )
         except Exception:

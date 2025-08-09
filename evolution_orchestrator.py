@@ -320,6 +320,9 @@ class EvolutionOrchestrator:
                     efficiency=eff,
                     bottleneck=bottleneck,
                     trending_topic=trending_topic,
+                    reason="evolution cycle",
+                    trigger=",".join(candidates),
+                    parent_event_id=self._last_mutation_id,
                 )
                 if self.capital_bot:
                     try:

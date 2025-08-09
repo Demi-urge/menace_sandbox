@@ -101,6 +101,9 @@ class SelfCodingManager:
                     roi_delta=after_roi - before_roi,
                     patch_id=patch_id,
                     reverted=reverted,
+                    reason=description,
+                    trigger=path.name,
+                    parent_event_id=None,
                 )
             except Exception as exc:
                 self.logger.exception(
