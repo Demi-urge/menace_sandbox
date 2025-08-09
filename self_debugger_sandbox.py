@@ -1240,7 +1240,10 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 before_cov, before_runtime = self._run_tests(root_test)
                 before_err = getattr(self.engine, "_current_errors", lambda: 0)()
                 pid, reverted, roi_delta = self.engine.apply_patch(
-                    root_test, "auto_debug"
+                    root_test,
+                    "auto_debug",
+                    reason="auto_debug",
+                    trigger="self_debugger_sandbox",
                 )
                 if self.policy:
                     try:

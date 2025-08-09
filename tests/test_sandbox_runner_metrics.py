@@ -158,7 +158,7 @@ class DummyEngine:
     def __init__(self, *a, **k):
         pass
 
-    def apply_patch(self, path, suggestion):
+    def apply_patch(self, path, suggestion, **_: object):
         return 1, False, 0.0
 
     def rollback_patch(self, patch_id):

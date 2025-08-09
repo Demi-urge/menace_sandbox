@@ -144,7 +144,12 @@ class AutomatedDebugger:
 
             @retry(Exception, attempts=3)
             def _apply(path: Path) -> None:
-                self.engine.apply_patch(path, "auto_debug")
+                self.engine.apply_patch(
+                    path,
+                    "auto_debug",
+                    reason="auto_debug",
+                    trigger="automated_debugger",
+                )
 
             try:
                 _apply(path)

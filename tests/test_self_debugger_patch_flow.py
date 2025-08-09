@@ -19,7 +19,7 @@ class FlowEngine(DummyEngine):
         self.rollback_patch_calls = []
         self.patched = []
 
-    def apply_patch(self, path: Path, desc: str):
+    def apply_patch(self, path: Path, desc: str, **_: object):
         pid = len(self.patched) + 1
         self.patched.append(pid)
         return pid, False, 0.0

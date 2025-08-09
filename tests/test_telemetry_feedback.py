@@ -8,7 +8,7 @@ class DummyEngine:
     def __init__(self):
         self.calls = []
 
-    def apply_patch(self, path: Path, desc: str):
+    def apply_patch(self, path: Path, desc: str, **_: object):
         self.calls.append((path, desc))
         return 1, False, 0.0
 

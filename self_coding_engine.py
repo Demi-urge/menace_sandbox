@@ -380,6 +380,9 @@ class SelfCodingEngine:
         *,
         threshold: float = 0.0,
         trending_topic: str | None = None,
+        parent_patch_id: int | None = None,
+        reason: str | None = None,
+        trigger: str | None = None,
         requesting_bot: str | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
@@ -392,6 +395,10 @@ class SelfCodingEngine:
         except PermissionError:
             self._log_attempt(requesting_bot, "apply_patch_denied", {"path": str(path)})
             raise
+        if reason is None:
+            reason = description
+        if trigger is None:
+            trigger = ""
         before_roi = 0.0
         before_err = self._current_errors()
         pred_before_roi = pred_before_err = 0.0
@@ -454,6 +461,9 @@ class SelfCodingEngine:
                             predicted_errors=pred_after_err,
                             reverted=True,
                             trending_topic=trending_topic,
+                            parent_patch_id=parent_patch_id,
+                            reason=reason,
+                            trigger=trigger,
                         )
                     )
                 except Exception:
@@ -543,6 +553,9 @@ class SelfCodingEngine:
                         predicted_errors=pred_after_err,
                         reverted=reverted,
                         trending_topic=trending_topic,
+                        parent_patch_id=parent_patch_id,
+                        reason=reason,
+                        trigger=trigger,
                     )
                 )
             except Exception as exc:
@@ -622,7 +635,7 @@ class SelfCodingEngine:
         path = Path(root_dir) / f"{bot}.py"
         if not path.exists():
             return
-        self.apply_patch(path, "refactor")
+        self.apply_patch(path, "refactor", reason="refactor", trigger="refactor_worst_bot")
 
 
 __all__ = ["SelfCodingEngine"]

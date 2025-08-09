@@ -1029,7 +1029,10 @@ def _sandbox_cycle_runner(
                 try:
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(
-                        target_path, suggestion
+                        target_path,
+                        suggestion,
+                        reason=suggestion,
+                        trigger="sandbox_runner",
                     )
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
@@ -1166,7 +1169,10 @@ def _sandbox_cycle_runner(
                 try:
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(
-                        target_path, suggestion
+                        target_path,
+                        suggestion,
+                        reason=suggestion,
+                        trigger="sandbox_runner",
                     )
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}

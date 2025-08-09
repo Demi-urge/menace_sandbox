@@ -205,7 +205,7 @@ class DummyEngine:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(self.generate_helper(desc))
 
-    def apply_patch(self, path: Path, desc: str):
+    def apply_patch(self, path: Path, desc: str, **_: object):
         self.applied = True
         return 1, False, 0.0
 
@@ -324,7 +324,7 @@ def test_sandbox_success(monkeypatch, tmp_path):
 
 def test_sandbox_failed_audit(monkeypatch, tmp_path):
     class FailEngine(DummyEngine):
-        def apply_patch(self, path: Path, desc: str):
+        def apply_patch(self, path: Path, desc: str, **_: object):
             raise RuntimeError("boom")
 
     engine = FailEngine()
@@ -439,7 +439,7 @@ def test_select_best_patch(monkeypatch, tmp_path):
             self.deltas = [0.1, 0.5, 0.5]
             self.calls = []
 
-        def apply_patch(self, path: Path, desc: str):
+        def apply_patch(self, path: Path, desc: str, **_: object):
             delta = self.deltas.pop(0)
             self.calls.append(delta)
             return len(self.calls), False, delta

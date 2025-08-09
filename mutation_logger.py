@@ -58,7 +58,7 @@ def log_mutation(
         trigger=trigger,
         performance=performance,
         workflow_id=workflow_id,
-        parent_id=parent_id,
+        parent_event_id=parent_id,
     )
     with _lock:
         event_id = _history_db.add(event)

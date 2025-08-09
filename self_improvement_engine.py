@@ -786,6 +786,7 @@ class SelfImprovementEngine:
         self._trainer_thread: threading.Thread | None = None
         self._cycle_count = 0
         self._last_mutation_id: int | None = None
+        self._last_patch_id: int | None = None
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -1429,8 +1430,22 @@ class SelfImprovementEngine:
             return None, False, 0.0
         try:
             patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                Path(__file__), "self_improvement"
+                Path(__file__),
+                "self_improvement",
+                parent_patch_id=self._last_patch_id,
+                reason="self_improvement",
+                trigger="optimize_self",
             )
+            event_id = MutationLogger.log_mutation(
+                change=f"self_opt_patch_{patch_id}",
+                reason="self_improvement",
+                trigger="optimize_self",
+                performance=delta,
+                workflow_id=0,
+                parent_id=self._last_mutation_id,
+            )
+            self._last_mutation_id = event_id
+            self._last_patch_id = patch_id
             return patch_id, reverted, delta
         except Exception as exc:
             self.logger.exception("self optimization failed: %s", exc)
@@ -3148,6 +3163,9 @@ class SelfImprovementEngine:
                         Path("auto_helpers.py"),
                         "helper",
                         trending_topic=trending_topic,
+                        parent_patch_id=self._last_patch_id,
+                        reason="helper_patch",
+                        trigger="automation_cycle",
                     )
                     event_id = MutationLogger.log_mutation(
                         change=f"helper_patch_{patch_id}",
@@ -3158,6 +3176,7 @@ class SelfImprovementEngine:
                         parent_id=self._last_mutation_id,
                     )
                     self._last_mutation_id = event_id
+                    self._last_patch_id = patch_id
                     if self.policy:
                         try:
                             self.logger.info(
