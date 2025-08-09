@@ -24,6 +24,10 @@ class EvolutionEvent:
     workflow_id: int | None = None
     ts: str = datetime.utcnow().isoformat()
     trending_topic: str | None = None
+    reason: str = ""
+    trigger: str = ""
+    performance: float = 0.0
+    parent_id: int | None = None
 
 
 class EvolutionHistoryDB:
@@ -44,7 +48,11 @@ class EvolutionHistoryDB:
                 patch_id INTEGER,
                 workflow_id INTEGER,
                 ts TEXT,
-                trending_topic TEXT
+                trending_topic TEXT,
+                reason TEXT,
+                "trigger" TEXT,
+                performance REAL DEFAULT 0,
+                parent_id INTEGER
             )
             """
         )
@@ -63,11 +71,19 @@ class EvolutionHistoryDB:
             self.conn.execute("ALTER TABLE evolution_history ADD COLUMN workflow_id INTEGER")
         if "trending_topic" not in cols:
             self.conn.execute("ALTER TABLE evolution_history ADD COLUMN trending_topic TEXT")
+        if "reason" not in cols:
+            self.conn.execute("ALTER TABLE evolution_history ADD COLUMN reason TEXT")
+        if "trigger" not in cols:
+            self.conn.execute('ALTER TABLE evolution_history ADD COLUMN "trigger" TEXT')
+        if "performance" not in cols:
+            self.conn.execute("ALTER TABLE evolution_history ADD COLUMN performance REAL DEFAULT 0")
+        if "parent_id" not in cols:
+            self.conn.execute("ALTER TABLE evolution_history ADD COLUMN parent_id INTEGER")
         self.conn.commit()
 
     def add(self, event: EvolutionEvent) -> int:
         cur = self.conn.execute(
-            "INSERT INTO evolution_history(action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            'INSERT INTO evolution_history(action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (
                 event.action,
                 event.before_metric,
@@ -80,6 +96,10 @@ class EvolutionHistoryDB:
                 event.workflow_id,
                 event.ts,
                 event.trending_topic,
+                event.reason,
+                event.trigger,
+                event.performance,
+                event.parent_id,
             ),
         )
         self.conn.commit()
@@ -94,12 +114,96 @@ class EvolutionHistoryDB:
 
     def fetch(
         self, limit: int = 50
-    ) -> List[Tuple[str, float, float, float, float, float, float, int | None, int | None, str, str | None]]:
+    ) -> List[
+        Tuple[
+            str,
+            float,
+            float,
+            float,
+            float,
+            float,
+            float,
+            int | None,
+            int | None,
+            str,
+            str | None,
+            str,
+            str,
+            float,
+            int | None,
+        ]
+    ]:
         cur = self.conn.execute(
-            "SELECT action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic FROM evolution_history ORDER BY ts DESC LIMIT ?",
+            'SELECT action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_id FROM evolution_history ORDER BY ts DESC LIMIT ?',
             (limit,),
         )
         return cur.fetchall()
+
+    def fetch_children(
+        self, parent_id: int
+    ) -> List[
+        Tuple[
+            int,
+            str,
+            float,
+            float,
+            float,
+            float,
+            float,
+            float,
+            int | None,
+            int | None,
+            str,
+            str | None,
+            str,
+            str,
+            float,
+            int | None,
+        ]
+    ]:
+        cur = self.conn.execute(
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_id FROM evolution_history WHERE parent_id=?',
+            (parent_id,),
+        )
+        return cur.fetchall()
+
+    def lineage_tree(self, workflow_id: int) -> List[dict]:
+        cur = self.conn.execute(
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_id FROM evolution_history WHERE workflow_id=?',
+            (workflow_id,),
+        )
+        rows = cur.fetchall()
+        by_parent: dict[int | None, list] = {}
+        for row in rows:
+            by_parent.setdefault(row[-1], []).append(row)
+
+        def build(pid: int | None) -> List[dict]:
+            children: List[dict] = []
+            for r in by_parent.get(pid, []):
+                children.append(
+                    {
+                        "rowid": r[0],
+                        "action": r[1],
+                        "before_metric": r[2],
+                        "after_metric": r[3],
+                        "roi": r[4],
+                        "predicted_roi": r[5],
+                        "efficiency": r[6],
+                        "bottleneck": r[7],
+                        "patch_id": r[8],
+                        "workflow_id": r[9],
+                        "ts": r[10],
+                        "trending_topic": r[11],
+                        "reason": r[12],
+                        "trigger": r[13],
+                        "performance": r[14],
+                        "parent_id": r[15],
+                        "children": build(r[0]),
+                    }
+                )
+            return children
+
+        return build(None)
 
     def summary(self, limit: int = 50) -> dict[str, float]:
         """Return simple stats for recent evolution events."""
