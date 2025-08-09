@@ -42,6 +42,10 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
         from .error_bot import ErrorDB
     except ImportError:
         from error_bot import ErrorDB  # type: ignore
+    try:
+        from .knowledge_graph import KnowledgeGraph
+    except ImportError:
+        from knowledge_graph import KnowledgeGraph  # type: ignore
 
 try:
     from sentence_transformers import SentenceTransformer, util  # type: ignore
@@ -189,7 +193,11 @@ class ErrorLogger:
     """Wrap functions to capture exceptions and log telemetry."""
 
     def __init__(
-        self, db: "ErrorDB" | None = None, *, sentry: "SentryClient" | None = None
+        self,
+        db: "ErrorDB" | None = None,
+        *,
+        sentry: "SentryClient" | None = None,
+        graph: "KnowledgeGraph" | None = None,
     ) -> None:
         if db is None:
             try:
@@ -211,6 +219,7 @@ class ErrorLogger:
         self.classifier = ErrorClassifier()
         self.logger = logging.getLogger("ErrorLogger")
         self.sentry = sentry
+        self.graph = graph
         self.replicator = None
         if TelemetryReplicator:
             hosts = os.getenv("KAFKA_HOSTS")
@@ -278,6 +287,21 @@ class ErrorLogger:
             self.db.add_telemetry(event)
         except Exception as e:  # pragma: no cover - db issues
             self.logger.error("failed to record telemetry: %s", e)
+        if self.graph:
+            try:
+                self.graph.add_telemetry_event(
+                    bot_id,
+                    category.value,
+                    root_module,
+                    module_counts,
+                    patch_id=patch_id,
+                    deploy_id=deploy_id,
+                )
+                self.graph.add_error_instance(
+                    category.value, module, root_cause
+                )
+            except Exception as e:  # pragma: no cover - graph issues
+                self.logger.error("failed to update knowledge graph: %s", e)
         if self.replicator:
             try:
                 self.replicator.replicate(event)

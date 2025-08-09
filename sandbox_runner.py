@@ -1091,8 +1091,8 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     global SANDBOX_ENV_PRESETS
     logger.info("starting sandbox run", extra=log_record(preset=preset))
     ctx = _sandbox_init(preset, args)
-    err_logger = getattr(ctx.sandbox, "error_logger", ErrorLogger())
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
+    err_logger = getattr(ctx.sandbox, "error_logger", ErrorLogger(graph=graph))
 
     def _cycle(
         section: str | None,
@@ -1103,18 +1103,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         try:
             _sandbox_cycle_runner(ctx, section, snippet, tracker, scenario)
         except Exception as exc:
-            event = err_logger.log(exc, section, "sandbox_runner")
-            try:
-                graph.add_telemetry_event(
-                    "sandbox_runner",
-                    getattr(event.error_type, "value", str(event.error_type)),
-                    event.root_module,
-                    event.module_counts,
-                    patch_id=event.patch_id,
-                    deploy_id=event.deploy_id,
-                )
-            except Exception:
-                logger.exception("telemetry graph update failed")
+            err_logger.log(exc, section, "sandbox_runner")
             raise
 
     switched = False
