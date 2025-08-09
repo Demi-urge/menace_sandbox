@@ -240,6 +240,7 @@ __all__ = [
     "supervisor_watchdog",
     "indirect_domain_reference_detector",
     "evolution_ab_comparator",
+    "mutation_logger",
     "module_index_db",
     "synergy_history_db",
     "synergy_auto_trainer",
