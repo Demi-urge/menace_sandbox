@@ -12,21 +12,33 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Optional
 
-from .sentry_client import SentryClient
+try:
+    from .sentry_client import SentryClient
+except ImportError:  # pragma: no cover - package fallback
+    from sentry_client import SentryClient  # type: ignore
 
 try:
     from .advanced_error_management import TelemetryReplicator  # type: ignore
 except Exception:  # pragma: no cover - optional
-    TelemetryReplicator = None  # type: ignore
+    try:
+        from advanced_error_management import TelemetryReplicator  # type: ignore
+    except Exception:
+        TelemetryReplicator = None  # type: ignore
 
 from pydantic import BaseModel, Field
 
 from typing import TYPE_CHECKING
 
-from .error_ontology import ErrorType, ErrorCategory, classify_exception
+try:
+    from .error_ontology import ErrorType, ErrorCategory, classify_exception
+except ImportError:  # pragma: no cover - package fallback
+    from error_ontology import ErrorType, ErrorCategory, classify_exception  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
-    from .error_bot import ErrorDB
+    try:
+        from .error_bot import ErrorDB
+    except ImportError:
+        from error_bot import ErrorDB  # type: ignore
 
 try:
     from sentence_transformers import SentenceTransformer, util  # type: ignore
@@ -171,8 +183,21 @@ class ErrorLogger:
         self, db: "ErrorDB" | None = None, *, sentry: "SentryClient" | None = None
     ) -> None:
         if db is None:
-            from .error_bot import ErrorDB as _ErrorDB
-            db = _ErrorDB()
+            try:
+                from .error_bot import ErrorDB as _ErrorDB
+            except ImportError:  # pragma: no cover - package fallback
+                try:
+                    from error_bot import ErrorDB as _ErrorDB  # type: ignore
+                except Exception:  # pragma: no cover - optional
+                    _ErrorDB = None
+            if _ErrorDB is None:
+                class _StubDB:
+                    def add_telemetry(self, *a: Any, **k: Any) -> None:  # pragma: no cover - no-op
+                        pass
+
+                db = _StubDB()
+            else:
+                db = _ErrorDB()
         self.db = db
         self.classifier = ErrorClassifier()
         self.logger = logging.getLogger("ErrorLogger")

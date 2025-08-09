@@ -13,6 +13,7 @@ import asyncio
 import sys
 import inspect
 from typing import Any, Dict, TYPE_CHECKING
+from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
@@ -48,7 +49,12 @@ from metrics_exporter import (
     orphan_modules_reclassified_total,
 )
 
-from .environment import SANDBOX_ENV_PRESETS, auto_include_modules
+from .environment import (
+    SANDBOX_ENV_PRESETS,
+    auto_include_modules,
+    record_error,
+    ERROR_CATEGORY_COUNTS,
+)
 from .resource_tuner import ResourceTuner
 from .orphan_discovery import (
     discover_recursive_orphans,
@@ -105,7 +111,7 @@ async def _collect_plugin_metrics_async(
     merged: Dict[str, float] = {}
     for res in await asyncio.gather(*tasks, return_exceptions=True):
         if isinstance(res, Exception):
-            logger.exception("metrics plugin failed", exc_info=res)
+            record_error(res)
             continue
         if isinstance(res, dict):
             for k, v in res.items():
@@ -303,8 +309,8 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     cluster_tracker, cluster_tested = auto_include_modules(
                         mods, recursive=True, validate=True
                     )
-                except Exception:
-                    logger.exception("isolated module auto-inclusion failed")
+                except Exception as exc:
+                    record_error(exc)
                     continue
                 for k in tested:
                     tested[k].extend(cluster_tested.get(k, []))
@@ -455,8 +461,8 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     legacy=sorted(legacy),
                 ),
             )
-    except Exception:
-        logger.exception("isolated module auto-inclusion failed")
+    except Exception as exc:
+        record_error(exc)
 
 
 def _sandbox_cycle_runner(
@@ -487,8 +493,8 @@ def _sandbox_cycle_runner(
             if isinstance(data, dict):
                 data = [data]
             SANDBOX_ENV_PRESETS = [dict(p) for p in data]
-        except Exception:
-            logger.exception("failed to reload presets")
+        except Exception as exc:
+            record_error(exc)
 
     tuner = ResourceTuner()
 
@@ -516,24 +522,35 @@ def _sandbox_cycle_runner(
         try:
             SANDBOX_ENV_PRESETS = tuner.adjust(tracker, SANDBOX_ENV_PRESETS)
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
-        except Exception:
-            logger.exception("resource tuning failed")
+        except Exception as exc:
+            record_error(exc)
         logger.info(
             "resource tuning complete",
             extra=log_record(cycle=idx, presets=SANDBOX_ENV_PRESETS),
         )
         logger.info("sandbox cycle %d starting", idx)
         logger.info("orchestrator run", extra=log_record(cycle=idx))
-        ctx.orchestrator.run_cycle(ctx.models)
+        try:
+            ctx.orchestrator.run_cycle(ctx.models)
+        except Exception as exc:
+            record_error(exc)
         logger.info("patch engine start", extra=log_record(cycle=idx))
-        result = ctx.improver.run_cycle()
+        try:
+            result = ctx.improver.run_cycle()
+        except Exception as exc:
+            record_error(exc)
+            result = SimpleNamespace(roi=None)
         logger.info(
             "patch engine complete",
             extra=log_record(cycle=idx, roi=result.roi.roi if result.roi else 0.0),
         )
         logger.info("tester run", extra=log_record(cycle=idx))
-        ctx.tester.run_once()
-        results = getattr(ctx.tester, "results", {}) or {}
+        try:
+            ctx.tester.run_once()
+            results = getattr(ctx.tester, "results", {}) or {}
+        except Exception as exc:
+            record_error(exc)
+            results = {}
         tested: list[str] = []
         passed: list[str] = []
         failed: list[str] = []
@@ -583,7 +600,12 @@ def _sandbox_cycle_runner(
         try:
             ctx.sandbox.analyse_and_fix(limit=getattr(ctx, "patch_retries", 1))
         except TypeError:
-            ctx.sandbox.analyse_and_fix()
+            try:
+                ctx.sandbox.analyse_and_fix()
+            except Exception as exc:
+                record_error(exc)
+        except Exception as exc:
+            record_error(exc)
         logger.info("patch application", extra=log_record(cycle=idx))
         roi = result.roi.roi if result.roi else 0.0
         logger.info(
@@ -833,8 +855,8 @@ def _sandbox_cycle_runner(
                     maintainability = mi_total / len(targets)
                 if cq_total:
                     code_quality = cq_total / len(targets)
-        except Exception:
-            logger.exception("metric analysis failed")
+        except Exception as exc:
+            record_error(exc)
         metrics = {
             "security_score": security_score,
             "safety_rating": safety_rating,
@@ -868,17 +890,21 @@ def _sandbox_cycle_runner(
                         ctx.plugins, ctx.prev_roi, roi, resources
                     )
                 )
-            except Exception:
-                logger.exception("metrics plugin collection failed")
+            except Exception as exc:
+                record_error(exc)
                 extra = None
             if extra:
                 metrics.update(extra)
         if ctx.extra_metrics:
             metrics.update(ctx.extra_metrics)
+        # include error category summaries
+        for cat, count in ERROR_CATEGORY_COUNTS.items():
+            metrics[f"error_category_{cat}"] = float(count)
+        ERROR_CATEGORY_COUNTS.clear()
         try:
             detections = ctx.dd_bot.scan()
-        except Exception:
-            logger.exception("discrepancy scan failed")
+        except Exception as exc:
+            record_error(exc)
             detections = []
         metrics["discrepancy_count"] = len(detections)
         scenario_metrics = (

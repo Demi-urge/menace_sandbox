@@ -31,6 +31,7 @@ import random
 import threading
 import signal
 import weakref
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import (
@@ -107,6 +108,7 @@ _FAKER = Faker() if Faker is not None else None
 from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
 from .input_history_db import InputHistoryDB
 from collections import Counter
+from error_logger import ErrorLogger
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +123,18 @@ POOL_LOCK_FILE = Path(
 )
 
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
+
+# Shared error logger and category counters for sandbox runs
+ERROR_LOGGER = ErrorLogger()
+ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
+
+
+def record_error(exc: Exception) -> None:
+    """Log *exc* via :class:`ErrorLogger` and track its category."""
+    stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    _, category, _ = ERROR_LOGGER.classifier.classify_details(exc, stack)
+    ERROR_LOGGER.log(exc, None, None)
+    ERROR_CATEGORY_COUNTS[category.value] += 1
 
 
 def _get_history_db() -> InputHistoryDB:
@@ -3304,7 +3318,7 @@ async def _execute_in_container(
                     }
             except Exception as exc:  # pragma: no cover - runtime failures
                 error_msg = str(exc)
-                logger.exception("container execution failed: %s", exc)
+                record_error(exc)
                 _log_diagnostic(error_msg, False)
                 _CREATE_FAILURES[image] += 1
                 fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -3423,7 +3437,7 @@ async def _execute_in_container(
             }
         except Exception as exc:  # pragma: no cover - runtime failures
             error_msg = str(exc)
-            logger.exception("container execution failed: %s", exc)
+            record_error(exc)
             _log_diagnostic(error_msg, False)
             _CREATE_FAILURES[image] += 1
             fails = _CONSECUTIVE_CREATE_FAILURES.get(image, 0) + 1
@@ -3484,7 +3498,7 @@ def simulate_execution_environment(
                 _execute_in_container(code_str, input_stub or {})
             )
         except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("container execution failed: %s", exc)
+            record_error(exc)
 
     if runtime_metrics:
         env_result["runtime_metrics"] = runtime_metrics
@@ -4183,7 +4197,7 @@ async def _section_worker(
         try:
             result = await _run()
         except Exception as exc:  # pragma: no cover - runtime failures
-            logger.exception("section execution failed: %s", exc)
+            record_error(exc)
             _log_diagnostic(str(exc), False)
             if attempt >= 2:
                 raise
@@ -4703,6 +4717,9 @@ def run_repo_section_simulations(
                                             env_input,
                                             tracker.diminishing(),
                                         )
+                                    except Exception as exc:
+                                        record_error(exc)
+                                        return {}, []
                                     finally:
                                         sem.release()
 
