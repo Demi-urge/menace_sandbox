@@ -122,22 +122,27 @@ class WorkflowCloner:
                 )
             except Exception:
                 logger.exception("bot creation failed")
-        self.history.add(
+        parent = self._last_event_ids.get(pid)
+        event_id = self.history.add(
             EvolutionEvent(
                 action="workflow_clone",
                 before_metric=before,
                 after_metric=after,
                 roi=after - before,
                 workflow_id=pid,
+                reason="clone top workflow",
+                trigger="top_pathways",
+                performance=after - before,
+                parent_event_id=parent,
             )
         )
-        event_id = MutationLogger.log_mutation(
+        MutationLogger.log_mutation(
             change="workflow_clone",
             reason="clone top workflow",
             trigger="top_pathways",
             performance=after - before,
             workflow_id=pid,
-            parent_id=self._last_event_ids.get(pid),
+            parent_id=event_id,
         )
         self._last_event_ids[pid] = event_id
 

@@ -14,6 +14,7 @@ from .cross_model_comparator import CrossModelComparator
 from .neuroplasticity import PathwayDB
 from .evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from .workflow_cloner import WorkflowCloner
+from .evolution_history_db import EvolutionEvent
 from .unified_event_bus import UnifiedEventBus
 from .cross_model_scheduler import _SimpleScheduler, BackgroundScheduler, _AsyncScheduler
 from typing import TYPE_CHECKING
@@ -89,6 +90,7 @@ class ModelEvaluationService:
         self.watchdog = watchdog
         self.logger = logging.getLogger(self.__class__.__name__)
         self._results: dict[str, dict] = {}
+        self._last_event_id: int | None = None
         self.scheduler: object | None = None
         if self.event_bus:
             try:
@@ -157,6 +159,29 @@ class ModelEvaluationService:
             if results:
                 self._persist_results(results)
                 self.comparator.evaluate_and_rollback()
+                try:
+                    best_score = max(
+                        (float(r.get("cv_score", 0.0)) for r in results.values()),
+                        default=0.0,
+                    )
+                except Exception:
+                    best_score = 0.0
+                try:
+                    event_id = self.cloner.history.add(
+                        EvolutionEvent(
+                            action="model_evaluation",
+                            before_metric=0.0,
+                            after_metric=best_score,
+                            roi=best_score,
+                            reason="model evaluation cycle",
+                            trigger="evaluation",
+                            performance=best_score,
+                            parent_event_id=self._last_event_id,
+                        )
+                    )
+                    self._last_event_id = event_id
+                except Exception as exc:
+                    self.logger.exception("history update failed: %s", exc)
                 self.cloner.clone_top_workflows(limit=1)
         except Exception as exc:
             self.logger.exception("evaluation cycle failed: %s", exc)
