@@ -30,25 +30,27 @@ class QuickFixEngine:
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
-    def _top_error(self, bot: str) -> Tuple[str, int] | None:
-        cur = self.db.conn.execute(
-            "SELECT error_type, COUNT(*) as c FROM telemetry WHERE bot_id=? GROUP BY error_type ORDER BY c DESC",
-            (bot,),
-        )
-        row = cur.fetchone()
-        if not row:
+    def _top_error(
+        self, bot: str
+    ) -> Tuple[str, str, dict[str, int], int] | None:
+        try:
+            info = self.db.top_error_module(bot)
+        except Exception:
             return None
-        return str(row[0] or ""), int(row[1])
+        if not info:
+            return None
+        etype, module, mods, count, _ = info
+        return etype, module, mods, count
 
     def run(self, bot: str) -> None:
         """Attempt a quick patch for the most frequent error of ``bot``."""
         info = self._top_error(bot)
         if not info:
             return
-        etype, count = info
+        etype, module, mods, count = info
         if count < self.threshold:
             return
-        path = Path(f"{bot}.py")
+        path = Path(f"{module}.py")
         if not path.exists():
             return
         desc = f"quick fix {etype}"
@@ -57,7 +59,8 @@ class QuickFixEngine:
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
         try:
-            self.graph.add_telemetry_event(bot, etype, path.stem)
+            self.graph.add_telemetry_event(bot, etype, module, mods)
+            self.graph.update_error_stats(self.db)
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
             raise

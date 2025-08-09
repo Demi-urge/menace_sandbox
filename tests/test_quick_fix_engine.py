@@ -3,6 +3,7 @@ import sys
 import types
 import importlib.util
 import logging
+from pathlib import Path
 import pytest
 
 # Avoid heavy imports from the real package
@@ -34,12 +35,16 @@ QuickFixEngine = quick_fix.QuickFixEngine
 
 class DummyManager:
     def run_patch(self, path, desc):
-        pass
+        self.calls = getattr(self, "calls", [])
+        self.calls.append((path, desc))
 
 
 class FailingGraph:
     def add_telemetry_event(self, *a, **k):
         raise RuntimeError("boom")
+
+    def update_error_stats(self, *a, **k):
+        pass
 
 
 def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
@@ -51,8 +56,40 @@ def test_telemetry_error_logged(monkeypatch, tmp_path, caplog):
     )
     (tmp_path / "bot.py").write_text("x = 1\n")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", 1))
+    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "bot", {}, 1))
     caplog.set_level(logging.ERROR)
     with pytest.raises(RuntimeError):
         engine.run("bot")
     assert "telemetry update failed" in caplog.text
+
+
+class DummyErrorDB:
+    def top_error_module(self, bot):
+        return ("runtime_fault", "b", {"a": 1, "b": 2}, 2, bot)
+
+
+class DummyGraph:
+    def __init__(self):
+        self.events = []
+        self.updated = None
+
+    def add_telemetry_event(self, *a, **k):
+        self.events.append((a, k))
+
+    def update_error_stats(self, db):
+        self.updated = db
+
+
+def test_run_targets_frequent_module(tmp_path, monkeypatch):
+    engine = QuickFixEngine(
+        error_db=DummyErrorDB(),
+        manager=DummyManager(),
+        threshold=2,
+        graph=DummyGraph(),
+    )
+    (tmp_path / "b.py").write_text("x=1\n")
+    monkeypatch.chdir(tmp_path)
+    engine.run("bot")
+    assert engine.manager.calls[0][0] == Path("b.py")
+    assert engine.graph.events[0][0][2] == "b"
+    assert engine.graph.updated is engine.db
