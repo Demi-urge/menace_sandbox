@@ -3,12 +3,14 @@ from __future__ import annotations
 """Periodic self-improvement engine for the Menace system."""
 
 import logging
+
 try:
     from .logging_utils import log_record, get_logger, setup_logging, set_correlation_id
 except Exception:  # pragma: no cover - simplified environments
     try:
         from logging_utils import log_record  # type: ignore
     except Exception:  # pragma: no cover - last resort
+
         def log_record(**fields: object) -> dict[str, object]:  # type: ignore
             return fields
 
@@ -20,6 +22,8 @@ except Exception:  # pragma: no cover - simplified environments
 
     def set_correlation_id(_: str | None) -> None:  # type: ignore
         return
+
+
 import time
 import threading
 import asyncio
@@ -78,7 +82,9 @@ DEFAULT_SYNERGY_WEIGHTS: dict[str, float] = {
 
 def _rotate_backups(path: Path) -> None:
     """Rotate backup files for ``path``."""
-    backups = [path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)]
+    backups = [
+        path.with_suffix(path.suffix + f".bak{i}") for i in range(1, BACKUP_COUNT + 1)
+    ]
     for i in range(BACKUP_COUNT - 1, 0, -1):
         if backups[i - 1].exists():
             if backups[i].exists():
@@ -93,13 +99,16 @@ def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> Non
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = "wb" if binary else "w"
     encoding = None if binary else "utf-8"
-    with tempfile.NamedTemporaryFile(mode, encoding=encoding, dir=path.parent, delete=False) as fh:
+    with tempfile.NamedTemporaryFile(
+        mode, encoding=encoding, dir=path.parent, delete=False
+    ) as fh:
         fh.write(data)
         fh.flush()
         os.fsync(fh.fileno())
         tmp = Path(fh.name)
     _rotate_backups(path)
     os.replace(tmp, path)
+
 
 from .self_model_bootstrap import bootstrap
 from .research_aggregator_bot import (
@@ -144,9 +153,7 @@ class SynergyWeightLearner:
 
     def __init__(self, path: Path | None = None, lr: float = 0.1) -> None:
         if sip_torch is None:
-            logger.warning(
-                "PyTorch not installed - using ActorCritic strategy"
-            )
+            logger.warning("PyTorch not installed - using ActorCritic strategy")
         self.path = Path(path) if path else None
         self.lr = lr
         self.weights = DEFAULT_SYNERGY_WEIGHTS.copy()
@@ -232,7 +239,9 @@ class SynergyWeightLearner:
             if extra:
                 reward *= 1.0 + float(extra.get("avg_roi", 0.0))
                 reward *= 1.0 + float(extra.get("pass_rate", 0.0))
-            q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
+            q = self.strategy.update(
+                {}, self._state, idx, reward, self._state, 1.0, 0.9
+            )
             q_vals_list.append(float(q))
         if hasattr(self.strategy, "predict"):
             q_vals = self.strategy.predict(self._state)
@@ -276,16 +285,29 @@ class DQNSynergyLearner(SynergyWeightLearner):
             )
         name = (strategy or "dqn").lower()
         self.target_sync = max(1, int(target_sync))
-        if name in {"double", "double_dqn", "double-dqn", "ddqn", "td3"} and sip_torch is not None:
-            self.strategy = DoubleDQNStrategy(action_dim=7, lr=lr, target_sync=target_sync)
+        if (
+            name in {"double", "double_dqn", "double-dqn", "ddqn", "td3"}
+            and sip_torch is not None
+        ):
+            self.strategy = DoubleDQNStrategy(
+                action_dim=7, lr=lr, target_sync=target_sync
+            )
             self.strategy_name = "td3" if name == "td3" else "double_dqn"
-        elif name in {"policy", "policy_gradient", "actor_critic", "actor-critic", "sac"}:
+        elif name in {
+            "policy",
+            "policy_gradient",
+            "actor_critic",
+            "actor-critic",
+            "sac",
+        }:
             self.strategy = ActorCriticStrategy()
             self.strategy_name = "sac" if name == "sac" else "policy_gradient"
         else:
             # prefer Double DQN when PyTorch is available
             if sip_torch is not None:
-                self.strategy = DoubleDQNStrategy(action_dim=7, lr=lr, target_sync=target_sync)
+                self.strategy = DoubleDQNStrategy(
+                    action_dim=7, lr=lr, target_sync=target_sync
+                )
                 self.strategy_name = "double_dqn"
             else:
                 self.strategy = DQNStrategy(action_dim=7, lr=lr)
@@ -334,10 +356,15 @@ class DQNSynergyLearner(SynergyWeightLearner):
                     buf = io.BytesIO()
                     sip_torch.save(self.strategy.model.state_dict(), buf)
                     _atomic_write(Path(base + ".pt"), buf.getvalue(), binary=True)
-                if hasattr(self.strategy, "target_model") and self.strategy.target_model is not None:
+                if (
+                    hasattr(self.strategy, "target_model")
+                    and self.strategy.target_model is not None
+                ):
                     buf = io.BytesIO()
                     sip_torch.save(self.strategy.target_model.state_dict(), buf)
-                    _atomic_write(Path(base + ".target.pt"), buf.getvalue(), binary=True)
+                    _atomic_write(
+                        Path(base + ".target.pt"), buf.getvalue(), binary=True
+                    )
             except Exception as exc:
                 logger.exception("failed to save DQN models: %s", exc)
         try:
@@ -369,13 +396,13 @@ class DQNSynergyLearner(SynergyWeightLearner):
             if extra:
                 reward *= 1.0 + float(extra.get("avg_roi", 0.0))
                 reward *= 1.0 + float(extra.get("pass_rate", 0.0))
-            q = self.strategy.update({}, self._state, idx, reward, self._state, 1.0, 0.9)
+            q = self.strategy.update(
+                {}, self._state, idx, reward, self._state, 1.0, 0.9
+            )
             q_vals_list.append(float(q))
         if hasattr(self.strategy, "predict"):
             q_vals = self.strategy.predict(self._state)
-            q_vals_list = [
-                float(v.item() if hasattr(v, "item") else v) for v in q_vals
-            ]
+            q_vals_list = [float(v.item() if hasattr(v, "item") else v) for v in q_vals]
         mapping = {
             "roi": 0,
             "efficiency": 1,
@@ -432,7 +459,9 @@ class SACSynergyLearner(DQNSynergyLearner):
 class TD3SynergyLearner(DQNSynergyLearner):
     """Synergy learner using a simplified TD3 strategy."""
 
-    def __init__(self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10) -> None:
+    def __init__(
+        self, path: Path | None = None, lr: float = 1e-3, *, target_sync: int = 10
+    ) -> None:
         super().__init__(path, lr, strategy="td3", target_sync=target_sync)
 
 
@@ -485,17 +514,13 @@ class SelfImprovementEngine:
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
-        self.aggregator = ResearchAggregatorBot(
-            [bot_name], info_db=self.info_db
-        )
+        self.aggregator = ResearchAggregatorBot([bot_name], info_db=self.info_db)
         self.pipeline = pipeline or ModelAutomationPipeline(
             aggregator=self.aggregator, action_planner=action_planner
         )
         err_bot = ErrorBot(ErrorDB(), MetricsDB())
         self.error_bot = err_bot
-        self.diagnostics = diagnostics or DiagnosticManager(
-            MetricsDB(), err_bot
-        )
+        self.diagnostics = diagnostics or DiagnosticManager(MetricsDB(), err_bot)
         self.last_run = 0.0
         self.capital_bot = capital_bot
         self.energy_threshold = energy_threshold
@@ -506,9 +531,7 @@ class SelfImprovementEngine:
         self.data_bot = data_bot
         self.patch_db = patch_db or (data_bot.patch_db if data_bot else None)
         if policy is None:
-            policy = ConfigurableSelfImprovementPolicy(
-                strategy=policy_strategy
-            )
+            policy = ConfigurableSelfImprovementPolicy(strategy=policy_strategy)
         self.policy = policy
         if self.policy and getattr(self.policy, "path", None):
             try:
@@ -522,12 +545,8 @@ class SelfImprovementEngine:
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
         )
-        self.pre_roi_bias = (
-            pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
-        )
-        self.pre_roi_cap = (
-            pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
-        )
+        self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
+        self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         settings = SandboxSettings()
         self.synergy_weight_roi = (
             synergy_weight_roi
@@ -565,9 +584,7 @@ class SelfImprovementEngine:
             else getattr(settings, "synergy_weight_throughput", 1.0)
         )
         self.roi_ema_alpha = (
-            roi_ema_alpha
-            if roi_ema_alpha is not None
-            else settings.roi_ema_alpha
+            roi_ema_alpha if roi_ema_alpha is not None else settings.roi_ema_alpha
         )
         default_path = Path(settings.sandbox_data_dir) / "synergy_weights.json"
         self.synergy_weights_path = (
@@ -601,15 +618,11 @@ class SelfImprovementEngine:
         else:
             self.synergy_learner.weights["roi"] = self.synergy_weight_roi
         if synergy_weight_efficiency is None:
-            self.synergy_weight_efficiency = self.synergy_learner.weights[
-                "efficiency"
-            ]
+            self.synergy_weight_efficiency = self.synergy_learner.weights["efficiency"]
         else:
             self.synergy_learner.weights["efficiency"] = self.synergy_weight_efficiency
         if synergy_weight_resilience is None:
-            self.synergy_weight_resilience = self.synergy_learner.weights[
-                "resilience"
-            ]
+            self.synergy_weight_resilience = self.synergy_learner.weights["resilience"]
         else:
             self.synergy_learner.weights["resilience"] = self.synergy_weight_resilience
         if synergy_weight_antifragility is None:
@@ -617,33 +630,29 @@ class SelfImprovementEngine:
                 "antifragility"
             ]
         else:
-            self.synergy_learner.weights[
-                "antifragility"
-            ] = self.synergy_weight_antifragility
+            self.synergy_learner.weights["antifragility"] = (
+                self.synergy_weight_antifragility
+            )
         if synergy_weight_reliability is None:
             self.synergy_weight_reliability = self.synergy_learner.weights[
                 "reliability"
             ]
         else:
-            self.synergy_learner.weights[
-                "reliability"
-            ] = self.synergy_weight_reliability
+            self.synergy_learner.weights["reliability"] = (
+                self.synergy_weight_reliability
+            )
         if synergy_weight_maintainability is None:
             self.synergy_weight_maintainability = self.synergy_learner.weights[
                 "maintainability"
             ]
         else:
-            self.synergy_learner.weights[
-                "maintainability"
-            ] = self.synergy_weight_maintainability
+            self.synergy_learner.weights["maintainability"] = (
+                self.synergy_weight_maintainability
+            )
         if synergy_weight_throughput is None:
-            self.synergy_weight_throughput = self.synergy_learner.weights[
-                "throughput"
-            ]
+            self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         else:
-            self.synergy_learner.weights[
-                "throughput"
-            ] = self.synergy_weight_throughput
+            self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.state_path = Path(state_path) if state_path else None
         self.roi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
@@ -661,7 +670,11 @@ class SelfImprovementEngine:
             )
             auto_map = True
         self.module_index = module_index or ModuleIndexDB(auto_map=auto_map)
-        map_path = getattr(self.module_index, "path", Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "module_map.json")
+        map_path = getattr(
+            self.module_index,
+            "path",
+            Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data")) / "module_map.json",
+        )
         try:
             self._last_map_refresh = map_path.stat().st_mtime
         except Exception:
@@ -748,9 +761,7 @@ class SelfImprovementEngine:
         if self.event_bus:
             if self.learning_engine:
                 try:
-                    self.event_bus.subscribe(
-                        "pathway:new", self._on_new_pathway
-                    )
+                    self.event_bus.subscribe("pathway:new", self._on_new_pathway)
                 except Exception as exc:
                     self.logger.exception(
                         "failed to subscribe to pathway events: %s", exc
@@ -797,9 +808,7 @@ class SelfImprovementEngine:
                 for k, v in data.get("roi_group_history", {}).items()
             }
             self.last_run = float(data.get("last_run", self.last_run))
-            self.roi_delta_ema = float(
-                data.get("roi_delta_ema", self.roi_delta_ema)
-            )
+            self.roi_delta_ema = float(data.get("roi_delta_ema", self.roi_delta_ema))
         except Exception as exc:
             self.logger.exception("failed to load state: %s", exc)
 
@@ -837,7 +846,9 @@ class SelfImprovementEngine:
             "antifragility"
         ]
         self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
-        self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
+        self.synergy_weight_maintainability = self.synergy_learner.weights[
+            "maintainability"
+        ]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         self.logger.info(
             "synergy weights loaded",
@@ -850,9 +861,13 @@ class SelfImprovementEngine:
         self.synergy_learner.weights["roi"] = self.synergy_weight_roi
         self.synergy_learner.weights["efficiency"] = self.synergy_weight_efficiency
         self.synergy_learner.weights["resilience"] = self.synergy_weight_resilience
-        self.synergy_learner.weights["antifragility"] = self.synergy_weight_antifragility
+        self.synergy_learner.weights["antifragility"] = (
+            self.synergy_weight_antifragility
+        )
         self.synergy_learner.weights["reliability"] = self.synergy_weight_reliability
-        self.synergy_learner.weights["maintainability"] = self.synergy_weight_maintainability
+        self.synergy_learner.weights["maintainability"] = (
+            self.synergy_weight_maintainability
+        )
         self.synergy_learner.weights["throughput"] = self.synergy_weight_throughput
         self.synergy_learner.save()
         self.logger.info(
@@ -888,9 +903,7 @@ class SelfImprovementEngine:
             return
         self.logger.info(
             "starting synergy trainer thread",
-            extra=log_record(
-                history_file=str(history_file), interval=float(interval)
-            ),
+            extra=log_record(history_file=str(history_file), interval=float(interval)),
         )
         self._trainer_stop = threading.Event()
         self._trainer_thread = threading.Thread(
@@ -947,12 +960,24 @@ class SelfImprovementEngine:
             lw = learner_weights.weights
             base_weights = {
                 "synergy_roi": lw.get("roi", self.synergy_weight_roi),
-                "synergy_efficiency": lw.get("efficiency", self.synergy_weight_efficiency),
-                "synergy_resilience": lw.get("resilience", self.synergy_weight_resilience),
-                "synergy_antifragility": lw.get("antifragility", self.synergy_weight_antifragility),
-                "synergy_reliability": lw.get("reliability", self.synergy_weight_reliability),
-                "synergy_maintainability": lw.get("maintainability", self.synergy_weight_maintainability),
-                "synergy_throughput": lw.get("throughput", self.synergy_weight_throughput),
+                "synergy_efficiency": lw.get(
+                    "efficiency", self.synergy_weight_efficiency
+                ),
+                "synergy_resilience": lw.get(
+                    "resilience", self.synergy_weight_resilience
+                ),
+                "synergy_antifragility": lw.get(
+                    "antifragility", self.synergy_weight_antifragility
+                ),
+                "synergy_reliability": lw.get(
+                    "reliability", self.synergy_weight_reliability
+                ),
+                "synergy_maintainability": lw.get(
+                    "maintainability", self.synergy_weight_maintainability
+                ),
+                "synergy_throughput": lw.get(
+                    "throughput", self.synergy_weight_throughput
+                ),
             }
         else:
             base_weights = {
@@ -1000,7 +1025,10 @@ class SelfImprovementEngine:
                                 w = coef_abs[i] / total
                                 weights[name] = w * base_weights[name]
                         else:
-                            weights = {k: base_weights[k] / len(base_weights) for k in base_weights}
+                            weights = {
+                                k: base_weights[k] / len(base_weights)
+                                for k in base_weights
+                            }
                         for i, name in enumerate(base_weights):
                             col = X[:, i]
                             stats[name] = (float(col.mean()), float(col.std() or 1.0))
@@ -1023,9 +1051,7 @@ class SelfImprovementEngine:
             return (val - mean) / (std + 1e-6)
 
         try:
-            syn_adj = sum(
-                norm_delta(name) * weights.get(name, 0.0) for name in weights
-            )
+            syn_adj = sum(norm_delta(name) * weights.get(name, 0.0) for name in weights)
         except Exception:
             syn_adj = 0.0
         self.logger.info(
@@ -1086,13 +1112,13 @@ class SelfImprovementEngine:
             "antifragility"
         ]
         self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
-        self.synergy_weight_maintainability = self.synergy_learner.weights["maintainability"]
+        self.synergy_weight_maintainability = self.synergy_learner.weights[
+            "maintainability"
+        ]
         self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
         self.logger.info(
             "synergy weights after update",
-            extra=log_record(
-                weights=self.synergy_learner.weights, roi_delta=roi_delta
-            ),
+            extra=log_record(weights=self.synergy_learner.weights, roi_delta=roi_delta),
         )
 
     # ------------------------------------------------------------------
@@ -1129,13 +1155,12 @@ class SelfImprovementEngine:
                 if hasattr(df, "empty"):
                     if not getattr(df, "empty", True):
                         df["roi"] = df["revenue"] - df["expense"]
-                        anomaly = float(
-                            len(DataBot.detect_anomalies(df, "roi"))
-                        ) / len(df)
+                        anomaly = float(len(DataBot.detect_anomalies(df, "roi"))) / len(
+                            df
+                        )
                 elif isinstance(df, list) and df:
                     rois = [
-                        float(r.get("revenue", 0.0) - r.get("expense", 0.0))
-                        for r in df
+                        float(r.get("revenue", 0.0) - r.get("expense", 0.0)) for r in df
                     ]
                     df_list = [{"roi": r} for r in rois]
                     anomaly = float(
@@ -1148,9 +1173,7 @@ class SelfImprovementEngine:
                 try:
                     patch_rate = self.data_bot.patch_db.success_rate()
                 except Exception as exc:
-                    self.logger.exception(
-                        "patch success rate lookup failed: %s", exc
-                    )
+                    self.logger.exception("patch success rate lookup failed: %s", exc)
                     patch_rate = 0.0
         avg_roi = avg_complex = revert_rate = 0.0
         module_idx = 0
@@ -1172,9 +1195,7 @@ class SelfImprovementEngine:
         syn_af *= self.synergy_weight_antifragility
         profit += syn_roi
         energy = max(0.0, energy + syn_eff)
-        pdb = self.patch_db or (
-            self.data_bot.patch_db if self.data_bot else None
-        )
+        pdb = self.patch_db or (self.data_bot.patch_db if self.data_bot else None)
         if pdb:
             try:
                 repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
@@ -1187,9 +1208,7 @@ class SelfImprovementEngine:
                 if rows:
                     avg_roi = float(sum(r[0] for r in rows) / len(rows))
                     avg_complex = float(sum(r[1] for r in rows) / len(rows))
-                    revert_rate = float(
-                        sum(1 for r in rows if r[2]) / len(rows)
-                    )
+                    revert_rate = float(sum(1 for r in rows if r[2]) / len(rows))
                     p = Path(rows[0][3])
                     abs_p = p if p.is_absolute() else repo / p
                     try:
@@ -1197,7 +1216,11 @@ class SelfImprovementEngine:
                     except Exception:
                         mod_name = p.name
                     module_idx = self.module_index.get(mod_name)
-                    mods = [m for m, idx in self.module_clusters.items() if idx == module_idx]
+                    mods = [
+                        m
+                        for m, idx in self.module_clusters.items()
+                        if idx == module_idx
+                    ]
                     try:
                         if mods:
                             placeholders = ",".join("?" * len(mods))
@@ -1213,20 +1236,14 @@ class SelfImprovementEngine:
                     if self.meta_logger:
                         try:
                             dim_flag = (
-                                1
-                                if mod_name in self.meta_logger.diminishing()
-                                else 0
+                                1 if mod_name in self.meta_logger.diminishing() else 0
                             )
                             if module_trend == 0.0:
-                                module_trend = dict(
-                                    self.meta_logger.rankings()
-                                ).get(mod_name, 0.0)
-                        except (
-                            Exception
-                        ) as exc:  # pragma: no cover - best effort
-                            self.logger.exception(
-                                "meta logger stats failed: %s", exc
-                            )
+                                module_trend = dict(self.meta_logger.rankings()).get(
+                                    mod_name, 0.0
+                                )
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.exception("meta logger stats failed: %s", exc)
             except Exception as exc:
                 self.logger.exception("patch metrics failed: %s", exc)
                 avg_roi = avg_complex = revert_rate = 0.0
@@ -1245,9 +1262,7 @@ class SelfImprovementEngine:
                 avg_roi_delta = float(stats.get("avg_roi_delta", 0.0))
                 avg_eff = float(stats.get("avg_efficiency", 0.0))
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "evolution history stats failed: %s", exc
-                )
+                self.logger.exception("evolution history stats failed: %s", exc)
                 avg_roi_delta = avg_eff = 0.0
         short_avg = 0.0
         if self.roi_history:
@@ -1289,9 +1304,7 @@ class SelfImprovementEngine:
                 self.logger.exception("policy scoring failed: %s", exc)
         if self.pre_roi_bot:
             try:
-                forecast = self.pre_roi_bot.predict_model_roi(
-                    self.bot_name, []
-                )
+                forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
                 if forecast.roi > self.pre_roi_bias:
                     return True
             except Exception as exc:
@@ -1326,9 +1339,7 @@ class SelfImprovementEngine:
                 try:
                     self.info_db.add(item)
                 except Exception as exc:
-                    self.logger.exception(
-                        "failed to record error item: %s", exc
-                    )
+                    self.logger.exception("failed to record error item: %s", exc)
 
     def _evaluate_learning(self) -> None:
         """Benchmark the learning engine via cross-validation."""
@@ -1342,18 +1353,14 @@ class SelfImprovementEngine:
                     try:
                         self.learning_engine.persist_evaluation(result)
                     except Exception as exc:
-                        self.logger.exception(
-                            "persist_evaluation failed: %s", exc
-                        )
+                        self.logger.exception("persist_evaluation failed: %s", exc)
             else:
                 X, y = self.learning_engine._dataset()  # type: ignore[attr-defined]
                 if not X or len(set(y)) < 2:
                     return
                 from sklearn.model_selection import cross_val_score
 
-                scores = cross_val_score(
-                    self.learning_engine.model, X, y, cv=3
-                )
+                scores = cross_val_score(self.learning_engine.model, X, y, cv=3)
                 mean_score = float(scores.mean())
                 if hasattr(self.learning_engine, "persist_evaluation"):
                     try:
@@ -1365,9 +1372,7 @@ class SelfImprovementEngine:
                             }
                         )
                     except Exception as exc:
-                        self.logger.exception(
-                            "persist_evaluation failed: %s", exc
-                        )
+                        self.logger.exception("persist_evaluation failed: %s", exc)
         except Exception as exc:
             self.logger.exception("learning evaluation failed: %s", exc)
             mean_score = 0.0
@@ -1412,9 +1417,7 @@ class SelfImprovementEngine:
                 )
                 self.learning_engine.partial_train(rec)
             except Exception as exc:
-                self.logger.exception(
-                    "failed to process pathway record: %s", exc
-                )
+                self.logger.exception("failed to process pathway record: %s", exc)
 
     # ------------------------------------------------------------------
     def _test_orphan_modules(self, paths: Iterable[str]) -> set[str]:
@@ -1487,7 +1490,9 @@ class SelfImprovementEngine:
                 )
                 try:
                     existing = (
-                        json.loads(orphan_path.read_text()) if orphan_path.exists() else {}
+                        json.loads(orphan_path.read_text())
+                        if orphan_path.exists()
+                        else {}
                     )
                 except Exception:
                     existing = {}
@@ -1526,7 +1531,9 @@ class SelfImprovementEngine:
                 pass
 
         try:
-            existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            existing_meta = (
+                json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            )
         except Exception:  # pragma: no cover - best effort
             existing_meta = {}
         existing_meta.update(classifications)
@@ -1540,6 +1547,7 @@ class SelfImprovementEngine:
             settings = SandboxSettings()
         except Exception:  # pragma: no cover - fallback for tests
             from sandbox_settings import SandboxSettings as _SS  # type: ignore
+
             settings = _SS()
 
         past_results: dict[str, dict[str, Any]] = {}
@@ -1549,8 +1557,10 @@ class SelfImprovementEngine:
             except Exception:
                 past_results = {}
         if past_results:
+
             def _ok(m: str) -> bool:
                 return past_results.get(m, {}).get("roi_delta", 0.0) >= 0
+
             candidates[:] = [m for m in candidates if _ok(m)]
             legacy[:] = [m for m in legacy if _ok(m)]
             redundant[:] = [m for m in redundant if _ok(m)]
@@ -1596,7 +1606,9 @@ class SelfImprovementEngine:
             return set()
 
         try:
-            environment.auto_include_modules(sorted(modules), recursive=True, validate=True)
+            environment.auto_include_modules(
+                sorted(modules), recursive=True, validate=True
+            )
         except Exception:
             try:
                 environment.auto_include_modules(sorted(modules), recursive=True)
@@ -1666,9 +1678,7 @@ class SelfImprovementEngine:
                 sec = details.get(m, {}).get("sec", [])
                 failed = any(s.get("result", {}).get("exit_code") for s in sec)
                 if failed:
-                    self.logger.info(
-                        "self tests failed", extra=log_record(module=m)
-                    )
+                    self.logger.info("self tests failed", extra=log_record(module=m))
                     continue
                 roi_total = 0.0
                 try:
@@ -1847,7 +1857,9 @@ class SelfImprovementEngine:
                 self.logger.exception("failed to record self test metrics")
 
         try:
-            existing_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            existing_meta = (
+                json.loads(meta_path.read_text()) if meta_path.exists() else {}
+            )
         except Exception:  # pragma: no cover - best effort
             existing_meta = {}
         existing_meta.update(classifications)
@@ -1894,6 +1906,7 @@ class SelfImprovementEngine:
 
         try:
             from scripts.discover_isolated_modules import discover_isolated_modules
+
             iso = discover_isolated_modules(str(repo), recursive=True)
             candidates.update(iso)
         except Exception as exc:  # pragma: no cover - best effort
@@ -1901,6 +1914,7 @@ class SelfImprovementEngine:
 
         try:
             from sandbox_runner.dependency_utils import collect_local_dependencies
+
             expanded = collect_local_dependencies(sorted(candidates))
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("dependency expansion failed: %s", exc)
@@ -1911,6 +1925,7 @@ class SelfImprovementEngine:
         except Exception:
             try:
                 from sandbox_settings import SandboxSettings as _SS  # type: ignore
+
                 settings = _SS()  # type: ignore
             except Exception:  # pragma: no cover - last resort
                 settings = type("_SS", (), {"test_redundant_modules": False})()
@@ -1967,12 +1982,16 @@ class SelfImprovementEngine:
             self.module_index.save()
             self._last_map_refresh = time.time()
             try:
-                environment.auto_include_modules(sorted(mods), recursive=True, validate=True)
+                environment.auto_include_modules(
+                    sorted(mods), recursive=True, validate=True
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 self.logger.exception("auto inclusion failed: %s", exc)
             updated_wfs: list[int] = []
             try:
-                updated_wfs = environment.try_integrate_into_workflows(sorted(mods)) or []
+                updated_wfs = (
+                    environment.try_integrate_into_workflows(sorted(mods)) or []
+                )
             except Exception:  # pragma: no cover - best effort
                 updated_wfs = []
             if updated_wfs:
@@ -2058,7 +2077,9 @@ class SelfImprovementEngine:
                 try:
                     self.logger.info(
                         "orphan integration stats",
-                        extra=log_record(module=m, roi=float(roi_val), passed=True, failed=False),
+                        extra=log_record(
+                            module=m, roi=float(roi_val), passed=True, failed=False
+                        ),
                     )
                 except Exception:
                     pass
@@ -2092,6 +2113,7 @@ class SelfImprovementEngine:
         except Exception as exc:  # pragma: no cover - best effort
             self.logger.exception("orphan integration failed: %s", exc)
             return set()
+
     def _collect_recursive_modules(self, modules: Iterable[str]) -> set[str]:
         """Return ``modules`` plus any local imports they depend on recursively."""
         from pathlib import Path
@@ -2130,9 +2152,7 @@ class SelfImprovementEngine:
                 return
             entry = traces.setdefault(dep_rel, {"parents": []})
             if chain:
-                entry["parents"] = list(
-                    dict.fromkeys(entry.get("parents", []) + chain)
-                )
+                entry["parents"] = list(dict.fromkeys(entry.get("parents", []) + chain))
 
         deps = collect_local_dependencies(
             roots,
@@ -2165,6 +2185,7 @@ class SelfImprovementEngine:
                 settings = SandboxSettings()
             except Exception:  # pragma: no cover - fallback for tests
                 from sandbox_settings import SandboxSettings as _SS  # type: ignore
+
                 settings = _SS()
 
             legacy_mods: list[str] = []
@@ -2197,8 +2218,12 @@ class SelfImprovementEngine:
                         orphan_modules_redundant_total.set(len(redundant_mods))
                 except Exception:
                     pass
-                existing_meta.update({m: {"classification": "legacy"} for m in legacy_mods})
-                existing_meta.update({m: {"classification": "redundant"} for m in redundant_mods})
+                existing_meta.update(
+                    {m: {"classification": "legacy"} for m in legacy_mods}
+                )
+                existing_meta.update(
+                    {m: {"classification": "redundant"} for m in redundant_mods}
+                )
                 try:
                     meta_path.parent.mkdir(parents=True, exist_ok=True)
                     meta_path.write_text(json.dumps(existing_meta, indent=2))
@@ -2213,9 +2238,7 @@ class SelfImprovementEngine:
                 )
                 modules.extend(sorted(iso_mods))
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "isolated module discovery failed: %s", exc
-                )
+                self.logger.exception("isolated module discovery failed: %s", exc)
 
             try:
                 from sandbox_runner import discover_recursive_orphans as _discover
@@ -2225,9 +2248,7 @@ class SelfImprovementEngine:
                     info: dict[str, Any] = {
                         "parents": [
                             str(Path(*p.split(".")).with_suffix(".py"))
-                            for p in (
-                                v.get("parents") if isinstance(v, dict) else v
-                            )
+                            for p in (v.get("parents") if isinstance(v, dict) else v)
                         ]
                     }
                     if isinstance(v, dict) and "redundant" in v:
@@ -2241,9 +2262,7 @@ class SelfImprovementEngine:
             try:
                 repo_mods = sorted(self._collect_recursive_modules(modules))
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "dependency expansion failed: %s", exc
-                )
+                self.logger.exception("dependency expansion failed: %s", exc)
                 repo_mods = sorted(set(modules))
 
             passing = self._test_orphan_modules(repo_mods)
@@ -2269,9 +2288,12 @@ class SelfImprovementEngine:
                         try:
                             kwargs: dict[str, object] = {}
                             try:
-                                if "side_effects" in inspect.signature(
-                                    environment.try_integrate_into_workflows
-                                ).parameters:
+                                if (
+                                    "side_effects"
+                                    in inspect.signature(
+                                        environment.try_integrate_into_workflows
+                                    ).parameters
+                                ):
                                     kwargs["side_effects"] = {
                                         m: metrics.get(m, 0) for m in safe
                                     }
@@ -2294,11 +2316,11 @@ class SelfImprovementEngine:
                     try:
                         self._refresh_module_map(safe)
                     except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "module map refresh failed: %s", exc
-                        )
+                        self.logger.exception("module map refresh failed: %s", exc)
                     try:
-                        survivors = [m for m in modules if Path(m).name not in integrated]
+                        survivors = [
+                            m for m in modules if Path(m).name not in integrated
+                        ]
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_text(json.dumps(sorted(survivors), indent=2))
                         meta_path = data_dir / "orphan_classifications.json"
@@ -2322,6 +2344,7 @@ class SelfImprovementEngine:
             settings = SandboxSettings()
         except Exception:  # pragma: no cover - fallback for tests
             from sandbox_settings import SandboxSettings as _SS  # type: ignore
+
             settings = _SS()
         modules: list[str] = []
         try:
@@ -2371,7 +2394,9 @@ class SelfImprovementEngine:
             for m, info in existing.items():
                 modules.append(m)
                 if isinstance(info, dict):
-                    self.orphan_traces.setdefault(m, {"parents": info.get("parents", [])})
+                    self.orphan_traces.setdefault(
+                        m, {"parents": info.get("parents", [])}
+                    )
 
         if not modules:
             tester = getattr(self, "_test_orphan_modules", None)
@@ -2389,9 +2414,7 @@ class SelfImprovementEngine:
             try:
                 cls = classify_module(p)
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "classification failed for %s: %s", p, exc
-                )
+                self.logger.exception("classification failed for %s: %s", p, exc)
                 cls = "candidate"
             try:
                 redundant = analyze_redundancy(p)
@@ -2445,8 +2468,7 @@ class SelfImprovementEngine:
         integrated: set[str] = set()
         if passing:
             metrics = {
-                m: self.orphan_traces.get(m, {}).get("side_effects", 0)
-                for m in passing
+                m: self.orphan_traces.get(m, {}).get("side_effects", 0) for m in passing
             }
             safe: list[str] = []
             threshold = SandboxSettings().side_effect_threshold
@@ -2464,17 +2486,18 @@ class SelfImprovementEngine:
                     try:
                         kwargs: dict[str, object] = {}
                         try:
-                            if "side_effects" in inspect.signature(
-                                environment.try_integrate_into_workflows
-                            ).parameters:
+                            if (
+                                "side_effects"
+                                in inspect.signature(
+                                    environment.try_integrate_into_workflows
+                                ).parameters
+                            ):
                                 kwargs["side_effects"] = {
                                     m: metrics.get(m, 0) for m in safe
                                 }
                         except Exception:
                             pass
-                        environment.try_integrate_into_workflows(
-                            sorted(safe), **kwargs
-                        )
+                        environment.try_integrate_into_workflows(sorted(safe), **kwargs)
                     except Exception:  # pragma: no cover - best effort
                         pass
                 except Exception as exc:  # pragma: no cover - best effort
@@ -2547,7 +2570,9 @@ class SelfImprovementEngine:
         orphan_path = data_dir / "orphan_modules.json"
         meta_path = data_dir / "orphan_classifications.json"
         try:
-            modules = json.loads(orphan_path.read_text()) if orphan_path.exists() else []
+            modules = (
+                json.loads(orphan_path.read_text()) if orphan_path.exists() else []
+            )
         except Exception:  # pragma: no cover - best effort
             self.logger.exception("failed to load orphan modules")
             return
@@ -2660,9 +2685,7 @@ class SelfImprovementEngine:
                         pass
                     continue
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "classification failed for %s: %s", path, exc
-                )
+                self.logger.exception("classification failed for %s: %s", path, exc)
             new_mods.add(rel)
         if skipped:
             self.logger.info(
@@ -2674,7 +2697,10 @@ class SelfImprovementEngine:
             exclude_env = os.getenv("SANDBOX_EXCLUDE_DIRS")
             exclude = [e for e in exclude_env.split(",") if e] if exclude_env else None
             mapping = build_module_map(repo, ignore=exclude)
-            mapping = { (f"{k}.py" if not k.endswith(".py") else k): v for k, v in mapping.items() }
+            mapping = {
+                (f"{k}.py" if not k.endswith(".py") else k): v
+                for k, v in mapping.items()
+            }
             if skipped:
                 for key in list(mapping.keys()):
                     if key in skipped:
@@ -2685,11 +2711,20 @@ class SelfImprovementEngine:
             out = data_dir / "module_map.json"
             out.parent.mkdir(parents=True, exist_ok=True)
             with open(out, "w", encoding="utf-8") as fh:
-                json.dump({"modules": self.module_index._map, "groups": self.module_index._groups}, fh, indent=2)
+                json.dump(
+                    {
+                        "modules": self.module_index._map,
+                        "groups": self.module_index._groups,
+                    },
+                    fh,
+                    indent=2,
+                )
             self._last_map_refresh = time.time()
             if self.meta_logger and hasattr(self.meta_logger, "audit"):
                 try:
-                    self.meta_logger.audit.record({"event": "module_map_refreshed", "modules": sorted(new_mods)})
+                    self.meta_logger.audit.record(
+                        {"event": "module_map_refreshed", "modules": sorted(new_mods)}
+                    )
                 except Exception:
                     pass
             self.logger.info(
@@ -2710,9 +2745,7 @@ class SelfImprovementEngine:
                 try:
                     deps_integrated = self._integrate_orphans(abs_deps)
                 except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "orphan integration failed: %s", exc
-                    )
+                    self.logger.exception("orphan integration failed: %s", exc)
                 try:
                     self._update_orphan_modules()
                 except Exception as exc:  # pragma: no cover - best effort
@@ -2720,9 +2753,7 @@ class SelfImprovementEngine:
                         "post integration orphan update failed: %s", exc
                     )
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "orphan integration failed: %s", exc
-                )
+                self.logger.exception("orphan integration failed: %s", exc)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.exception("module map refresh failed: %s", exc)
 
@@ -2737,9 +2768,7 @@ class SelfImprovementEngine:
             try:
                 self.retest_redundant_modules()
             except Exception as exc:  # pragma: no cover - best effort
-                self.logger.exception(
-                    "redundant module check failed: %s", exc
-                )
+                self.logger.exception("redundant module check failed: %s", exc)
             # refresh orphan data so new modules are considered before policy evaluation
             self._update_orphan_modules()
             orphans = self._load_orphan_candidates()
@@ -2751,18 +2780,14 @@ class SelfImprovementEngine:
                             sorted(passing), recursive=True, validate=True
                         )
                     except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "auto inclusion failed: %s", exc
-                        )
+                        self.logger.exception("auto inclusion failed: %s", exc)
                     repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
                     abs_paths = [str(repo / p) for p in passing]
                     integrated: set[str] = set()
                     try:
                         integrated = self._integrate_orphans(abs_paths)
                     except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "orphan integration failed: %s", exc
-                        )
+                        self.logger.exception("orphan integration failed: %s", exc)
                     try:
                         self._update_orphan_modules()
                     except Exception as exc:  # pragma: no cover - best effort
@@ -2770,18 +2795,74 @@ class SelfImprovementEngine:
                             "post integration orphan update failed: %s", exc
                         )
             self._refresh_module_map()
-            state = (
-                self._policy_state()
-                if self.policy
-                else (0,) * POLICY_STATE_LEN
-            )
+            if self.error_bot:
+                try:
+                    predictions = (
+                        self.error_bot.predict_errors()
+                        if hasattr(self.error_bot, "predict_errors")
+                        else []
+                    )
+                    clusters = (
+                        self.error_bot.get_error_clusters()
+                        if hasattr(self.error_bot, "get_error_clusters")
+                        else {}
+                    )
+                    baseline = {
+                        item.get("error_type", ""): float(item.get("count", 0.0))
+                        for item in (
+                            self.error_bot.summarize_telemetry(limit=10)
+                            if hasattr(self.error_bot, "summarize_telemetry")
+                            else []
+                        )
+                    }
+                    affected_modules: set[str] = set()
+                    pred_clusters: set[int] = set()
+                    for err in predictions:
+                        cid = clusters.get(err)
+                        if cid is None:
+                            continue
+                        pred_clusters.add(cid)
+                        affected_modules.update(
+                            m for m, idx in self.module_clusters.items() if idx == cid
+                        )
+                    if pred_clusters and affected_modules:
+                        self.logger.info(
+                            "predicted error clusters",
+                            extra=log_record(
+                                predicted_clusters=sorted(pred_clusters),
+                                modules=sorted(affected_modules),
+                            ),
+                        )
+                        self.error_bot.auto_patch_recurrent_errors()
+                        after = {
+                            item.get("error_type", ""): float(item.get("count", 0.0))
+                            for item in (
+                                self.error_bot.summarize_telemetry(limit=10)
+                                if hasattr(self.error_bot, "summarize_telemetry")
+                                else []
+                            )
+                        }
+                        prevented = [
+                            err
+                            for err in predictions
+                            if baseline.get(err, 0.0) > 0
+                            and baseline.get(err) == after.get(err)
+                        ]
+                        if prevented:
+                            self.logger.info(
+                                "proactive patch prevented faults",
+                                extra=log_record(errors=prevented),
+                            )
+                except Exception as exc:
+                    self.logger.exception(
+                        "proactive prediction patching failed: %s", exc
+                    )
+            state = self._policy_state() if self.policy else (0,) * POLICY_STATE_LEN
             predicted = self.policy.score(state) if self.policy else 0.0
             roi_pred: float | None = None
             self.logger.info(
                 "cycle start",
-                extra=log_record(
-                    energy=energy, predicted_roi=predicted, state=state
-                ),
+                extra=log_record(energy=energy, predicted_roi=predicted, state=state),
             )
             if self.policy:
                 self.logger.info(
@@ -2796,9 +2877,7 @@ class SelfImprovementEngine:
             if self.capital_bot:
                 try:
                     before_roi = self.capital_bot.profit()
-                    self.logger.info(
-                        "initial ROI", extra=log_record(roi=before_roi)
-                    )
+                    self.logger.info("initial ROI", extra=log_record(roi=before_roi))
                 except Exception as exc:
                     self.logger.exception("profit lookup failed: %s", exc)
                     before_roi = 0.0
@@ -2816,17 +2895,13 @@ class SelfImprovementEngine:
                             * 5
                         )
                     )
-                    self.logger.info(
-                        "available energy", extra=log_record(value=energy)
-                    )
+                    self.logger.info("available energy", extra=log_record(value=energy))
                 except Exception as exc:
                     self.logger.exception("energy calculation failed: %s", exc)
                     energy = 1
             if self.policy:
                 try:
-                    energy = max(
-                        1, int(round(energy * (1 + max(0.0, predicted))))
-                    )
+                    energy = max(1, int(round(energy * (1 + max(0.0, predicted)))))
                     self.logger.info(
                         "policy adjusted energy",
                         extra=log_record(
@@ -2837,33 +2912,23 @@ class SelfImprovementEngine:
                         ),
                     )
                 except Exception as exc:
-                    self.logger.exception(
-                        "policy energy adjustment failed: %s", exc
-                    )
+                    self.logger.exception("policy energy adjustment failed: %s", exc)
             if self.pre_roi_bot:
                 try:
-                    forecast = self.pre_roi_bot.predict_model_roi(
-                        self.bot_name, []
-                    )
+                    forecast = self.pre_roi_bot.predict_model_roi(self.bot_name, [])
                     roi_pred = float(getattr(forecast, "roi", 0.0))
                     scale = (
-                        1
-                        + max(0.0, roi_pred + self.pre_roi_bias)
-                        * self.pre_roi_scale
+                        1 + max(0.0, roi_pred + self.pre_roi_bias) * self.pre_roi_scale
                     )
                     if self.pre_roi_cap:
                         scale = min(scale, self.pre_roi_cap)
                     energy = max(1, int(round(energy * scale)))
                     self.logger.info(
                         "pre_roi adjusted energy",
-                        extra=log_record(
-                            value=energy, roi_prediction=roi_pred
-                        ),
+                        extra=log_record(value=energy, roi_prediction=roi_pred),
                     )
                 except Exception as exc:
-                    self.logger.exception(
-                        "pre ROI energy adjustment failed: %s", exc
-                    )
+                    self.logger.exception("pre ROI energy adjustment failed: %s", exc)
             tracker = getattr(self, "tracker", None)
             if tracker is not None:
                 try:
@@ -2885,9 +2950,7 @@ class SelfImprovementEngine:
                             ),
                         )
                 except Exception as exc:  # pragma: no cover - best effort
-                    self.logger.exception(
-                        "synergy energy adjustment failed: %s", exc
-                    )
+                    self.logger.exception("synergy energy adjustment failed: %s", exc)
             try:
                 roi_scale = 1.0 + max(0.0, self.roi_delta_ema)
                 self.logger.info(
@@ -2902,9 +2965,7 @@ class SelfImprovementEngine:
                 self.logger.exception("roi energy adjustment failed: %s", exc)
             energy = max(1, min(int(energy), 100))
             model_id = bootstrap()
-            self.logger.info(
-                "model bootstrapped", extra=log_record(model_id=model_id)
-            )
+            self.logger.info("model bootstrapped", extra=log_record(model_id=model_id))
             self.info_db.set_current_model(model_id)
             self._record_state()
             if self.learning_engine:
@@ -2913,9 +2974,7 @@ class SelfImprovementEngine:
                     self.learning_engine.train()
                     self._evaluate_learning()
                 except Exception as exc:
-                    self.logger.exception(
-                        "learning engine run failed: %s", exc
-                    )
+                    self.logger.exception("learning engine run failed: %s", exc)
             self.logger.info(
                 "pipeline pre-run metrics",
                 extra=log_record(
@@ -2942,12 +3001,10 @@ class SelfImprovementEngine:
                         "applying helper patch",
                         extra=log_record(trending_topic=trending_topic),
                     )
-                    patch_id, reverted, delta = (
-                        self.self_coding_engine.apply_patch(
-                            Path("auto_helpers.py"),
-                            "helper",
-                            trending_topic=trending_topic,
-                        )
+                    patch_id, reverted, delta = self.self_coding_engine.apply_patch(
+                        Path("auto_helpers.py"),
+                        "helper",
+                        trending_topic=trending_topic,
                     )
                     if self.policy:
                         try:
@@ -2973,13 +3030,9 @@ class SelfImprovementEngine:
                                 except (
                                     Exception
                                 ) as exc:  # pragma: no cover - best effort
-                                    self.logger.exception(
-                                        "policy save failed: %s", exc
-                                    )
+                                    self.logger.exception("policy save failed: %s", exc)
                         except Exception as exc:
-                            self.logger.exception(
-                                "policy patch update failed: %s", exc
-                            )
+                            self.logger.exception("policy patch update failed: %s", exc)
                     if self.optimize_self_flag:
                         self._optimize_self()
                 except Exception as exc:
@@ -2991,9 +3044,7 @@ class SelfImprovementEngine:
                     self.error_bot.auto_patch_recurrent_errors()
                     self.logger.info("error auto-patching complete")
                 except Exception as exc:
-                    self.logger.exception(
-                        "auto patch recurrent errors failed: %s", exc
-                    )
+                    self.logger.exception("auto patch recurrent errors failed: %s", exc)
             after_roi = before_roi
             if self.capital_bot:
                 try:
@@ -3003,9 +3054,7 @@ class SelfImprovementEngine:
                         extra=log_record(before=before_roi, after=after_roi),
                     )
                 except Exception as exc:
-                    self.logger.exception(
-                        "post-cycle profit lookup failed: %s", exc
-                    )
+                    self.logger.exception("post-cycle profit lookup failed: %s", exc)
                     after_roi = before_roi
             roi_value = result.roi.roi if result.roi else 0.0
             if self.evolution_history:
@@ -3023,9 +3072,7 @@ class SelfImprovementEngine:
                         )
                     )
                 except Exception as exc:
-                    self.logger.exception(
-                        "evolution history logging failed: %s", exc
-                    )
+                    self.logger.exception("evolution history logging failed: %s", exc)
             eff = bottleneck = patch_rate = trend = anomaly = 0.0
             if self.data_bot:
                 try:
@@ -3048,9 +3095,7 @@ class SelfImprovementEngine:
                     self.self_coding_engine, "patch_db", None
                 ):
                     try:
-                        patch_rate = (
-                            self.self_coding_engine.patch_db.success_rate()
-                        )
+                        patch_rate = self.self_coding_engine.patch_db.success_rate()
                     except Exception as exc:
                         self.logger.exception(
                             "self_coding patch rate lookup failed: %s", exc
@@ -3073,17 +3118,13 @@ class SelfImprovementEngine:
                     df_anom = self.data_bot.db.fetch(100)
                     if hasattr(df_anom, "empty"):
                         if not getattr(df_anom, "empty", True):
-                            df_anom["roi"] = (
-                                df_anom["revenue"] - df_anom["expense"]
-                            )
+                            df_anom["roi"] = df_anom["revenue"] - df_anom["expense"]
                             anomaly = float(
                                 len(DataBot.detect_anomalies(df_anom, "roi"))
                             ) / len(df_anom)
                     elif isinstance(df_anom, list) and df_anom:
                         rois = [
-                            float(
-                                r.get("revenue", 0.0) - r.get("expense", 0.0)
-                            )
+                            float(r.get("revenue", 0.0) - r.get("expense", 0.0))
                             for r in df_anom
                         ]
                         df_list = [{"roi": r} for r in rois]
@@ -3091,9 +3132,7 @@ class SelfImprovementEngine:
                             len(DataBot.detect_anomalies(df_list, "roi"))
                         ) / len(rois)
                 except Exception as exc:
-                    self.logger.exception(
-                        "anomaly calculation failed: %s", exc
-                    )
+                    self.logger.exception("anomaly calculation failed: %s", exc)
                     anomaly = 0.0
                 try:
                     self.data_bot.log_evolution_cycle(
@@ -3133,9 +3172,7 @@ class SelfImprovementEngine:
                                 "capital bot evolution log failed: %s", exc
                             )
                 except Exception as exc:
-                    self.logger.exception(
-                        "data_bot evolution logging failed: %s", exc
-                    )
+                    self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
             delta = after_roi - before_roi
             self.roi_delta_ema = (
@@ -3203,12 +3240,8 @@ class SelfImprovementEngine:
                     if getattr(self.policy, "path", None):
                         try:
                             self.policy.save()
-                        except (
-                            Exception
-                        ) as exc:  # pragma: no cover - best effort
-                            self.logger.exception(
-                                "policy save failed: %s", exc
-                            )
+                        except Exception as exc:  # pragma: no cover - best effort
+                            self.logger.exception("policy save failed: %s", exc)
                     self.logger.info(
                         "policy updated",
                         extra=log_record(
@@ -3245,10 +3278,7 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("energy check failed: %s", exc)
                     current_energy = energy
-            if (
-                current_energy >= self.energy_threshold
-                and not self._cycle_running
-            ):
+            if current_energy >= self.energy_threshold and not self._cycle_running:
                 try:
                     await asyncio.to_thread(
                         self.run_cycle, energy=int(round(current_energy * 5))
@@ -3307,9 +3337,7 @@ class ImprovementEngineRegistry:
     def __init__(self) -> None:
         self.engines: dict[str, SelfImprovementEngine] = {}
 
-    def register_engine(
-        self, name: str, engine: SelfImprovementEngine
-    ) -> None:
+    def register_engine(self, name: str, engine: SelfImprovementEngine) -> None:
         """Add *engine* under *name*."""
         self.engines[name] = engine
 
@@ -3336,9 +3364,7 @@ class ImprovementEngineRegistry:
                 return name, res
             return None
 
-        tasks = [
-            asyncio.create_task(_run(n, e)) for n, e in self.engines.items()
-        ]
+        tasks = [asyncio.create_task(_run(n, e)) for n, e in self.engines.items()]
         results: dict[str, AutomationResult] = {}
         for t in tasks:
             out = await t
@@ -3408,9 +3434,7 @@ class ImprovementEngineRegistry:
             self.register_engine(name, factory(name))
             return
         if (
-            energy <= remove_energy
-            or trend <= roi_threshold
-            or projected_roi <= 0.0
+            energy <= remove_energy or trend <= roi_threshold or projected_roi <= 0.0
         ) and len(self.engines) > min_engines:
             name = next(iter(self.engines))
             self.unregister_engine(name)
@@ -3708,9 +3732,7 @@ def cli(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Self-improvement utilities")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_dash = sub.add_parser(
-        "synergy-dashboard", help="start synergy metrics dashboard"
-    )
+    p_dash = sub.add_parser("synergy-dashboard", help="start synergy metrics dashboard")
     p_dash.add_argument("--file", default="synergy_history.db")
     p_dash.add_argument("--port", type=int, default=5001)
     p_dash.add_argument("--exporter-host")
