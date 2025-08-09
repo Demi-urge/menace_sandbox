@@ -25,3 +25,5 @@ def test_ingest_error_instance():
     assert g.graph.get_edge_data("error_category:cat", "module:mod")["weight"] == 2
     assert g.graph.get_edge_data("module:mod", "cause:cause")["weight"] == 2
     assert g.graph.nodes["error_category:cat"]["weight"] == 2
+    assert g.graph.nodes["error_type:E"]["frequency"] == 2
+    assert g.graph.get_edge_data("module:r", "error_type:E")["weight"] == 2
