@@ -441,6 +441,7 @@ class KnowledgeGraph:
             return
 
         totals: Dict[str, int] = {}
+        cause_totals: Dict[str, int] = {}
         for row in stats:
             try:
                 etype = row["error_type"]
@@ -456,8 +457,17 @@ class KnowledgeGraph:
             self.graph.add_edge(enode, mnode, type="module", weight=count)
             totals[enode] = totals.get(enode, 0) + count
 
+            cause = row.get("cause")
+            if cause:
+                cnode = f"cause:{cause}"
+                self.graph.add_node(cnode)
+                self.graph.add_edge(mnode, cnode, type="cause", weight=count)
+                cause_totals[cnode] = cause_totals.get(cnode, 0) + count
+
         for enode, weight in totals.items():
             self.graph.nodes[enode]["weight"] = weight
+        for cnode, weight in cause_totals.items():
+            self.graph.nodes[cnode]["weight"] = weight
 
     def ingest_error_db(self, err_db: object, code_db: object | None = None) -> None:
         """Load errors and telemetry from ``err_db``."""

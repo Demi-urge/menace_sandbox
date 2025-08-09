@@ -368,13 +368,31 @@ class ErrorDB:
         freq = sum(mods.values()) if mods else 1
         self.conn.execute(
             """
-            INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, module, module_counts, inferred_cause, ts, resolution_status, patch_id, deploy_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO telemetry(
+                task_id,
+                bot_id,
+                error_type,
+                category,
+                cause,
+                stack_trace,
+                root_module,
+                module,
+                module_counts,
+                inferred_cause,
+                ts,
+                resolution_status,
+                patch_id,
+                deploy_id,
+                frequency
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.task_id,
                 event.bot_id,
                 getattr(event.error_type, "value", event.error_type),
+                getattr(event.category, "value", event.category),
+                event.root_cause,
                 event.stack_trace,
                 event.root_module,
                 event.module,
@@ -384,6 +402,7 @@ class ErrorDB:
                 event.resolution_status,
                 event.patch_id,
                 event.deploy_id,
+                freq,
             ),
         )
         for mod, count in mods.items():
@@ -425,17 +444,46 @@ class ErrorDB:
             },
         )
 
-    def fetch_error_stats(self) -> list[dict[str, int]]:
-        """Return aggregated error counts grouped by category and module."""
+    def fetch_error_stats(self) -> list[dict[str, int | str | None]]:
+        """Return aggregated error counts grouped by category, module and cause."""
+        try:
+            cur = self.conn.execute(
+                """
+                SELECT category, module, cause, COUNT(*) AS cnt
+                FROM telemetry
+                GROUP BY category, module, cause
+                """
+            )
+            rows = cur.fetchall()
+            if rows:
+                return [
+                    {
+                        "error_type": row[0],
+                        "category": row[0],
+                        "module": row[1],
+                        "cause": row[2],
+                        "count": row[3],
+                    }
+                    for row in rows
+                ]
+        except Exception:
+            pass
+
         cur = self.conn.execute(
             "SELECT category, module, count FROM error_stats"
         )
         return [
-            {"category": row[0], "module": row[1], "count": row[2]}
+            {
+                "error_type": row[0],
+                "category": row[0],
+                "module": row[1],
+                "cause": None,
+                "count": row[2],
+            }
             for row in cur.fetchall()
         ]
 
-    def get_error_stats(self) -> list[dict[str, int]]:
+    def get_error_stats(self) -> list[dict[str, int | str | None]]:
         """Backward compatible wrapper for ``fetch_error_stats``."""
         return self.fetch_error_stats()
 
