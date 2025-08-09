@@ -303,10 +303,12 @@ class KnowledgeGraph:
     ) -> None:
         """Add telemetry relationship from error type to bot.
 
-        Error nodes track their occurrence frequency via the ``weight``
-        attribute.  Edges from an error ``cause`` (``error_type``) to the
-        affected ``module`` also store a ``weight`` representing how often the
-        pair has been observed.
+        Error nodes track their occurrence frequency via both ``weight`` and a
+        ``frequency`` attribute for backward compatibility.  Edges from an
+        error ``cause`` (``error_type``) to the affected ``module`` store a
+        ``weight`` representing how often the pair has been observed.  The
+        calling ``root_module`` is also linked to the error type via a ``cause``
+        edge so upstream modules can be traced.
         """
 
         if self.graph is None:
@@ -319,6 +321,9 @@ class KnowledgeGraph:
             self.graph.add_node(enode)
             # increment node weight for frequency of this error type
             self.graph.nodes[enode]["weight"] = self.graph.nodes[enode].get("weight", 0) + 1
+            self.graph.nodes[enode]["frequency"] = (
+                self.graph.nodes[enode].get("frequency", 0) + 1
+            )
             self.graph.add_edge(enode, bnode, type="telemetry")
             mods = module_counts or ({root_module: 1} if root_module else {})
             for mod, cnt in mods.items():
@@ -326,6 +331,11 @@ class KnowledgeGraph:
                 self.graph.add_node(mnode)
                 prev = self.graph.get_edge_data(enode, mnode, {}).get("weight", 0)
                 self.graph.add_edge(enode, mnode, type="module", weight=prev + cnt)
+            if root_module:
+                mnode = f"module:{root_module}"
+                self.graph.add_node(mnode)
+                prev = self.graph.get_edge_data(mnode, enode, {}).get("weight", 0)
+                self.graph.add_edge(mnode, enode, type="cause", weight=prev + 1)
             if patch_id is not None:
                 pnode = f"patch:{patch_id}"
                 self.graph.add_node(pnode)
@@ -434,7 +444,7 @@ class KnowledgeGraph:
         has_module = has_cause = has_freq = False
         try:
             cols = [r[1] for r in cur.execute("PRAGMA table_info(telemetry)").fetchall()]
-            sel = ["bot_id", "error_type", "root_module"]
+            sel = ["rowid", "bot_id", "error_type", "root_module"]
             has_patch = "patch_id" in cols
             has_deploy = "deploy_id" in cols
             has_category = "category" in cols
@@ -458,8 +468,8 @@ class KnowledgeGraph:
         except Exception:
             telemetry = []
         for row in telemetry:
-            bot, etype, root_mod = row[0], row[1], row[2]
-            idx = 3
+            rowid, bot, etype, root_mod = row[0], row[1], row[2], row[3]
+            idx = 4
             patch = row[idx] if has_patch else None
             if has_patch:
                 idx += 1
@@ -476,25 +486,37 @@ class KnowledgeGraph:
             if has_cause:
                 idx += 1
             freq = row[idx] if has_freq else 1
+            try:
+                cnt = int(freq)
+            except Exception:
+                cnt = 1
             if not bot:
                 continue
             for b in str(bot).split(";"):
                 if not b:
                     continue
-                self.add_telemetry_event(
-                    b,
-                    etype,
-                    root_mod,
-                    patch_id=patch,
-                    deploy_id=deploy,
-                )
+                for _ in range(max(cnt, 1)):
+                    self.add_telemetry_event(
+                        b,
+                        etype,
+                        root_mod,
+                        patch_id=patch,
+                        deploy_id=deploy,
+                    )
             if category and module:
-                try:
-                    cnt = int(freq)
-                except Exception:
-                    cnt = 1
                 for _ in range(max(cnt, 1)):
                     self.add_error_instance(category, module, cause)
+            try:
+                cur.execute(
+                    "UPDATE telemetry SET frequency=COALESCE(frequency,0)+? WHERE rowid=?",
+                    (cnt, rowid),
+                )
+            except Exception:
+                pass
+        try:
+            cur.commit()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Error clustering and failure chain analysis
