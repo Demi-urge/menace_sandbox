@@ -2,8 +2,17 @@ from __future__ import annotations
 
 """Manage evaluation results from multiple learning engines."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TYPE_CHECKING
 import logging
+import threading
+import time
+
+if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
+    from .error_cluster_analyzer import ErrorClusterAnalyzer
+    from .error_cluster_predictor import ErrorClusterPredictor
+    from .knowledge_graph import KnowledgeGraph
+    from .error_bot import ErrorDB
+    from .unified_event_bus import UnifiedEventBus
 
 from .evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from . import RAISE_ERRORS
@@ -95,4 +104,61 @@ class EvaluationManager:
         return self.engines.get(self._best_name)
 
 
-__all__ = ["EvaluationManager"]
+class ErrorClusterScheduler:
+    """Run error cluster analysis at fixed intervals."""
+
+    def __init__(
+        self,
+        analyzer: ErrorClusterAnalyzer,
+        predictor: ErrorClusterPredictor,
+        db: ErrorDB,
+        graph: KnowledgeGraph,
+        event_bus: UnifiedEventBus,
+        *,
+        interval: float = 300.0,
+    ) -> None:
+        self.analyzer = analyzer
+        self.predictor = predictor
+        self.db = db
+        self.graph = graph
+        self.event_bus = event_bus
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                clusters = self.analyzer.analyze()
+                if clusters:
+                    mapping = {
+                        etype: cid
+                        for cid, errors in clusters.items()
+                        for etype in errors
+                    }
+                    self.db.set_error_clusters(mapping)
+                # ensure graph stats stay current
+                self.graph.update_error_stats(self.db)
+                high_risk = self.predictor.predict_high_risk_modules()
+                payload = {
+                    "clusters": clusters,
+                    "high_risk_modules": high_risk,
+                }
+                self.event_bus.publish("errors:cluster_update", payload)
+            except Exception:  # pragma: no cover - background loop
+                logger.exception("cluster scheduler iteration failed")
+            self._stop.wait(self.interval)
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=0.1)
+
+
+__all__ = ["EvaluationManager", "ErrorClusterScheduler"]
