@@ -582,12 +582,16 @@ class ErrorBot(AdminBotBase):
         self.event_bus = event_bus
         self.memory_mgr = memory_mgr
         self.graph = graph or KnowledgeGraph()
-        self.forecaster = forecaster or ErrorForecaster(self.metrics_db)
+        self.forecaster = forecaster or ErrorForecaster(
+            self.metrics_db, graph=self.graph
+        )
         self.self_coding_engine = self_coding_engine
         self.last_forecast_chains: dict[str, list[str]] = {}
         self.generated_runbooks: dict[str, str] = {}
         self.last_error_event: object | None = None
         self.last_memory_event: MemoryEntry | None = None
+        self._cluster_cache: dict[str, int] | None = None
+        self._cluster_digest: str | None = None
         if self.event_bus:
             try:
                 self.event_bus.subscribe("errors:new", self._on_error_event)
@@ -890,9 +894,56 @@ class ErrorBot(AdminBotBase):
     # Prediction and discrepancy helpers
     # ------------------------------------------------------------------
 
+    def cluster_error_modules(
+        self, freq_threshold: int = 5, module_threshold: int = 10
+    ) -> None:
+        """Cluster high-frequency error types per module and trigger mitigation."""
+        if not self.graph or not getattr(self.graph, "graph", None):
+            return
+        # compute digest of error_type->module edges to detect changes
+        edges = [
+            (u, v, d.get("weight", 0))
+            for u, v, d in self.graph.graph.edges(data=True)
+            if u.startswith("error_type:") and v.startswith("module:")
+        ]
+        digest = hashlib.md5(str(sorted(edges)).encode()).hexdigest()
+        if digest == self._cluster_digest:
+            return
+        self._cluster_digest = digest
+        clusters = self.graph.error_clusters(min_weight=freq_threshold)
+        if not clusters:
+            return
+        self._cluster_cache = {k.split(":", 1)[1]: v for k, v in clusters.items()}
+        try:
+            self.db.set_error_clusters(self._cluster_cache)
+        except Exception:
+            pass
+        mod_counts: dict[str, int] = {}
+        g = self.graph.graph
+        for enode in clusters:
+            for _, mnode, d in g.out_edges(enode, data=True):
+                if mnode.startswith("module:"):
+                    mod_counts[mnode] = mod_counts.get(mnode, 0) + int(d.get("weight", 1))
+        for mnode, count in mod_counts.items():
+            if count >= module_threshold:
+                module = mnode.split(":", 1)[1]
+                self.flag_module(module)
+                if self.self_coding_engine:
+                    path = Path(f"{module}.py")
+                    if path.exists():
+                        try:
+                            self.self_coding_engine.apply_patch(
+                                path, "cluster mitigation"
+                            )
+                        except Exception as exc:  # pragma: no cover - runtime issues
+                            self.logger.exception("auto patch failed: %s", exc)
+                            if error_bot_exceptions:
+                                error_bot_exceptions.inc()
+
     def predict_errors(self) -> List[str]:
         """Return predicted upcoming errors from assigned prediction bots."""
         preds: List[str] = []
+        self.cluster_error_modules()
         if not self.prediction_manager:
             return preds
         df = self.metrics_db.fetch(20)
