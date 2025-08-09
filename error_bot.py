@@ -564,7 +564,8 @@ class ErrorBot(AdminBotBase):
         super().__init__(db_router=db_router)
         self.name = "ErrorBot"
         self.db = db or ErrorDB()
-        self.error_logger = ErrorLogger(self.db)
+        self.graph = graph
+        self.error_logger = ErrorLogger(self.db, knowledge_graph=self.graph)
         self.data_bot = data_bot
         if metrics_db:
             self.metrics_db = metrics_db

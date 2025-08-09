@@ -19,13 +19,15 @@ from .knowledge_graph import KnowledgeGraph
 class DebugLoopService:
     """Run :class:`TelemetryFeedback` continuously and archive crash logs."""
 
-    def __init__(self, feedback: TelemetryFeedback | None = None, *, graph: KnowledgeGraph | None = None) -> None:
+    def __init__(
+        self, feedback: TelemetryFeedback | None = None, *, graph: KnowledgeGraph | None = None
+    ) -> None:
+        self.graph = graph or KnowledgeGraph()
         if feedback is None:
-            logger = ErrorLogger()
+            logger = ErrorLogger(knowledge_graph=self.graph)
             engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
             feedback = TelemetryFeedback(logger, engine)
         self.feedback = feedback
-        self.graph = graph or KnowledgeGraph()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.failure_count = 0
         self._thread: Optional[threading.Thread] = None

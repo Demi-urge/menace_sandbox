@@ -173,7 +173,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
         self.graph = KnowledgeGraph()
-        self.error_logger = ErrorLogger(graph=self.graph)
+        self.error_logger = ErrorLogger(knowledge_graph=self.graph)
 
     # ------------------------------------------------------------------
     def _record_exception(self, exc: Exception) -> TelemetryEvent:
