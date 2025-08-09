@@ -1174,6 +1174,7 @@ time.
 - `ClusterServiceSupervisor` accepts a `CLUSTER_HEALTH_CHECK_CMD` for deeper
   remote health validation.
 - `ComplianceAuditService` runs continuous security and compliance audits.
+- `MutationLogger` records code changes and `MutationLineage` reconstructs trees and clones branches for A/B tests (see [docs/mutation_lineage.md](docs/mutation_lineage.md)).
 
 ## Legal Notice
 
