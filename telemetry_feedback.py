@@ -64,7 +64,12 @@ class TelemetryFeedback:
             return
         desc = f"fix {error_type}: {module}"
         try:
-            patch_id, _, _ = self.engine.apply_patch(path, desc)
+            patch_id, _, _ = self.engine.apply_patch(
+                path,
+                desc,
+                reason=desc,
+                trigger="telemetry_feedback",
+            )
         except Exception:
             patch_id = None
         ids = [

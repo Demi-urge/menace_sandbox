@@ -49,7 +49,12 @@ def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int
     try:
         patch_id: int | None
         try:
-            patch_id, _, _ = engine.apply_patch(path, "preemptive_fix")
+            patch_id, _, _ = engine.apply_patch(
+                path,
+                "preemptive_fix",
+                reason="preemptive_fix",
+                trigger="quick_fix_engine",
+            )
         except AttributeError:
             engine.patch_file(path, "preemptive_fix")
             patch_id = None

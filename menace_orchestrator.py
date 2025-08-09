@@ -368,7 +368,13 @@ class MenaceOrchestrator:
             eng = self.engines.get(node)
             if not eng:
                 continue
-            pid, reverted, _ = eng.apply_patch(path, description, threshold=threshold)
+            pid, reverted, _ = eng.apply_patch(
+                path,
+                description,
+                threshold=threshold,
+                reason=description,
+                trigger="menace_orchestrator",
+            )
             results[node] = (pid, reverted)
             if pid is not None and not reverted and self.rollback_mgr:
                 self.rollback_mgr.register_patch(str(pid), node)

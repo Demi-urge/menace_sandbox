@@ -10,6 +10,7 @@ from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
 from .data_bot import DataBot
 from .advanced_error_management import FormalVerifier, AutomatedRollbackManager
+from . import mutation_logger as MutationLogger
 
 
 class PatchApprovalPolicy:
@@ -68,6 +69,8 @@ class SelfCodingManager:
         self.data_bot = data_bot
         self.approval_policy = approval_policy
         self.logger = logging.getLogger(self.__class__.__name__)
+        self._last_patch_id: int | None = None
+        self._last_event_id: int | None = None
 
     # ------------------------------------------------------------------
     def run_patch(self, path: Path, description: str, energy: int = 1) -> AutomationResult:
@@ -75,9 +78,26 @@ class SelfCodingManager:
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
         before_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
-        patch_id, reverted, _ = self.engine.apply_patch(path, description)
+        patch_id, reverted, _ = self.engine.apply_patch(
+            path,
+            description,
+            parent_patch_id=self._last_patch_id,
+            reason=description,
+            trigger=path.name,
+        )
         result = self.pipeline.run(self.bot_name, energy=energy)
         after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0
+        roi_delta = after_roi - before_roi
+        event_id = MutationLogger.log_mutation(
+            change=f"self_coding_patch_{patch_id}",
+            reason=description,
+            trigger=path.name,
+            performance=roi_delta,
+            workflow_id=0,
+            parent_id=self._last_event_id,
+        )
+        self._last_event_id = event_id
+        self._last_patch_id = patch_id
         if self.data_bot:
             try:
                 roi_val = result.roi.roi if result.roi else 0.0
@@ -98,12 +118,12 @@ class SelfCodingManager:
                     roi_val,
                     0.0,
                     patch_success=patch_rate,
-                    roi_delta=after_roi - before_roi,
+                    roi_delta=roi_delta,
                     patch_id=patch_id,
                     reverted=reverted,
                     reason=description,
                     trigger=path.name,
-                    parent_event_id=None,
+                    parent_event_id=self._last_event_id,
                 )
             except Exception as exc:
                 self.logger.exception(

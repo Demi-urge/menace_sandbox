@@ -1029,7 +1029,10 @@ class ErrorBot(AdminBotBase):
                     if path.exists():
                         try:
                             self.self_coding_engine.apply_patch(
-                                path, "cluster mitigation"
+                                path,
+                                "cluster mitigation",
+                                reason="cluster mitigation",
+                                trigger="error_bot",
                             )
                         except Exception as exc:  # pragma: no cover - runtime issues
                             self.logger.exception("auto patch failed: %s", exc)
@@ -1081,7 +1084,12 @@ class ErrorBot(AdminBotBase):
                         try:
                             path = Path(f"{b}.py")
                             if path.exists():
-                                self.self_coding_engine.apply_patch(path, "error mitigation")
+                                self.self_coding_engine.apply_patch(
+                                    path,
+                                    "error mitigation",
+                                    reason="error mitigation",
+                                    trigger="error_bot",
+                                )
                         except Exception as exc:
                             self.logger.exception("auto patch failed: %s", exc)
                             if error_bot_exceptions:
@@ -1160,7 +1168,12 @@ class ErrorBot(AdminBotBase):
                 if path.exists():
                     desc = f"fix recurring {item.get('error_type', 'error')}"
                     try:
-                        self.self_coding_engine.apply_patch(path, desc)
+                        self.self_coding_engine.apply_patch(
+                            path,
+                            desc,
+                            reason=desc,
+                            trigger="error_bot",
+                        )
                     except Exception as exc:
                         self.logger.exception("auto patch failed: %s", exc)
                         if error_bot_exceptions:
