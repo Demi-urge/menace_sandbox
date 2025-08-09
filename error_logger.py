@@ -30,9 +30,12 @@ from pydantic import BaseModel, Field
 from typing import TYPE_CHECKING
 
 try:
-    from .error_ontology import ErrorType, ErrorCategory, classify_exception
+    from .error_ontology import ErrorCategory, classify_exception
 except ImportError:  # pragma: no cover - package fallback
-    from error_ontology import ErrorType, ErrorCategory, classify_exception  # type: ignore
+    from error_ontology import ErrorCategory, classify_exception  # type: ignore
+
+# Backwards compatibility with legacy imports
+ErrorType = ErrorCategory
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     try:
@@ -52,7 +55,9 @@ class TelemetryEvent(BaseModel):
 
     task_id: str | None = None
     bot_id: str | None = None
-    error_type: ErrorType = ErrorType.UNKNOWN
+    # Normalised ontology identifier for the error category
+    error_type: ErrorCategory = ErrorCategory.Unknown
+    # Legacy alias retained for backward compatibility
     category: ErrorCategory = ErrorCategory.Unknown
     root_cause: str = ""
     stack_trace: str = ""
@@ -73,16 +78,16 @@ DEFAULT_CLASSIFICATION_RULES = {
         "semantic": ["missing key", "key not found", "not in index"],
     },
     "DependencyMismatch": {
-        "regex": [r"ModuleNotFoundError|ImportError"],
-        "semantic": ["module not found", "dependency missing"],
+        "regex": [r"ModuleNotFoundError|ImportError", r"PackageNotFoundError"],
+        "semantic": ["module not found", "dependency missing", "missing package"],
     },
     "LogicMisfire": {
-        "regex": [r"AssertionError"],
+        "regex": [r"AssertionError", r"NotImplementedError"],
         "semantic": ["assertion failed", "not implemented"],
     },
     "SemanticBug": {
-        "regex": [r"TypeError"],
-        "semantic": ["unexpected type", "wrong type"],
+        "regex": [r"TypeError", r"ValueError"],
+        "semantic": ["unexpected type", "wrong type", "invalid value"],
     },
 }
 
@@ -110,8 +115,8 @@ class ErrorClassifier:
             else:
                 config = DEFAULT_CLASSIFICATION_RULES
 
-        self.regex_map: dict[str, ErrorType] = {}
-        self.semantic_map: dict[str, ErrorType] = {}
+        self.regex_map: dict[str, ErrorCategory] = {}
+        self.semantic_map: dict[str, ErrorCategory] = {}
 
         for name, rules in config.items():
             err_type = self._parse_type(name)
@@ -131,20 +136,25 @@ class ErrorClassifier:
             self.model = None
 
     @staticmethod
-    def _parse_type(name: str) -> ErrorType | None:
+    def _parse_type(name: str) -> ErrorCategory | None:
         import re
 
         key = re.sub(r"(?<!^)(?=[A-Z])", "_", name)
         key = key.replace("-", "_").replace(" ", "_").upper()
         try:
-            return ErrorType[key]
+            return ErrorCategory[key]
         except KeyError:
             try:
-                return ErrorType(name.lower())
+                return ErrorCategory(name.lower())
             except Exception:  # pragma: no cover - unknown type
                 return None
 
-    def classify(self, stack: str) -> ErrorType:
+    def classify(self, stack: str, exc: Exception | None = None) -> ErrorCategory:
+        """Classify a stack trace, prioritising ontology categories."""
+        if exc is not None:
+            ont = classify_exception(exc, stack)
+            if ont is not ErrorCategory.Unknown:
+                return ont
         for pattern, label in self.regex_map.items():
             if re.search(pattern, stack, re.IGNORECASE):
                 return label
@@ -156,7 +166,7 @@ class ErrorClassifier:
             try:
                 emb = self.model.encode([low])[0]
                 best_score = 0.0
-                best_label: ErrorType | None = None
+                best_label: ErrorCategory | None = None
                 for phrase, label in self.semantic_map.items():
                     sim = float(util.cos_sim(emb, self.model.encode([phrase])[0]))
                     if sim > best_score:
@@ -166,14 +176,13 @@ class ErrorClassifier:
                     return best_label
             except Exception as e:  # pragma: no cover - runtime issues
                 self.logger.warning("semantic classification failed: %s", e)
-        return ErrorType.UNKNOWN
+        return ErrorCategory.Unknown
 
-    def classify_details(self, exc: Exception, stack: str) -> tuple[ErrorType, ErrorCategory, str]:
-        """Return legacy type plus ontology category and root cause."""
-        err_type = self.classify(stack)
-        category = classify_exception(exc, stack)
+    def classify_details(self, exc: Exception, stack: str) -> tuple[ErrorCategory, str]:
+        """Return ontology category and root cause."""
+        category = self.classify(stack, exc)
         root_cause = exc.__class__.__name__ if category is not ErrorCategory.Unknown else ""
-        return err_type, category, root_cause
+        return category, root_cause
 
 
 class ErrorLogger:
@@ -246,11 +255,11 @@ class ErrorLogger:
             env = os.getenv("DEPLOY_ID")
             if env and env.isdigit():
                 deploy_id = int(env)
-        err_type, category, root_cause = self.classifier.classify_details(exc, stack)
+        category, root_cause = self.classifier.classify_details(exc, stack)
         event = TelemetryEvent(
             task_id=task_id,
             bot_id=bot_id,
-            error_type=err_type,
+            error_type=category,
             category=category,
             root_cause=root_cause,
             stack_trace=stack,
@@ -295,4 +304,4 @@ class ErrorLogger:
         return wrapper
 
 
-__all__ = ["TelemetryEvent", "ErrorLogger", "ErrorClassifier"]
+__all__ = ["TelemetryEvent", "ErrorLogger", "ErrorClassifier", "ErrorType"]
