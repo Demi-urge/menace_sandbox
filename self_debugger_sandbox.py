@@ -19,6 +19,8 @@ import io
 import math
 from statistics import pstdev
 from coverage import Coverage
+from .error_logger import ErrorLogger, TelemetryEvent
+from .knowledge_graph import KnowledgeGraph
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -170,6 +172,29 @@ class SelfDebuggerSandbox(AutomatedDebugger):
         self._last_weights_update = 0.0
         self._weight_update_interval = 60.0
         self._last_test_log: Path | None = None
+        self.error_logger = ErrorLogger()
+        self.graph = KnowledgeGraph()
+
+    # ------------------------------------------------------------------
+    def _record_exception(self, exc: Exception) -> TelemetryEvent:
+        """Log ``exc`` and record telemetry in the knowledge graph."""
+        event = self.error_logger.log(
+            exc,
+            None,
+            getattr(self.engine, "name", None),
+        )
+        try:
+            self.graph.add_telemetry_event(
+                getattr(self.engine, "name", "sandbox"),
+                getattr(event.error_type, "value", str(event.error_type)),
+                event.root_module,
+                event.module_counts,
+                patch_id=event.patch_id,
+                deploy_id=event.deploy_id,
+            )
+        except Exception:
+            self.logger.exception("telemetry graph update failed")
+        return event
 
     # ------------------------------------------------------------------
     def preemptive_fix_high_risk_modules(self, limit: int = 5) -> None:
@@ -313,10 +338,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 self._last_test_log = log_file
             except Exception:
                 self.logger.exception("failed to write test log")
+            self._record_exception(exc)
             raise RuntimeError("test subprocess failed") from exc
-        except Exception:
+        except Exception as exc:
             percent = 0.0
             runtime = time.perf_counter() - start
+            self._record_exception(exc)
             self.logger.exception("coverage generation failed")
         else:
             runtime = time.perf_counter() - start
@@ -350,7 +377,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         log=str(self._last_test_log) if self._last_test_log else None,
                     ),
                 )
-            except Exception:
+            except Exception as exc:
+                self._record_exception(exc)
                 self.logger.exception(
                     "flakiness run failed", extra=log_record(run=i)
                 )
@@ -1027,7 +1055,8 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         subprocess.run(
                             ["pytest", "-q"], cwd=str(repo), check=True, env=env
                         )
-                    except Exception:
+                    except Exception as exc:
+                        self._record_exception(exc)
                         self.logger.exception("sandbox tests failed")
                         return None
 
@@ -1080,6 +1109,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 self.engine.rollback_mgr.rollback(str(pid))
                             except Exception as exc:
                                 reason = f"rollback failed: {exc}"
+                                self._record_exception(exc)
                                 self.logger.exception("rollback failed")
                             result = "reverted"
                             reverted = True
@@ -1105,10 +1135,12 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         return None
                     except RuntimeError as exc:
                         reason = f"sandbox tests failed: {exc}"
+                        self._record_exception(exc)
                         self.logger.error("sandbox tests failed", exc_info=exc)
                         score = float("-inf")
                     except Exception as exc:
                         reason = f"{type(exc).__name__}: {exc}"
+                        self._record_exception(exc)
                         self.logger.exception("patch failed")
                         score = float("-inf")
                     finally:
@@ -1164,6 +1196,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                                 )
                                 self.engine.rollback_patch(str(pid))
                             except Exception as exc:
+                                self._record_exception(exc)
                                 self.logger.exception(
                                     "candidate rollback failed"
                                 )
@@ -1180,6 +1213,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                 cleaned: list[dict[str, object] | None] = []
                 for res in results:
                     if isinstance(res, Exception):
+                        self._record_exception(res)
                         self.logger.error("candidate eval failed", exc_info=res)
                         continue
                     cleaned.append(res)
@@ -1188,6 +1222,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             try:
                 results = asyncio.run(_eval_all())
             except Exception as exc:
+                self._record_exception(exc)
                 self.logger.error("candidate evaluation failed", exc_info=exc)
                 results = []
 
@@ -1256,6 +1291,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                             self.engine.rollback_mgr.rollback(str(pid))
                         except Exception as exc:
                             reason = f"rollback failed: {exc}"
+                            self._record_exception(exc)
                             self.logger.exception("rollback failed")
                     result = "reverted"
                     reason = f"score {patch_score:.3f} below threshold {self.score_threshold:.3f}"
@@ -1269,15 +1305,18 @@ class SelfDebuggerSandbox(AutomatedDebugger):
                         self.engine.rollback_mgr.rollback(str(pid))
                     except Exception as exc:
                         reason = f"rollback failed: {exc}"
+                        self._record_exception(exc)
                         self.logger.exception("rollback failed")
                     result = "reverted"
                 else:
                     patched = not reverted and patch_score >= self.score_threshold
             except RuntimeError as exc:
                 reason = f"sandbox tests failed: {exc}"
+                self._record_exception(exc)
                 self.logger.error("sandbox tests failed", exc_info=exc)
             except Exception as exc:
                 reason = f"{type(exc).__name__}: {exc}"
+                self._record_exception(exc)
                 self.logger.exception("patch failed")
             finally:
                 self._log_patch(
