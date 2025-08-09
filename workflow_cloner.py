@@ -22,6 +22,7 @@ from .neuroplasticity import PathwayDB
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .bot_planning_bot import PlanningTask
 from .database_manager import add_model
+from . import mutation_logger as MutationLogger
 
 if TYPE_CHECKING:  # pragma: no cover - optional dependencies
     from .ga_clone_manager import GALearningManager
@@ -47,6 +48,7 @@ class WorkflowCloner:
         self.interval = interval
         self.running = False
         self._thread: Optional[threading.Thread] = None
+        self._last_event_ids: dict[int, int] = {}
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -129,6 +131,15 @@ class WorkflowCloner:
                 workflow_id=pid,
             )
         )
+        event_id = MutationLogger.log_mutation(
+            change="workflow_clone",
+            reason="clone top workflow",
+            trigger="top_pathways",
+            performance=after - before,
+            workflow_id=pid,
+            parent_id=self._last_event_ids.get(pid),
+        )
+        self._last_event_ids[pid] = event_id
 
     def clone_top_workflows(self, limit: int = 3) -> None:
         top = self.db.top_pathways(limit=limit)
