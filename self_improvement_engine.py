@@ -1106,6 +1106,7 @@ class SelfImprovementEngine:
             "synergy_throughput",
         ]
         deltas = {n: self._metric_delta(n) for n in names}
+        before_weight = self.synergy_weight_roi
         try:
             extra = getattr(self, "_last_orphan_metrics", None)
             self.synergy_learner.update(roi_delta, deltas, extra)
@@ -1155,6 +1156,8 @@ class SelfImprovementEngine:
             trigger="roi_delta",
             performance=roi_delta,
             workflow_id=0,
+            before_metric=before_weight,
+            after_metric=self.synergy_weight_roi,
             parent_id=self._last_mutation_id,
         )
         self._last_mutation_id = event_id
@@ -1436,12 +1439,30 @@ class SelfImprovementEngine:
                 reason="self_improvement",
                 trigger="optimize_self",
             )
+            before_metric = 0.0
+            after_metric = delta
+            if self.self_coding_engine.patch_db and patch_id is not None:
+                try:
+                    with self.self_coding_engine.patch_db._connect() as conn:
+                        row = conn.execute(
+                            "SELECT roi_before, roi_after FROM patch_history WHERE id=?",
+                            (patch_id,),
+                        ).fetchone()
+                    if row:
+                        before_metric = float(row[0])
+                        after_metric = float(row[1])
+                except Exception:
+                    after_metric = before_metric + delta
+            else:
+                after_metric = before_metric + delta
             event_id = MutationLogger.log_mutation(
                 change=f"self_opt_patch_{patch_id}",
                 reason="self_improvement",
                 trigger="optimize_self",
                 performance=delta,
                 workflow_id=0,
+                before_metric=before_metric,
+                after_metric=after_metric,
                 parent_id=self._last_mutation_id,
             )
             self._last_mutation_id = event_id
@@ -3167,12 +3188,30 @@ class SelfImprovementEngine:
                         reason="helper_patch",
                         trigger="automation_cycle",
                     )
+                    before_metric = 0.0
+                    after_metric = delta
+                    if self.self_coding_engine.patch_db and patch_id is not None:
+                        try:
+                            with self.self_coding_engine.patch_db._connect() as conn:
+                                row = conn.execute(
+                                    "SELECT roi_before, roi_after FROM patch_history WHERE id=?",
+                                    (patch_id,),
+                                ).fetchone()
+                            if row:
+                                before_metric = float(row[0])
+                                after_metric = float(row[1])
+                        except Exception:
+                            after_metric = before_metric + delta
+                    else:
+                        after_metric = before_metric + delta
                     event_id = MutationLogger.log_mutation(
                         change=f"helper_patch_{patch_id}",
                         reason="self-improvement helper patch",
                         trigger="automation_cycle",
                         performance=delta,
                         workflow_id=0,
+                        before_metric=before_metric,
+                        after_metric=after_metric,
                         parent_id=self._last_mutation_id,
                     )
                     self._last_mutation_id = event_id
@@ -3453,6 +3492,8 @@ class SelfImprovementEngine:
                 trigger="run_cycle",
                 performance=delta,
                 workflow_id=0,
+                before_metric=before_roi,
+                after_metric=after_roi,
                 parent_id=self._last_mutation_id,
             )
             self._last_mutation_id = event_id

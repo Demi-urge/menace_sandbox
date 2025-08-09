@@ -142,6 +142,8 @@ class WorkflowCloner:
             trigger="top_pathways",
             performance=after - before,
             workflow_id=pid,
+            before_metric=before,
+            after_metric=after,
             parent_id=event_id,
         )
         self._last_event_ids[pid] = event_id

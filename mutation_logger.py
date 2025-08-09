@@ -46,14 +46,21 @@ def log_mutation(
     trigger: str,
     performance: float,
     workflow_id: int,
+    before_metric: float = 0.0,
+    after_metric: float = 0.0,
     parent_id: int | None = None,
 ) -> int:
-    """Record a mutation event and return its row id."""
+    """Record a mutation event and return its row id.
+
+    ``roi`` is computed automatically from ``before_metric`` and
+    ``after_metric``.
+    """
+    roi = after_metric - before_metric
     event = EvolutionEvent(
         action=change,
-        before_metric=0.0,
-        after_metric=0.0,
-        roi=0.0,
+        before_metric=before_metric,
+        after_metric=after_metric,
+        roi=roi,
         reason=reason,
         trigger=trigger,
         performance=performance,
