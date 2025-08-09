@@ -12,6 +12,8 @@ from typing import Optional, Dict, Any, List
 from .data_bot import DataBot
 from .error_forecaster import ErrorForecaster
 from .dependency_update_bot import DependencyUpdater
+from .error_bot import ErrorDB
+from .knowledge_graph import KnowledgeGraph
 
 
 class SelfValidationDashboard:
@@ -22,12 +24,16 @@ class SelfValidationDashboard:
         data_bot: DataBot,
         error_forecaster: Optional[ErrorForecaster] = None,
         updater: Optional[DependencyUpdater] = None,
+        graph: Optional[KnowledgeGraph] = None,
+        error_db: Optional[ErrorDB] = None,
         *,
         history_file: str | Path | None = None,
     ) -> None:
         self.data_bot = data_bot
         self.error_forecaster = error_forecaster
         self.updater = updater
+        self.graph = graph
+        self.error_db = error_db
         self.history_file = Path(history_file) if history_file else None
         self.timer: Optional[threading.Timer] = None
 
@@ -51,6 +57,36 @@ class SelfValidationDashboard:
             "error_forecast": forecast,
             "outdated": updates,
         }
+
+        # Gather top error categories with affected modules from the knowledge graph
+        error_stats: List[Dict[str, Any]] = []
+        if self.graph and self.error_db:
+            try:
+                self.graph.update_error_stats(self.error_db)
+                g = getattr(self.graph, "graph", None)
+                if g is not None:
+                    nodes = [
+                        (n, d.get("weight", 0))
+                        for n, d in g.nodes(data=True)
+                        if n.startswith("error_type:")
+                    ]
+                    nodes.sort(key=lambda x: x[1], reverse=True)
+                    for enode, weight in nodes[:5]:
+                        modules = [
+                            m.split(":", 1)[1]
+                            for _, m, _ in g.out_edges(enode, data=True)
+                            if m.startswith("module:")
+                        ]
+                        error_stats.append(
+                            {
+                                "error_type": enode.split(":", 1)[1],
+                                "count": int(weight),
+                                "modules": modules,
+                            }
+                        )
+            except Exception:
+                error_stats = []
+        report["top_errors"] = error_stats
         history: List[Dict[str, Any]] = []
         if self.history_file and self.history_file.exists():
             try:
@@ -58,12 +94,27 @@ class SelfValidationDashboard:
             except Exception:
                 history = []
         if self.history_file:
-            entry = {"ts": datetime.utcnow().isoformat(), "roi_trend": trend, "error_forecast": forecast}
+            entry = {
+                "ts": datetime.utcnow().isoformat(),
+                "roi_trend": trend,
+                "error_forecast": forecast,
+                "top_errors": error_stats,
+            }
             history.append(entry)
             self.history_file.write_text(json.dumps(history, indent=2))
             trends = [float(h.get("roi_trend", 0.0)) for h in history]
             if trends:
                 report["aggregates"] = {"roi_trend_avg": sum(trends) / len(trends)}
+            # compile historical error trends for charting patch effectiveness
+            err_trends: Dict[str, List[int]] = {}
+            for h in history:
+                for e in h.get("top_errors", []):
+                    et = e.get("error_type")
+                    if et is None:
+                        continue
+                    err_trends.setdefault(et, []).append(int(e.get("count", 0)))
+            if err_trends:
+                report["error_trends"] = err_trends
         dest = Path(path)
         dest.write_text(json.dumps(report, indent=2))
         return dest
@@ -113,8 +164,22 @@ def cli(argv: list[str] | None = None) -> None:
         updater: DependencyUpdater | None = DependencyUpdater()
     except Exception:  # pragma: no cover - optional deps
         updater = None
+    try:
+        graph: KnowledgeGraph | None = KnowledgeGraph()
+    except Exception:  # pragma: no cover - optional deps
+        graph = None
+    try:
+        err_db: ErrorDB | None = ErrorDB()
+    except Exception:  # pragma: no cover - optional deps
+        err_db = None
 
-    dash = SelfValidationDashboard(data_bot, forecaster, updater)
+    dash = SelfValidationDashboard(
+        data_bot,
+        forecaster,
+        updater,
+        graph=graph,
+        error_db=err_db,
+    )
     dash.generate_report(args.output)
     if args.interval > 0:
         dash.schedule(args.output, interval=args.interval)
