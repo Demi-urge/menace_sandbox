@@ -296,6 +296,7 @@ class KnowledgeGraph:
         bot_id: str,
         error_type: str | None = None,
         root_module: str | None = None,
+        module_counts: dict[str, int] | None = None,
         *,
         patch_id: int | None = None,
         deploy_id: int | None = None,
@@ -319,11 +320,12 @@ class KnowledgeGraph:
             # increment node weight for frequency of this error type
             self.graph.nodes[enode]["weight"] = self.graph.nodes[enode].get("weight", 0) + 1
             self.graph.add_edge(enode, bnode, type="telemetry")
-            if root_module:
-                mnode = f"module:{root_module}"
+            mods = module_counts or ({root_module: 1} if root_module else {})
+            for mod, cnt in mods.items():
+                mnode = f"module:{mod}"
                 self.graph.add_node(mnode)
                 prev = self.graph.get_edge_data(enode, mnode, {}).get("weight", 0)
-                self.graph.add_edge(enode, mnode, type="module", weight=prev + 1)
+                self.graph.add_edge(enode, mnode, type="module", weight=prev + cnt)
             if patch_id is not None:
                 pnode = f"patch:{patch_id}"
                 self.graph.add_node(pnode)
