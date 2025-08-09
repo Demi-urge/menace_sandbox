@@ -349,6 +349,7 @@ class KnowledgeGraph:
         *,
         patch_id: int | None = None,
         deploy_id: int | None = None,
+        resolved: bool | None = None,
     ) -> None:
         """Add telemetry relationship from error type to bot.
 
@@ -357,7 +358,10 @@ class KnowledgeGraph:
         error ``cause`` (``error_type``) to the affected ``module`` store a
         ``weight`` representing how often the pair has been observed.  The
         calling ``root_module`` is also linked to the error type via a ``cause``
-        edge so upstream modules can be traced.
+        edge so upstream modules can be traced.  When ``patch_id`` and
+        ``resolved`` are supplied a ``patch:<id>`` node is linked to a
+        ``resolution:success`` or ``resolution:failure`` node to capture patch
+        outcomes.
         """
 
         if self.graph is None:
@@ -389,6 +393,14 @@ class KnowledgeGraph:
                 pnode = f"patch:{patch_id}"
                 self.graph.add_node(pnode)
                 self.graph.add_edge(enode, pnode, type="patch")
+                if resolved is not None:
+                    outcome = "success" if resolved else "failure"
+                    rnode = f"resolution:{outcome}"
+                    self.graph.add_node(rnode)
+                    prev = self.graph.get_edge_data(pnode, rnode, {}).get("weight", 0)
+                    self.graph.add_edge(
+                        pnode, rnode, type="resolution", weight=prev + 1
+                    )
             if deploy_id is not None:
                 dnode = f"deploy:{deploy_id}"
                 self.graph.add_node(dnode)
@@ -506,6 +518,7 @@ class KnowledgeGraph:
             sel = ["rowid", "bot_id", "error_type", "root_module"]
             has_patch = "patch_id" in cols
             has_deploy = "deploy_id" in cols
+            has_resolution = "resolution_status" in cols
             has_category = "category" in cols
             has_module = "module" in cols
             has_cause = "cause" in cols
@@ -514,6 +527,8 @@ class KnowledgeGraph:
                 sel.append("patch_id")
             if has_deploy:
                 sel.append("deploy_id")
+            if has_resolution:
+                sel.append("resolution_status")
             if has_category:
                 sel.append("category")
             if has_module:
@@ -534,6 +549,9 @@ class KnowledgeGraph:
                 idx += 1
             deploy = row[idx] if has_deploy else None
             if has_deploy:
+                idx += 1
+            resolution = row[idx] if has_resolution else None
+            if has_resolution:
                 idx += 1
             category = row[idx] if has_category else None
             if has_category:
@@ -561,6 +579,9 @@ class KnowledgeGraph:
                         root_mod,
                         patch_id=patch,
                         deploy_id=deploy,
+                        resolved=(str(resolution).lower() == "successful")
+                        if resolution is not None
+                        else None,
                     )
             if category and module:
                 for _ in range(max(cnt, 1)):

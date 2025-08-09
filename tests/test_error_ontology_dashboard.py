@@ -44,3 +44,19 @@ def test_generate_report_includes_cause(tmp_path):
     data = json.loads(dest.read_text())
     assert any(c["cause"] == "cause1" and c["count"] == 2 for c in data["cause_stats"])
     assert any(c["cause"] == "cause2" and c["count"] == 1 for c in data["cause_stats"])
+
+
+def test_category_success(tmp_path):
+    db = ErrorDB(tmp_path / "e.db")
+    db.conn.executemany(
+        "INSERT INTO telemetry(category,resolution_status) VALUES (?,?)",
+        [("cat1", "successful"), ("cat1", "fatal"), ("cat2", "successful")],
+    )
+    db.conn.commit()
+    dash = ErrorOntologyDashboard(error_db=db, graph=DummyGraph())
+    with dash.app.test_request_context():
+        resp, _ = dash.category_success()
+    data = json.loads(resp.get_data())
+    rates = dict(zip(data["labels"], data["rate"]))
+    assert rates["cat1"] == 0.5
+    assert rates["cat2"] == 1.0
