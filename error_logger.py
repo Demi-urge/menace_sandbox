@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field
 
 from typing import TYPE_CHECKING
 
-from .error_ontology import ErrorType
+from .error_ontology import ErrorType, ErrorCategory, classify_exception
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .error_bot import ErrorDB
@@ -41,6 +41,8 @@ class TelemetryEvent(BaseModel):
     task_id: str | None = None
     bot_id: str | None = None
     error_type: ErrorType = ErrorType.UNKNOWN
+    category: ErrorCategory = ErrorCategory.Unknown
+    root_cause: str = ""
     stack_trace: str = ""
     root_module: str = ""
     module: str = ""
@@ -154,6 +156,13 @@ class ErrorClassifier:
                 self.logger.warning("semantic classification failed: %s", e)
         return ErrorType.UNKNOWN
 
+    def classify_details(self, exc: Exception, stack: str) -> tuple[ErrorType, ErrorCategory, str]:
+        """Return legacy type plus ontology category and root cause."""
+        err_type = self.classify(stack)
+        category = classify_exception(exc, stack)
+        root_cause = exc.__class__.__name__ if category is not ErrorCategory.Unknown else ""
+        return err_type, category, root_cause
+
 
 class ErrorLogger:
     """Wrap functions to capture exceptions and log telemetry."""
@@ -212,10 +221,13 @@ class ErrorLogger:
             env = os.getenv("DEPLOY_ID")
             if env and env.isdigit():
                 deploy_id = int(env)
+        err_type, category, root_cause = self.classifier.classify_details(exc, stack)
         event = TelemetryEvent(
             task_id=task_id,
             bot_id=bot_id,
-            error_type=self.classifier.classify(stack),
+            error_type=err_type,
+            category=category,
+            root_cause=root_cause,
             stack_trace=stack,
             root_module=root_module,
             module=module,
