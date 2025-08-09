@@ -21,6 +21,7 @@ from statistics import pstdev
 from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from .knowledge_graph import KnowledgeGraph
+from .quick_fix_engine import generate_patch
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -196,7 +197,7 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return
         for mod in modules:
             try:
-                self.engine.patch_file(Path(mod), "preemptive_fix")
+                generate_patch(mod, self.engine)
                 self.logger.info("preemptive patch applied", extra=log_record(module=mod))
             except Exception:
                 self.logger.exception("preemptive fix failed", extra=log_record(module=mod))
