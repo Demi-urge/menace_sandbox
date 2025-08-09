@@ -521,12 +521,13 @@ class EvolutionOrchestrator:
             try:
                 wf_key = getattr(res, "workflow_id", res.variant)
                 parent = self._workflow_event_ids.get(wf_key)
+                change = res.roi - base_roi
                 event_id = self.history.add(
                     EvolutionEvent(
                         action=f"experiment:{res.variant}",
                         before_metric=base_roi,
                         after_metric=res.roi,
-                        roi=res.roi - base_roi,
+                        roi=change,
                         trending_topic=getattr(res, "trending_topic", None),
                         reason="workflow experiment",
                         trigger="experiment",
@@ -535,6 +536,15 @@ class EvolutionOrchestrator:
                     )
                 )
                 self._workflow_event_ids[wf_key] = event_id
+                # detailed experiment logging
+                self.logger.info(
+                    "workflow_variant=%s change=%.4f reason=%s trigger=%s parent=%s",
+                    res.variant,
+                    change,
+                    "experiment",
+                    "experiment",
+                    parent,
+                )
                 vals = self._workflow_roi_history.setdefault(res.variant, [])
                 vals.append(res.roi)
                 if len(vals) > 5:
@@ -551,6 +561,16 @@ class EvolutionOrchestrator:
                     continue
                 avg = sum(vals) / len(vals)
                 if avg > main_avg * 1.05:
+                    parent = self._workflow_event_ids.get(wf)
+                    change_desc = f"avg {avg:.4f} > main {main_avg:.4f}"
+                    self.logger.info(
+                        "workflow_variant=%s change=%s reason=%s trigger=%s parent=%s",
+                        wf,
+                        change_desc,
+                        "benchmark",
+                        "benchmark",
+                        parent,
+                    )
                     self._replace_main_workflow(wf)
                     main_wf = wf
                     main_avg = avg

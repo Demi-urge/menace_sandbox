@@ -58,8 +58,21 @@ class SystemEvolutionManager:
         preds = self.struct_bot.predict_changes(snap)
         ga_results = {}
         for b in self.bots:
-            rec = self.ga_manager.run_cycle(b)
-            ga_results[b] = rec.roi
+            try:
+                rec = self.ga_manager.run_cycle(b)
+                roi_val = rec.roi
+            except Exception as exc:  # pragma: no cover - best effort logging
+                logging.getLogger(__name__).warning("GA cycle failed for %s: %s", b, exc)
+                roi_val = 0.0
+            ga_results[b] = roi_val
+            logging.getLogger(__name__).info(
+                "bot_variant=%s change=%.4f reason=%s trigger=%s parent=%s",
+                b,
+                roi_val,
+                "evolution",
+                "ga_cycle",
+                None,
+            )
         if ga_results:
             avg_roi = float(sum(ga_results.values()) / len(ga_results))
             try:

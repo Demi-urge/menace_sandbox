@@ -120,6 +120,17 @@ class ExperimentManager:
                 )
             except Exception as exc:
                 logger.warning("failed inserting experiment log for %s: %s", name, exc)
+            # detailed logging for bot experiments
+            prev = prev_vals[-1] if prev_vals else 0.0
+            change_desc = roi_val - prev
+            logger.info(
+                "bot_variant=%s change=%.4f reason=%s trigger=%s parent=%s",
+                name,
+                change_desc,
+                "experiment",
+                "experiment",
+                None,
+            )
         return results
 
     def compare_variants(self, results: Iterable[ExperimentResult]) -> Dict[tuple[str, str], tuple[float, float]]:
