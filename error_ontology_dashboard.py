@@ -11,6 +11,7 @@ from flask import jsonify, render_template_string
 from .metrics_dashboard import MetricsDashboard
 from .error_bot import ErrorDB
 from .knowledge_graph import KnowledgeGraph
+from .error_cluster_predictor import ErrorClusterPredictor
 
 
 _TEMPLATE = """
@@ -25,16 +26,19 @@ _TEMPLATE = """
 <canvas id="by_module" width="400" height="200"></canvas>
 <canvas id="by_cause" width="400" height="200"></canvas>
 <canvas id="success_by_category" width="400" height="200"></canvas>
+<canvas id="predicted_modules" width="400" height="200"></canvas>
 <script>
 async function load(){
   const c = await fetch('/category_data').then(r=>r.json());
   const m = await fetch('/module_data').then(r=>r.json());
   const k = await fetch('/cause_data').then(r=>r.json());
   const s = await fetch('/category_success').then(r=>r.json());
+  const p = await fetch('/predicted_modules').then(r=>r.json());
   new Chart(document.getElementById('by_category'), {type:'bar',data:{labels:c.labels,datasets:[{label:'Count',data:c.count}]}});
   new Chart(document.getElementById('by_module'), {type:'bar',data:{labels:m.labels,datasets:[{label:'Count',data:m.count}]}});
   new Chart(document.getElementById('by_cause'), {type:'bar',data:{labels:k.labels,datasets:[{label:'Count',data:k.count}]}});
   new Chart(document.getElementById('success_by_category'), {type:'bar',data:{labels:s.labels,datasets:[{label:'Success Rate',data:s.rate}]},options:{scales:{y:{beginAtZero:true,max:1}}}});
+  new Chart(document.getElementById('predicted_modules'), {type:'bar',data:{labels:p.labels,datasets:[{label:'Risk Rank',data:p.rank}]}});
 }
 load();
 </script>
@@ -56,11 +60,13 @@ class ErrorOntologyDashboard(MetricsDashboard):
         super().__init__(history_file)
         self.error_db = error_db or ErrorDB()
         self.graph = graph or KnowledgeGraph()
+        self.predictor = ErrorClusterPredictor(self.graph, self.error_db)
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/category_data', 'category_data', self.category_data)
         self.app.add_url_rule('/module_data', 'module_data', self.module_data)
         self.app.add_url_rule('/cause_data', 'cause_data', self.cause_data)
         self.app.add_url_rule('/category_success', 'category_success', self.category_success)
+        self.app.add_url_rule('/predicted_modules', 'predicted_modules', self.predicted_modules)
 
     # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
@@ -101,6 +107,11 @@ class ErrorOntologyDashboard(MetricsDashboard):
         labels = [r[0] for r in rows]
         rate = [float(r[1] or 0.0) for r in rows]
         return jsonify({'labels': labels, 'rate': rate}), 200
+
+    def predicted_modules(self) -> tuple[str, int]:
+        modules = self.predictor.predict_high_risk_modules()
+        rank = list(range(len(modules), 0, -1))
+        return jsonify({'labels': modules, 'rank': rank}), 200
 
     def generate_report(self, path: str | Path = 'error_ontology_report.json') -> Path:
         """Generate a JSON report of error counts."""

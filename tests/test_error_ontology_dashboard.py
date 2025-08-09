@@ -22,6 +22,11 @@ class DummyGraph:
         pass
 
 
+class DummyPredictor:
+    def predict_high_risk_modules(self, *, min_cluster_size: int = 2, top_n: int = 5):
+        return ["mod1", "mod2"]
+
+
 def test_generate_report_includes_cause(tmp_path):
     db = ErrorDB(tmp_path / "e.db")
     db.conn.execute(
@@ -60,3 +65,14 @@ def test_category_success(tmp_path):
     rates = dict(zip(data["labels"], data["rate"]))
     assert rates["cat1"] == 0.5
     assert rates["cat2"] == 1.0
+
+
+def test_predicted_modules(tmp_path):
+    db = ErrorDB(tmp_path / "e.db")
+    dash = ErrorOntologyDashboard(error_db=db, graph=DummyGraph())
+    dash.predictor = DummyPredictor()
+    with dash.app.test_request_context():
+        resp, _ = dash.predicted_modules()
+    data = json.loads(resp.get_data())
+    assert data["labels"] == ["mod1", "mod2"]
+    assert data["rank"] == [2, 1]

@@ -183,3 +183,19 @@ Example output:
 roi_forecast 0.82
 synergy_adaptation_actions_total{action="use_history"} 3
 ```
+
+## High-Risk Module Predictions
+
+`ErrorOntologyDashboard` exposes a prediction API for modules likely to fail.
+The endpoint `/predicted_modules` uses
+`ErrorClusterPredictor.predict_high_risk_modules` to rank modules by risk and
+returns a JSON object with `labels` and `rank` arrays.
+
+Start the dashboard and query the predictions:
+
+```bash
+python -m menace.error_ontology_dashboard --port 8003
+curl http://localhost:8003/predicted_modules
+```
+
+The response helps operators anticipate which modules may require attention.
