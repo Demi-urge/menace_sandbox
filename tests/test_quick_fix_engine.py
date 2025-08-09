@@ -93,3 +93,52 @@ def test_run_targets_frequent_module(tmp_path, monkeypatch):
     assert engine.manager.calls[0][0] == Path("b.py")
     assert engine.graph.events[0][0][2] == "b"
     assert engine.graph.updated is engine.db
+
+
+class DummyPreemptiveDB:
+    def __init__(self):
+        self.records = []
+
+    def log_preemptive_patch(self, module, risk, patch_id):
+        self.records.append((module, risk, patch_id))
+
+
+class DummyResult:
+    def __init__(self, patch_id):
+        self.patch_id = patch_id
+
+
+class DummyManager2:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.calls = []
+
+    def run_patch(self, path, desc):
+        self.calls.append((path, desc))
+        if self.fail:
+            raise RuntimeError("boom")
+        return DummyResult(123)
+
+
+def test_preemptive_patch_modules(tmp_path, monkeypatch):
+    db = DummyPreemptiveDB()
+    mgr = DummyManager2()
+    engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mod.py").write_text("x=1\n")
+    modules = [("mod", 0.9), ("low", 0.1)]
+    engine.preemptive_patch_modules(modules, risk_threshold=0.5)
+    assert mgr.calls == [(Path("mod.py"), "preemptive_patch")]
+    assert db.records == [("mod", 0.9, 123)]
+
+
+def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
+    db = DummyPreemptiveDB()
+    mgr = DummyManager2(fail=True)
+    engine = QuickFixEngine(error_db=db, manager=mgr, threshold=0, graph=None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "mod.py").write_text("x=1\n")
+    monkeypatch.setattr(quick_fix, "generate_patch", lambda m, engine=None: 999)
+    engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
+    assert mgr.calls == [(Path("mod.py"), "preemptive_patch")]
+    assert db.records == [("mod", 0.8, 999)]

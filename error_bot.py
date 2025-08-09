@@ -209,6 +209,17 @@ class ErrorDB:
             )
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS preemptive_patches(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                module TEXT,
+                risk_score REAL,
+                patch_id INTEGER,
+                ts TEXT
+            )
+            """
+        )
         self.conn.commit()
 
     def _publish(self, topic: str, payload: object) -> None:
@@ -246,6 +257,17 @@ class ErrorDB:
 
     def discrepancies(self) -> pd.DataFrame:
         return pd.read_sql("SELECT message, ts FROM discrepancies", self.conn)
+
+    def log_preemptive_patch(
+        self, module: str, risk_score: float, patch_id: int | None
+    ) -> None:
+        """Persist information about a preemptive patch action."""
+
+        self.conn.execute(
+            "INSERT INTO preemptive_patches(module, risk_score, patch_id, ts) VALUES (?,?,?,?)",
+            (module, float(risk_score), patch_id, datetime.utcnow().isoformat()),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Safe mode helpers
