@@ -23,12 +23,15 @@ _TEMPLATE = """
 <h1>Error Ontology Dashboard</h1>
 <canvas id="by_category" width="400" height="200"></canvas>
 <canvas id="by_module" width="400" height="200"></canvas>
+<canvas id="by_cause" width="400" height="200"></canvas>
 <script>
 async function load(){
   const c = await fetch('/category_data').then(r=>r.json());
   const m = await fetch('/module_data').then(r=>r.json());
+  const k = await fetch('/cause_data').then(r=>r.json());
   new Chart(document.getElementById('by_category'), {type:'bar',data:{labels:c.labels,datasets:[{label:'Count',data:c.count}]}});
   new Chart(document.getElementById('by_module'), {type:'bar',data:{labels:m.labels,datasets:[{label:'Count',data:m.count}]}});
+  new Chart(document.getElementById('by_cause'), {type:'bar',data:{labels:k.labels,datasets:[{label:'Count',data:k.count}]}});
 }
 load();
 </script>
@@ -53,6 +56,7 @@ class ErrorOntologyDashboard(MetricsDashboard):
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/category_data', 'category_data', self.category_data)
         self.app.add_url_rule('/module_data', 'module_data', self.module_data)
+        self.app.add_url_rule('/cause_data', 'cause_data', self.cause_data)
 
     # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
@@ -76,6 +80,15 @@ class ErrorOntologyDashboard(MetricsDashboard):
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
 
+    def cause_data(self) -> tuple[str, int]:
+        cur = self.error_db.conn.execute(
+            'SELECT COALESCE(cause, ""), COUNT(*) FROM telemetry GROUP BY cause'
+        )
+        rows = cur.fetchall()
+        labels = [r[0] for r in rows]
+        count = [int(r[1]) for r in rows]
+        return jsonify({'labels': labels, 'count': count}), 200
+
     def generate_report(self, path: str | Path = 'error_ontology_report.json') -> Path:
         """Generate a JSON report of error counts."""
         # Keep graph in sync with latest stats
@@ -92,8 +105,18 @@ class ErrorOntologyDashboard(MetricsDashboard):
             {"category": r[0], "module": r[1], "count": int(r[2])}
             for r in rows
         ]
+        cause_cur = self.error_db.conn.execute(
+            'SELECT COALESCE(cause, "") as cause, COUNT(*) as count FROM telemetry GROUP BY cause'
+        )
+        cause_rows = cause_cur.fetchall()
+        causes = [
+            {"cause": r[0], "count": int(r[1])}
+            for r in cause_rows
+        ]
         dest = Path(path)
-        dest.write_text(json.dumps({"error_stats": data}, indent=2))
+        dest.write_text(
+            json.dumps({"error_stats": data, "cause_stats": causes}, indent=2)
+        )
         return dest
 
 
