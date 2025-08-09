@@ -394,6 +394,51 @@ class ErrorDB:
             for row in cur.fetchall()
         ]
 
+    def top_error_module(
+        self, bot_id: str | None = None, *, unresolved_only: bool = False
+    ) -> tuple[str, str, dict[str, int], int, str] | None:
+        """Return the most frequent ``(error_type, module)`` pair.
+
+        Parameters:
+            bot_id: optionally restrict to a specific bot.
+            unresolved_only: if ``True``, only consider unresolved telemetry.
+
+        Returns a tuple ``(error_type, module, module_counts, count, sample_bot)``
+        where ``module_counts`` aggregates counts for the selected
+        ``error_type`` across modules and ``sample_bot`` is an example bot id
+        for the returned pair.
+        """
+
+        where: list[str] = []
+        params: list[str] = []
+        if bot_id:
+            where.append("bot_id=?")
+            params.append(bot_id)
+        if unresolved_only:
+            where.append("resolution_status='unresolved'")
+        query = "SELECT bot_id, error_type, module_counts FROM telemetry"
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        cur = self.conn.execute(query, params)
+        pair_counts: dict[tuple[str, str], int] = {}
+        samples: dict[tuple[str, str], str] = {}
+        module_totals: dict[str, dict[str, int]] = {}
+        for bot, etype, mods_json in cur.fetchall():
+            try:
+                mods = json.loads(mods_json or "{}")
+            except Exception:
+                mods = {}
+            for mod, cnt in mods.items():
+                key = (str(etype), str(mod))
+                pair_counts[key] = pair_counts.get(key, 0) + int(cnt)
+                samples.setdefault(key, str(bot or ""))
+                mt = module_totals.setdefault(str(etype), {})
+                mt[str(mod)] = mt.get(str(mod), 0) + int(cnt)
+        if not pair_counts:
+            return None
+        (etype, module), count = max(pair_counts.items(), key=lambda kv: kv[1])
+        return etype, module, module_totals.get(etype, {}), count, samples[(etype, module)]
+
     # ------------------------------------------------------------------
     def set_error_clusters(self, clusters: dict[str, int]) -> None:
         """Persist ``error_type`` → ``cluster_id`` mappings."""
