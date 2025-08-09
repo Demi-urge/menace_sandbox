@@ -120,6 +120,7 @@ from sandbox_settings import SandboxSettings
 from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
+from menace.quick_fix_engine import QuickFixEngine
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -735,6 +736,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
 
     graph = KnowledgeGraph()
     telem_db = ErrorDB(Path(tmp) / "errors.db", graph=graph)
+    error_logger = ErrorLogger(telem_db, knowledge_graph=graph)
     forecaster = ErrorForecaster(metrics_db, graph=graph)
     improver.error_bot = ErrorBot(
         telem_db,
@@ -743,6 +745,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         forecaster=forecaster,
         improvement_engine=improver,
     )
+    improver.error_bot.error_logger = error_logger
     settings = SandboxSettings()
 
     class _TelemProxy:
@@ -795,6 +798,12 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         llm_client=va_client,
         patch_suggestion_db=suggestion_db,
     )
+    from menace.self_coding_manager import SelfCodingManager
+    from menace.model_automation_pipeline import ModelAutomationPipeline
+
+    quick_manager = SelfCodingManager(engine, ModelAutomationPipeline(), bot_name="menace")
+    quick_fix_engine = QuickFixEngine(telem_db, quick_manager, graph=graph)
+
     gpt_client = None
     if os.getenv("OPENAI_API_KEY"):
         try:
@@ -810,8 +819,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         state_getter=improver._policy_state,
     )
-    sandbox.error_logger = improver.error_bot.error_logger
+    sandbox.error_logger = error_logger
     sandbox.error_forecaster = forecaster
+    sandbox.quick_fix_engine = quick_fix_engine
     sandbox.graph = graph
     tester = SelfTestService(
         telem_db,
@@ -1119,6 +1129,57 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         except Exception as exc:
             err_logger.log(exc, section, "sandbox_runner")
             raise
+        finally:
+            forecaster = getattr(ctx.sandbox, "error_forecaster", None)
+            qfix = getattr(ctx.sandbox, "quick_fix_engine", None)
+            if forecaster:
+                try:
+                    forecaster.train()
+                    bots: list[str] = []
+                    try:
+                        df = forecaster.metrics_db.fetch(None)
+                        if hasattr(df, "empty"):
+                            if not getattr(df, "empty", True):
+                                bots = list(dict.fromkeys(df["bot"].tolist()))
+                        elif isinstance(df, list):
+                            bots = list(
+                                dict.fromkeys(r.get("bot") for r in df if r.get("bot"))
+                            )
+                    except Exception:
+                        bots = []
+                    for b in bots:
+                        try:
+                            probs = forecaster.predict_error_prob(b, steps=1)
+                        except Exception:
+                            continue
+                        if probs and probs[0] > 0.8:
+                            modules: list[str] = []
+                            if getattr(ctx.sandbox, "graph", None):
+                                try:
+                                    chain_nodes = forecaster.predict_failure_chain(
+                                        b, ctx.sandbox.graph, steps=3
+                                    )
+                                    modules = [
+                                        n.split(":", 1)[1]
+                                        for n in chain_nodes
+                                        if n.startswith("module:")
+                                    ]
+                                except Exception:
+                                    modules = []
+                            if modules:
+                                logger.info(
+                                    "predicted high risk",
+                                    extra=log_record(bot=b, modules=modules),
+                                )
+                            if qfix:
+                                try:
+                                    qfix.run(b)
+                                except Exception:
+                                    logger.exception(
+                                        "quick fix engine failed for %s", b
+                                    )
+                except Exception:
+                    logger.exception("error forecasting failed")
 
     switched = False
     section_results: dict[str, dict[str, list]] = {}
