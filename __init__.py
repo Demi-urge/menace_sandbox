@@ -244,5 +244,6 @@ __all__ = [
     "module_index_db",
     "synergy_history_db",
     "synergy_auto_trainer",
+    "variant_manager",
 ]
 __version__ = "0.1.0"
