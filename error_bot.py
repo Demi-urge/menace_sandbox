@@ -121,6 +121,7 @@ class ErrorDB:
                 stack_trace TEXT,
                 root_module TEXT,
                 module TEXT,
+                module_counts TEXT,
                 inferred_cause TEXT,
                 ts TEXT,
                 resolution_status TEXT,
@@ -138,6 +139,8 @@ class ErrorDB:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN module TEXT")
         if "inferred_cause" not in cols:
             self.conn.execute("ALTER TABLE telemetry ADD COLUMN inferred_cause TEXT")
+        if "module_counts" not in cols:
+            self.conn.execute("ALTER TABLE telemetry ADD COLUMN module_counts TEXT")
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS error_stats(
@@ -329,10 +332,11 @@ class ErrorDB:
 
     def add_telemetry(self, event: "TelemetryEvent") -> None:
         """Insert a high-resolution error telemetry entry."""
+        mods = event.module_counts or ({event.module: 1} if event.module else {})
         self.conn.execute(
             """
-            INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, module, inferred_cause, ts, resolution_status, patch_id, deploy_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO telemetry(task_id, bot_id, error_type, stack_trace, root_module, module, module_counts, inferred_cause, ts, resolution_status, patch_id, deploy_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.task_id,
@@ -341,6 +345,7 @@ class ErrorDB:
                 event.stack_trace,
                 event.root_module,
                 event.module,
+                json.dumps(mods),
                 event.inferred_cause,
                 event.timestamp,
                 event.resolution_status,
@@ -348,16 +353,18 @@ class ErrorDB:
                 event.deploy_id,
             ),
         )
-        self.conn.execute(
-            """
-            INSERT INTO error_stats(error_type, module, count) VALUES(?,?,1)
-            ON CONFLICT(error_type, module) DO UPDATE SET count=count+1
-            """,
-            (
-                getattr(event.error_type, "value", event.error_type),
-                event.module,
-            ),
-        )
+        for mod, count in mods.items():
+            self.conn.execute(
+                """
+                INSERT INTO error_stats(error_type, module, count) VALUES(?,?,?)
+                ON CONFLICT(error_type, module) DO UPDATE SET count=count+excluded.count
+                """,
+                (
+                    getattr(event.error_type, "value", event.error_type),
+                    mod,
+                    count,
+                ),
+            )
         self.conn.commit()
         self._publish(
             "telemetry:new",
@@ -368,6 +375,7 @@ class ErrorDB:
                 "stack_trace": event.stack_trace,
                 "root_module": event.root_module,
                 "module": event.module,
+                "module_counts": mods,
                 "inferred_cause": event.inferred_cause,
                 "ts": event.timestamp,
                 "resolution_status": event.resolution_status,

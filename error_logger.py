@@ -19,7 +19,7 @@ try:
 except Exception:  # pragma: no cover - optional
     TelemetryReplicator = None  # type: ignore
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from typing import TYPE_CHECKING
 
@@ -44,6 +44,7 @@ class TelemetryEvent(BaseModel):
     stack_trace: str = ""
     root_module: str = ""
     module: str = ""
+    module_counts: dict[str, int] = Field(default_factory=dict)
     inferred_cause: str = ""
     timestamp: str = datetime.utcnow().isoformat()
     resolution_status: str = "unresolved"
@@ -193,9 +194,15 @@ class ErrorLogger:
     ) -> None:
         stack = traceback.format_exc()
         module = ""
+        module_counts: dict[str, int] = {}
         tb = traceback.extract_tb(exc.__traceback__)
+        for frame in tb:
+            mod = os.path.splitext(os.path.basename(frame.filename))[0]
+            if mod:
+                module_counts[mod] = module_counts.get(mod, 0) + 1
         if tb:
             module = os.path.splitext(os.path.basename(tb[-1].filename))[0]
+        root_module = max(module_counts, key=module_counts.get, default="")
         cause = str(exc)
         if patch_id is None:
             env = os.getenv("PATCH_ID")
@@ -210,8 +217,9 @@ class ErrorLogger:
             bot_id=bot_id,
             error_type=self.classifier.classify(stack),
             stack_trace=stack,
-            root_module=exc.__class__.__module__.split(".")[0],
+            root_module=root_module,
             module=module,
+            module_counts=module_counts,
             inferred_cause=cause,
             timestamp=datetime.utcnow().isoformat(),
             resolution_status="unresolved",
