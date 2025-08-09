@@ -335,6 +335,36 @@ class KnowledgeGraph:
                 self.graph.add_node(dnode)
                 self.graph.add_edge(enode, dnode, type="deploy")
 
+    def add_error_instance(self, category: str, module: str, cause: str | None = None) -> None:
+        """Record an observed ``category``/``module``/``cause`` chain.
+
+        This creates nodes ``error_category:<category>``, ``module:<module>`` and
+        ``cause:<cause>`` (if provided) with edges ``category -> module`` and
+        ``module -> cause``.  Occurrence counts are stored on the edges and also
+        aggregated on the ``error_category`` node so frequency queries can be
+        performed later.
+        """
+
+        if self.graph is None:
+            return
+
+        cnode = f"error_category:{category}"
+        mnode = f"module:{module}"
+        self.graph.add_node(cnode)
+        self.graph.add_node(mnode)
+
+        # increment weights for category node and category->module edge
+        self.graph.nodes[cnode]["weight"] = self.graph.nodes[cnode].get("weight", 0) + 1
+        prev = self.graph.get_edge_data(cnode, mnode, {}).get("weight", 0)
+        self.graph.add_edge(cnode, mnode, type="module", weight=prev + 1)
+
+        if cause:
+            conode = f"cause:{cause}"
+            self.graph.add_node(conode)
+            self.graph.nodes[conode]["weight"] = self.graph.nodes[conode].get("weight", 0) + 1
+            prev = self.graph.get_edge_data(mnode, conode, {}).get("weight", 0)
+            self.graph.add_edge(mnode, conode, type="cause", weight=prev + 1)
+
     def update_error_stats(self, err_db: object) -> None:
         """Synchronise error statistics from ``err_db``.
 
@@ -400,26 +430,52 @@ class KnowledgeGraph:
             codes = [r[0] for r in cur.execute("SELECT code_id FROM error_code WHERE error_id=?", (eid,)).fetchall()]
             self.add_error(eid, msg, bots=bots, models=models, codes=codes, summary_lookup=_summary)
 
+        has_patch = has_deploy = has_category = False
+        has_module = has_cause = has_freq = False
         try:
             cols = [r[1] for r in cur.execute("PRAGMA table_info(telemetry)").fetchall()]
             sel = ["bot_id", "error_type", "root_module"]
             has_patch = "patch_id" in cols
             has_deploy = "deploy_id" in cols
+            has_category = "category" in cols
+            has_module = "module" in cols
+            has_cause = "cause" in cols
+            has_freq = "frequency" in cols
             if has_patch:
                 sel.append("patch_id")
             if has_deploy:
                 sel.append("deploy_id")
+            if has_category:
+                sel.append("category")
+            if has_module:
+                sel.append("module")
+            if has_cause:
+                sel.append("cause")
+            if has_freq:
+                sel.append("frequency")
             query = f"SELECT {', '.join(sel)} FROM telemetry"
             telemetry = cur.execute(query).fetchall()
         except Exception:
             telemetry = []
         for row in telemetry:
-            bot, etype, mod = row[0], row[1], row[2]
+            bot, etype, root_mod = row[0], row[1], row[2]
             idx = 3
             patch = row[idx] if has_patch else None
             if has_patch:
                 idx += 1
             deploy = row[idx] if has_deploy else None
+            if has_deploy:
+                idx += 1
+            category = row[idx] if has_category else None
+            if has_category:
+                idx += 1
+            module = row[idx] if has_module else root_mod
+            if has_module:
+                idx += 1
+            cause = row[idx] if has_cause else None
+            if has_cause:
+                idx += 1
+            freq = row[idx] if has_freq else 1
             if not bot:
                 continue
             for b in str(bot).split(";"):
@@ -428,10 +484,17 @@ class KnowledgeGraph:
                 self.add_telemetry_event(
                     b,
                     etype,
-                    mod,
+                    root_mod,
                     patch_id=patch,
                     deploy_id=deploy,
                 )
+            if category and module:
+                try:
+                    cnt = int(freq)
+                except Exception:
+                    cnt = 1
+                for _ in range(max(cnt, 1)):
+                    self.add_error_instance(category, module, cause)
 
     # ------------------------------------------------------------------
     # Error clustering and failure chain analysis
