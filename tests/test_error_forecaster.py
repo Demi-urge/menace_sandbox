@@ -79,3 +79,30 @@ def test_predict_failure_chain(tmp_path):
     mods = fc.predict_failure_chain("B", kg, steps=2)
     assert "module:M1" in mods
     assert "module:M2" in mods
+
+
+def test_preemptive_patch_selection(tmp_path):
+    mdb = MetricsDB(tmp_path / "m.db")
+    for i in range(2):
+        mdb.add(
+            MetricRecord(
+                bot="C",
+                cpu=1.0,
+                memory=1.0,
+                response_time=0.0,
+                disk_io=0.0,
+                net_io=0.0,
+                errors=0,
+            )
+        )
+    kg = KnowledgeGraph()
+    kg.graph.add_node("bot:C")
+    kg.graph.add_node("error_type:E", weight=2)
+    kg.graph.add_edge("error_type:E", "bot:C", type="telemetry")
+    kg.graph.add_edge("error_type:E", "module:M", type="module", weight=2)
+    kg.graph.add_edge("error_type:E", "patch:P2", type="patch")
+    fc = ErrorForecaster(mdb, seq_len=1, epochs=1)
+    fc.train()
+    fc.predict_error_prob = lambda bot, steps=1: [1.0]
+    patches = fc.suggest_patches("C", kg)
+    assert "patch:P2" in patches

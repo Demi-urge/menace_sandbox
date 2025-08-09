@@ -434,6 +434,137 @@ class KnowledgeGraph:
                 )
 
     # ------------------------------------------------------------------
+    # Error clustering and failure chain analysis
+    # ------------------------------------------------------------------
+
+    def error_clusters(
+        self, min_weight: int = 1, min_cluster_size: int = 2
+    ) -> Dict[str, int]:
+        """Group ``error_type`` nodes by frequency and shared modules.
+
+        Returns a mapping of error node ids to their cluster label. Cluster
+        assignments are also stored on each ``error_type`` node under the
+        ``cluster`` attribute for later lookups.
+        """
+
+        if self.graph is None:
+            return {}
+
+        errors: List[str] = [
+            n
+            for n, data in self.graph.nodes(data=True)
+            if n.startswith("error_type:") and data.get("weight", 0) >= min_weight
+        ]
+        if not errors:
+            return {}
+
+        modules = sorted(
+            {
+                m
+                for e in errors
+                for _, m, _ in self.graph.out_edges(e, data=True)
+                if m.startswith("module:")
+            }
+        )
+        if not modules:
+            return {}
+        mod_index = {m: i for i, m in enumerate(modules)}
+        vectors: List[List[float]] = []
+        for e in errors:
+            vec = [0.0] * (len(modules) + 1)
+            for _, m, d in self.graph.out_edges(e, data=True):
+                if m.startswith("module:"):
+                    idx = mod_index[m]
+                    vec[idx] = float(d.get("weight", 0.0))
+            vec[-1] = float(self.graph.nodes[e].get("weight", 0.0))
+            vectors.append(vec)
+
+        labels: List[int]
+        if hdbscan and len(errors) >= min_cluster_size:
+            try:
+                clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size)
+                labels = list(clusterer.fit_predict(vectors))
+            except Exception:
+                labels = [0] * len(errors)
+        else:
+            n_clusters = max(1, len(errors) // max(1, min_cluster_size))
+            if KMeans:
+                km = KMeans(n_clusters=n_clusters, n_init="auto")  # type: ignore[arg-type]
+            else:
+                km = _SimpleKMeans(n_clusters=n_clusters)
+            km.fit(vectors)
+            labels = list(km.predict(vectors))
+
+        mapping: Dict[str, int] = {}
+        for node, lbl in zip(errors, labels):
+            mapping[node] = int(lbl)
+            self.graph.nodes[node]["cluster"] = int(lbl)
+        return mapping
+
+    def cluster_failure_chain(self, error_type: str, top: int = 5) -> List[str]:
+        """Return modules most associated with the cluster of ``error_type``."""
+
+        if self.graph is None:
+            return []
+        enode = (
+            error_type if error_type.startswith("error_type:") else f"error_type:{error_type}"
+        )
+        if enode not in self.graph:
+            return []
+        cluster = self.graph.nodes[enode].get("cluster")
+        if cluster is None:
+            self.error_clusters()
+            cluster = self.graph.nodes[enode].get("cluster")
+            if cluster is None:
+                return []
+        modules: Dict[str, int] = {}
+        for node, data in self.graph.nodes(data=True):
+            if node.startswith("error_type:") and data.get("cluster") == cluster:
+                for _, m, d in self.graph.out_edges(node, data=True):
+                    if m.startswith("module:"):
+                        modules[m] = modules.get(m, 0) + int(d.get("weight", 1))
+        return [m for m, _ in sorted(modules.items(), key=lambda x: x[1], reverse=True)[:top]]
+
+    def bot_failure_chain(self, bot: str, top: int = 5) -> List[str]:
+        """Return likely module failure chain for ``bot`` based on cluster history."""
+
+        if self.graph is None:
+            return []
+        bnode = f"bot:{bot}"
+        if bnode not in self.graph:
+            return []
+        modules: Dict[str, int] = {}
+        for enode, _, _ in self.graph.in_edges(bnode, data=True):
+            if enode.startswith("error_type:"):
+                chain = self.cluster_failure_chain(enode, top=top)
+                for m in chain:
+                    modules[m] = modules.get(m, 0) + 1
+        return [m for m, _ in sorted(modules.items(), key=lambda x: x[1], reverse=True)[:top]]
+
+    def bot_patch_candidates(self, bot: str, top: int = 3) -> List[str]:
+        """Return patch nodes linked to error clusters affecting ``bot``."""
+
+        if self.graph is None:
+            return []
+        bnode = f"bot:{bot}"
+        if bnode not in self.graph:
+            return []
+        patches: Dict[str, int] = {}
+        for enode, _, _ in self.graph.in_edges(bnode, data=True):
+            if not enode.startswith("error_type:"):
+                continue
+            cluster = self.graph.nodes[enode].get("cluster")
+            if cluster is None:
+                self.error_clusters()
+                cluster = self.graph.nodes[enode].get("cluster")
+            for node, data in self.graph.nodes(data=True):
+                if node.startswith("error_type:") and data.get("cluster") == cluster:
+                    for _, pnode, d in self.graph.out_edges(node, data=True):
+                        if pnode.startswith("patch:"):
+                            patches[pnode] = patches.get(pnode, 0) + int(d.get("weight", 1))
+        return [p for p, _ in sorted(patches.items(), key=lambda x: x[1], reverse=True)[:top]]
+
+    # ------------------------------------------------------------------
     # Traversal helpers
     # ------------------------------------------------------------------
 

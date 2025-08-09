@@ -42,3 +42,25 @@ def test_suggest_root_cause_clusters():
     clusters = kg.suggest_root_cause("X", hops=None, min_cluster_size=2)
     assert clusters
     assert all(isinstance(c, list) for c in clusters)
+
+
+def test_error_clusters_and_failure_chain():
+    kg = KnowledgeGraph()
+    # build error types affecting modules
+    kg.graph.add_node("error_type:E1", weight=2)
+    kg.graph.add_node("error_type:E2", weight=4)
+    kg.graph.add_edge("error_type:E1", "module:M1", type="module", weight=2)
+    kg.graph.add_edge("error_type:E2", "module:M1", type="module", weight=1)
+    kg.graph.add_edge("error_type:E2", "module:M2", type="module", weight=3)
+    kg.graph.add_edge("error_type:E1", "bot:B", type="telemetry")
+    kg.graph.add_edge("error_type:E2", "bot:B", type="telemetry")
+    kg.graph.add_edge("error_type:E2", "patch:P1", type="patch")
+
+    clusters = kg.error_clusters(min_cluster_size=1)
+    assert clusters["error_type:E1"] == clusters["error_type:E2"]
+
+    chain = kg.bot_failure_chain("B", top=3)
+    assert "module:M1" in chain and "module:M2" in chain
+
+    patches = kg.bot_patch_candidates("B")
+    assert "patch:P1" in patches

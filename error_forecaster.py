@@ -289,11 +289,25 @@ class ErrorForecaster:
         self, bot: str, graph: KnowledgeGraph, steps: int = 3
     ) -> List[str]:
         """Return module nodes likely affected by ``bot`` within ``steps`` hops."""
+
         probs = self.predict_error_prob(bot, steps=steps)
-        if not any(p > 0.5 for p in probs):
+        if not probs:
             return []
+        chain = graph.bot_failure_chain(bot, top=steps)
+        if chain:
+            return chain
         nodes = graph.cascading_effects(f"bot:{bot}", order=steps)
         return [n for n in nodes if n.startswith("module:")]
+
+    def suggest_patches(
+        self, bot: str, graph: KnowledgeGraph, top: int = 3
+    ) -> List[str]:
+        """Return patch candidates for ``bot`` using cluster history."""
+
+        probs = self.predict_error_prob(bot, steps=1)
+        if not probs or probs[0] <= 0.5:
+            return []
+        return graph.bot_patch_candidates(bot, top=top)
 
 
 __all__ = ["ErrorForecaster"]
