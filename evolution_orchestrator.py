@@ -424,6 +424,8 @@ class EvolutionOrchestrator:
                 trigger=trigger_str,
                 performance=after_roi - before_roi,
                 workflow_id=0,
+                before_metric=before_roi,
+                after_metric=after_roi,
                 parent_id=event_id,
             )
             self._last_mutation_id = mutation_id

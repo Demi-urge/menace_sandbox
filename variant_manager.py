@@ -35,18 +35,22 @@ class VariantManager:
         Returns the mutation event id for the new variant.
         """
         workflow_id: int | None = None
+        metric = 0.0
         try:
             row = self.history_db.conn.execute(
-                "SELECT workflow_id FROM evolution_history WHERE rowid=?",
+                "SELECT workflow_id, after_metric FROM evolution_history WHERE rowid=?",
                 (parent_event_id,),
             ).fetchone()
-            if row and row[0] is not None:
-                workflow_id = int(row[0])
-                if self.workflow_cloner:
-                    try:
-                        self.workflow_cloner._clone(workflow_id)  # type: ignore[attr-defined]
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.warning("workflow clone failed for %s: %s", workflow_id, exc)
+            if row:
+                if row[0] is not None:
+                    workflow_id = int(row[0])
+                    if self.workflow_cloner:
+                        try:
+                            self.workflow_cloner._clone(workflow_id)  # type: ignore[attr-defined]
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.warning("workflow clone failed for %s: %s", workflow_id, exc)
+                if row[1] is not None:
+                    metric = float(row[1])
         except Exception as exc:  # pragma: no cover - best effort
             logger.warning(
                 "failed retrieving workflow for parent %s: %s", parent_event_id, exc
@@ -57,6 +61,8 @@ class VariantManager:
             trigger="variant_manager",
             performance=0.0,
             workflow_id=workflow_id or 0,
+            before_metric=metric,
+            after_metric=metric,
             parent_id=parent_event_id,
         )
         return event_id
