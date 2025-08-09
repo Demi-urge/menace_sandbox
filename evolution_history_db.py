@@ -174,6 +174,71 @@ class EvolutionHistoryDB:
         )
         return cur.fetchall()
 
+    # ------------------------------------------------------------------
+    def subtree(self, event_id: int) -> dict | None:
+        """Return the mutation subtree rooted at ``event_id``."""
+
+        fields = [
+            "rowid",
+            "action",
+            "before_metric",
+            "after_metric",
+            "roi",
+            "predicted_roi",
+            "efficiency",
+            "bottleneck",
+            "patch_id",
+            "workflow_id",
+            "ts",
+            "trending_topic",
+            "reason",
+            "trigger",
+            "performance",
+            "parent_event_id",
+        ]
+
+        def build(row: Tuple) -> dict:
+            node = dict(zip(fields, row))
+            kids = self.fetch_children(row[0])
+            node["children"] = [build(child) for child in kids]
+            return node
+
+        row = self.conn.execute(
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+            (event_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return build(row)
+
+    # ------------------------------------------------------------------
+    def spawn_variant(
+        self,
+        parent_event_id: int,
+        action: str,
+        *,
+        reason: str = "spawn_variant",
+        trigger: str = "spawn_variant",
+    ) -> int:
+        """Create a new evolution event branching from ``parent_event_id``."""
+
+        row = self.conn.execute(
+            "SELECT workflow_id FROM evolution_history WHERE rowid=?",
+            (parent_event_id,),
+        ).fetchone()
+        workflow_id = row[0] if row else None
+        event = EvolutionEvent(
+            action=action,
+            before_metric=0.0,
+            after_metric=0.0,
+            roi=0.0,
+            workflow_id=workflow_id,
+            reason=reason,
+            trigger=trigger,
+            parent_event_id=parent_event_id,
+        )
+        return self.add(event)
+
     def lineage_tree(self, workflow_id: int) -> List[dict]:
         cur = self.conn.execute(
             'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE workflow_id=?',

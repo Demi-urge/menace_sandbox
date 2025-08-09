@@ -133,6 +133,26 @@ class ExperimentManager:
             )
         return results
 
+    # ------------------------------------------------------------------
+    async def run_experiments_from_parent(
+        self, parent_event_id: int, energy: int = 1
+    ) -> List[ExperimentResult]:
+        """Run experiments for variants branching from ``parent_event_id``."""
+
+        if not self.lineage or not getattr(self.lineage, "history_db", None):
+            return []
+        try:
+            tree = self.lineage.history_db.subtree(parent_event_id)  # type: ignore[attr-defined]
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed building lineage subtree: %s", exc)
+            return []
+        if not tree:
+            return []
+        variants = [c["action"] for c in tree.get("children", []) if c.get("action")]
+        if not variants:
+            return []
+        return await self.run_experiments(variants, energy=energy)
+
     def compare_variants(self, results: Iterable[ExperimentResult]) -> Dict[tuple[str, str], tuple[float, float]]:
         """Return t-statistics and p-values comparing ROI across variants."""
         comps: Dict[tuple[str, str], tuple[float, float]] = {}
