@@ -1,0 +1,43 @@
+# Example classification rules for ErrorClassifier.
+# Set the ERROR_CLASSIFIER_CONFIG environment variable to the path of this file.
+RuntimeFault:
+  regex:
+    - KeyError
+    - IndexError
+    - FileNotFoundError
+    - ZeroDivisionError
+    - AttributeError
+  semantic:
+    - "missing key"
+    - "key not found"
+    - "not in index"
+    - "division by zero"
+    - "attribute not found"
+DependencyMismatch:
+  regex:
+    - ModuleNotFoundError|ImportError
+    - PackageNotFoundError
+    - OSError
+  semantic:
+    - "module not found"
+    - "dependency missing"
+    - "missing package"
+    - "no module named"
+    - "cannot import name"
+    - "dependency conflict"
+    - "version conflict"
+LogicMisfire:
+  regex:
+    - AssertionError
+    - NotImplementedError
+  semantic:
+    - "assertion failed"
+    - "not implemented"
+SemanticBug:
+  regex:
+    - TypeError
+    - ValueError
+  semantic:
+    - "unexpected type"
+    - "wrong type"
+    - "invalid value"
