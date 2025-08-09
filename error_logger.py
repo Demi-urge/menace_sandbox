@@ -38,6 +38,11 @@ try:
 except ImportError:  # pragma: no cover - package fallback
     from error_ontology import ErrorCategory, classify_exception  # type: ignore
 
+try:
+    from .knowledge_graph import KnowledgeGraph
+except ImportError:  # pragma: no cover - package fallback
+    from knowledge_graph import KnowledgeGraph  # type: ignore
+
 # Backwards compatibility with legacy imports
 ErrorType = ErrorCategory
 
@@ -46,10 +51,6 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
         from .error_bot import ErrorDB
     except ImportError:
         from error_bot import ErrorDB  # type: ignore
-    try:
-        from .knowledge_graph import KnowledgeGraph
-    except ImportError:
-        from knowledge_graph import KnowledgeGraph  # type: ignore
 
 try:
     from sentence_transformers import SentenceTransformer, util  # type: ignore
@@ -249,7 +250,7 @@ class ErrorLogger:
         db: "ErrorDB" | None = None,
         *,
         sentry: "SentryClient" | None = None,
-        graph: "KnowledgeGraph" | None = None,
+        knowledge_graph: "KnowledgeGraph" | None = None,
     ) -> None:
         if db is None:
             try:
@@ -271,7 +272,7 @@ class ErrorLogger:
         self.classifier = ErrorClassifier()
         self.logger = logging.getLogger("ErrorLogger")
         self.sentry = sentry
-        self.graph = graph
+        self.graph = knowledge_graph
         self.replicator = None
         if TelemetryReplicator:
             hosts = os.getenv("KAFKA_HOSTS")

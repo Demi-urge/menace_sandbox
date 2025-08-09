@@ -34,10 +34,12 @@ try:
     from .data_bot import DataBot
     from .error_bot import ErrorDB
     from .error_logger import ErrorLogger
+    from .knowledge_graph import KnowledgeGraph
 except Exception:  # pragma: no cover - fallback when imported directly
     from data_bot import DataBot  # type: ignore
     from error_bot import ErrorDB  # type: ignore
     from error_logger import ErrorLogger  # type: ignore
+    from knowledge_graph import KnowledgeGraph  # type: ignore
 
 try:
     from .auto_env_setup import get_recursive_isolated, set_recursive_isolated
@@ -137,6 +139,7 @@ class SelfTestService:
         self,
         db: ErrorDB | None = None,
         *,
+        graph: KnowledgeGraph | None = None,
         pytest_args: str | None = None,
         workers: int | None = None,
         data_bot: DataBot | None = None,
@@ -207,7 +210,8 @@ class SelfTestService:
         """
 
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.error_logger = ErrorLogger(db)
+        self.graph = graph or KnowledgeGraph()
+        self.error_logger = ErrorLogger(db, knowledge_graph=self.graph)
         self.data_bot = data_bot
         self.result_callback = result_callback
         self.container_image = container_image

@@ -9,6 +9,7 @@ from menace.self_coding_engine import SelfCodingEngine
 from menace.error_bot import ErrorDB
 from menace.self_debugger_sandbox import SelfDebuggerSandbox
 from menace.error_logger import ErrorLogger
+from menace.knowledge_graph import KnowledgeGraph
 from menace.task_handoff_bot import TaskInfo
 from menace.bot_testing_bot import BotTestingBot
 from menace.deployment_bot import DeploymentBot, DeploymentSpec
@@ -71,7 +72,7 @@ def debug_and_deploy(repo: Path, *, jobs: int = 1) -> None:
     error_db = ErrorDB()
     tester = BotTestingBot()
     # instantiate telemetry logger for completeness
-    _ = ErrorLogger(error_db)
+    _ = ErrorLogger(error_db, knowledge_graph=KnowledgeGraph())
 
     class _TelemProxy:
         def __init__(self, db: ErrorDB) -> None:

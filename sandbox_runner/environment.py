@@ -109,6 +109,7 @@ from .config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
 from .input_history_db import InputHistoryDB
 from collections import Counter
 from error_logger import ErrorLogger
+from knowledge_graph import KnowledgeGraph
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -125,7 +126,8 @@ POOL_LOCK_FILE = Path(
 _INPUT_HISTORY_DB: InputHistoryDB | None = None
 
 # Shared error logger and category counters for sandbox runs
-ERROR_LOGGER = ErrorLogger()
+KNOWLEDGE_GRAPH = KnowledgeGraph()
+ERROR_LOGGER = ErrorLogger(knowledge_graph=KNOWLEDGE_GRAPH)
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
 

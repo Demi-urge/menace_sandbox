@@ -1092,7 +1092,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     logger.info("starting sandbox run", extra=log_record(preset=preset))
     ctx = _sandbox_init(preset, args)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
-    err_logger = getattr(ctx.sandbox, "error_logger", ErrorLogger(graph=graph))
+    err_logger = getattr(
+        ctx.sandbox, "error_logger", ErrorLogger(knowledge_graph=graph)
+    )
 
     def _cycle(
         section: str | None,
