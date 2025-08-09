@@ -37,6 +37,9 @@ EXCEPTION_TYPE_MAP: Mapping[Type[BaseException], ErrorCategory] = {
     FileNotFoundError: ErrorCategory.RuntimeFault,
     ImportError: ErrorCategory.DependencyMismatch,
     ModuleNotFoundError: ErrorCategory.DependencyMismatch,
+    ZeroDivisionError: ErrorCategory.RuntimeFault,
+    AttributeError: ErrorCategory.RuntimeFault,
+    OSError: ErrorCategory.DependencyMismatch,
     TypeError: ErrorCategory.SemanticBug,
     ValueError: ErrorCategory.SemanticBug,
 }
@@ -45,14 +48,24 @@ KEYWORD_MAP: Mapping[str, ErrorCategory] = {
     "dependency missing": ErrorCategory.DependencyMismatch,
     "module not found": ErrorCategory.DependencyMismatch,
     "missing dependency": ErrorCategory.DependencyMismatch,
+    "no module named": ErrorCategory.DependencyMismatch,
+    "cannot import name": ErrorCategory.DependencyMismatch,
+    "dependency conflict": ErrorCategory.DependencyMismatch,
+    "version conflict": ErrorCategory.DependencyMismatch,
     "not implemented": ErrorCategory.LogicMisfire,
     "assertion failed": ErrorCategory.LogicMisfire,
+    "division by zero": ErrorCategory.RuntimeFault,
+    "zero division": ErrorCategory.RuntimeFault,
+    "attribute error": ErrorCategory.RuntimeFault,
+    "attribute not found": ErrorCategory.RuntimeFault,
     "unexpected type": ErrorCategory.SemanticBug,
     "wrong type": ErrorCategory.SemanticBug,
 }
 
 MODULE_MAP: Mapping[str, ErrorCategory] = {
     "importlib": ErrorCategory.DependencyMismatch,
+    "pkg_resources": ErrorCategory.DependencyMismatch,
+    "pip": ErrorCategory.DependencyMismatch,
 }
 
 

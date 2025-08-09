@@ -8,6 +8,10 @@ import re
 import traceback
 import json
 import hashlib
+try:
+    import yaml
+except Exception:  # pragma: no cover - optional dependency
+    yaml = None  # type: ignore
 from datetime import datetime
 from functools import wraps
 from typing import Any, Callable, Optional
@@ -78,12 +82,36 @@ class TelemetryEvent(BaseModel):
 
 DEFAULT_CLASSIFICATION_RULES = {
     "RuntimeFault": {
-        "regex": [r"KeyError", r"IndexError", r"FileNotFoundError"],
-        "semantic": ["missing key", "key not found", "not in index"],
+        "regex": [
+            r"KeyError",
+            r"IndexError",
+            r"FileNotFoundError",
+            r"ZeroDivisionError",
+            r"AttributeError",
+        ],
+        "semantic": [
+            "missing key",
+            "key not found",
+            "not in index",
+            "division by zero",
+            "attribute not found",
+        ],
     },
     "DependencyMismatch": {
-        "regex": [r"ModuleNotFoundError|ImportError", r"PackageNotFoundError"],
-        "semantic": ["module not found", "dependency missing", "missing package"],
+        "regex": [
+            r"ModuleNotFoundError|ImportError",
+            r"PackageNotFoundError",
+            r"OSError",
+        ],
+        "semantic": [
+            "module not found",
+            "dependency missing",
+            "missing package",
+            "no module named",
+            "cannot import name",
+            "dependency conflict",
+            "version conflict",
+        ],
     },
     "LogicMisfire": {
         "regex": [r"AssertionError", r"NotImplementedError"],
@@ -106,30 +134,13 @@ class ErrorClassifier:
         config_path: str | None = None,
     ) -> None:
         self.logger = logging.getLogger("ErrorClassifier")
+        self.config_path = config_path or os.getenv("ERROR_CLASSIFIER_CONFIG")
+        self.config_mtime = 0.0
         if config is None:
-            if config_path is None:
-                config_path = os.getenv("ERROR_CLASSIFIER_CONFIG")
-            if config_path and os.path.exists(config_path):
-                try:
-                    with open(config_path, "r", encoding="utf-8") as fh:
-                        config = json.load(fh)
-                except Exception as e:  # pragma: no cover - configuration errors
-                    self.logger.warning("failed to load config %s: %s", config_path, e)
-                    config = DEFAULT_CLASSIFICATION_RULES
-            else:
-                config = DEFAULT_CLASSIFICATION_RULES
-
-        self.regex_map: dict[str, ErrorCategory] = {}
-        self.semantic_map: dict[str, ErrorCategory] = {}
-
-        for name, rules in config.items():
-            err_type = self._parse_type(name)
-            if not err_type:
-                continue
-            for pattern in rules.get("regex", []):
-                self.regex_map[pattern] = err_type
-            for phrase in rules.get("semantic", []):
-                self.semantic_map[phrase.lower()] = err_type
+            config = self._load_config()
+        else:
+            self.config_path = None
+        self._build_maps(config)
 
         if SentenceTransformer and util:
             try:
@@ -153,8 +164,49 @@ class ErrorClassifier:
             except Exception:  # pragma: no cover - unknown type
                 return None
 
+    def _build_maps(self, config: dict[str, Any]) -> None:
+        self.regex_map = {}
+        self.semantic_map = {}
+        for name, rules in config.items():
+            err_type = self._parse_type(name)
+            if not err_type:
+                continue
+            for pattern in rules.get("regex", []):
+                self.regex_map[pattern] = err_type
+            for phrase in rules.get("semantic", []):
+                self.semantic_map[phrase.lower()] = err_type
+
+    def _load_config(self) -> dict[str, Any]:
+        if self.config_path and os.path.exists(self.config_path):
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as fh:
+                    if self.config_path.endswith((".yml", ".yaml")) and yaml:
+                        data = yaml.safe_load(fh) or {}
+                    else:
+                        data = json.load(fh)
+                self.config_mtime = os.path.getmtime(self.config_path)
+                return data
+            except Exception as e:  # pragma: no cover - configuration errors
+                self.logger.warning(
+                    "failed to load config %s: %s", self.config_path, e
+                )
+        self.config_mtime = 0.0
+        return DEFAULT_CLASSIFICATION_RULES
+
+    def _maybe_reload(self) -> None:
+        if not self.config_path:
+            return
+        try:
+            mtime = os.path.getmtime(self.config_path)
+        except OSError:  # pragma: no cover - file removed
+            return
+        if mtime != self.config_mtime:
+            config = self._load_config()
+            self._build_maps(config)
+
     def classify(self, stack: str, exc: Exception | None = None) -> ErrorCategory:
         """Classify a stack trace, prioritising ontology categories."""
+        self._maybe_reload()
         if exc is not None:
             ont = classify_exception(exc, stack)
             if ont is not ErrorCategory.Unknown:
