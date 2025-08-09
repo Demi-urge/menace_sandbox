@@ -52,6 +52,11 @@ class SandboxSettings(BaseSettings):
         description="Integrate modules classified as redundant after validation.",
     )
     side_effect_threshold: int = Field(10, env="SANDBOX_SIDE_EFFECT_THRESHOLD")
+    auto_patch_high_risk: bool = Field(
+        True,
+        env="AUTO_PATCH_HIGH_RISK",
+        description="Enable automatic patching for high-risk modules.",
+    )
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")
