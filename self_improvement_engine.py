@@ -3242,7 +3242,7 @@ class SelfImprovementEngine:
                 try:
                     from .evolution_history_db import EvolutionEvent
 
-                    self.evolution_history.add(
+                    event_id = self.evolution_history.add(
                         EvolutionEvent(
                             action="self_improvement",
                             before_metric=before_roi,
@@ -3250,8 +3250,13 @@ class SelfImprovementEngine:
                             roi=roi_value,
                             predicted_roi=predicted,
                             trending_topic=trending_topic,
+                            reason="self improvement cycle",
+                            trigger="run_cycle",
+                            performance=after_roi - before_roi,
+                            parent_event_id=self._last_mutation_id,
                         )
                     )
+                    self._last_mutation_id = event_id
                 except Exception as exc:
                     self.logger.exception("evolution history logging failed: %s", exc)
             eff = bottleneck = patch_rate = trend = anomaly = 0.0

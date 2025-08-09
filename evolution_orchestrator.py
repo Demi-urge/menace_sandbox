@@ -363,6 +363,7 @@ class EvolutionOrchestrator:
                 trending_topic=trending_topic,
                 reason=reason_str,
                 trigger=trigger_str,
+                performance=after_roi - before_roi,
                 parent_event_id=parent_event_id,
                 workflow_id=workflow_id,
             )
@@ -417,15 +418,15 @@ class EvolutionOrchestrator:
                     evolution_cycle_count.inc()
             except Exception:
                 self.logger.exception("metrics export failed")
-            event_id = MutationLogger.log_mutation(
+            mutation_id = MutationLogger.log_mutation(
                 change=action_seq,
                 reason=reason_str,
                 trigger=trigger_str,
                 performance=after_roi - before_roi,
                 workflow_id=0,
-                parent_id=self._last_mutation_id,
+                parent_id=event_id,
             )
-            self._last_mutation_id = event_id
+            self._last_mutation_id = mutation_id
         self._run_bot_experiments()
         self._run_workflow_experiments()
         self._cycles += 1
@@ -531,6 +532,7 @@ class EvolutionOrchestrator:
                         trending_topic=getattr(res, "trending_topic", None),
                         reason="workflow experiment",
                         trigger="experiment",
+                        performance=change,
                         parent_event_id=parent,
                         workflow_id=wf_key if isinstance(wf_key, int) else None,
                     )
@@ -605,6 +607,7 @@ class EvolutionOrchestrator:
                     trending_topic=getattr(res, "trending_topic", None),
                     reason="bot experiment",
                     trigger="experiment",
+                    performance=res.roi - base_roi,
                     parent_event_id=parent,
                     workflow_id=wf_key if isinstance(wf_key, int) else None,
                 )

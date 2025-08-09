@@ -258,6 +258,7 @@ class ResourceAllocationOptimizer:
         self.paused: Dict[str, bool] = {}
         self.workflow_fail_counts: Dict[str, int] = {}
         self.paused_workflows: Dict[str, bool] = {}
+        self._workflow_event_ids: Dict[str, int] = {}
         self.bandit = BayesianBandit([])
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("ResourceAllocationOptimizer")
@@ -463,14 +464,21 @@ class ResourceAllocationOptimizer:
             for wf in removed:
                 try:
                     roi = workflow_roi_stats(wf, self.roi_db, metrics_db)["roi"]
-                    self.evolution_history.add(
+                    parent = self._workflow_event_ids.get(wf)
+                    change = 0.0 - roi
+                    event_id = self.evolution_history.add(
                         EvolutionEvent(
                             action=f"prune:{wf}",
                             before_metric=roi,
                             after_metric=0.0,
                             roi=roi,
+                            reason="prune low ROI workflow",
+                            trigger="roi_threshold",
+                            performance=change,
+                            parent_event_id=parent,
                         )
                     )
+                    self._workflow_event_ids[wf] = event_id
                 except Exception as exc:
                     self.logger.error("failed to log evolution event: %s", exc)
         return removed
