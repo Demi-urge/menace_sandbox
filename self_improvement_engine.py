@@ -1160,6 +1160,12 @@ class SelfImprovementEngine:
             after_metric=self.synergy_weight_roi,
             parent_id=self._last_mutation_id,
         )
+        MutationLogger.record_mutation_outcome(
+            event_id,
+            after_metric=self.synergy_weight_roi,
+            roi=roi_delta,
+            performance=roi_delta,
+        )
         self._last_mutation_id = event_id
 
     # ------------------------------------------------------------------
@@ -1464,6 +1470,12 @@ class SelfImprovementEngine:
                 before_metric=before_metric,
                 after_metric=after_metric,
                 parent_id=self._last_mutation_id,
+            )
+            MutationLogger.record_mutation_outcome(
+                event_id,
+                after_metric=after_metric,
+                roi=after_metric,
+                performance=delta,
             )
             self._last_mutation_id = event_id
             self._last_patch_id = patch_id
@@ -3214,6 +3226,12 @@ class SelfImprovementEngine:
                         after_metric=after_metric,
                         parent_id=self._last_mutation_id,
                     )
+                    MutationLogger.record_mutation_outcome(
+                        event_id,
+                        after_metric=after_metric,
+                        roi=after_metric,
+                        performance=delta,
+                    )
                     self._last_mutation_id = event_id
                     self._last_patch_id = patch_id
                     if self.policy:
@@ -3495,6 +3513,12 @@ class SelfImprovementEngine:
                 before_metric=before_roi,
                 after_metric=after_roi,
                 parent_id=self._last_mutation_id,
+            )
+            MutationLogger.record_mutation_outcome(
+                event_id,
+                after_metric=after_roi,
+                roi=roi_value,
+                performance=delta,
             )
             self._last_mutation_id = event_id
             self.logger.info("cycle complete", extra=log_record(roi=roi_value))
