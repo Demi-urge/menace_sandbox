@@ -32,7 +32,7 @@ to stress error handling:
 - `concurrency_spike` – spawn bursts of threads and async tasks to stress concurrency handling. Presets include `THREAD_BURST` and `ASYNC_TASK_BURST` values.
 - `memory` – restrict heap allocation.
 - `timeout` – terminate the process prematurely.
-- `hostile_input` – replace generated input stubs with malicious payloads.
+- `hostile_input` – replace generated input stubs with malicious payloads. Internally this sets `SANDBOX_STUB_STRATEGY` to `hostile` (alias `misuse`).
 - `user_misuse` – attempt invalid API calls or unauthorized actions and log the
   resulting errors.
 
@@ -54,7 +54,7 @@ for preset in presets:
 
 These presets can be passed directly to `run_repo_section_simulations` or `_run_sandbox` for scenario testing.
 
-Example preset with hostile input stubs:
+Example preset with hostile input stubs (`SANDBOX_STUB_STRATEGY` set to `hostile`/`misuse`):
 
 ```json
 {
