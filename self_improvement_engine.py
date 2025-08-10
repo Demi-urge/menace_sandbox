@@ -1107,6 +1107,22 @@ class SelfImprovementEngine:
         ]
         deltas = {n: self._metric_delta(n) for n in names}
         before_weight = self.synergy_weight_roi
+        # Create a mutation event up-front so we can record the outcome even if
+        # the update step fails.
+        event_id = MutationLogger.log_mutation(
+            change="synergy_weights_updated",
+            reason="roi_delta adjustment",
+            trigger="roi_delta",
+            performance=0.0,
+            workflow_id=0,
+            before_metric=before_weight,
+            after_metric=before_weight,
+            parent_id=self._last_mutation_id,
+        )
+
+        after_metric = before_weight
+        perf = 0.0
+        roi_val = 0.0
         try:
             extra = getattr(self, "_last_orphan_metrics", None)
             self.synergy_learner.update(roi_delta, deltas, extra)
@@ -1118,6 +1134,24 @@ class SelfImprovementEngine:
                     state=self.synergy_learner._state,
                 ),
             )
+            self.synergy_weight_roi = self.synergy_learner.weights["roi"]
+            self.synergy_weight_efficiency = self.synergy_learner.weights["efficiency"]
+            self.synergy_weight_resilience = self.synergy_learner.weights["resilience"]
+            self.synergy_weight_antifragility = self.synergy_learner.weights[
+                "antifragility"
+            ]
+            self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
+            self.synergy_weight_maintainability = self.synergy_learner.weights[
+                "maintainability"
+            ]
+            self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
+            self.logger.info(
+                "synergy weights after update",
+                extra=log_record(weights=self.synergy_learner.weights, roi_delta=roi_delta),
+            )
+            after_metric = self.synergy_weight_roi
+            perf = roi_delta
+            roi_val = roi_delta
         except Exception as exc:  # pragma: no cover - runtime issues
             try:
                 synergy_weight_update_failures_total.inc()
@@ -1134,39 +1168,14 @@ class SelfImprovementEngine:
             except Exception:
                 pass
             self.logger.exception("synergy weight update failed: %s", exc)
-            return
-        self.synergy_weight_roi = self.synergy_learner.weights["roi"]
-        self.synergy_weight_efficiency = self.synergy_learner.weights["efficiency"]
-        self.synergy_weight_resilience = self.synergy_learner.weights["resilience"]
-        self.synergy_weight_antifragility = self.synergy_learner.weights[
-            "antifragility"
-        ]
-        self.synergy_weight_reliability = self.synergy_learner.weights["reliability"]
-        self.synergy_weight_maintainability = self.synergy_learner.weights[
-            "maintainability"
-        ]
-        self.synergy_weight_throughput = self.synergy_learner.weights["throughput"]
-        self.logger.info(
-            "synergy weights after update",
-            extra=log_record(weights=self.synergy_learner.weights, roi_delta=roi_delta),
-        )
-        event_id = MutationLogger.log_mutation(
-            change="synergy_weights_updated",
-            reason="roi_delta adjustment",
-            trigger="roi_delta",
-            performance=roi_delta,
-            workflow_id=0,
-            before_metric=before_weight,
-            after_metric=self.synergy_weight_roi,
-            parent_id=self._last_mutation_id,
-        )
-        MutationLogger.record_mutation_outcome(
-            event_id,
-            after_metric=self.synergy_weight_roi,
-            roi=roi_delta,
-            performance=roi_delta,
-        )
-        self._last_mutation_id = event_id
+        finally:
+            MutationLogger.record_mutation_outcome(
+                event_id,
+                after_metric=after_metric,
+                roi=roi_val,
+                performance=perf,
+            )
+            self._last_mutation_id = event_id
 
     # ------------------------------------------------------------------
     def _policy_state(self) -> tuple[int, ...]:

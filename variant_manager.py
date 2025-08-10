@@ -122,11 +122,18 @@ class VariantManager:
         if not new_patch_id:
             return 0, []
 
-        # run the cloned branch through existing experiments
-        results = asyncio.run(
-            self.experiment_manager.run_experiments([variant_name])
-        )
-        roi_val = results[0].roi if results else 0.0
+        roi_val = 0.0
+        results: List[ExperimentResult] = []
+        try:
+            # run the cloned branch through existing experiments
+            results = asyncio.run(
+                self.experiment_manager.run_experiments([variant_name])
+            )
+            roi_val = results[0].roi if results else 0.0
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning(
+                "failed running experiments for %s: %s", variant_name, exc
+            )
 
         event_id = MutationLogger.log_mutation(
             change=variant_name,
@@ -165,29 +172,47 @@ class VariantManager:
         if not variants:
             return [], {}
 
-        results = asyncio.run(
-            self.experiment_manager.run_experiments(variants)
-        )
-
-        # Map each variant to its corresponding event rowid and record outcomes
+        # Map each variant to its corresponding event rowid upfront so we can
+        # record outcomes even if experiment execution fails.
         name_to_id = {row[1]: row[0] for row in children if row}
-        for res in results:
-            event_id = name_to_id.get(res.variant)
-            if event_id is None:
-                continue
-            try:
-                MutationLogger.record_mutation_outcome(
-                    event_id,
-                    after_metric=res.roi,
-                    roi=res.roi,
-                    performance=res.roi,
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.warning(
-                    "failed recording mutation outcome for %s: %s", res.variant, exc
-                )
 
-        comparisons = self.experiment_manager.compare_variants(results)
+        results: List[ExperimentResult] = []
+        try:
+            results = asyncio.run(
+                self.experiment_manager.run_experiments(variants)
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("variant experiments failed: %s", exc)
+
+        if results:
+            for res in results:
+                event_id = name_to_id.get(res.variant)
+                if event_id is None:
+                    continue
+                try:
+                    MutationLogger.record_mutation_outcome(
+                        event_id,
+                        after_metric=res.roi,
+                        roi=res.roi,
+                        performance=res.roi,
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning(
+                        "failed recording mutation outcome for %s: %s", res.variant, exc
+                    )
+            comparisons = self.experiment_manager.compare_variants(results)
+        else:
+            # experiments failed; mark each variant with neutral outcome
+            for event_id in name_to_id.values():
+                try:
+                    MutationLogger.record_mutation_outcome(
+                        event_id, after_metric=0.0, roi=0.0, performance=0.0
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning(
+                        "failed recording mutation outcome: %s", exc
+                    )
+            comparisons = {}
         return results, comparisons
 
 
