@@ -788,6 +788,9 @@ class SelfImprovementEngine:
         self._last_mutation_id: int | None = None
         self._last_patch_id: int | None = None
         self._last_scenario_metrics: dict[str, float] = {}
+        self._last_scenario_trend: dict[str, float] = {}
+        self._scenario_pass_rate: float = 0.0
+        self._force_rerun = False
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -974,6 +977,52 @@ class SelfImprovementEngine:
             return float(vals[-1])
         return float(current_avg - prev_avg)
 
+    def _evaluate_scenario_metrics(self, metrics: dict[str, float]) -> None:
+        """Evaluate scenario metrics and trigger remediation when thresholds fail."""
+        prev = getattr(self, "_last_scenario_metrics", {})
+        trend = {k: float(v) - float(prev.get(k, 0.0)) for k, v in metrics.items()}
+        thresholds = {
+            "latency_error_rate": {"max": 0.2, "action": "alert"},
+            "hostile_failures": {"max": 5.0, "action": "patch"},
+            "misuse_failures": {"max": 5.0, "action": "patch"},
+            "concurrency_throughput": {"min": 100.0, "action": "rerun"},
+        }
+        failing: list[str] = []
+        for name, val in metrics.items():
+            cfg = thresholds.get(name)
+            if not cfg:
+                continue
+            exceed = ("max" in cfg and val > cfg["max"]) or (
+                "min" in cfg and val < cfg["min"]
+            )
+            if exceed:
+                failing.append(name)
+                action = cfg.get("action")
+                if action == "alert":
+                    try:
+                        dispatch_alert(
+                            "scenario_degradation",
+                            2,
+                            f"{name} degraded",
+                            {"value": float(val)},
+                        )
+                    except Exception:
+                        self.logger.exception("alert dispatch failed for %s", name)
+                elif action == "patch":
+                    try:
+                        generate_patch(name, self.self_coding_engine)
+                    except Exception:
+                        self.logger.exception("patch generation failed for %s", name)
+                elif action == "rerun":
+                    self._force_rerun = True
+        total = len(metrics)
+        passed = total - len(failing)
+        frac = passed / total if total else 1.0
+        # store negative value when scenarios fail so reward is penalised
+        self._scenario_pass_rate = frac - 1.0
+        self._last_scenario_trend = trend
+        self._last_scenario_metrics = dict(metrics)
+
     # ------------------------------------------------------------------
     def _weighted_synergy_adjustment(self, window: int = 3) -> float:
         """Compute weighted synergy adjustment factor.
@@ -1125,7 +1174,16 @@ class SelfImprovementEngine:
         perf = 0.0
         roi_val = 0.0
         try:
-            extra = getattr(self, "_last_orphan_metrics", None)
+            extra = dict(getattr(self, "_last_orphan_metrics", {}) or {})
+            scen = getattr(self, "_last_scenario_trend", None)
+            if scen:
+                try:
+                    extra["avg_roi"] = float(sum(scen.values()) / len(scen))
+                except Exception:
+                    extra["avg_roi"] = 0.0
+            pr = getattr(self, "_scenario_pass_rate", None)
+            if pr is not None:
+                extra["pass_rate"] = float(pr)
             self.synergy_learner.update(roi_delta, deltas, extra)
             self.logger.info(
                 "synergy weights updated",
@@ -1351,6 +1409,9 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
+        if getattr(self, "_force_rerun", False):
+            self._force_rerun = False
+            return True
         if time.time() - self.last_run >= self.interval:
             return True
         if self.policy:
@@ -3450,7 +3511,7 @@ class SelfImprovementEngine:
                                     except Exception:
                                         pass
                     if scenario_metrics:
-                        self._last_scenario_metrics = dict(scenario_metrics)
+                        self._evaluate_scenario_metrics(scenario_metrics)
                         self.logger.info(
                             "scenario metrics",
                             extra=log_record(**scenario_metrics),
