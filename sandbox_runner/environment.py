@@ -4717,9 +4717,15 @@ def run_repo_section_simulations(
     if env_presets is None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
             try:
-                from menace.environment_generator import generate_presets
+                from menace.environment_generator import (
+                    generate_presets,
+                    generate_canonical_presets,
+                )
 
-                env_presets = generate_presets()
+                if os.getenv("SANDBOX_PRESET_MODE") == "canonical":
+                    env_presets = generate_canonical_presets()
+                else:
+                    env_presets = generate_presets()
             except Exception:
                 env_presets = [{}]
         else:

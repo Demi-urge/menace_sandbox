@@ -70,6 +70,11 @@ disable this behaviour and fall back to a single empty preset. Pass
 generator creates (default is `3`).
 See [environment_generator.md](environment_generator.md) for a description of the generated variables.
 
+Set `SANDBOX_PRESET_MODE=canonical` to use a deterministic set of presets
+returned by `generate_canonical_presets()`. These cover common scenarios such
+as `high_latency_api`, `hostile_input`, `user_misuse` and `concurrency_spike`
+so every module is exercised under each condition.
+
 `adapt_presets()` further tweaks these scenarios before each run. The function
 raises CPU, memory and bandwidth limits when ROI gains stall and lowers them
 again once improvements resume. Positive synergy ROI also decreases
