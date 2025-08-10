@@ -105,7 +105,7 @@ def MonitoringDashboard(
     dash.orchestrator = orchestrator
     dash._report_timer = None  # type: ignore[assignment]
     dash.event_bus = event_bus
-    dash._lineage_updates: queue.Queue[tuple[int, list[dict]]] = queue.Queue()
+    dash._lineage_updates: queue.Queue[list[dict]] = queue.Queue()
     dash._lineage_trees: dict[int, list[dict]] = {}
     dash._lineage_lock = threading.Lock()
 
@@ -167,14 +167,15 @@ def MonitoringDashboard(
                     tree = dash.lineage_tracker.build_tree(int(workflow_id))
                     with dash._lineage_lock:
                         dash._lineage_trees[int(workflow_id)] = tree
-                    dash._lineage_updates.put((int(workflow_id), tree))
+                    dash._lineage_updates.put(tree)
         except Exception:
             dash.logger.exception('failed handling mutation event')
 
     def lineage_stream():
         def _gen():
             while True:
-                workflow_id, tree = dash._lineage_updates.get()
+                tree = dash._lineage_updates.get()
+                workflow_id = tree[0].get("workflow_id") if tree else None
                 payload = {"workflow_id": workflow_id, "tree": tree}
                 yield f"data: {json.dumps(payload)}\n\n"
 
