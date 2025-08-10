@@ -93,14 +93,54 @@ def test_generate_presets_user_misuse(monkeypatch):
     p = presets[0]
     assert p.get("FAILURE_MODES") == "user_misuse"
     assert p.get("SCENARIO_NAME") == "user_misuse"
+    assert p.get("INVALID_CONFIG") is True
+
+
+def test_generate_presets_hostile_input(monkeypatch):
+    monkeypatch.setattr(eg, "_select_failures", lambda: ["hostile_input"])
+    presets = eg.generate_presets(1)
+    p = presets[0]
+    assert p.get("SCENARIO_NAME") == "hostile_input"
+    assert p.get("PAYLOAD_INDICATOR")
+
+
+def test_generate_presets_high_latency_auto(monkeypatch):
+    monkeypatch.setattr(eg, "_select_failures", lambda: [])
+
+    def fake_choice(seq):
+        if seq is eg._LATENCIES:
+            return 500
+        if seq is eg._JITTERS:
+            return 50
+        if seq is eg._PACKET_LOSS:
+            return 0.1
+        return seq[0]
+
+    monkeypatch.setattr(eg.random, "choice", fake_choice)
+    presets = eg.generate_presets(1)
+    p = presets[0]
+    assert p.get("SCENARIO_NAME") == "high_latency_api"
+    assert p.get("FAILURE_MODES") == "network"
 
 
 def test_generate_presets_profiles():
-    presets = eg.generate_presets(profiles=["high_latency", "concurrency_spike"])
+    presets = eg.generate_presets(
+        profiles=["high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"]
+    )
     names = {p.get("SCENARIO_NAME") for p in presets}
-    assert {"high_latency", "concurrency_spike"} <= names
-    hl = next(p for p in presets if p.get("SCENARIO_NAME") == "high_latency")
+    expected = {"high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"}
+    assert expected <= names
+    hl = next(p for p in presets if p.get("SCENARIO_NAME") == "high_latency_api")
     assert hl.get("NETWORK_LATENCY_MS") == 500
+    assert hl.get("NETWORK_JITTER_MS") == 50
+    assert hl.get("PACKET_LOSS") == 0.1
+    hi = next(p for p in presets if p.get("SCENARIO_NAME") == "hostile_input")
+    assert hi.get("PAYLOAD_INDICATOR")
+    um = next(p for p in presets if p.get("SCENARIO_NAME") == "user_misuse")
+    assert um.get("INVALID_CONFIG") is True
+    cs = next(p for p in presets if p.get("SCENARIO_NAME") == "concurrency_spike")
+    assert cs.get("CPU_SPIKE")
+    assert cs.get("MAX_THREADS") == 200
 
 
 class _DummyTracker:
@@ -490,7 +530,7 @@ def test_prediction_synergy_roi_network():
 def test_adapt_presets_synergy_prediction_increases_threat(monkeypatch):
     tracker = rt.ROITracker()
     for r in [0.1, 0.2, 0.1]:
-        tracker.update(0.0, r, metrics={"security_score": 70, "synergy_roi": 0.5 * r})
+        tracker.update(0.0, r, metrics={"security_score": 90, "synergy_roi": 0.5 * r})
     monkeypatch.setattr(tracker, "forecast", lambda: (0.5, (0.0, 0.0)))
 
     presets = [{"THREAT_INTENSITY": 30}]

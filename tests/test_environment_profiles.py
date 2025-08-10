@@ -114,7 +114,7 @@ def test_profiles_results(monkeypatch):
     monkeypatch.setattr(env, "simulate_execution_environment", lambda *a, **k: {})
     from environment_generator import generate_presets
 
-    profiles = ["high_latency", "hostile_input", "user_misuse", "concurrency_spike"]
+    profiles = ["high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"]
     presets = generate_presets(profiles=profiles)
     tracker = env.run_workflow_simulations("wf.db", env_presets=presets)
     for name in profiles:
