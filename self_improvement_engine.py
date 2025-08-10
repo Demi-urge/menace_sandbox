@@ -1764,10 +1764,33 @@ class SelfImprovementEngine:
                     )
                 except Exception:
                     continue
-                sec = details.get(m, {}).get("sec", [])
-                failed = any(s.get("result", {}).get("exit_code") for s in sec)
-                if failed:
-                    self.logger.info("self tests failed", extra=log_record(module=m))
+                scenarios = details.get(m, {})
+                scenario_synergy = getattr(tracker_res, "scenario_synergy", {})
+                worst_roi = math.inf
+                scenario_failed = False
+                for scen, runs in scenarios.items():
+                    if any(r.get("result", {}).get("exit_code") for r in runs):
+                        scenario_failed = True
+                        break
+                    try:
+                        sy_list = scenario_synergy.get(scen, [])
+                        scen_roi = (
+                            float(sy_list[-1].get("synergy_roi", 0.0))
+                            if sy_list
+                            else 0.0
+                        )
+                    except Exception:
+                        scen_roi = 0.0
+                    worst_roi = min(worst_roi, scen_roi)
+                info = self.orphan_traces.setdefault(m, {"parents": []})
+                if worst_roi is math.inf:
+                    worst_roi = 0.0
+                info["robustness"] = float(worst_roi)
+                if scenario_failed or worst_roi < 0.0:
+                    self.logger.info(
+                        "self tests failed",
+                        extra=log_record(module=m, robustness=worst_roi),
+                    )
                     continue
                 roi_total = 0.0
                 try:
@@ -2178,15 +2201,24 @@ class SelfImprovementEngine:
             passed = float(counts.get("orphan_modules_passed", len(mods)))
             pass_rate = passed / tested if tested else 0.0
             avg_roi = sum(roi_vals.values()) / len(roi_vals) if roi_vals else 0.0
+            robust_vals = [
+                self.orphan_traces.get(m, {}).get("robustness", 0.0) for m in mods
+            ]
+            worst_robust = min(robust_vals) if robust_vals else 0.0
             self._last_orphan_metrics = {
                 "pass_rate": float(pass_rate),
                 "avg_roi": float(avg_roi),
+                "worst_scenario_roi": float(worst_robust),
             }
 
             tracker = getattr(self, "tracker", None)
             if tracker is not None:
                 try:
-                    tracker.register_metrics("orphan_pass_rate", "orphan_avg_roi")
+                    tracker.register_metrics(
+                        "orphan_pass_rate",
+                        "orphan_avg_roi",
+                        "orphan_worst_scenario_roi",
+                    )
                     base = tracker.roi_history[-1] if tracker.roi_history else 0.0
                     tracker.update(
                         base,
@@ -2194,6 +2226,7 @@ class SelfImprovementEngine:
                         metrics={
                             "orphan_pass_rate": pass_rate,
                             "orphan_avg_roi": avg_roi,
+                            "orphan_worst_scenario_roi": worst_robust,
                         },
                     )
                 except Exception:  # pragma: no cover - best effort
