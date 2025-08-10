@@ -25,6 +25,7 @@ _FAILURE_MODES = [
     "network_partition",
     "cpu_spike",
     "hostile_input",
+    "user_misuse",
 ]
 
 # chance that multiple failure modes will be combined in one preset
@@ -117,6 +118,8 @@ def generate_presets(
             if "hostile_input" in failures:
                 preset.setdefault("SCENARIO_NAME", "hostile_input")
                 preset["SANDBOX_STUB_STRATEGY"] = "hostile"
+            if "user_misuse" in failures:
+                preset.setdefault("SCENARIO_NAME", "user_misuse")
         presets.append(preset)
 
     if tracker:

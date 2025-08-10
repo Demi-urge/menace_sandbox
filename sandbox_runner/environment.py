@@ -3867,6 +3867,21 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
             "    _env['SANDBOX_INPUT_STUBS']=json.dumps(_stubs)\n"
         )
 
+    if "user_misuse" in modes:
+        parts.append(
+            "import sys, os\n"
+            "def _misuse():\n"
+            "    try:\n"
+            "        len('x', 'y')\n"
+            "    except Exception as exc:\n"
+            "        print(exc, file=sys.stderr)\n"
+            "    try:\n"
+            "        open('/root/forbidden', 'r')\n"
+            "    except Exception as exc:\n"
+            "        print(exc, file=sys.stderr)\n"
+            "_misuse()\n"
+        )
+
     if not parts:
         return snippet
 

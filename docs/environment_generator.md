@@ -32,6 +32,8 @@ to stress error handling:
 - `memory` – restrict heap allocation.
 - `timeout` – terminate the process prematurely.
 - `hostile_input` – replace generated input stubs with malicious payloads.
+- `user_misuse` – attempt invalid API calls or unauthorized actions and log the
+  resulting errors.
 
 Include the key as a list or comma separated string. The sandbox runner reads
 `FAILURE_MODES` from the environment preset before executing each snippet and
