@@ -3,8 +3,10 @@ from __future__ import annotations
 """Utilities for visualising evaluation results."""
 
 import json
+import queue
+import threading
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 import types
 
 try:  # optional dependency
@@ -39,11 +41,27 @@ except Exception:  # pragma: no cover - optional
 from .evaluation_manager import EvaluationManager
 
 
+def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
+    """Helper returning the lineage tree for ``workflow_id``."""
+
+    try:
+        from .mutation_lineage import MutationLineage
+
+        return MutationLineage().build_tree(workflow_id)
+    except Exception:  # pragma: no cover - best effort fallback
+        from .mutation_logger import build_lineage
+
+        return build_lineage(workflow_id)
+
+
 class EvaluationDashboard:
     """Render :class:`EvaluationManager` history as data frames and weights."""
 
     def __init__(self, manager: EvaluationManager) -> None:
         self.manager = manager
+        self._lineage_lock = threading.Lock()
+        self._lineage_trees: Dict[int, List[Dict[str, Any]]] = {}
+        self._lineage_updates: queue.Queue[List[Dict[str, Any]]] = queue.Queue()
 
     def dataframe(self):
         if pd is None:
@@ -77,19 +95,26 @@ class EvaluationDashboard:
     def lineage_tree(self, workflow_id: int) -> List[Dict[str, Any]]:
         """Return the mutation lineage for ``workflow_id``.
 
-        Attempts to use :class:`MutationLineage` for enriched tree data and
-        falls back to :func:`mutation_logger.build_lineage` when the lineage
-        utilities are unavailable.
+        The tree is cached and rebuilt on demand.  :class:`MutationLineage` is
+        used when available and falls back to :func:`mutation_logger.build_lineage`.
         """
 
-        try:
-            from .mutation_lineage import MutationLineage
+        with self._lineage_lock:
+            cached = self._lineage_trees.get(workflow_id)
+        if cached is not None:
+            return cached
+        tree = _build_tree(workflow_id)
+        with self._lineage_lock:
+            self._lineage_trees[workflow_id] = tree
+        return tree
 
-            return MutationLineage().build_tree(workflow_id)
-        except Exception:  # pragma: no cover - best effort fallback
-            from .mutation_logger import build_lineage
+    # ------------------------------------------------------------------
+    def update_lineage_tree(self, workflow_id: int, tree: List[Dict[str, Any]]) -> None:
+        """Update cached lineage tree and push to the update queue."""
 
-            return build_lineage(workflow_id)
+        with self._lineage_lock:
+            self._lineage_trees[workflow_id] = tree
+        self._lineage_updates.put(tree)
 
     # ------------------------------------------------------------------
     def save_lineage_json(self, path: str | Path, workflow_id: int) -> None:
