@@ -68,6 +68,7 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
     },
     "user_misuse": {
         "FAILURE_MODES": "user_misuse",
+        "SANDBOX_STUB_STRATEGY": "misuse",
         "INVALID_CONFIG": True,
         "INVALID_PARAM_TYPES": True,
         "UNEXPECTED_API_CALLS": True,
@@ -145,6 +146,7 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "CPU_LIMIT": "1",
             "MEMORY_LIMIT": "512Mi",
             "FAILURE_MODES": "user_misuse",
+            "SANDBOX_STUB_STRATEGY": "misuse",
             "INVALID_CONFIG": True,
             "INVALID_PARAM_TYPES": True,
             "UNEXPECTED_API_CALLS": True,
@@ -229,6 +231,7 @@ def _random_preset() -> Dict[str, Any]:
             preset.setdefault("MALICIOUS_DATA", True)
         if "user_misuse" in failures:
             preset["SCENARIO_NAME"] = "user_misuse"
+            preset["SANDBOX_STUB_STRATEGY"] = "misuse"
             preset.setdefault("INVALID_CONFIG", True)
             preset.setdefault("INVALID_PARAM_TYPES", True)
             preset.setdefault("UNEXPECTED_API_CALLS", True)

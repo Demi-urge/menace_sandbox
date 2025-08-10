@@ -57,6 +57,9 @@ export SANDBOX_STUB_STRATEGY=hostile
 python sandbox_runner.py --runs 1
 ```
 
+The `user_misuse` profile sets `SANDBOX_STUB_STRATEGY=misuse` which generates
+stubs with missing fields or incorrect types to simulate user errors.
+
 ## Concurrency Settings
 
 Profiles that include `concurrency_spike` populate the `THREAD_BURST` and
@@ -98,9 +101,8 @@ to stress error handling:
 - `concurrency_spike` – spawn bursts of threads and async tasks to stress concurrency handling. Presets include `THREAD_BURST` and `ASYNC_TASK_BURST` values.
 - `memory` – restrict heap allocation.
 - `timeout` – terminate the process prematurely.
-- `hostile_input` – replace generated input stubs with malicious payloads. Internally this sets `SANDBOX_STUB_STRATEGY` to `hostile` (alias `misuse`).
-- `user_misuse` – attempt invalid API calls or unauthorized actions and log the
-  resulting errors.
+- `hostile_input` – replace generated input stubs with malicious payloads. Internally this sets `SANDBOX_STUB_STRATEGY` to `hostile`.
+- `user_misuse` – supply wrong types or omit fields, setting `SANDBOX_STUB_STRATEGY=misuse` and logging the resulting errors.
 
 Include the key as a list or comma separated string. The sandbox runner reads
 `FAILURE_MODES` from the environment preset before executing each snippet and
@@ -120,7 +122,7 @@ for preset in presets:
 
 These presets can be passed directly to `run_repo_section_simulations` or `_run_sandbox` for scenario testing.
 
-Example preset with hostile input stubs (`SANDBOX_STUB_STRATEGY` set to `hostile`/`misuse`):
+Example preset with hostile input stubs (`SANDBOX_STUB_STRATEGY` set to `hostile`):
 
 ```json
 {

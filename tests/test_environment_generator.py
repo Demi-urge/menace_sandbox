@@ -93,6 +93,7 @@ def test_generate_presets_user_misuse(monkeypatch):
     p = presets[0]
     assert p.get("FAILURE_MODES") == "user_misuse"
     assert p.get("SCENARIO_NAME") == "user_misuse"
+    assert p.get("SANDBOX_STUB_STRATEGY") == "misuse"
     assert p.get("INVALID_CONFIG") is True
     assert p.get("INVALID_PARAM_TYPES")
     assert p.get("UNEXPECTED_API_CALLS")
