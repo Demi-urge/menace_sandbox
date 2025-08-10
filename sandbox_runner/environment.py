@@ -4842,12 +4842,35 @@ def _scenario_specific_metrics(
         extra["latency_error_rate"] = float(metrics.get("error_rate", 0.0))
     if "hostile" in name:
         extra["hostile_failures"] = float(metrics.get("failure_count", 0.0))
+        extra["hostile_sanitization_failures"] = float(
+            metrics.get("sanitization_failures", 0.0)
+        )
+        extra["hostile_validation_failures"] = float(
+            metrics.get("validation_failures", 0.0)
+        )
     if "misuse" in name:
         extra["misuse_failures"] = float(metrics.get("failure_count", 0.0))
+        extra["misuse_invalid_calls"] = float(
+            metrics.get("invalid_call_count", 0.0)
+        )
+        extra["misuse_recovery_attempts"] = float(
+            metrics.get("recovery_attempts", 0.0)
+        )
     if "concurrency" in name:
         extra["concurrency_throughput"] = float(
             metrics.get("throughput", metrics.get("concurrency_throughput", 0.0))
         )
+        extra["concurrency_thread_saturation"] = float(
+            metrics.get("concurrency_threads", 0.0)
+        )
+        extra["concurrency_async_saturation"] = float(
+            metrics.get("concurrency_tasks", 0.0)
+        )
+        err_rate = float(
+            metrics.get("concurrency_error_rate", metrics.get("error_rate", 0.0))
+        )
+        level = float(metrics.get("concurrency_level", 1.0))
+        extra["concurrency_error_count"] = err_rate * level
     return extra
 
 
