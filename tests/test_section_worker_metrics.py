@@ -28,6 +28,10 @@ def test_section_worker_returns_metrics(monkeypatch):
     for key in ("cpu", "memory", "disk_io", "net_io", "gpu_usage"):
         assert key in metrics
         assert isinstance(metrics[key], float)
+    assert "success_rate" in metrics
+    assert isinstance(metrics["success_rate"], float)
+    assert "avg_completion_time" in metrics
+    assert isinstance(metrics["avg_completion_time"], float)
 
 
 def test_section_worker_concurrency(monkeypatch):
@@ -48,3 +52,5 @@ def test_section_worker_concurrency(monkeypatch):
     assert metrics["concurrency_level"] == 2.0
     assert "concurrency_throughput" in metrics
     assert "concurrency_error_rate" in metrics
+    assert metrics["success_rate"] == 1.0
+    assert "avg_completion_time" in metrics
