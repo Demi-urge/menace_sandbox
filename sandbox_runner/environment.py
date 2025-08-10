@@ -4840,7 +4840,9 @@ def _scenario_specific_metrics(
     extra: Dict[str, float] = {}
     if "latency" in name:
         extra["latency_error_rate"] = float(metrics.get("error_rate", 0.0))
-    if "misuse" in name or "hostile" in name:
+    if "hostile" in name:
+        extra["hostile_failures"] = float(metrics.get("failure_count", 0.0))
+    if "misuse" in name:
         extra["misuse_failures"] = float(metrics.get("failure_count", 0.0))
     if "concurrency" in name:
         extra["concurrency_throughput"] = float(
@@ -5170,6 +5172,7 @@ def run_repo_section_simulations(
                             "network_latency",
                             "throughput",
                             "latency_error_rate",
+                            "hostile_failures",
                             "misuse_failures",
                             "concurrency_throughput",
                         ):
@@ -5978,6 +5981,7 @@ def run_workflow_simulations(
                     "network_latency",
                     "throughput",
                     "latency_error_rate",
+                    "hostile_failures",
                     "misuse_failures",
                     "concurrency_throughput",
                 ):
