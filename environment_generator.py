@@ -91,6 +91,39 @@ _PROFILE_ALIASES = {
     "malicious_data": "hostile_input",
 }
 
+# keyword based suggestions for module-specific profiles
+_KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
+    "api": ["high_latency_api"],
+    "network": ["high_latency_api"],
+    "parser": ["hostile_input", "user_misuse"],
+    "input": ["hostile_input"],
+    "concurrency": ["concurrency_spike"],
+    "thread": ["concurrency_spike"],
+}
+
+
+def suggest_profiles_for_module(module_name: str) -> List[str]:
+    """Return profile names relevant to ``module_name``.
+
+    The helper performs a simple keyword lookup on the module path and
+    returns matching scenario profile names. When multiple keywords match
+    the resulting list preserves order and duplicates are removed.
+    """
+
+    name = module_name.lower()
+    profiles: List[str] = []
+    for key, profs in _KEYWORD_PROFILE_MAP.items():
+        if key in name:
+            profiles.extend(profs)
+
+    seen: set[str] = set()
+    unique: List[str] = []
+    for prof in profiles:
+        if prof not in seen:
+            unique.append(prof)
+            seen.add(prof)
+    return unique
+
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
 

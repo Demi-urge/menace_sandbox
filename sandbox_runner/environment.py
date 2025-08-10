@@ -4920,6 +4920,22 @@ def run_repo_section_simulations(
             all_presets: List[Dict[str, Any]] = [
                 p for lst in preset_map.values() for p in lst
             ]
+            for module in sections:
+                if module in preset_map:
+                    continue
+                try:
+                    from menace.environment_generator import (
+                        generate_presets,
+                        suggest_profiles_for_module,
+                    )
+
+                    profiles = suggest_profiles_for_module(module)
+                    if profiles:
+                        new_presets = generate_presets(profiles=profiles)
+                        preset_map[module] = new_presets
+                        all_presets.extend(new_presets)
+                except Exception:
+                    pass
         else:
             preset_map = {}
             all_presets = list(env_presets)
@@ -5766,16 +5782,6 @@ def run_workflow_simulations(
         except Exception:
             pass
 
-    tracker = tracker or ROITracker()
-    scenario_names: List[str] = []
-    for i, p in enumerate(all_presets):
-        name = p.get("SCENARIO_NAME")
-        if not name:
-            name = f"scenario_{i}"
-            p["SCENARIO_NAME"] = name
-        if name not in scenario_names:
-            scenario_names.append(name)
-
     wf_db = WorkflowDB(Path(workflows_db))
     workflows = wf_db.fetch()
     if dynamic_workflows or not workflows:
@@ -5805,6 +5811,35 @@ def run_workflow_simulations(
             WorkflowRecord(workflow=mods, title=f"workflow_{gid}", wid=i + 1)
             for i, (gid, mods) in enumerate(sorted(groups.items()))
         ]
+
+    if isinstance(env_presets, Mapping):
+        try:
+            from menace.environment_generator import (
+                generate_presets,
+                suggest_profiles_for_module,
+            )
+
+            modules = {step.split(":")[0] for wf in workflows for step in wf.workflow}
+            for module in modules:
+                if module in preset_map:
+                    continue
+                profiles = suggest_profiles_for_module(module)
+                if profiles:
+                    new_presets = generate_presets(profiles=profiles)
+                    preset_map[module] = new_presets
+                    all_presets.extend(new_presets)
+        except Exception:
+            pass
+
+    tracker = tracker or ROITracker()
+    scenario_names: List[str] = []
+    for i, p in enumerate(all_presets):
+        name = p.get("SCENARIO_NAME")
+        if not name:
+            name = f"scenario_{i}"
+            p["SCENARIO_NAME"] = name
+        if name not in scenario_names:
+            scenario_names.append(name)
 
     async def _run() -> (
         "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]
