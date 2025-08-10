@@ -44,6 +44,11 @@ def _load_methods():
         "time": __import__("time"),
         "datetime": __import__("datetime").datetime,
         "Iterable": __import__("typing").Iterable,
+        "math": __import__("math"),
+        "SandboxSettings": lambda: types.SimpleNamespace(
+            side_effect_threshold=0.0, test_redundant_modules=False
+        ),
+        "classify_module": lambda path, include_meta=True: ("candidate", {}),
         "build_module_map": lambda repo, ignore=None: {},
         "generate_workflows_for_modules": lambda mods: None,
         "try_integrate_into_workflows": lambda mods: None,
@@ -57,6 +62,9 @@ def _load_methods():
         try_integrate_into_workflows(mods)
         run_workflow_simulations()
     mod_dict["auto_include_modules"] = auto_include_modules
+    mod_dict["environment"] = types.SimpleNamespace(
+        auto_include_modules=auto_include_modules
+    )
     ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[]))
     code = ast.Module(body=methods, type_ignores=[])
     exec(compile(code, str(path), "exec"), mod_dict)
