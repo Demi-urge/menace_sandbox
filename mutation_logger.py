@@ -85,12 +85,29 @@ def log_mutation(
 
         def _publish() -> None:
             try:
-                publish_with_retry(_event_bus, "mutation_recorded", payload)
+                publish_with_retry(_event_bus, "mutation_recorded", payload, delay=0.1)
             except Exception as exc:  # pragma: no cover - best effort
                 _logger.error("failed publishing mutation_recorded: %s", exc)
 
         Thread(target=_publish, daemon=True).start()
     return event_id
+
+
+def record_mutation_outcome(
+    event_id: int,
+    after_metric: float,
+    roi: float,
+    performance: float,
+) -> None:
+    """Record outcome metrics for an existing mutation event."""
+
+    with _lock:
+        _history_db.record_outcome(
+            event_id,
+            after_metric=after_metric,
+            roi=roi,
+            performance=performance,
+        )
 
 
 def build_lineage(workflow_id: int) -> list[dict]:
@@ -99,4 +116,9 @@ def build_lineage(workflow_id: int) -> list[dict]:
         return _history_db.lineage_tree(workflow_id)
 
 
-__all__ = ["log_mutation", "build_lineage", "set_event_bus"]
+__all__ = [
+    "log_mutation",
+    "record_mutation_outcome",
+    "build_lineage",
+    "set_event_bus",
+]

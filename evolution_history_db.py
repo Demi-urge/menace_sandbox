@@ -34,7 +34,7 @@ class EvolutionHistoryDB:
     """SQLite-backed store for evolution history."""
 
     def __init__(self, path: Path | str = "evolution_history.db") -> None:
-        self.conn = sqlite3.connect(path)
+        self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS evolution_history(
