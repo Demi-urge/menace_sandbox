@@ -21,6 +21,34 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Scenario Types
+
+Improvement cycles inherit the sandbox scenario presets. Use profiles such as
+`high_latency_api`, `hostile_input`, `user_misuse` or `concurrency_spike` to
+exercise bots under different conditions.
+
+## Configuring and Extending Presets
+
+Create custom presets with `environment_cli.py generate` and feed them to the
+autonomous run hosting the engine via `--preset-file` or the
+`SANDBOX_ENV_PRESETS` variable. Additional profiles can be introduced by
+extending `environment_generator.generate_canonical_presets` or by supplying
+extra JSON snippets.
+
+## Interpreting Per-Scenario Metrics
+
+The engine records ROI deltas and synergy metrics for each `SCENARIO_NAME` in
+the tracker history. Comparing these values highlights which conditions trigger
+improvements. For example, rising `roi_delta_ema` during a `concurrency_spike`
+run indicates the bot is adapting to thread bursts.
+
+## Example: running with a custom preset
+
+```bash
+python environment_cli.py generate --profiles concurrency_spike --out spike.json
+python run_autonomous.py --preset-file spike.json --runs 1
+```
+
 ## Recursive orphan discovery
 
 ### How it works

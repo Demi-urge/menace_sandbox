@@ -4,6 +4,18 @@
 
 The generator randomly chooses values for keys such as `CPU_LIMIT`, `MEMORY_LIMIT` and `DISK_LIMIT`. It can also introduce failure modes and emulate networking conditions.
 
+## Scenario Types
+
+Presets fall into broad categories that target different behaviours:
+
+- **baseline** – minimal limits used for control runs.
+- **stress** – resource or network pressure such as `high_latency_api`.
+- **security** – attack simulations like `hostile_input` or `user_misuse`.
+- **concurrency** – thread and async task bursts via `concurrency_spike`.
+
+Combine categories by listing multiple profiles when generating presets or on
+the command line.
+
 ## Predefined Profiles
 
 `generate_presets` ships with several canonical profiles that can be requested
@@ -19,6 +31,19 @@ Generate a preset that combines hostile inputs with a concurrency spike:
 
 ```bash
 python environment_cli.py --profiles hostile_input concurrency_spike --count 1
+```
+
+## Configuring and Extending Presets
+
+Profiles are simple dictionaries merged into the randomly generated fields.
+Add your own profile by defining it in a JSON file and passing its name to
+`generate_presets`. Individual keys can be overridden via environment variables
+or by editing the generated JSON. Example:
+
+```bash
+export CPU_LIMIT=2
+python environment_cli.py --profiles hostile_input --count 1 --out presets.json
+python run_autonomous.py --preset-file presets.json --runs 1
 ```
 
 ## Hostile Input Stub Strategy
@@ -117,6 +142,15 @@ Profiles can be selected explicitly:
 ```python
 presets = generate_presets(profiles=["high_latency", "hostile_input"])
 ```
+
+## Interpreting Per-Scenario Metrics
+
+Each preset carries a `SCENARIO_NAME` so that ROI and synergy measurements are
+grouped per scenario. After a run inspect `roi_history.json` or the metrics
+database and filter by this name to see how a particular profile behaves. A drop
+in `synergy_resilience` for `hostile_input` indicates the system struggled with
+malicious payloads, while high `security_score` under `high_latency_api` shows
+robust network handling.
 
 When provided and the tracker contains at least five ROI samples, the agent's
 `decide()` method adjusts `CPU_LIMIT`, `MEMORY_LIMIT`, `BANDWIDTH_LIMIT` and
