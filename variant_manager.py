@@ -10,6 +10,7 @@ from .experiment_manager import ExperimentManager, ExperimentResult
 from .evolution_history_db import EvolutionHistoryDB
 from .workflow_cloner import WorkflowCloner
 from . import mutation_logger as MutationLogger
+from .mutation_lineage import MutationLineage
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,90 @@ class VariantManager:
             parent_id=parent_event_id,
         )
         return event_id
+
+    # ------------------------------------------------------------------
+    def ab_test_branch(
+        self, failing_patch_id: int, variant_name: str
+    ) -> Tuple[int, List[ExperimentResult]]:
+        """Clone the most promising ancestor branch for A/B testing.
+
+        ``failing_patch_id`` identifies the latest patch that performed
+        poorly.  We backtrack its lineage using
+        :meth:`MutationLineage.backtrack_failed_path` and analyse ROI deltas
+        along that path to find the ancestor with the strongest positive ROI
+        trend.  That patch is cloned via
+        :meth:`MutationLineage.clone_branch_for_ab_test` and fed into the
+        existing experiment pipeline.  The resulting mutation event id and
+        experiment results are returned.
+        """
+
+        lineage: MutationLineage | None = getattr(
+            self.experiment_manager, "lineage", None
+        )
+        if not lineage or not getattr(lineage, "patch_db", None):
+            return 0, []
+
+        # Determine ancestor patches with positive ROI trends
+        path = lineage.backtrack_failed_path(failing_patch_id)
+        if not path:
+            return 0, []
+
+        best_patch: int | None = None
+        best_delta = float("-inf")
+        try:
+            with lineage.patch_db._connect() as conn:  # type: ignore[attr-defined]
+                for pid in path:
+                    row = conn.execute(
+                        "SELECT roi_delta FROM patch_history WHERE id=?",
+                        (pid,),
+                    ).fetchone()
+                    if not row:
+                        continue
+                    delta = float(row[0])
+                    if delta > best_delta:
+                        best_delta = delta
+                        best_patch = pid
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("failed analysing ROI trend: %s", exc)
+            return 0, []
+
+        if best_patch is None or best_delta <= 0:
+            # no promising ancestor
+            return 0, []
+
+        new_patch_id = lineage.clone_branch_for_ab_test(best_patch, variant_name)
+        if not new_patch_id:
+            return 0, []
+
+        # run the cloned branch through existing experiments
+        results = asyncio.run(
+            self.experiment_manager.run_experiments([variant_name])
+        )
+        roi_val = results[0].roi if results else 0.0
+
+        event_id = MutationLogger.log_mutation(
+            change=variant_name,
+            reason="ab_test_branch",
+            trigger="variant_manager",
+            performance=roi_val,
+            workflow_id=0,
+            before_metric=0.0,
+            after_metric=roi_val,
+            parent_id=best_patch,
+        )
+        try:
+            MutationLogger.record_mutation_outcome(
+                event_id,
+                after_metric=roi_val,
+                roi=roi_val,
+                performance=roi_val,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning(
+                "failed recording mutation outcome for %s: %s", variant_name, exc
+            )
+
+        return event_id, results
 
     # ------------------------------------------------------------------
     def compare_variants(
