@@ -3,7 +3,7 @@ from __future__ import annotations
 """Thread-safe mutation logging helpers."""
 
 import logging
-from threading import Lock
+from threading import Lock, Thread
 from typing import Optional
 import sqlite3
 
@@ -81,11 +81,15 @@ def log_mutation(
     with _lock:
         event_id = _history_db.add(event)
     if _event_bus is not None:
-        try:
-            payload = {"event_id": event_id, **event.__dict__}
-            publish_with_retry(_event_bus, "mutation_recorded", payload)
-        except Exception as exc:  # pragma: no cover - best effort
-            _logger.error("failed publishing mutation_recorded: %s", exc)
+        payload = {"event_id": event_id, **event.__dict__}
+
+        def _publish() -> None:
+            try:
+                publish_with_retry(_event_bus, "mutation_recorded", payload)
+            except Exception as exc:  # pragma: no cover - best effort
+                _logger.error("failed publishing mutation_recorded: %s", exc)
+
+        Thread(target=_publish, daemon=True).start()
     return event_id
 
 
