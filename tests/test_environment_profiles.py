@@ -122,6 +122,37 @@ def test_profiles_results(monkeypatch):
         assert key in tracker.metrics_history
 
 
+def test_canonical_profiles_autoload(monkeypatch):
+    _setup_runner(monkeypatch)
+    import sandbox_runner.environment as env
+    monkeypatch.setattr(env, "simulate_execution_environment", lambda *a, **k: {})
+
+    async def fake_section_worker(snippet, env_input, threshold):
+        return {"exit_code": 0}, [(0.0, 1.0, {"throughput": 1.0})]
+
+    monkeypatch.setattr(env, "_section_worker", fake_section_worker)
+    canonical = [
+        {"SCENARIO_NAME": "high_latency_api"},
+        {"SCENARIO_NAME": "hostile_input"},
+        {"SCENARIO_NAME": "user_misuse"},
+        {"SCENARIO_NAME": "concurrency_spike"},
+    ]
+    _stub_module(
+        monkeypatch,
+        "menace.environment_generator",
+        generate_canonical_presets=lambda: canonical,
+        generate_presets=lambda profiles=None: [],
+    )
+    tracker = env.run_workflow_simulations("wf.db")
+    for name in [
+        "high_latency_api",
+        "hostile_input",
+        "user_misuse",
+        "concurrency_spike",
+    ]:
+        assert f"throughput:{name}" in tracker.metrics_history
+
+
 def test_hostile_input_triggers_fix(monkeypatch):
     _setup_runner(monkeypatch)
     DummySandbox.calls = 0
