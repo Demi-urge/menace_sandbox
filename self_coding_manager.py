@@ -96,6 +96,12 @@ class SelfCodingManager:
             workflow_id=0,
             parent_id=self._last_event_id,
         )
+        MutationLogger.record_mutation_outcome(
+            event_id,
+            after_metric=after_roi,
+            roi=after_roi,
+            performance=roi_delta,
+        )
         self._last_event_id = event_id
         self._last_patch_id = patch_id
         if self.data_bot:
