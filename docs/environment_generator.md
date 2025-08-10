@@ -31,6 +31,7 @@ to stress error handling:
 - `cpu_spike` – introduce short bursts of high CPU usage.
 - `memory` – restrict heap allocation.
 - `timeout` – terminate the process prematurely.
+- `hostile_input` – replace generated input stubs with malicious payloads.
 
 Include the key as a list or comma separated string. The sandbox runner reads
 `FAILURE_MODES` from the environment preset before executing each snippet and
@@ -49,6 +50,17 @@ for preset in presets:
 ```
 
 These presets can be passed directly to `run_repo_section_simulations` or `_run_sandbox` for scenario testing.
+
+Example preset with hostile input stubs:
+
+```json
+{
+  "CPU_LIMIT": "1",
+  "MEMORY_LIMIT": "512Mi",
+  "FAILURE_MODES": "hostile_input",
+  "SANDBOX_STUB_STRATEGY": "hostile"
+}
+```
 
 `generate_presets` also accepts an optional `agent` and `tracker` argument:
 
