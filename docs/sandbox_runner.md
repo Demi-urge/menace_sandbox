@@ -75,6 +75,55 @@ returned by `generate_canonical_presets()`. These cover common scenarios such
 as `high_latency_api`, `hostile_input`, `user_misuse` and `concurrency_spike`
 so every module is exercised under each condition.
 
+## Predefined Profiles
+
+When `SANDBOX_PRESET_MODE=canonical` is enabled or `generate_presets()` is
+called with explicit profile names, the runner iterates over several
+deterministic scenarios:
+
+- `high_latency_api` – introduces significant network delay.
+- `hostile_input` – replaces normal stubs with adversarial payloads.
+- `user_misuse` – attempts incorrect API usage and unauthorized access.
+- `concurrency_spike` – spawns bursts of threads and async tasks.
+
+Run all canonical profiles with:
+
+```bash
+SANDBOX_PRESET_MODE=canonical python sandbox_runner.py --runs 1
+```
+
+To target specific profiles, generate presets via the CLI and pass them to the
+runner:
+
+```bash
+python environment_cli.py --profiles hostile_input concurrency_spike --count 1 > presets.json
+SANDBOX_ENV_PRESETS="$(cat presets.json)" python sandbox_runner.py
+```
+
+## Hostile Input Stub Strategy
+
+The hostile profile or the `hostile_input` failure mode forces the sandbox to
+use malicious input stubs by setting `SANDBOX_STUB_STRATEGY=hostile` (alias
+`misuse`). Enable it manually to fuzz a run:
+
+```bash
+export SANDBOX_STUB_STRATEGY=hostile
+python sandbox_runner.py --runs 1
+```
+
+## Concurrency Settings
+
+Profiles or presets containing `concurrency_spike` stress thread and task
+handling. The preset can supply `THREAD_BURST` and `ASYNC_TASK_BURST` values to
+control the spike. They may also be set directly:
+
+```bash
+export FAILURE_MODES=concurrency_spike
+export THREAD_BURST=32
+export ASYNC_TASK_BURST=128
+python sandbox_runner.py --runs 1
+```
+
 `adapt_presets()` further tweaks these scenarios before each run. The function
 raises CPU, memory and bandwidth limits when ROI gains stall and lowers them
 again once improvements resume. Positive synergy ROI also decreases

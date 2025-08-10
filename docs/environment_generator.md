@@ -4,6 +4,47 @@
 
 The generator randomly chooses values for keys such as `CPU_LIMIT`, `MEMORY_LIMIT` and `DISK_LIMIT`. It can also introduce failure modes and emulate networking conditions.
 
+## Predefined Profiles
+
+`generate_presets` ships with several canonical profiles that can be requested
+via the `profiles` argument or by setting `SANDBOX_PRESET_MODE=canonical` in the
+runner. Available names include:
+
+- `high_latency_api` – adds heavy `NETWORK_LATENCY_MS` values.
+- `hostile_input` – enables malicious stub generation.
+- `user_misuse` – performs invalid API calls and file access attempts.
+- `concurrency_spike` – defines `THREAD_BURST` and `ASYNC_TASK_BURST` bursts.
+
+Generate a preset that combines hostile inputs with a concurrency spike:
+
+```bash
+python environment_cli.py --profiles hostile_input concurrency_spike --count 1
+```
+
+## Hostile Input Stub Strategy
+
+The `hostile_input` profile or failure mode sets
+`SANDBOX_STUB_STRATEGY=hostile` so that generated presets feed adversarial
+payloads to each section. To enforce it without a profile:
+
+```bash
+export SANDBOX_STUB_STRATEGY=hostile
+python sandbox_runner.py --runs 1
+```
+
+## Concurrency Settings
+
+Profiles that include `concurrency_spike` populate the `THREAD_BURST` and
+`ASYNC_TASK_BURST` fields to overwhelm concurrency controls. These values may
+also be supplied manually:
+
+```bash
+export FAILURE_MODES=concurrency_spike
+export THREAD_BURST=32
+export ASYNC_TASK_BURST=128
+python sandbox_runner.py --runs 1
+```
+
 ## Available Parameters
 
 - `CPU_LIMIT` – numeric string passed to `resource.setrlimit` to cap CPU seconds used by the snippet.
