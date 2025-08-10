@@ -47,27 +47,36 @@ _ASYNC_BURSTS = [20, 50, 100]
 
 # named profiles for deterministic scenarios
 _PROFILES: Dict[str, Dict[str, Any]] = {
-    "high_latency": {
+    "high_latency_api": {
         "NETWORK_LATENCY_MS": 500,
+        "NETWORK_JITTER_MS": 50,
+        "PACKET_LOSS": 0.1,
         "FAILURE_MODES": "network",
         "THREAT_INTENSITY": 70,
     },
     "hostile_input": {
         "FAILURE_MODES": "hostile_input",
         "SANDBOX_STUB_STRATEGY": "hostile",
+        "PAYLOAD_INDICATOR": "corrupted_bytes",
         "THREAT_INTENSITY": 50,
     },
     "user_misuse": {
         "FAILURE_MODES": "user_misuse",
+        "INVALID_CONFIG": True,
         "THREAT_INTENSITY": 30,
     },
     "concurrency_spike": {
-        "FAILURE_MODES": "concurrency_spike",
+        "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
         "THREAD_BURST": 50,
         "ASYNC_TASK_BURST": 100,
+        "MAX_THREADS": 200,
+        "CPU_SPIKE": True,
         "THREAT_INTENSITY": 50,
     },
 }
+
+# legacy aliases mapping to canonical scenario names
+_PROFILE_ALIASES = {"high_latency": "high_latency_api"}
 
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
@@ -105,6 +114,8 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "CPU_LIMIT": "1",
             "MEMORY_LIMIT": "512Mi",
             "NETWORK_LATENCY_MS": 500,
+            "NETWORK_JITTER_MS": 50,
+            "PACKET_LOSS": 0.1,
             "FAILURE_MODES": "network",
         },
         {
@@ -113,20 +124,24 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "MEMORY_LIMIT": "512Mi",
             "FAILURE_MODES": "hostile_input",
             "SANDBOX_STUB_STRATEGY": "hostile",
+            "PAYLOAD_INDICATOR": "corrupted_bytes",
         },
         {
             "SCENARIO_NAME": "user_misuse",
             "CPU_LIMIT": "1",
             "MEMORY_LIMIT": "512Mi",
             "FAILURE_MODES": "user_misuse",
+            "INVALID_CONFIG": True,
         },
         {
             "SCENARIO_NAME": "concurrency_spike",
             "CPU_LIMIT": "1",
             "MEMORY_LIMIT": "512Mi",
-            "FAILURE_MODES": "concurrency_spike",
+            "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
             "THREAD_BURST": 50,
             "ASYNC_TASK_BURST": 100,
+            "MAX_THREADS": 200,
+            "CPU_SPIKE": True,
         },
     ]
 
@@ -164,19 +179,35 @@ def _random_preset() -> Dict[str, Any]:
             f"{os_type}_image": f"{os_type}-base.qcow2",
             "memory": "4Gi",
         }
+    # identify high-latency scenarios even without explicit failure modes
+    if (
+        preset["NETWORK_LATENCY_MS"] >= 200
+        and (
+            preset["NETWORK_JITTER_MS"] >= 20
+            or preset["PACKET_LOSS"] >= 0.05
+        )
+    ):
+        preset.setdefault("FAILURE_MODES", "network")
+        preset.setdefault("SCENARIO_NAME", "high_latency_api")
+
     failures = _select_failures()
     if failures:
         preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
         if "hostile_input" in failures:
-            preset.setdefault("SCENARIO_NAME", "hostile_input")
+            preset["SCENARIO_NAME"] = "hostile_input"
             preset["SANDBOX_STUB_STRATEGY"] = "hostile"
+            preset.setdefault("PAYLOAD_INDICATOR", "corrupted_bytes")
         if "user_misuse" in failures:
-            preset.setdefault("SCENARIO_NAME", "user_misuse")
+            preset["SCENARIO_NAME"] = "user_misuse"
+            preset.setdefault("INVALID_CONFIG", True)
         if "concurrency_spike" in failures:
             preset.setdefault("THREAD_BURST", random.choice(_THREAD_BURSTS))
             preset.setdefault(
                 "ASYNC_TASK_BURST", random.choice(_ASYNC_BURSTS)
             )
+            preset.setdefault("MAX_THREADS", random.choice([100, 200, 500]))
+            preset.setdefault("CPU_SPIKE", True)
+            preset["SCENARIO_NAME"] = "concurrency_spike"
     return preset
 
 
@@ -198,11 +229,12 @@ def generate_presets(
 
     if profiles:
         for name in profiles:
+            canonical = _PROFILE_ALIASES.get(name, name)
             base = _random_preset()
-            data = _PROFILES.get(name)
+            data = _PROFILES.get(canonical)
             if data:
                 base.update(data)
-            base["SCENARIO_NAME"] = name
+            base["SCENARIO_NAME"] = canonical
             presets.append(base)
 
     remaining = num - len(presets)
