@@ -53,30 +53,19 @@ class LineageTracker:
     def ancestors(self, event_id: int) -> List[dict]:
         """Return ancestors of ``event_id`` from root to the node itself."""
 
+        rows = self.db.ancestors(event_id)
         result: List[dict] = []
-        cur = self.db.conn.execute(
-            "SELECT rowid, parent_event_id, action, roi, performance FROM evolution_history WHERE rowid=?",
-            (event_id,),
-        )
-        row = cur.fetchone()
-        while row:
+        for row in rows:
             result.append(
                 {
                     "rowid": int(row[0]),
-                    "parent_event_id": row[1],
-                    "action": row[2],
-                    "roi": row[3],
-                    "performance": row[4],
+                    "parent_event_id": row[15],
+                    "action": row[1],
+                    "roi": row[4],
+                    "performance": row[14],
                 }
             )
-            pid = row[1]
-            if pid is None:
-                break
-            row = self.db.conn.execute(
-                "SELECT rowid, parent_event_id, action, roi, performance FROM evolution_history WHERE rowid=?",
-                (pid,),
-            ).fetchone()
-        return list(reversed(result))
+        return result
 
     # ------------------------------------------------------------------
     def descendants(self, event_id: int) -> Optional[dict]:

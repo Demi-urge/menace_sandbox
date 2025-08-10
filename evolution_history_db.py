@@ -175,6 +175,74 @@ class EvolutionHistoryDB:
         return cur.fetchall()
 
     # ------------------------------------------------------------------
+    def children(
+        self, parent_event_id: int
+    ) -> List[
+        Tuple[
+            int,
+            str,
+            float,
+            float,
+            float,
+            float,
+            float,
+            float,
+            int | None,
+            int | None,
+            str,
+            str | None,
+            str,
+            str,
+            float,
+            int | None,
+        ]
+    ]:
+        """Alias for :meth:`fetch_children` for backwards compatibility."""
+
+        return self.fetch_children(parent_event_id)
+
+    # ------------------------------------------------------------------
+    def ancestors(
+        self, event_id: int
+    ) -> List[
+        Tuple[
+            int,
+            str,
+            float,
+            float,
+            float,
+            float,
+            float,
+            float,
+            int | None,
+            int | None,
+            str,
+            str | None,
+            str,
+            str,
+            float,
+            int | None,
+        ]
+    ]:
+        """Return lineage from root to ``event_id``."""
+
+        rows = []
+        row = self.conn.execute(
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+            (event_id,),
+        ).fetchone()
+        while row:
+            rows.append(row)
+            parent = row[-1]
+            if parent is None:
+                break
+            row = self.conn.execute(
+                'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+                (parent,),
+            ).fetchone()
+        return list(reversed(rows))
+
+    # ------------------------------------------------------------------
     def subtree(self, event_id: int) -> dict | None:
         """Return the mutation subtree rooted at ``event_id``."""
 
