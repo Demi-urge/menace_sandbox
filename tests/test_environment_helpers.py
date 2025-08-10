@@ -58,6 +58,34 @@ def test_section_worker_user_misuse(monkeypatch):
     assert "len(" in res["stderr"]
 
 
+def test_generate_presets_concurrency(monkeypatch):
+    import menace.environment_generator as gen
+
+    monkeypatch.setattr(gen, "_select_failures", lambda: ["concurrency_spike"])
+    monkeypatch.setattr(gen.random, "choice", lambda seq: seq[0])
+    presets = gen.generate_presets(1)
+    preset = presets[0]
+    assert preset["FAILURE_MODES"] == "concurrency_spike"
+    assert "THREAD_BURST" in preset and "ASYNC_TASK_BURST" in preset
+
+
+def test_section_worker_concurrency_spike():
+    res, _ = asyncio.run(
+        env._section_worker(
+            "print('run')",
+            {
+                "FAILURE_MODES": ["concurrency_spike"],
+                "THREAD_BURST": "5",
+                "ASYNC_TASK_BURST": "5",
+            },
+            0.0,
+        )
+    )
+    assert res["exit_code"] == 0
+    assert res.get("concurrency_threads", 0) >= 5
+    assert res.get("concurrency_tasks", 0) >= 5
+
+
 def test_generate_input_stubs_env(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_STUBS", '[{"a": 1}]')
     import importlib

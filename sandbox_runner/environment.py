@@ -3840,6 +3840,34 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
             "threading.Thread(target=_burn, daemon=True).start()\n"
         )
 
+    if "concurrency_spike" in modes:
+        parts.append(
+            "import os, threading, asyncio, time, json\n"
+            "def _run():\n"
+            "    n_t=int(os.getenv('THREAD_BURST','50'))\n"
+            "    n_a=int(os.getenv('ASYNC_TASK_BURST','50'))\n"
+            "    def _burn():\n"
+            "        time.sleep(0.05)\n"
+            "    threads=[threading.Thread(target=_burn) for _ in range(n_t)]\n"
+            "    [t.start() for t in threads]\n"
+            "    async def _burst():\n"
+            "        async def _noop():\n"
+            "            await asyncio.sleep(0.01)\n"
+            "        await asyncio.gather(*[asyncio.create_task(_noop()) for _ in range(n_a)])\n"
+            "    try:\n"
+            "        asyncio.run(_burst())\n"
+            "    except Exception:\n"
+            "        pass\n"
+            "    path=os.getenv('SANDBOX_CONCURRENCY_OUT')\n"
+            "    if path:\n"
+            "        try:\n"
+            "            with open(path,'w') as fh:\n"
+            "                json.dump({'threads':len(threads),'tasks':n_a},fh)\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "_run()\n"
+        )
+
     if "memory" in modes:
         parts.append(" _mem_fail = bytearray(10_000_000)\n")
 
@@ -3907,6 +3935,8 @@ async def _section_worker(
             path.write_text(snip, encoding="utf-8")
             env = os.environ.copy()
             env.update({k: str(v) for k, v in env_input.items()})
+            conc_path = Path(td) / "concurrency.json"
+            env["SANDBOX_CONCURRENCY_OUT"] = str(conc_path)
             if "memory" in modes and "MEMORY_LIMIT" not in env_input:
                 env["MEMORY_LIMIT"] = "32Mi"
                 env_input["MEMORY_LIMIT"] = "32Mi"
@@ -3934,6 +3964,16 @@ async def _section_worker(
                 "netem_packet_loss": float(loss or 0),
                 "netem_packet_duplication": float(dup or 0),
             }
+
+            def _load_conc() -> Dict[str, float]:
+                try:
+                    with open(conc_path) as fh:
+                        data = json.load(fh)
+                    return {
+                        f"concurrency_{k}": float(v) for k, v in data.items()
+                    }
+                except Exception:
+                    return {}
 
             if {"network", "network_partition"} & modes:
                 if "loss" not in netem_args:
@@ -4020,6 +4060,7 @@ async def _section_worker(
                         "stderr": "",
                         "exit_code": int(metrics.get("exit_code", 0)),
                         **netem_metrics,
+                        **_load_conc(),
                     }
                 except Exception as exc:
                     logger.warning("pyroute2 docker netem failed: %s", exc)
@@ -4152,6 +4193,7 @@ async def _section_worker(
                     "disk_io": disk_io,
                     "net_io": net_io,
                     "gpu_usage": gpu_usage,
+                    **_load_conc(),
                 }
 
             try:
@@ -4174,6 +4216,7 @@ async def _section_worker(
                         "net_io": 0.0,
                         "gpu_usage": 0.0,
                         **netem_metrics,
+                        **_load_conc(),
                     }
                 if psutil is not None:
                     out = _run_psutil()
@@ -4198,6 +4241,7 @@ async def _section_worker(
                     "net_io": float(metrics.get("net_io", 0.0)),
                     "gpu_usage": float(metrics.get("gpu_usage", 0.0)),
                     **netem_metrics,
+                    **_load_conc(),
                 }
             except subprocess.TimeoutExpired as exc:
                 return {
