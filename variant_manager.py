@@ -79,9 +79,29 @@ class VariantManager:
         variants = [row[1] for row in children if row]
         if not variants:
             return [], {}
+
         results = asyncio.run(
             self.experiment_manager.run_experiments(variants)
         )
+
+        # Map each variant to its corresponding event rowid and record outcomes
+        name_to_id = {row[1]: row[0] for row in children if row}
+        for res in results:
+            event_id = name_to_id.get(res.variant)
+            if event_id is None:
+                continue
+            try:
+                MutationLogger.record_mutation_outcome(
+                    event_id,
+                    after_metric=res.roi,
+                    roi=res.roi,
+                    performance=res.roi,
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning(
+                    "failed recording mutation outcome for %s: %s", res.variant, exc
+                )
+
         comparisons = self.experiment_manager.compare_variants(results)
         return results, comparisons
 
