@@ -176,7 +176,7 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
     _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
     _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
-    _stub_module(monkeypatch, "networkx")
+    _stub_module(monkeypatch, "networkx", DiGraph=object)
     sqla = types.ModuleType("sqlalchemy")
     sqla_engine = types.ModuleType("sqlalchemy.engine")
     sqla_engine.Engine = object
@@ -209,10 +209,12 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sandbox_runner.metrics_plugins, "collect_plugin_metrics", collect)
 
-    presets = [
-        {"SCENARIO_NAME": "dev", "CPU_LIMIT": "1", "MEMORY_LIMIT": "32Mi"},
-        {"SCENARIO_NAME": "prod", "CPU_LIMIT": "2", "MEMORY_LIMIT": "64Mi"},
-    ]
+    presets = {
+        "m.py": [
+            {"SCENARIO_NAME": "dev", "CPU_LIMIT": "1", "MEMORY_LIMIT": "32Mi"},
+            {"SCENARIO_NAME": "prod", "CPU_LIMIT": "2", "MEMORY_LIMIT": "64Mi"},
+        ]
+    }
 
     tracker = sandbox_runner.run_repo_section_simulations(
         str(tmp_path), input_stubs=[{}], env_presets=presets
@@ -220,9 +222,69 @@ def test_run_repo_section_simulations_plugins(monkeypatch, tmp_path):
 
     assert len(tracker.calls) == 2
     seen = {call["modules"][1]: call for call in tracker.calls}
-    for preset in presets:
+    for preset in presets["m.py"]:
         name = preset["SCENARIO_NAME"]
         metrics = seen[name]["metrics"]
         assert "plugin_metric" in metrics
+        assert f"plugin_metric:{name}" in metrics
         assert metrics["cpu"] <= float(preset["CPU_LIMIT"])
         assert metrics["memory"] <= env._parse_size(preset["MEMORY_LIMIT"])
+
+
+def test_run_repo_section_simulations_details(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    (tmp_path / "m.py").write_text("def f():\n    return 1\n")
+
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyBot)
+    _stub_module(monkeypatch, "menace.self_improvement_engine", SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyBot)
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", PatchHistoryDB=DummyBot, CodeDB=DummyBot)
+    _stub_module(monkeypatch, "menace.patch_suggestion_db", PatchSuggestionDB=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker2)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
+    _stub_module(monkeypatch, "networkx", DiGraph=object)
+    sqla = types.ModuleType("sqlalchemy")
+    sqla_engine = types.ModuleType("sqlalchemy.engine")
+    sqla_engine.Engine = object
+    monkeypatch.setitem(sys.modules, "sqlalchemy", sqla)
+    monkeypatch.setitem(sys.modules, "sqlalchemy.engine", sqla_engine)
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
+
+    import sandbox_runner
+    import sandbox_runner.environment as env
+
+    monkeypatch.setattr(
+        sandbox_runner,
+        "scan_repo_sections",
+        lambda p, modules=None: {"m.py": {"sec": ["pass"]}},
+        raising=False,
+    )
+    monkeypatch.setattr(sandbox_runner, "simulate_execution_environment", lambda *a, **k: {"risk_flags_triggered": []})
+    monkeypatch.setattr(env, "_section_worker", _fake_worker)
+
+    presets = {
+        "m.py": [
+            {"SCENARIO_NAME": "dev", "CPU_LIMIT": "1", "MEMORY_LIMIT": "32Mi"},
+            {"SCENARIO_NAME": "prod", "CPU_LIMIT": "2", "MEMORY_LIMIT": "64Mi"},
+        ]
+    }
+
+    tracker, details = sandbox_runner.run_repo_section_simulations(
+        str(tmp_path), input_stubs=[{}], env_presets=presets, return_details=True
+    )
+
+    assert tracker.calls
+    assert set(details["m.py"]) == {"dev", "prod"}
+    for scen in ("dev", "prod"):
+        rec = details["m.py"][scen][0]
+        assert rec["section"] == "sec"
+        assert rec["preset"]["SCENARIO_NAME"] == scen

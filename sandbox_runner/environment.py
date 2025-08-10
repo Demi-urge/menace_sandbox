@@ -4745,7 +4745,7 @@ def generate_input_stubs(
 def run_repo_section_simulations(
     repo_path: str,
     input_stubs: List[Dict[str, Any]] | None = None,
-    env_presets: List[Dict[str, Any]] | None = None,
+    env_presets: List[Dict[str, Any]] | Mapping[str, List[Dict[str, Any]]] | None = None,
     modules: Iterable[str] | None = None,
     *,
     return_details: bool = False,
@@ -4798,10 +4798,24 @@ def run_repo_section_simulations(
         sections = scan_repo_sections(repo_path, modules=modules)
         tracker = ROITracker()
         plugins = discover_metrics_plugins(os.environ)
-        scenario_names = []
-        for i, preset in enumerate(env_presets):
+
+        if isinstance(env_presets, Mapping):
+            preset_map: Dict[str, List[Dict[str, Any]]] = {
+                str(k): list(v) for k, v in env_presets.items()
+            }
+            all_presets: List[Dict[str, Any]] = [
+                p for lst in preset_map.values() for p in lst
+            ]
+        else:
+            preset_map = {}
+            all_presets = list(env_presets)
+
+        scenario_names: List[str] = []
+        for i, preset in enumerate(all_presets):
             name = preset.get("SCENARIO_NAME", f"scenario_{i}")
-            scenario_names.append(name)
+            if name not in scenario_names:
+                scenario_names.append(name)
+
         details: Dict[str, Dict[str, list[Dict[str, Any]]]] = {}
         synergy_data: Dict[str, Dict[str, list]] = {
             name: {"roi": [], "metrics": []} for name in scenario_names
@@ -4815,17 +4829,17 @@ def run_repo_section_simulations(
         ] = []
         index = 0
         max_cpu = (
-            max(float(p.get("CPU_LIMIT", 1)) for p in env_presets)
-            if env_presets
+            max(float(p.get("CPU_LIMIT", 1)) for p in all_presets)
+            if all_presets
             else 1.0
         )
         max_mem = (
-            max(_parse_size(p.get("MEMORY_LIMIT", 0)) for p in env_presets)
-            if env_presets
+            max(_parse_size(p.get("MEMORY_LIMIT", 0)) for p in all_presets)
+            if all_presets
             else 0
         )
         max_gpu = (
-            max(int(p.get("GPU_LIMIT", 0)) for p in env_presets) if env_presets else 0
+            max(int(p.get("GPU_LIMIT", 0)) for p in all_presets) if all_presets else 0
         )
         total_cpu = multiprocessing.cpu_count() or 1
         if psutil:
@@ -4854,8 +4868,17 @@ def run_repo_section_simulations(
                 try:
                     for sec_name, lines in sec_map.items():
                         code_str = "\n".join(lines)
-                        for p_idx, preset in enumerate(env_presets):
-                            scenario = scenario_names[p_idx]
+                        module_presets = preset_map.get(module, all_presets)
+                        for p_idx, preset in enumerate(module_presets):
+                            scenario = preset.get(
+                                "SCENARIO_NAME", f"scenario_{p_idx}"
+                            )
+                            if scenario not in scenario_names:
+                                scenario_names.append(scenario)
+                                synergy_data.setdefault(
+                                    scenario, {"roi": [], "metrics": []}
+                                )
+                                scenario_synergy.setdefault(scenario, [])
                             logger.info(
                                 "simulate %s:%s under scenario %s",
                                 module,
@@ -4940,8 +4963,13 @@ def run_repo_section_simulations(
                     synergy_data[scenario]["roi"].append(updates[-1][1])
                     synergy_data[scenario]["metrics"].append(updates[-1][2])
                 if return_details:
-                    details.setdefault(module, {}).setdefault(sec_name, []).append(
-                        {"preset": preset, "stub": stub, "result": res}
+                    details.setdefault(module, {}).setdefault(scenario, []).append(
+                        {
+                            "section": sec_name,
+                            "preset": preset,
+                            "stub": stub,
+                            "result": res,
+                        }
                     )
                 if res.get("exit_code") not in (0, None):
                     all_diminished = False
@@ -4954,8 +4982,13 @@ def run_repo_section_simulations(
                 for lines in sec_map.values():
                     combined.extend(lines)
             all_modules = list(sections)
-            for p_idx, preset in enumerate(env_presets):
-                scenario = scenario_names[p_idx]
+            scenario_presets: Dict[str, Dict[str, Any]] = {}
+            for preset in all_presets:
+                scenario = preset.get("SCENARIO_NAME")
+                if scenario and scenario not in scenario_presets:
+                    scenario_presets[scenario] = preset
+
+            for scenario, preset in scenario_presets.items():
                 for stub in input_stubs:
                     env_input = dict(preset)
                     env_input.update(stub)
