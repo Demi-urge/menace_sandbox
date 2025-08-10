@@ -428,6 +428,12 @@ class EvolutionOrchestrator:
                 after_metric=after_roi,
                 parent_id=event_id,
             )
+            MutationLogger.record_mutation_outcome(
+                mutation_id,
+                after_metric=after_roi,
+                roi=result_roi,
+                performance=after_roi - before_roi,
+            )
             self._last_mutation_id = mutation_id
         self._run_bot_experiments()
         self._run_workflow_experiments()
