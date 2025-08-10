@@ -73,5 +73,31 @@ class EvaluationDashboard:
         max_avg = max(totals[n] / counts[n] for n in totals)
         return {n: (totals[n] / counts[n]) / max_avg for n in totals}
 
+    # ------------------------------------------------------------------
+    def lineage_tree(self, workflow_id: int) -> List[Dict[str, Any]]:
+        """Return the mutation lineage for ``workflow_id``.
+
+        Attempts to use :class:`MutationLineage` for enriched tree data and
+        falls back to :func:`mutation_logger.build_lineage` when the lineage
+        utilities are unavailable.
+        """
+
+        try:
+            from .mutation_lineage import MutationLineage
+
+            return MutationLineage().build_tree(workflow_id)
+        except Exception:  # pragma: no cover - best effort fallback
+            from .mutation_logger import build_lineage
+
+            return build_lineage(workflow_id)
+
+    # ------------------------------------------------------------------
+    def save_lineage_json(self, path: str | Path, workflow_id: int) -> None:
+        """Persist the mutation lineage tree as JSON."""
+
+        Path(path).write_text(
+            json.dumps(self.lineage_tree(workflow_id), indent=2)
+        )
+
 
 __all__ = ["EvaluationDashboard"]
