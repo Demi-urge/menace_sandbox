@@ -346,7 +346,19 @@ def test_generate_input_stubs_history_fallback(monkeypatch, tmp_path):
 def test_generate_input_stubs_hostile(monkeypatch):
     monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
     monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "hostile")
-    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    import importlib
+    importlib.reload(env)
+    stubs = env.generate_input_stubs(1)
+    val = next(iter(stubs[0].values()))
+    assert isinstance(val, str) and ("' OR '1'='1" in val or len(val) > 1000)
+
+
+def test_generate_input_stubs_misuse(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "misuse")
+    monkeypatch.delenv("SANDBOX_INPUT_TEMPLATES_FILE", raising=False)
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)

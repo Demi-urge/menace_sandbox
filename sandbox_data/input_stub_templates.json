@@ -3,5 +3,11 @@
     {"mode": "default", "level": 1},
     {"mode": "alt", "level": 2, "flag": "A"},
     {"mode": "stress", "level": 5}
+  ],
+  "hostile": [
+    "' OR '1'='1",
+    "<script>alert(1)</script>",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "../../etc/passwd"
   ]
 }

@@ -17,6 +17,7 @@ if not _LIGHT_IMPORTS:
         SANDBOX_INPUT_STUBS,
         SANDBOX_EXTRA_METRICS,
         SANDBOX_ENV_PRESETS,
+        SANDBOX_STUB_STRATEGY,
     )
 else:  # defer heavy imports until needed
     _env_mod = None
@@ -36,6 +37,7 @@ else:  # defer heavy imports until needed
                 "SANDBOX_INPUT_STUBS",
                 "SANDBOX_EXTRA_METRICS",
                 "SANDBOX_ENV_PRESETS",
+                "SANDBOX_STUB_STRATEGY",
             ):
                 globals()[name] = getattr(_env_mod, name)
 
@@ -51,6 +53,7 @@ else:  # defer heavy imports until needed
             "SANDBOX_INPUT_STUBS",
             "SANDBOX_EXTRA_METRICS",
             "SANDBOX_ENV_PRESETS",
+            "SANDBOX_STUB_STRATEGY",
             "_sandbox_cycle_runner",
         }:
             _load_env()
@@ -101,6 +104,7 @@ __all__ = [
     "SANDBOX_INPUT_STUBS",
     "SANDBOX_EXTRA_METRICS",
     "SANDBOX_ENV_PRESETS",
+    "SANDBOX_STUB_STRATEGY",
     "_sandbox_cycle_runner",
     "_run_sandbox",
     "rank_scenarios",

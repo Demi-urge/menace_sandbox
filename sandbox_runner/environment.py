@@ -4385,6 +4385,10 @@ try:
 except Exception:
     SANDBOX_INPUT_STUBS = []
 
+# Default stub generation strategy. Exposed for callers that wish to
+# introspect or override the behaviour programmatically.
+SANDBOX_STUB_STRATEGY = os.getenv("SANDBOX_STUB_STRATEGY", "templates")
+
 from .stub_providers import discover_stub_providers, StubProvider
 
 
@@ -4507,6 +4511,27 @@ def _hostile_strategy(
         "A" * 10_000,
         "../../etc/passwd",
     ]
+
+    # Allow external templates to supplement the built-in payloads. When
+    # ``SANDBOX_INPUT_TEMPLATES_FILE`` is provided and contains a ``hostile``
+    # list, those values are prepended so callers can customise the
+    # adversarial corpus without modifying the codebase.
+    tmpl_path = os.getenv(
+        "SANDBOX_INPUT_TEMPLATES_FILE",
+        str(ROOT / "sandbox_data" / "input_stub_templates.json"),
+    )
+    if tmpl_path:
+        p = Path(tmpl_path)
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                extras = data.get("hostile") if isinstance(data, dict) else None
+                if isinstance(extras, list):
+                    payloads = [str(e) for e in extras if isinstance(e, str)] + payloads
+            except Exception:
+                logger.exception("failed to load hostile templates: %s", p)
+
     base = _stub_from_signature(target) if target else {}
     keys = list(base) or ["payload"]
     stubs: List[Dict[str, Any]] = []
@@ -4597,11 +4622,11 @@ def generate_input_stubs(
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
     The built-in strategies ``templates``, ``history``, ``random``, ``smart``,
-    ``synthetic`` and ``hostile`` can be selected via ``strategy`` or the
-    ``SANDBOX_STUB_STRATEGY`` environment variable. The ``smart`` strategy
-    attempts to generate realistic values using ``faker`` or ``hypothesis`` when
-    available. The ``synthetic`` strategy mirrors ``smart`` but is intended for
-    language model based stub providers.
+    ``synthetic`` and ``hostile`` (alias ``misuse``) can be selected via
+    ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment variable. The
+    ``smart`` strategy attempts to generate realistic values using ``faker`` or
+    ``hypothesis`` when available. The ``synthetic`` strategy mirrors ``smart``
+    but is intended for language model based stub providers.
     """
 
     if SANDBOX_INPUT_STUBS:
@@ -4624,13 +4649,13 @@ def generate_input_stubs(
     stubs: List[Dict[str, Any]] | None = None
 
     history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
-    strat = strategy or os.getenv("SANDBOX_STUB_STRATEGY", "templates")
+    strat = strategy or SANDBOX_STUB_STRATEGY
     templates: List[Dict[str, Any]] | None = None
 
     if history:
         stubs = [dict(random.choice(history)) for _ in range(num)]
     else:
-        if strat == "hostile":
+        if strat in {"hostile", "misuse"}:
             stubs = _hostile_strategy(num, target)
         elif strat in {"smart", "synthetic"} and target is not None:
             base = _stub_from_signature(target, smart=True)
