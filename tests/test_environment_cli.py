@@ -11,7 +11,9 @@ class DummyTracker:
 
 
 def test_generate_cli(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "generate_presets", lambda n=None: [{"env": "A"}])
+    monkeypatch.setattr(
+        cli, "generate_presets", lambda n=None, profiles=None: [{"env": "A"}]
+    )
     cli.cli(["generate", "--count", "1"])
     data = json.loads(capsys.readouterr().out)
     assert data == [{"env": "A"}]
