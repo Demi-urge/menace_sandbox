@@ -69,6 +69,41 @@ def _select_failures() -> list[str]:
     return [mode] if mode else []
 
 
+def generate_canonical_presets() -> List[Dict[str, Any]]:
+    """Return deterministic presets for common sandbox scenarios."""
+
+    return [
+        {
+            "SCENARIO_NAME": "high_latency_api",
+            "CPU_LIMIT": "1",
+            "MEMORY_LIMIT": "512Mi",
+            "NETWORK_LATENCY_MS": 500,
+            "FAILURE_MODES": "network",
+        },
+        {
+            "SCENARIO_NAME": "hostile_input",
+            "CPU_LIMIT": "1",
+            "MEMORY_LIMIT": "512Mi",
+            "FAILURE_MODES": "hostile_input",
+            "SANDBOX_STUB_STRATEGY": "hostile",
+        },
+        {
+            "SCENARIO_NAME": "user_misuse",
+            "CPU_LIMIT": "1",
+            "MEMORY_LIMIT": "512Mi",
+            "FAILURE_MODES": "user_misuse",
+        },
+        {
+            "SCENARIO_NAME": "concurrency_spike",
+            "CPU_LIMIT": "1",
+            "MEMORY_LIMIT": "512Mi",
+            "FAILURE_MODES": "concurrency_spike",
+            "THREAD_BURST": 50,
+            "ASYNC_TASK_BURST": 100,
+        },
+    ]
+
+
 def generate_presets(
     count: int | None = None,
     *,
@@ -277,7 +312,7 @@ def generate_presets(
     return presets
 
 
-__all__ = ["generate_presets", "AdaptivePresetAgent"]
+__all__ = ["generate_presets", "generate_canonical_presets", "AdaptivePresetAgent"]
 
 
 class AdaptivePresetAgent:
