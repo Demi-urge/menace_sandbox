@@ -170,6 +170,23 @@ def test_generate_presets_new_scenario_keys():
     assert cs.get("ASYNC_TASK_BURST") is not None
 
 
+def test_generate_presets_profile_severity_levels():
+    low = eg.generate_presets(profiles=["high_latency_api"], severity="low")[0]
+    high = eg.generate_presets(profiles=["high_latency_api"], severity="high")[0]
+    assert low["NETWORK_LATENCY_MS"] < high["NETWORK_LATENCY_MS"]
+    assert low["THREAT_INTENSITY"] < high["THREAT_INTENSITY"]
+
+
+def test_generate_presets_mixed_severity_profiles():
+    presets = eg.generate_presets(
+        profiles=["high_latency_api", "concurrency_spike"],
+        severity={"high_latency_api": "low", "concurrency_spike": "high"},
+    )
+    by_name = {p.get("SCENARIO_NAME"): p for p in presets}
+    assert by_name["high_latency_api"]["NETWORK_LATENCY_MS"] == 200
+    assert by_name["concurrency_spike"]["THREAD_BURST"] == 50
+
+
 class _DummyTracker:
     def __init__(
         self,

@@ -49,39 +49,87 @@ _THREAD_BURSTS = [10, 20, 50]
 _ASYNC_BURSTS = [20, 50, 100]
 _CONCURRENCY_LEVELS = [1, 5, 10, 20, 50, 100]
 
-# named profiles for deterministic scenarios
+# named profiles for deterministic scenarios with severity levels
 _PROFILES: Dict[str, Dict[str, Any]] = {
     "high_latency_api": {
-        "NETWORK_LATENCY_MS": 500,
-        "NETWORK_JITTER_MS": 50,
-        "PACKET_LOSS": 0.1,
-        "API_LATENCY_MS": 1000,
-        "FAILURE_MODES": "api_latency",
-        "THREAT_INTENSITY": 70,
+        "levels": {
+            "low": {
+                "NETWORK_LATENCY_MS": 200,
+                "NETWORK_JITTER_MS": 20,
+                "PACKET_LOSS": 0.05,
+                "API_LATENCY_MS": 500,
+                "FAILURE_MODES": "api_latency",
+                "THREAT_INTENSITY": 30,
+            },
+            "high": {
+                "NETWORK_LATENCY_MS": 500,
+                "NETWORK_JITTER_MS": 50,
+                "PACKET_LOSS": 0.1,
+                "API_LATENCY_MS": 1000,
+                "FAILURE_MODES": "api_latency",
+                "THREAT_INTENSITY": 70,
+            },
+        }
     },
     "hostile_input": {
-        "FAILURE_MODES": "hostile_input",
-        "SANDBOX_STUB_STRATEGY": "hostile",
-        "PAYLOAD_INDICATOR": "corrupted_bytes",
-        "MALICIOUS_DATA": True,
-        "THREAT_INTENSITY": 50,
+        "levels": {
+            "low": {
+                "FAILURE_MODES": "hostile_input",
+                "SANDBOX_STUB_STRATEGY": "hostile",
+                "PAYLOAD_INDICATOR": "corrupted_bytes",
+                "MALICIOUS_DATA": True,
+                "THREAT_INTENSITY": 30,
+            },
+            "high": {
+                "FAILURE_MODES": "hostile_input",
+                "SANDBOX_STUB_STRATEGY": "hostile",
+                "PAYLOAD_INDICATOR": "corrupted_bytes",
+                "MALICIOUS_DATA": True,
+                "THREAT_INTENSITY": 50,
+            },
+        }
     },
     "user_misuse": {
-        "FAILURE_MODES": "user_misuse",
-        "SANDBOX_STUB_STRATEGY": "misuse",
-        "INVALID_CONFIG": True,
-        "INVALID_PARAM_TYPES": True,
-        "UNEXPECTED_API_CALLS": True,
-        "THREAT_INTENSITY": 30,
+        "levels": {
+            "low": {
+                "FAILURE_MODES": "user_misuse",
+                "SANDBOX_STUB_STRATEGY": "misuse",
+                "INVALID_CONFIG": True,
+                "INVALID_PARAM_TYPES": True,
+                "UNEXPECTED_API_CALLS": True,
+                "THREAT_INTENSITY": 20,
+            },
+            "high": {
+                "FAILURE_MODES": "user_misuse",
+                "SANDBOX_STUB_STRATEGY": "misuse",
+                "INVALID_CONFIG": True,
+                "INVALID_PARAM_TYPES": True,
+                "UNEXPECTED_API_CALLS": True,
+                "THREAT_INTENSITY": 30,
+            },
+        }
     },
     "concurrency_spike": {
-        "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
-        "THREAD_BURST": 50,
-        "ASYNC_TASK_BURST": 100,
-        "MAX_THREADS": 200,
-        "CPU_SPIKE": True,
-        "CONCURRENCY_LEVEL": 100,
-        "THREAT_INTENSITY": 50,
+        "levels": {
+            "low": {
+                "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
+                "THREAD_BURST": 10,
+                "ASYNC_TASK_BURST": 20,
+                "MAX_THREADS": 100,
+                "CPU_SPIKE": True,
+                "CONCURRENCY_LEVEL": 20,
+                "THREAT_INTENSITY": 30,
+            },
+            "high": {
+                "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
+                "THREAD_BURST": 50,
+                "ASYNC_TASK_BURST": 100,
+                "MAX_THREADS": 200,
+                "CPU_SPIKE": True,
+                "CONCURRENCY_LEVEL": 100,
+                "THREAT_INTENSITY": 50,
+            },
+        }
     },
 }
 
@@ -287,23 +335,41 @@ def generate_presets(
     count: int | None = None,
     *,
     profiles: List[str] | None = None,
+    severity: str | Dict[str, str] | None = None,
     agent: "AdaptivePresetAgent" | None = None,
     tracker: "ROITracker" | None = None,
 ) -> List[Dict[str, Any]]:
     """Return a list of environment presets.
 
     ``profiles`` may contain named scenario profiles which override values in
-    the randomly generated presets. When ``profiles`` is omitted a few presets
-    may still randomly pick one of the predefined profiles.
+    the randomly generated presets. ``severity`` selects a predefined tier for
+    these profiles. It may be a single string applied to all profiles or a
+    mapping of profile name to severity level. When ``profiles`` is omitted a
+    few presets may still randomly pick one of the predefined profiles.
     """
     num = 3 if count is None else max(0, count)
     presets: List[Dict[str, Any]] = []
+
+    def _sev(name: str) -> str:
+        if isinstance(severity, dict):
+            return severity.get(name) or severity.get(_PROFILE_ALIASES.get(name, name)) or "high"
+        return severity or "high"
+
+    def _profile_data(name: str) -> Dict[str, Any] | None:
+        data = _PROFILES.get(name)
+        if not data:
+            return None
+        levels = data.get("levels") if isinstance(data, dict) else None
+        if levels:
+            lvl = _sev(name)
+            return levels.get(lvl) or levels.get("high") or next(iter(levels.values()))
+        return data
 
     if profiles:
         for name in profiles:
             canonical = _PROFILE_ALIASES.get(name, name)
             base = _random_preset()
-            data = _PROFILES.get(canonical)
+            data = _profile_data(canonical)
             if data:
                 base.update(data)
             base["SCENARIO_NAME"] = canonical
@@ -319,7 +385,9 @@ def generate_presets(
             and random.SystemRandom().random() < _PROFILE_PROB
         ):
             name = random.choice(list(_PROFILES))
-            preset.update(_PROFILES[name])
+            data = _profile_data(name)
+            if data:
+                preset.update(data)
             preset["SCENARIO_NAME"] = name
         presets.append(preset)
 
