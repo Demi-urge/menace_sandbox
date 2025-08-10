@@ -187,6 +187,28 @@ def test_generate_presets_mixed_severity_profiles():
     assert by_name["concurrency_spike"]["THREAD_BURST"] == 50
 
 
+def test_generate_combined_presets_deterministic():
+    presets = eg.generate_combined_presets([["hostile_input", "concurrency_spike"]])
+    assert len(presets) == 1
+    p = presets[0]
+    assert p["SCENARIO_NAME"] == "hostile_input+concurrency_spike"
+    assert p["THREAD_BURST"] == 50
+    assert p["ASYNC_TASK_BURST"] == 100
+    assert p["SANDBOX_STUB_STRATEGY"] == "hostile"
+    assert p["FAILURE_MODES"] == ["hostile_input", "concurrency_spike", "cpu_spike"]
+
+
+def test_generate_presets_combined_profiles(monkeypatch):
+    monkeypatch.setattr(eg, "_select_failures", lambda: [])
+    presets = eg.generate_presets(count=1, profiles=[["hostile_input", "concurrency_spike"]])
+    assert len(presets) == 1
+    p = presets[0]
+    assert p["SCENARIO_NAME"] == "hostile_input+concurrency_spike"
+    assert p["THREAD_BURST"] == 50
+    assert p["SANDBOX_STUB_STRATEGY"] == "hostile"
+    assert p["FAILURE_MODES"] == ["hostile_input", "concurrency_spike", "cpu_spike"]
+
+
 class _DummyTracker:
     def __init__(
         self,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 import os
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, Sequence, Union, TYPE_CHECKING
 import json
 import logging
 from logging_utils import log_record
@@ -246,6 +246,68 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
     ]
 
 
+def generate_combined_presets(
+    combinations: Sequence[Sequence[str]],
+    *,
+    severity: str | Dict[str, str] | None = None,
+) -> List[Dict[str, Any]]:
+    """Return deterministic presets for explicit profile combinations.
+
+    Each item in ``combinations`` is a sequence of profile names. The
+    corresponding profile data is merged in order with duplicate failure
+    modes removed while preserving their first occurrence. ``severity``
+    behaves like in :func:`generate_presets` and may be a single string or a
+    mapping of profile name to level.
+    """
+
+    def _sev(name: str) -> str:
+        if isinstance(severity, dict):
+            return (
+                severity.get(name)
+                or severity.get(_PROFILE_ALIASES.get(name, name))
+                or "high"
+            )
+        return severity or "high"
+
+    def _profile_data(name: str) -> Dict[str, Any] | None:
+        data = _PROFILES.get(name)
+        if not data:
+            return None
+        levels = data.get("levels") if isinstance(data, dict) else None
+        if levels:
+            lvl = _sev(name)
+            return levels.get(lvl) or levels.get("high") or next(iter(levels.values()))
+        return data
+
+    presets: List[Dict[str, Any]] = []
+    for combo in combinations:
+        base: Dict[str, Any] = {"CPU_LIMIT": "1", "MEMORY_LIMIT": "512Mi"}
+        failures: List[str] = []
+        canonical = [_PROFILE_ALIASES.get(n, n) for n in combo]
+        for name in canonical:
+            data = _profile_data(name)
+            if not data:
+                continue
+            fm = data.get("FAILURE_MODES")
+            if fm:
+                if isinstance(fm, list):
+                    failures.extend(fm)
+                else:
+                    failures.append(fm)
+            for k, v in data.items():
+                if k != "FAILURE_MODES":
+                    base[k] = v
+        if failures:
+            uniq: List[str] = []
+            for fm in failures:
+                if fm not in uniq:
+                    uniq.append(fm)
+            base["FAILURE_MODES"] = uniq if len(uniq) > 1 else uniq[0]
+        base["SCENARIO_NAME"] = "+".join(canonical)
+        presets.append(base)
+    return presets
+
+
 def _random_preset() -> Dict[str, Any]:
     """Build a single random preset."""
 
@@ -334,18 +396,20 @@ def _random_preset() -> Dict[str, Any]:
 def generate_presets(
     count: int | None = None,
     *,
-    profiles: List[str] | None = None,
+    profiles: Sequence[Union[str, Sequence[str]]] | None = None,
     severity: str | Dict[str, str] | None = None,
     agent: "AdaptivePresetAgent" | None = None,
     tracker: "ROITracker" | None = None,
 ) -> List[Dict[str, Any]]:
     """Return a list of environment presets.
 
-    ``profiles`` may contain named scenario profiles which override values in
-    the randomly generated presets. ``severity`` selects a predefined tier for
-    these profiles. It may be a single string applied to all profiles or a
-    mapping of profile name to severity level. When ``profiles`` is omitted a
-    few presets may still randomly pick one of the predefined profiles.
+    ``profiles`` may contain individual profile names or sequences of profile
+    names. When a sequence is supplied the corresponding profile data is
+    merged in order, producing a combined scenario. ``severity`` selects a
+    predefined tier for these profiles. It may be a single string applied to
+    all profiles or a mapping of profile name to severity level. When
+    ``profiles`` is omitted a few presets may still randomly pick one of the
+    predefined profiles.
     """
     num = 3 if count is None else max(0, count)
     presets: List[Dict[str, Any]] = []
@@ -367,13 +431,39 @@ def generate_presets(
 
     if profiles:
         for name in profiles:
-            canonical = _PROFILE_ALIASES.get(name, name)
-            base = _random_preset()
-            data = _profile_data(canonical)
-            if data:
-                base.update(data)
-            base["SCENARIO_NAME"] = canonical
-            presets.append(base)
+            if isinstance(name, (list, tuple, set)):
+                canonical_list = [_PROFILE_ALIASES.get(n, n) for n in name]
+                base = _random_preset()
+                failures: List[str] = []
+                for cname in canonical_list:
+                    data = _profile_data(cname)
+                    if not data:
+                        continue
+                    fm = data.get("FAILURE_MODES")
+                    if fm:
+                        if isinstance(fm, list):
+                            failures.extend(fm)
+                        else:
+                            failures.append(fm)
+                    for k, v in data.items():
+                        if k != "FAILURE_MODES":
+                            base[k] = v
+                if failures:
+                    uniq: List[str] = []
+                    for fm in failures:
+                        if fm not in uniq:
+                            uniq.append(fm)
+                    base["FAILURE_MODES"] = uniq if len(uniq) > 1 else uniq[0]
+                base["SCENARIO_NAME"] = "+".join(canonical_list)
+                presets.append(base)
+            else:
+                canonical = _PROFILE_ALIASES.get(name, name)
+                base = _random_preset()
+                data = _profile_data(canonical)
+                if data:
+                    base.update(data)
+                base["SCENARIO_NAME"] = canonical
+                presets.append(base)
 
     remaining = num - len(presets)
     for _ in range(max(0, remaining)):
