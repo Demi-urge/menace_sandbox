@@ -155,6 +155,21 @@ def test_generate_presets_profiles():
     assert cs.get("CONCURRENCY_LEVEL")
 
 
+def test_generate_presets_new_scenario_keys():
+    presets = eg.generate_presets(
+        profiles=["hostile_input", "user_misuse", "concurrency_spike"]
+    )
+    by_name = {p.get("SCENARIO_NAME"): p for p in presets}
+    hi = by_name["hostile_input"]
+    um = by_name["user_misuse"]
+    cs = by_name["concurrency_spike"]
+    assert hi.get("THREAT_INTENSITY") is not None
+    assert um.get("THREAT_INTENSITY") is not None
+    assert cs.get("THREAT_INTENSITY") is not None
+    assert cs.get("THREAD_BURST") is not None
+    assert cs.get("ASYNC_TASK_BURST") is not None
+
+
 class _DummyTracker:
     def __init__(
         self,

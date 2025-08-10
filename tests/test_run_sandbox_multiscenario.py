@@ -141,3 +141,80 @@ def test_run_sandbox_multiscenario(monkeypatch, tmp_path):
     assert details['mod.py']['three'][0]['result']['exit_code'] == 1
     assert details['mod.py']['one'][0]['result']['exit_code'] == 0
     assert details['mod.py']['two'][0]['result']['exit_code'] == 1
+
+
+def test_run_sandbox_hostile_misuse_concurrency_metrics(monkeypatch, tmp_path):
+    monkeypatch.setenv('MENACE_LIGHT_IMPORTS', '1')
+
+    _stub_module(monkeypatch, 'menace.unified_event_bus', UnifiedEventBus=DummyBot)
+    _stub_module(monkeypatch, 'menace.menace_orchestrator', MenaceOrchestrator=DummyBot)
+    _stub_module(monkeypatch, 'menace.self_improvement_policy', SelfImprovementPolicy=DummyBot)
+    _stub_module(monkeypatch, 'menace.self_improvement_engine', SelfImprovementEngine=DummyBot)
+    _stub_module(monkeypatch, 'menace.self_test_service', SelfTestService=DummyBot)
+    _stub_module(monkeypatch, 'menace.self_debugger_sandbox', SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, 'menace.self_coding_engine', SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, 'menace.code_database', PatchHistoryDB=DummyBot, CodeDB=DummyBot)
+    _stub_module(monkeypatch, 'menace.menace_memory_manager', MenaceMemoryManager=DummyBot, MemoryEntry=None)
+    _stub_module(monkeypatch, 'menace.discrepancy_detection_bot', DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, 'menace.audit_trail', AuditTrail=DummyBot)
+    _stub_module(monkeypatch, 'menace.error_bot', ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, 'menace.data_bot', MetricsDB=DummyBot, DataBot=DummyBot)
+    _stub_module(monkeypatch, 'menace.roi_tracker', ROITracker=_ROITracker)
+    _stub_module(monkeypatch, 'networkx', DiGraph=lambda *a, **k: None)
+    sqla = types.ModuleType('sqlalchemy')
+    sqla_engine = types.ModuleType('sqlalchemy.engine')
+    sqla_engine.Engine = object
+    monkeypatch.setitem(sys.modules, 'sqlalchemy', sqla)
+    monkeypatch.setitem(sys.modules, 'sqlalchemy.engine', sqla_engine)
+    _stub_module(monkeypatch, 'jinja2', Template=lambda *a, **k: None)
+
+    import sandbox_runner
+    import sandbox_runner.environment as env
+    import sandbox_runner.metrics_plugins as mp
+    monkeypatch.setattr(mp, 'discover_metrics_plugins', lambda env: [])
+    monkeypatch.setattr(mp, 'collect_plugin_metrics', lambda plugins, prev, actual, metrics: {})
+
+    metric_map = {
+        'hostile_input': {'resilience': 10.0, 'hostile_failures': 2},
+        'user_misuse': {'resilience': 20.0, 'misuse_failures': 3},
+        'concurrency_spike': {'resilience': 30.0, 'concurrency_throughput': 5.0},
+    }
+
+    async def fake_worker(snippet, env_input, threshold):
+        scen = env_input.get('SCENARIO_NAME')
+        roi = 1.0
+        metrics = metric_map[scen]
+        return {'exit_code': 0}, [(0.0, roi, metrics)]
+
+    def fake_scan_repo_sections(repo_path, modules=None):
+        mod_file = Path(repo_path) / 'mod.py'
+        return {'mod.py': {'sec': mod_file.read_text().splitlines()}}
+    monkeypatch.setattr(sandbox_runner, 'scan_repo_sections', fake_scan_repo_sections, raising=False)
+
+    monkeypatch.setattr(env, 'simulate_execution_environment', lambda *a, **k: {})
+    monkeypatch.setattr(env, '_section_worker', fake_worker)
+
+    mod = tmp_path / 'mod.py'
+    mod.write_text('def foo():\n    return 1\n')
+
+    presets = [
+        {'SCENARIO_NAME': 'hostile_input'},
+        {'SCENARIO_NAME': 'user_misuse'},
+        {'SCENARIO_NAME': 'concurrency_spike'},
+    ]
+
+    tracker = sandbox_runner.run_repo_section_simulations(
+        str(tmp_path), input_stubs=[{}], env_presets=presets
+    )
+
+    scenarios = {mods[1] for mods in tracker.calls}
+    assert scenarios == {'hostile_input', 'user_misuse', 'concurrency_spike'}
+
+    expected_keys = {
+        'hostile_input': 'synergy_hostile_failures',
+        'user_misuse': 'synergy_misuse_failures',
+        'concurrency_spike': 'synergy_concurrency_throughput',
+    }
+    for scen, key in expected_keys.items():
+        data = tracker.scenario_synergy.get(scen)
+        assert data and key in data[0] and 'synergy_resilience' in data[0]
