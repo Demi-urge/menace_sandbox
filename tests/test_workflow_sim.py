@@ -517,7 +517,20 @@ def test_workflow_sim_details(monkeypatch, tmp_path):
         return_details=True,
     )
 
-    assert tracker.roi_history == [1.0, 2.0, 1.0, 2.0, 1.0, 1.0, 2.0, 2.0]
+    assert tracker.roi_history == [
+        1.0,
+        2.0,
+        1.0,
+        2.0,
+        1.0,
+        2.0,
+        1.0,
+        2.0,
+        1.0,
+        1.0,
+        2.0,
+        2.0,
+    ]
     synergy = tracker.metrics_history.get("synergy_roi")
     assert synergy and synergy[-2:] == [-1.0, -2.0]
     assert set(details) == {"1", "2", "_combined"}
