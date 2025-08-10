@@ -1142,6 +1142,11 @@ def main(argv: List[str] | None = None) -> None:
         action="store_true",
         help="remove stale containers and VM overlays then exit",
     )
+    parser.add_argument(
+        "--misuse-stubs",
+        action="store_true",
+        help="append adversarial misuse input stubs",
+    )
 
     sub = parser.add_subparsers(dest="cmd")
     p_rank = sub.add_parser("rank-scenarios", help="rank preset runs")
@@ -1350,6 +1355,9 @@ def main(argv: List[str] | None = None) -> None:
     )
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "misuse_stubs", False):
+        os.environ["SANDBOX_MISUSE_STUBS"] = "1"
 
     settings = SandboxSettings()
     auto_include_isolated = bool(getattr(settings, "auto_include_isolated", True) or getattr(args, "auto_include_isolated", False))

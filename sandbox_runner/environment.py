@@ -4422,6 +4422,9 @@ except Exception:
 # introspect or override the behaviour programmatically.
 SANDBOX_STUB_STRATEGY = os.getenv("SANDBOX_STUB_STRATEGY", "templates")
 
+# When true, append adversarial "misuse" stubs to the generated inputs
+SANDBOX_MISUSE_STUBS = os.getenv("SANDBOX_MISUSE_STUBS", "0") not in {"", "0", None}
+
 from .stub_providers import discover_stub_providers, StubProvider
 
 
@@ -4543,6 +4546,15 @@ def _hostile_strategy(
         "<script>alert(1)</script>",
         "A" * 10_000,
         "../../etc/passwd",
+        "",
+        "\x00",
+        0,
+        -1,
+        2**31,
+        float('inf'),
+        float('-inf'),
+        float('nan'),
+        None,
     ]
 
     # Allow external templates to supplement the built-in payloads. When
@@ -4574,6 +4586,21 @@ def _hostile_strategy(
             stub[key] = payloads[(i + j) % len(payloads)]
         stubs.append(stub)
     return stubs
+
+
+def _misuse_provider(
+    stubs: List[Dict[str, Any]] | None, ctx: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """Append adversarial payloads when ``SANDBOX_MISUSE_STUBS`` is enabled."""
+
+    if not SANDBOX_MISUSE_STUBS:
+        return stubs or []
+    if isinstance(ctx, dict) and ctx.get("strategy") in {"hostile", "misuse"}:
+        return stubs or []
+    count = len(stubs or []) or 1
+    target = ctx.get("target") if isinstance(ctx, dict) else None
+    hostile = _hostile_strategy(count, target)
+    return (stubs or []) + hostile
 
 
 def _smart_value(name: str, hint: Any) -> Any:
@@ -4679,6 +4706,8 @@ def generate_input_stubs(
     num = 2 if count is None else max(0, count)
 
     providers = providers or discover_stub_providers()
+    if SANDBOX_MISUSE_STUBS and _misuse_provider not in providers:
+        providers = list(providers) + [_misuse_provider]
     stubs: List[Dict[str, Any]] | None = None
 
     history = _load_history(os.getenv("SANDBOX_INPUT_HISTORY"))
