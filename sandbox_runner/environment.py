@@ -4283,7 +4283,12 @@ async def _section_worker(
     while True:
         try:
             start = time.perf_counter()
-            results = await asyncio.gather(*(_run() for _ in range(concurrency)))
+            if concurrency > 1:
+                results = await asyncio.gather(
+                    *(_run() for _ in range(concurrency))
+                )
+            else:
+                results = [await _run()]
             duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
             record_error(exc)
@@ -4324,11 +4329,15 @@ async def _section_worker(
             metrics[k] /= float(concurrency)
         error_rate = error_count / float(concurrency)
         throughput = float(concurrency) / duration if duration > 0 else 0.0
+        success_rate = 1.0 - error_rate
+        avg_time = duration / float(concurrency)
         metrics.update(
             {
                 "concurrency_level": float(concurrency),
                 "concurrency_error_rate": error_rate,
                 "concurrency_throughput": throughput,
+                "success_rate": success_rate,
+                "avg_completion_time": avg_time,
             }
         )
         if SANDBOX_EXTRA_METRICS:
@@ -4350,7 +4359,7 @@ async def _section_worker(
             delay *= 2
             continue
 
-        actual = 1.0 - error_rate
+        actual = success_rate
         updates.append((prev, actual, metrics))
         if abs(actual - prev) <= threshold:
             if retried:
