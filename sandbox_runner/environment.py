@@ -130,6 +130,31 @@ KNOWLEDGE_GRAPH = KnowledgeGraph()
 ERROR_LOGGER = ErrorLogger(knowledge_graph=KNOWLEDGE_GRAPH)
 ERROR_CATEGORY_COUNTS: Counter[str] = Counter()
 
+# Track how many times each module/scenario combination was executed
+COVERAGE_TRACKER: Dict[str, Dict[str, int]] = {}
+
+
+def _update_coverage(module: str, scenario: str) -> None:
+    """Increment coverage counter for ``module`` under ``scenario``."""
+    mod_map = COVERAGE_TRACKER.setdefault(module, {})
+    mod_map[scenario] = mod_map.get(scenario, 0) + 1
+
+
+def coverage_summary() -> Dict[str, Dict[str, int]]:
+    """Return a copy of the current coverage statistics."""
+    return {m: dict(s) for m, s in COVERAGE_TRACKER.items()}
+
+
+def save_coverage_data() -> None:
+    """Persist :data:`COVERAGE_TRACKER` to ``sandbox_data/coverage.json``."""
+    path = Path(os.getenv("SANDBOX_COVERAGE_FILE", ROOT / "sandbox_data" / "coverage.json"))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(COVERAGE_TRACKER, fh, indent=2, sort_keys=True)
+    except Exception as exc:  # pragma: no cover - best effort only
+        logger.exception("failed to save coverage data: %s", exc)
+
 
 def record_error(exc: Exception) -> None:
     """Log *exc* via :class:`ErrorLogger` and track its category."""
@@ -5116,6 +5141,7 @@ def run_repo_section_simulations(
                         metrics={**metrics, **scenario_metrics},
                     )
                 if updates:
+                    _update_coverage(module, scenario)
                     synergy_data[scenario]["roi"].append(updates[-1][1])
                     synergy_data[scenario]["metrics"].append(updates[-1][2])
                 if return_details:
@@ -5131,6 +5157,8 @@ def run_repo_section_simulations(
                     all_diminished = False
 
         await _gather_tasks()
+
+        save_coverage_data()
 
         if all_diminished:
             combined: List[str] = []

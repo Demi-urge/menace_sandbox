@@ -90,6 +90,10 @@ def _run_sandbox(args: argparse.Namespace, sandbox_main=None) -> None:
 
     preset = presets[0]
     sandbox_main(preset, args)
+    if getattr(args, "coverage_report", False):
+        from .environment import coverage_summary
+
+        print(json.dumps(coverage_summary(), indent=2))
 
 
 def rank_scenarios(paths: list[str]) -> None:
@@ -1146,6 +1150,11 @@ def main(argv: List[str] | None = None) -> None:
         "--misuse-stubs",
         action="store_true",
         help="append adversarial misuse input stubs",
+    )
+    parser.add_argument(
+        "--coverage-report",
+        action="store_true",
+        help="print coverage summary after sandbox execution",
     )
 
     sub = parser.add_subparsers(dest="cmd")
