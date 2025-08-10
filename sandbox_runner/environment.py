@@ -5580,7 +5580,7 @@ def run_workflow_simulations(
     ):
         details: Dict[str, list[Dict[str, Any]]] = {}
 
-        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any]]] = []
+        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str]] = []
         index = 0
         synergy_data: Dict[str, Dict[str, list]] = {
             name: {"roi": [], "metrics": []} for name in scenario_names
@@ -5622,30 +5622,33 @@ def run_workflow_simulations(
                 return "\n".join(f"# {s}" for s in steps) + "\npass\n"
             return "\n".join(imports + [""] + calls) + "\n"
 
-        for wf in workflows:
-            snippet = _wf_snippet(wf.workflow)
-            debugger = SelfDebuggerSandbox(
-                object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
-            )
-            for p_idx, preset in enumerate(env_presets):
-                scenario = scenario_names[p_idx]
-                env_input = dict(preset)
-                for _ in range(3):
-                    result = simulate_execution_environment(snippet, env_input)
-                    if not result.get("risk_flags_triggered"):
-                        break
-                    debugger.analyse_and_fix()
-                fut = asyncio.create_task(
-                    _section_worker(
-                        snippet,
-                        env_input,
-                        tracker.diminishing(),
-                    )
-                )
-                tasks.append((index, fut, wf.wid, scenario, preset))
-                index += 1
+        wf_aggregates: Dict[tuple[int, str], Dict[str, Any]] = {}
 
-        for _, fut, wid, scenario, preset in sorted(tasks, key=lambda x: x[0]):
+        for wf in workflows:
+            for step in wf.workflow:
+                snippet = _wf_snippet([step])
+                debugger = SelfDebuggerSandbox(
+                    object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+                )
+                for p_idx, preset in enumerate(env_presets):
+                    scenario = scenario_names[p_idx]
+                    env_input = dict(preset)
+                    for _ in range(3):
+                        result = simulate_execution_environment(snippet, env_input)
+                        if not result.get("risk_flags_triggered"):
+                            break
+                        debugger.analyse_and_fix()
+                    fut = asyncio.create_task(
+                        _section_worker(
+                            snippet,
+                            env_input,
+                            tracker.diminishing(),
+                        )
+                    )
+                    tasks.append((index, fut, wf.wid, scenario, preset, step))
+                    index += 1
+
+        for _, fut, wid, scenario, preset, module in sorted(tasks, key=lambda x: x[0]):
             res, updates = await fut
             for prev, actual, metrics in updates:
                 scenario_metrics = {f"{k}:{scenario}": v for k, v in metrics.items()}
@@ -5654,16 +5657,47 @@ def run_workflow_simulations(
                 tracker.update(
                     prev,
                     actual,
-                    modules=[f"workflow_{wid}", scenario],
+                    modules=[module, scenario],
                     metrics={**metrics, **scenario_metrics},
                 )
             if updates:
-                synergy_data[scenario]["roi"].append(updates[-1][1])
-                synergy_data[scenario]["metrics"].append(updates[-1][2])
+                final_roi = updates[-1][1]
+                final_metrics = updates[-1][2]
+                agg = wf_aggregates.setdefault((wid, scenario), {
+                    "roi": 0.0,
+                    "metrics_totals": {},
+                    "metrics_counts": {},
+                })
+                agg["roi"] += final_roi
+                for m, val in final_metrics.items():
+                    agg["metrics_totals"][m] = agg["metrics_totals"].get(m, 0.0) + float(val)
+                    agg["metrics_counts"][m] = agg["metrics_counts"].get(m, 0) + 1
             if return_details:
                 details.setdefault(str(wid), []).append(
-                    {"preset": preset, "result": res}
+                    {"preset": preset, "module": module, "result": res}
                 )
+
+        for wf in workflows:
+            for scenario in scenario_names:
+                agg = wf_aggregates.get((wf.wid, scenario))
+                if not agg:
+                    continue
+                totals = agg["metrics_totals"]
+                counts = agg["metrics_counts"]
+                avg_metrics = {
+                    m: totals[m] / counts[m] for m in totals if counts.get(m)
+                }
+                scenario_metrics = {f"{k}:{scenario}": v for k, v in avg_metrics.items()}
+                pred_roi, _ = tracker.forecast()
+                tracker.record_metric_prediction("roi", pred_roi, agg["roi"])
+                tracker.update(
+                    0.0,
+                    agg["roi"],
+                    modules=[f"workflow_{wf.wid}", scenario],
+                    metrics={**avg_metrics, **scenario_metrics},
+                )
+                synergy_data[scenario]["roi"].append(agg["roi"])
+                synergy_data[scenario]["metrics"].append(avg_metrics)
 
         combined_steps: list[str] = []
         for wf in workflows:
