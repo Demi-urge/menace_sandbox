@@ -147,6 +147,7 @@ entry describing the problem.
 When no `input_stubs` argument is supplied the function calls `generate_input_stubs()` from `environment.py`. This helper first inspects the target function signature (when available) and derives argument dictionaries from defaults and type hints. The `SANDBOX_INPUT_STUBS` variable overrides this behaviour. When unset, history or template files are consulted before falling back to the signature, a smart faker-based strategy, a synthetic language-model strategy, a hostile fuzzing strategy or a random strategy. Plugins discovered via `SANDBOX_STUB_PLUGINS` may augment or override the generated stubs.
 
 The `hostile` strategy generates adversarial examples such as SQL injection strings, XSS payloads and oversized values. Presets with the `hostile_input` failure mode automatically set `SANDBOX_STUB_STRATEGY=hostile` and `_inject_failure_modes` replaces any lower-case stub variables with these malicious payloads before execution.
+Presets that include the `user_misuse` failure mode attempt to call functions with incorrect argument counts and touch disallowed files. These errors are printed to `stderr` but execution proceeds so the sandbox can observe misuse safely.
 
 Sections with declining ROI trigger dedicated improvement cycles. Only the flagged section is iteratively modified while metrics are tracked. When progress stalls the sandbox issues a GPT‑4 brainstorming request if `SANDBOX_BRAINSTORM_INTERVAL` is set. Consecutive low‑ROI cycles before brainstorming can be tuned via `SANDBOX_BRAINSTORM_RETRIES`.
 

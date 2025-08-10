@@ -87,6 +87,14 @@ def test_generate_presets_multiple_failures(monkeypatch):
     assert isinstance(fm, list) and len(fm) == 2
 
 
+def test_generate_presets_user_misuse(monkeypatch):
+    monkeypatch.setattr(eg, "_select_failures", lambda: ["user_misuse"])
+    presets = eg.generate_presets(1)
+    p = presets[0]
+    assert p.get("FAILURE_MODES") == "user_misuse"
+    assert p.get("SCENARIO_NAME") == "user_misuse"
+
+
 class _DummyTracker:
     def __init__(
         self,

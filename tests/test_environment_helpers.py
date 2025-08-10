@@ -40,6 +40,24 @@ def test_inject_failure_modes_hostile(monkeypatch):
     assert "' OR '1'='1" in data or "<script>" in data or len(data) > 1000
 
 
+def test_inject_failure_modes_user_misuse(capsys):
+    out = env._inject_failure_modes("print('ok')", {"user_misuse"})
+    exec(out, {})
+    captured = capsys.readouterr()
+    assert "len(" in captured.err
+    assert captured.out.strip() == "ok"
+
+
+def test_section_worker_user_misuse(monkeypatch):
+    monkeypatch.setattr(env.time, "sleep", lambda s: None)
+    res, _ = asyncio.run(
+        env._section_worker("print('run')", {"FAILURE_MODES": ["user_misuse"]}, 0.0)
+    )
+    assert res["exit_code"] == 0
+    assert "run" in res["stdout"]
+    assert "len(" in res["stderr"]
+
+
 def test_generate_input_stubs_env(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_STUBS", '[{"a": 1}]')
     import importlib
