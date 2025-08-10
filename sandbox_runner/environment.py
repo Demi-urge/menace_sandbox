@@ -5854,6 +5854,14 @@ def run_workflow_simulations(
         except Exception:
             pass
 
+    def _module_from_step(step: str) -> str:
+        if ":" in step:
+            return step.split(":", 1)[0]
+        step = step.replace("/", ".")
+        if "." in step:
+            return step.rsplit(".", 1)[0]
+        return "simple_functions"
+
     tracker = tracker or ROITracker()
     scenario_names: List[str] = []
     for i, p in enumerate(all_presets):
@@ -5863,13 +5871,21 @@ def run_workflow_simulations(
             p["SCENARIO_NAME"] = name
         if name not in scenario_names:
             scenario_names.append(name)
+    for name in required:
+        if name not in scenario_names:
+            scenario_names.append(name)
+
+    module_names = {_module_from_step(step) for wf in workflows for step in wf.workflow}
+    coverage_summary: Dict[str, Dict[str, bool]] = {
+        mod: {scen: False for scen in scenario_names} for mod in module_names
+    }
 
     async def _run() -> (
         "ROITracker" | tuple["ROITracker", Dict[str, list[Dict[str, Any]]]]
     ):
         details: Dict[str, list[Dict[str, Any]]] = {}
 
-        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str]] = []
+        tasks: list[tuple[int, asyncio.Task, int, str, Dict[str, Any], str, str]] = []
         index = 0
         synergy_data: Dict[str, Dict[str, list]] = {
             name: {"roi": [], "metrics": []} for name in scenario_names
@@ -5919,6 +5935,7 @@ def run_workflow_simulations(
                 debugger = SelfDebuggerSandbox(
                     object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
                 )
+                mod_name = _module_from_step(step)
                 for preset in all_presets:
                     scenario = preset.get("SCENARIO_NAME", "")
                     env_input = dict(preset)
@@ -5934,11 +5951,13 @@ def run_workflow_simulations(
                             tracker.diminishing(),
                         )
                     )
-                    tasks.append((index, fut, wf.wid, scenario, preset, step))
+                    tasks.append((index, fut, wf.wid, scenario, preset, step, mod_name))
                     index += 1
 
-        for _, fut, wid, scenario, preset, module in sorted(tasks, key=lambda x: x[0]):
+        for _, fut, wid, scenario, preset, module, mod_name in sorted(tasks, key=lambda x: x[0]):
             res, updates = await fut
+            if mod_name in coverage_summary and scenario in coverage_summary[mod_name]:
+                coverage_summary[mod_name][scenario] = True
             for prev, actual, metrics in updates:
                 specific = _scenario_specific_metrics(scenario, metrics)
                 if specific:
@@ -6084,6 +6103,19 @@ def run_workflow_simulations(
                     {"preset": preset, "result": res}
                 )
 
+        for mod, scen_map in coverage_summary.items():
+            missing = [s for s, done in scen_map.items() if not done]
+            if missing:
+                logger.warning("module %s missing scenarios: %s", mod, ", ".join(missing))
+            else:
+                logger.info("module %s covered in all scenarios", mod)
+        logger.info("scenario coverage summary: %s", coverage_summary)
+        try:
+            if any(not all(scen_map.values()) for scen_map in coverage_summary.values()):
+                dispatch_alert("sandbox_coverage", {"coverage": coverage_summary})
+        except Exception:
+            logger.exception("failed to dispatch coverage alert")
+        setattr(tracker, "coverage_summary", coverage_summary)
         return (tracker, details) if return_details else tracker
 
     return asyncio.run(_run())
