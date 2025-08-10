@@ -49,21 +49,31 @@ function render(nodes){
   });
   return ul;
 }
+function renderAll(trees){
+  const div=document.getElementById('lineage');
+  div.innerHTML='';
+  Object.entries(trees).forEach(([wid,nodes])=>{
+    const h=document.createElement('h3');
+    h.textContent=`Workflow ${wid}`;
+    div.appendChild(h);
+    div.appendChild(render(nodes));
+  });
+}
+let trees={};
 async function load() {
   const m = await fetch('/metrics_data').then(r=>r.json());
   const e = await fetch('/evolution_data').then(r=>r.json());
   const err = await fetch('/error_data').then(r=>r.json());
-  const lin = await fetch('/lineage_data').then(r=>r.json());
+  trees = await fetch('/lineage_data').then(r=>r.json());
   new Chart(document.getElementById('metrics'), {type:'line',data:{labels:m.labels,datasets:[{label:'CPU',data:m.cpu},{label:'Errors',data:m.errors}]}});
   new Chart(document.getElementById('evolution'), {type:'line',data:{labels:e.labels,datasets:[{label:'ROI',data:e.roi}]}});
   new Chart(document.getElementById('errors'), {type:'bar',data:{labels:err.labels,datasets:[{label:'Count',data:err.count}]}});
-  document.getElementById('lineage').appendChild(render(lin));
+  renderAll(trees);
   const source = new EventSource('/lineage_stream');
   source.onmessage = e => {
     const data = JSON.parse(e.data);
-    const div = document.getElementById('lineage');
-    div.innerHTML = '';
-    div.appendChild(render(data));
+    trees[data.workflow_id]=data.tree;
+    renderAll(trees);
   };
 }
 load();
@@ -95,7 +105,9 @@ def MonitoringDashboard(
     dash.orchestrator = orchestrator
     dash._report_timer = None  # type: ignore[assignment]
     dash.event_bus = event_bus
-    dash._lineage_updates: queue.Queue[list[dict]] = queue.Queue()
+    dash._lineage_updates: queue.Queue[tuple[int, list[dict]]] = queue.Queue()
+    dash._lineage_trees: dict[int, list[dict]] = {}
+    dash._lineage_lock = threading.Lock()
 
     def index() -> tuple[str, int]:
         return render_template_string(_TEMPLATE), 200
@@ -128,7 +140,23 @@ def MonitoringDashboard(
 
     def lineage_data() -> tuple[str, int]:
         workflow_id = request.args.get('workflow_id', type=int)
-        data = dash.lineage_tracker.build_tree(workflow_id)
+        if workflow_id is not None:
+            with dash._lineage_lock:
+                tree = dash._lineage_trees.get(workflow_id)
+            if tree is None:
+                tree = dash.lineage_tracker.build_tree(workflow_id)
+                with dash._lineage_lock:
+                    dash._lineage_trees[workflow_id] = tree
+            return jsonify({workflow_id: tree}), 200
+        with dash._lineage_lock:
+            if not dash._lineage_trees:
+                cur = dash.evolution_db.conn.execute(
+                    "SELECT DISTINCT workflow_id FROM evolution_history WHERE workflow_id IS NOT NULL"
+                )
+                for row in cur.fetchall():
+                    wid = int(row[0])
+                    dash._lineage_trees[wid] = dash.lineage_tracker.build_tree(wid)
+            data = dict(dash._lineage_trees)
         return jsonify(data), 200
 
     def _handle_mutation(topic: str, payload: object) -> None:
@@ -136,16 +164,19 @@ def MonitoringDashboard(
             if isinstance(payload, dict):
                 workflow_id = payload.get('workflow_id')
                 if workflow_id is not None:
-                    data = dash.lineage_tracker.build_tree(workflow_id)
-                    dash._lineage_updates.put(data)
+                    tree = dash.lineage_tracker.build_tree(int(workflow_id))
+                    with dash._lineage_lock:
+                        dash._lineage_trees[int(workflow_id)] = tree
+                    dash._lineage_updates.put((int(workflow_id), tree))
         except Exception:
             dash.logger.exception('failed handling mutation event')
 
     def lineage_stream():
         def _gen():
             while True:
-                data = dash._lineage_updates.get()
-                yield f"data: {json.dumps(data)}\n\n"
+                workflow_id, tree = dash._lineage_updates.get()
+                payload = {"workflow_id": workflow_id, "tree": tree}
+                yield f"data: {json.dumps(payload)}\n\n"
 
         return dash.app.response_class(_gen(), mimetype='text/event-stream')
 
