@@ -94,6 +94,8 @@ def test_generate_presets_user_misuse(monkeypatch):
     assert p.get("FAILURE_MODES") == "user_misuse"
     assert p.get("SCENARIO_NAME") == "user_misuse"
     assert p.get("INVALID_CONFIG") is True
+    assert p.get("INVALID_PARAM_TYPES")
+    assert p.get("UNEXPECTED_API_CALLS")
 
 
 def test_generate_presets_hostile_input(monkeypatch):
@@ -102,6 +104,7 @@ def test_generate_presets_hostile_input(monkeypatch):
     p = presets[0]
     assert p.get("SCENARIO_NAME") == "hostile_input"
     assert p.get("PAYLOAD_INDICATOR")
+    assert p.get("MALICIOUS_DATA")
 
 
 def test_generate_presets_high_latency_auto(monkeypatch):
@@ -114,13 +117,16 @@ def test_generate_presets_high_latency_auto(monkeypatch):
             return 50
         if seq is eg._PACKET_LOSS:
             return 0.1
+        if seq is eg._API_LATENCIES:
+            return 1000
         return seq[0]
 
     monkeypatch.setattr(eg.random, "choice", fake_choice)
     presets = eg.generate_presets(1)
     p = presets[0]
     assert p.get("SCENARIO_NAME") == "high_latency_api"
-    assert p.get("FAILURE_MODES") == "network"
+    assert p.get("FAILURE_MODES") == "api_latency"
+    assert p.get("API_LATENCY_MS") == 1000
 
 
 def test_generate_presets_profiles():
@@ -134,13 +140,18 @@ def test_generate_presets_profiles():
     assert hl.get("NETWORK_LATENCY_MS") == 500
     assert hl.get("NETWORK_JITTER_MS") == 50
     assert hl.get("PACKET_LOSS") == 0.1
+    assert hl.get("API_LATENCY_MS") == 1000
     hi = next(p for p in presets if p.get("SCENARIO_NAME") == "hostile_input")
     assert hi.get("PAYLOAD_INDICATOR")
+    assert hi.get("MALICIOUS_DATA")
     um = next(p for p in presets if p.get("SCENARIO_NAME") == "user_misuse")
     assert um.get("INVALID_CONFIG") is True
+    assert um.get("INVALID_PARAM_TYPES")
+    assert um.get("UNEXPECTED_API_CALLS")
     cs = next(p for p in presets if p.get("SCENARIO_NAME") == "concurrency_spike")
     assert cs.get("CPU_SPIKE")
     assert cs.get("MAX_THREADS") == 200
+    assert cs.get("CONCURRENCY_LEVEL")
 
 
 class _DummyTracker:

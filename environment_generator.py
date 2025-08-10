@@ -26,7 +26,9 @@ _FAILURE_MODES = [
     "cpu_spike",
     "concurrency_spike",
     "hostile_input",
+    "malicious_data",
     "user_misuse",
+    "api_latency",
 ]
 
 # chance that multiple failure modes will be combined in one preset
@@ -34,6 +36,7 @@ _MULTI_FAILURE_CHANCE = 0.2
 
 _DISK_LIMITS = ["512Mi", "1Gi", "2Gi", "4Gi", "8Gi"]
 _LATENCIES = [10, 50, 100, 200, 500]  # milliseconds
+_API_LATENCIES = [50, 100, 200, 500, 1000]
 _BANDWIDTHS = ["1Mbps", "5Mbps", "10Mbps", "50Mbps", "100Mbps"]
 _CPU_LIMITS = ["0.5", "1", "2", "4", "8"]
 _MEMORY_LIMITS = [f"{m}Mi" for m in [128, 256, 512, 1024, 2048, 4096]]
@@ -44,6 +47,7 @@ _SECURITY_LEVELS = [1, 2, 3, 4, 5]
 _THREAT_INTENSITIES = [10, 30, 50, 70, 90]
 _THREAD_BURSTS = [10, 20, 50]
 _ASYNC_BURSTS = [20, 50, 100]
+_CONCURRENCY_LEVELS = [1, 5, 10, 20, 50, 100]
 
 # named profiles for deterministic scenarios
 _PROFILES: Dict[str, Dict[str, Any]] = {
@@ -51,18 +55,22 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
         "NETWORK_LATENCY_MS": 500,
         "NETWORK_JITTER_MS": 50,
         "PACKET_LOSS": 0.1,
-        "FAILURE_MODES": "network",
+        "API_LATENCY_MS": 1000,
+        "FAILURE_MODES": "api_latency",
         "THREAT_INTENSITY": 70,
     },
     "hostile_input": {
         "FAILURE_MODES": "hostile_input",
         "SANDBOX_STUB_STRATEGY": "hostile",
         "PAYLOAD_INDICATOR": "corrupted_bytes",
+        "MALICIOUS_DATA": True,
         "THREAT_INTENSITY": 50,
     },
     "user_misuse": {
         "FAILURE_MODES": "user_misuse",
         "INVALID_CONFIG": True,
+        "INVALID_PARAM_TYPES": True,
+        "UNEXPECTED_API_CALLS": True,
         "THREAT_INTENSITY": 30,
     },
     "concurrency_spike": {
@@ -71,12 +79,16 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
         "ASYNC_TASK_BURST": 100,
         "MAX_THREADS": 200,
         "CPU_SPIKE": True,
+        "CONCURRENCY_LEVEL": 100,
         "THREAT_INTENSITY": 50,
     },
 }
 
 # legacy aliases mapping to canonical scenario names
-_PROFILE_ALIASES = {"high_latency": "high_latency_api"}
+_PROFILE_ALIASES = {
+    "high_latency": "high_latency_api",
+    "malicious_data": "hostile_input",
+}
 
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
@@ -116,7 +128,8 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "NETWORK_LATENCY_MS": 500,
             "NETWORK_JITTER_MS": 50,
             "PACKET_LOSS": 0.1,
-            "FAILURE_MODES": "network",
+            "API_LATENCY_MS": 1000,
+            "FAILURE_MODES": "api_latency",
         },
         {
             "SCENARIO_NAME": "hostile_input",
@@ -125,6 +138,7 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "FAILURE_MODES": "hostile_input",
             "SANDBOX_STUB_STRATEGY": "hostile",
             "PAYLOAD_INDICATOR": "corrupted_bytes",
+            "MALICIOUS_DATA": True,
         },
         {
             "SCENARIO_NAME": "user_misuse",
@@ -132,6 +146,8 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "MEMORY_LIMIT": "512Mi",
             "FAILURE_MODES": "user_misuse",
             "INVALID_CONFIG": True,
+            "INVALID_PARAM_TYPES": True,
+            "UNEXPECTED_API_CALLS": True,
         },
         {
             "SCENARIO_NAME": "concurrency_spike",
@@ -142,6 +158,7 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
             "ASYNC_TASK_BURST": 100,
             "MAX_THREADS": 200,
             "CPU_SPIKE": True,
+            "CONCURRENCY_LEVEL": 100,
         },
     ]
 
@@ -155,12 +172,15 @@ def _random_preset() -> Dict[str, Any]:
     jitter = random.choice(_JITTERS)
     bw_idx1 = random.randrange(len(_BANDWIDTHS))
     bw_idx2 = random.randrange(bw_idx1, len(_BANDWIDTHS))
+    api_latency = random.choice(_API_LATENCIES)
+    concurrency_level = random.choice(_CONCURRENCY_LEVELS)
     preset = {
         "CPU_LIMIT": cpu,
         "MEMORY_LIMIT": memory,
         "DISK_LIMIT": disk,
         "NETWORK_LATENCY_MS": random.choice(_LATENCIES),
         "NETWORK_JITTER_MS": jitter,
+        "API_LATENCY_MS": api_latency,
         "MIN_BANDWIDTH": _BANDWIDTHS[bw_idx1],
         "MAX_BANDWIDTH": _BANDWIDTHS[bw_idx2],
         "BANDWIDTH_LIMIT": random.choice(_BANDWIDTHS),
@@ -168,6 +188,7 @@ def _random_preset() -> Dict[str, Any]:
         "PACKET_DUPLICATION": random.choice(_PACKET_DUPLICATION),
         "SECURITY_LEVEL": random.choice(_SECURITY_LEVELS),
         "THREAT_INTENSITY": random.choice(_THREAT_INTENSITIES),
+        "CONCURRENCY_LEVEL": concurrency_level,
     }
     if random.random() < 0.5:
         preset["GPU_LIMIT"] = random.choice(_GPU_LIMITS)
@@ -186,20 +207,31 @@ def _random_preset() -> Dict[str, Any]:
             preset["NETWORK_JITTER_MS"] >= 20
             or preset["PACKET_LOSS"] >= 0.05
         )
-    ):
-        preset.setdefault("FAILURE_MODES", "network")
+    ) or preset["API_LATENCY_MS"] >= 500:
+        preset.setdefault(
+            "FAILURE_MODES",
+            "api_latency" if preset["API_LATENCY_MS"] >= 500 else "network",
+        )
         preset.setdefault("SCENARIO_NAME", "high_latency_api")
 
     failures = _select_failures()
     if failures:
         preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
-        if "hostile_input" in failures:
-            preset["SCENARIO_NAME"] = "hostile_input"
+        if "api_latency" in failures:
+            preset["API_LATENCY_MS"] = random.choice(_API_LATENCIES[3:])
+            preset["SCENARIO_NAME"] = "high_latency_api"
+        if "hostile_input" in failures or "malicious_data" in failures:
+            preset["SCENARIO_NAME"] = (
+                "hostile_input" if "hostile_input" in failures else "malicious_data"
+            )
             preset["SANDBOX_STUB_STRATEGY"] = "hostile"
             preset.setdefault("PAYLOAD_INDICATOR", "corrupted_bytes")
+            preset.setdefault("MALICIOUS_DATA", True)
         if "user_misuse" in failures:
             preset["SCENARIO_NAME"] = "user_misuse"
             preset.setdefault("INVALID_CONFIG", True)
+            preset.setdefault("INVALID_PARAM_TYPES", True)
+            preset.setdefault("UNEXPECTED_API_CALLS", True)
         if "concurrency_spike" in failures:
             preset.setdefault("THREAD_BURST", random.choice(_THREAD_BURSTS))
             preset.setdefault(
@@ -208,6 +240,10 @@ def _random_preset() -> Dict[str, Any]:
             preset.setdefault("MAX_THREADS", random.choice([100, 200, 500]))
             preset.setdefault("CPU_SPIKE", True)
             preset["SCENARIO_NAME"] = "concurrency_spike"
+            preset["CONCURRENCY_LEVEL"] = max(
+                preset.get("CONCURRENCY_LEVEL", 0),
+                random.choice(_CONCURRENCY_LEVELS[3:]),
+            )
     return preset
 
 
