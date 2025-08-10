@@ -7,7 +7,7 @@ import os
 from typing import Any, Dict, List, TYPE_CHECKING
 import json
 import logging
-from .logging_utils import log_record
+from logging_utils import log_record
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -44,6 +44,33 @@ _SECURITY_LEVELS = [1, 2, 3, 4, 5]
 _THREAT_INTENSITIES = [10, 30, 50, 70, 90]
 _THREAD_BURSTS = [10, 20, 50]
 _ASYNC_BURSTS = [20, 50, 100]
+
+# named profiles for deterministic scenarios
+_PROFILES: Dict[str, Dict[str, Any]] = {
+    "high_latency": {
+        "NETWORK_LATENCY_MS": 500,
+        "FAILURE_MODES": "network",
+        "THREAT_INTENSITY": 70,
+    },
+    "hostile_input": {
+        "FAILURE_MODES": "hostile_input",
+        "SANDBOX_STUB_STRATEGY": "hostile",
+        "THREAT_INTENSITY": 50,
+    },
+    "user_misuse": {
+        "FAILURE_MODES": "user_misuse",
+        "THREAT_INTENSITY": 30,
+    },
+    "concurrency_spike": {
+        "FAILURE_MODES": "concurrency_spike",
+        "THREAD_BURST": 50,
+        "ASYNC_TASK_BURST": 100,
+        "THREAT_INTENSITY": 50,
+    },
+}
+
+# probability of injecting a random profile when none specified
+_PROFILE_PROB = 0.3
 
 logger = logging.getLogger(__name__)
 
@@ -104,65 +131,92 @@ def generate_canonical_presets() -> List[Dict[str, Any]]:
     ]
 
 
+def _random_preset() -> Dict[str, Any]:
+    """Build a single random preset."""
+
+    cpu = random.choice(_CPU_LIMITS)
+    memory = random.choice(_MEMORY_LIMITS)
+    disk = random.choice(_DISK_LIMITS)
+    jitter = random.choice(_JITTERS)
+    bw_idx1 = random.randrange(len(_BANDWIDTHS))
+    bw_idx2 = random.randrange(bw_idx1, len(_BANDWIDTHS))
+    preset = {
+        "CPU_LIMIT": cpu,
+        "MEMORY_LIMIT": memory,
+        "DISK_LIMIT": disk,
+        "NETWORK_LATENCY_MS": random.choice(_LATENCIES),
+        "NETWORK_JITTER_MS": jitter,
+        "MIN_BANDWIDTH": _BANDWIDTHS[bw_idx1],
+        "MAX_BANDWIDTH": _BANDWIDTHS[bw_idx2],
+        "BANDWIDTH_LIMIT": random.choice(_BANDWIDTHS),
+        "PACKET_LOSS": random.choice(_PACKET_LOSS),
+        "PACKET_DUPLICATION": random.choice(_PACKET_DUPLICATION),
+        "SECURITY_LEVEL": random.choice(_SECURITY_LEVELS),
+        "THREAT_INTENSITY": random.choice(_THREAT_INTENSITIES),
+    }
+    if random.random() < 0.5:
+        preset["GPU_LIMIT"] = random.choice(_GPU_LIMITS)
+    if random.random() < _ALT_OS_PROB:
+        os_type = random.choice(_ALT_OS_TYPES)
+        preset["OS_TYPE"] = os_type
+        preset["CONTAINER_IMAGE"] = f"python:3.11-{os_type}"
+        preset["VM_SETTINGS"] = {
+            f"{os_type}_image": f"{os_type}-base.qcow2",
+            "memory": "4Gi",
+        }
+    failures = _select_failures()
+    if failures:
+        preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
+        if "hostile_input" in failures:
+            preset.setdefault("SCENARIO_NAME", "hostile_input")
+            preset["SANDBOX_STUB_STRATEGY"] = "hostile"
+        if "user_misuse" in failures:
+            preset.setdefault("SCENARIO_NAME", "user_misuse")
+        if "concurrency_spike" in failures:
+            preset.setdefault("THREAD_BURST", random.choice(_THREAD_BURSTS))
+            preset.setdefault(
+                "ASYNC_TASK_BURST", random.choice(_ASYNC_BURSTS)
+            )
+    return preset
+
+
 def generate_presets(
     count: int | None = None,
     *,
+    profiles: List[str] | None = None,
     agent: "AdaptivePresetAgent" | None = None,
     tracker: "ROITracker" | None = None,
 ) -> List[Dict[str, Any]]:
-    """Return a list of random environment presets.
+    """Return a list of environment presets.
 
-    Each preset sets ``CPU_LIMIT`` and ``MEMORY_LIMIT`` and may include one or
-    more ``FAILURE_MODES`` to stress specific subsystems. ``count`` defaults to
-    ``3``
-    and can be overridden to control the number of generated scenarios.
+    ``profiles`` may contain named scenario profiles which override values in
+    the randomly generated presets. When ``profiles`` is omitted a few presets
+    may still randomly pick one of the predefined profiles.
     """
     num = 3 if count is None else max(0, count)
     presets: List[Dict[str, Any]] = []
-    for _ in range(num):
-        cpu = random.choice(["0.5", "1", "2", "4", "8"])
-        memory = f"{random.choice([128, 256, 512, 1024, 2048, 4096])}Mi"
-        disk = random.choice(_DISK_LIMITS)
-        jitter = random.choice(_JITTERS)
-        bw_idx1 = random.randrange(len(_BANDWIDTHS))
-        bw_idx2 = random.randrange(bw_idx1, len(_BANDWIDTHS))
-        preset = {
-            "CPU_LIMIT": cpu,
-            "MEMORY_LIMIT": memory,
-            "DISK_LIMIT": disk,
-            "NETWORK_LATENCY_MS": random.choice(_LATENCIES),
-            "NETWORK_JITTER_MS": jitter,
-            "MIN_BANDWIDTH": _BANDWIDTHS[bw_idx1],
-            "MAX_BANDWIDTH": _BANDWIDTHS[bw_idx2],
-            "BANDWIDTH_LIMIT": random.choice(_BANDWIDTHS),
-            "PACKET_LOSS": random.choice(_PACKET_LOSS),
-            "PACKET_DUPLICATION": random.choice(_PACKET_DUPLICATION),
-            "SECURITY_LEVEL": random.choice(_SECURITY_LEVELS),
-            "THREAT_INTENSITY": random.choice(_THREAT_INTENSITIES),
-        }
-        if random.random() < 0.5:
-            preset["GPU_LIMIT"] = random.choice(_GPU_LIMITS)
-        if random.random() < _ALT_OS_PROB:
-            os_type = random.choice(_ALT_OS_TYPES)
-            preset["OS_TYPE"] = os_type
-            preset["CONTAINER_IMAGE"] = f"python:3.11-{os_type}"
-            preset["VM_SETTINGS"] = {
-                f"{os_type}_image": f"{os_type}-base.qcow2",
-                "memory": "4Gi",
-            }
-        failures = _select_failures()
-        if failures:
-            preset["FAILURE_MODES"] = failures[0] if len(failures) == 1 else failures
-            if "hostile_input" in failures:
-                preset.setdefault("SCENARIO_NAME", "hostile_input")
-                preset["SANDBOX_STUB_STRATEGY"] = "hostile"
-            if "user_misuse" in failures:
-                preset.setdefault("SCENARIO_NAME", "user_misuse")
-            if "concurrency_spike" in failures:
-                preset.setdefault("THREAD_BURST", random.choice(_THREAD_BURSTS))
-                preset.setdefault(
-                    "ASYNC_TASK_BURST", random.choice(_ASYNC_BURSTS)
-                )
+
+    if profiles:
+        for name in profiles:
+            base = _random_preset()
+            data = _PROFILES.get(name)
+            if data:
+                base.update(data)
+            base["SCENARIO_NAME"] = name
+            presets.append(base)
+
+    remaining = num - len(presets)
+    for _ in range(max(0, remaining)):
+        preset = _random_preset()
+        if (
+            not profiles
+            and "FAILURE_MODES" not in preset
+            and _PROFILES
+            and random.SystemRandom().random() < _PROFILE_PROB
+        ):
+            name = random.choice(list(_PROFILES))
+            preset.update(_PROFILES[name])
+            preset["SCENARIO_NAME"] = name
         presets.append(preset)
 
     if tracker:
@@ -831,9 +885,13 @@ def adapt_presets(
     syn_roi_vals = tracker.metrics_history.get("synergy_roi", [])
     try:
         if hasattr(tracker, "forecast_synergy"):
-            pred_synergy_roi = float(getattr(tracker, "forecast_synergy")()[0])
+            pred_synergy_roi = float(tracker.forecast_synergy()[0])
+        elif hasattr(tracker, "predict_synergy"):
+            pred_synergy_roi = float(tracker.predict_synergy())
+        elif hasattr(tracker, "forecast"):
+            pred_synergy_roi = float(tracker.forecast()[0])
         else:
-            pred_synergy_roi = float(getattr(tracker, "predict_synergy")())
+            pred_synergy_roi = 0.0
     except Exception:
         pred_synergy_roi = 0.0
     vals = syn_roi_vals[-3:]

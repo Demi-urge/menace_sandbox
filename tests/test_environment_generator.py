@@ -95,6 +95,14 @@ def test_generate_presets_user_misuse(monkeypatch):
     assert p.get("SCENARIO_NAME") == "user_misuse"
 
 
+def test_generate_presets_profiles():
+    presets = eg.generate_presets(profiles=["high_latency", "concurrency_spike"])
+    names = {p.get("SCENARIO_NAME") for p in presets}
+    assert {"high_latency", "concurrency_spike"} <= names
+    hl = next(p for p in presets if p.get("SCENARIO_NAME") == "high_latency")
+    assert hl.get("NETWORK_LATENCY_MS") == 500
+
+
 class _DummyTracker:
     def __init__(
         self,

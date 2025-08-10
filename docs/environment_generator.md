@@ -1,6 +1,6 @@
 # Environment Generator
 
-`environment_generator.generate_presets(count=None)` produces a list of dictionaries describing sandbox environment scenarios. Each dictionary contains resource limits and network settings that the sandbox runner reads from the environment before executing a code snippet.
+`environment_generator.generate_presets(count=None, profiles=None)` produces a list of dictionaries describing sandbox environment scenarios. Each dictionary contains resource limits and network settings that the sandbox runner reads from the environment before executing a code snippet. When `profiles` is supplied it should be a list of named scenario profiles such as `"high_latency"` or `"hostile_input"`. The generator merges the parameters from these profiles with the randomly generated presets.
 
 The generator randomly chooses values for keys such as `CPU_LIMIT`, `MEMORY_LIMIT` and `DISK_LIMIT`. It can also introduce failure modes and emulate networking conditions.
 
@@ -69,6 +69,12 @@ Example preset with hostile input stubs:
 
 ```python
 presets = generate_presets(3, agent=my_agent, tracker=my_tracker)
+```
+
+Profiles can be selected explicitly:
+
+```python
+presets = generate_presets(profiles=["high_latency", "hostile_input"])
 ```
 
 When provided and the tracker contains at least five ROI samples, the agent's

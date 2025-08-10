@@ -41,6 +41,12 @@ def cli(argv: List[str] | None = None) -> int:
 
     p_gen = sub.add_parser("generate", help="Generate environment presets")
     p_gen.add_argument("--count", type=int, default=None, help="Number of presets")
+    p_gen.add_argument(
+        "--profiles",
+        nargs="*",
+        default=None,
+        help="Named profiles to include in generation",
+    )
     p_gen.add_argument("--out", default="-", help="Output file or '-' for stdout")
 
     p_adapt = sub.add_parser("adapt", help="Adapt presets using ROI history")
@@ -57,7 +63,7 @@ def cli(argv: List[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.cmd == "generate":
-        presets = generate_presets(args.count)
+        presets = generate_presets(args.count, profiles=args.profiles)
         data = json.dumps(presets, indent=2)
         if args.out == "-":
             sys.stdout.write(data)
