@@ -418,23 +418,18 @@ class EvolutionOrchestrator:
                     evolution_cycle_count.inc()
             except Exception:
                 self.logger.exception("metrics export failed")
-            mutation_id = MutationLogger.log_mutation(
+            with MutationLogger.log_context(
                 change=action_seq,
                 reason=reason_str,
                 trigger=trigger_str,
-                performance=after_roi - before_roi,
                 workflow_id=0,
                 before_metric=before_roi,
-                after_metric=after_roi,
                 parent_id=event_id,
-            )
-            MutationLogger.record_mutation_outcome(
-                mutation_id,
-                after_metric=after_roi,
-                roi=result_roi,
-                performance=after_roi - before_roi,
-            )
-            self._last_mutation_id = mutation_id
+            ) as mutation:
+                mutation["after_metric"] = after_roi
+                mutation["performance"] = after_roi - before_roi
+                mutation["roi"] = result_roi
+            self._last_mutation_id = int(mutation["event_id"])
         self._run_bot_experiments()
         self._run_workflow_experiments()
         self._cycles += 1
