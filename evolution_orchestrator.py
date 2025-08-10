@@ -467,19 +467,43 @@ class EvolutionOrchestrator:
                         proposals.append(main_wf)
             except Exception:
                 main_wf = None
-        results = []
+        base_roi = self._latest_roi()
+        results: list = []
         if self.experiment_manager and proposals:
             try:
                 import asyncio
 
                 results = asyncio.run(self.experiment_manager.run_experiments(proposals))
             except Exception:
-                results = []
+                self.logger.exception("workflow experiments failed")
         if not results:
+            for name in proposals:
+                try:
+                    wf_key = name
+                    parent = self._workflow_event_ids.get(wf_key)
+                    event_id = self.history.add(
+                        EvolutionEvent(
+                            action=f"experiment:{name}",
+                            before_metric=base_roi,
+                            after_metric=base_roi,
+                            roi=0.0,
+                            trending_topic=None,
+                            reason="workflow experiment",
+                            trigger="experiment",
+                            performance=0.0,
+                            parent_event_id=parent,
+                            workflow_id=wf_key if isinstance(wf_key, int) else None,
+                        )
+                    )
+                    self._workflow_event_ids[wf_key] = event_id
+                    MutationLogger.record_mutation_outcome(
+                        event_id, after_metric=base_roi, roi=0.0, performance=0.0
+                    )
+                except Exception:
+                    self.logger.exception("record experiment failed")
             return
         self._last_workflow_benchmark = time.time()
         try:
-            base_roi = self._latest_roi()
             best = self.experiment_manager.best_variant(results)
         except Exception:
             best = None
@@ -541,6 +565,9 @@ class EvolutionOrchestrator:
                     )
                 )
                 self._workflow_event_ids[wf_key] = event_id
+                MutationLogger.record_mutation_outcome(
+                    event_id, after_metric=res.roi, roi=change, performance=change
+                )
                 # detailed experiment logging
                 self.logger.info(
                     "workflow_variant=%s change=%.4f reason=%s trigger=%s parent=%s",
@@ -585,6 +612,8 @@ class EvolutionOrchestrator:
         """Run suggested bot experiments and record outcomes."""
         if not self.experiment_manager or not self.improvement_engine:
             return
+        base_roi = self._latest_roi()
+        res = None
         try:
             import asyncio
 
@@ -594,28 +623,32 @@ class EvolutionOrchestrator:
                 )
             )
         except Exception:
-            res = None
-        if not res:
-            return
+            self.logger.exception("bot experiment execution failed")
+
+        variant = getattr(res, "variant", self.improvement_engine.bot_name)
+        after_roi = getattr(res, "roi", base_roi)
+        change = after_roi - base_roi
+        wf_key = getattr(res, "workflow_id", variant)
+        parent = self._workflow_event_ids.get(wf_key)
         try:
-            base_roi = self._latest_roi()
-            wf_key = getattr(res, "workflow_id", res.variant)
-            parent = self._workflow_event_ids.get(wf_key)
             event_id = self.history.add(
                 EvolutionEvent(
-                    action=f"bot_experiment:{res.variant}",
+                    action=f"bot_experiment:{variant}",
                     before_metric=base_roi,
-                    after_metric=res.roi,
-                    roi=res.roi - base_roi,
+                    after_metric=after_roi,
+                    roi=change,
                     trending_topic=getattr(res, "trending_topic", None),
                     reason="bot experiment",
                     trigger="experiment",
-                    performance=res.roi - base_roi,
+                    performance=change,
                     parent_event_id=parent,
                     workflow_id=wf_key if isinstance(wf_key, int) else None,
                 )
             )
             self._workflow_event_ids[wf_key] = event_id
+            MutationLogger.record_mutation_outcome(
+                event_id, after_metric=after_roi, roi=change, performance=change
+            )
         except Exception:
             self.logger.exception("record bot experiment failed")
 
