@@ -24,6 +24,7 @@ _FAILURE_MODES = [
     "disk_corruption",
     "network_partition",
     "cpu_spike",
+    "concurrency_spike",
     "hostile_input",
     "user_misuse",
 ]
@@ -41,6 +42,8 @@ _JITTERS = [0, 5, 10, 20, 50]  # milliseconds
 _PACKET_DUPLICATION = [0.0, 0.01, 0.05]
 _SECURITY_LEVELS = [1, 2, 3, 4, 5]
 _THREAT_INTENSITIES = [10, 30, 50, 70, 90]
+_THREAD_BURSTS = [10, 20, 50]
+_ASYNC_BURSTS = [20, 50, 100]
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,11 @@ def generate_presets(
                 preset["SANDBOX_STUB_STRATEGY"] = "hostile"
             if "user_misuse" in failures:
                 preset.setdefault("SCENARIO_NAME", "user_misuse")
+            if "concurrency_spike" in failures:
+                preset.setdefault("THREAD_BURST", random.choice(_THREAD_BURSTS))
+                preset.setdefault(
+                    "ASYNC_TASK_BURST", random.choice(_ASYNC_BURSTS)
+                )
         presets.append(preset)
 
     if tracker:

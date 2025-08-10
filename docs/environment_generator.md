@@ -29,6 +29,7 @@ to stress error handling:
 - `network_partition` – sever connectivity to selected hosts.
 - `cpu` – reduce available CPU share.
 - `cpu_spike` – introduce short bursts of high CPU usage.
+- `concurrency_spike` – spawn bursts of threads and async tasks to stress concurrency handling. Presets include `THREAD_BURST` and `ASYNC_TASK_BURST` values.
 - `memory` – restrict heap allocation.
 - `timeout` – terminate the process prematurely.
 - `hostile_input` – replace generated input stubs with malicious payloads.
