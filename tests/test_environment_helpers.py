@@ -21,6 +21,7 @@ import sandbox_runner.environment as env
 def test_parse_failure_modes():
     assert env._parse_failure_modes("disk,network") == {"disk", "network"}
     assert env._parse_failure_modes(["cpu_spike", "memory"]) == {"cpu_spike", "memory"}
+    assert env._parse_failure_modes("hostile_input") == {"hostile_input"}
 
 
 def test_inject_failure_modes_disk():
@@ -28,6 +29,15 @@ def test_inject_failure_modes_disk():
     out = env._inject_failure_modes(snippet, {"disk"})
     assert "_orig_open" in out
     assert "open('f','w').write('x')" in out
+
+
+def test_inject_failure_modes_hostile(monkeypatch):
+    monkeypatch.setenv("SANDBOX_INPUT_STUBS", "")
+    monkeypatch.setenv("x", "1")
+    out = env._inject_failure_modes("", {"hostile_input"})
+    exec(out, {})
+    data = os.environ.get("SANDBOX_INPUT_STUBS", "")
+    assert "' OR '1'='1" in data or "<script>" in data or len(data) > 1000
 
 
 def test_generate_input_stubs_env(monkeypatch):
@@ -285,6 +295,18 @@ def test_generate_input_stubs_history_fallback(monkeypatch, tmp_path):
 
     stubs = env.generate_input_stubs(1)
     assert stubs == [{"a": 10}]
+
+
+def test_generate_input_stubs_hostile(monkeypatch):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "hostile")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    import importlib
+    importlib.reload(env)
+    stubs = env.generate_input_stubs(1)
+    val = next(iter(stubs[0].values()))
+    assert isinstance(val, str) and ("' OR '1'='1" in val or len(val) > 1000)
 
 
 def _stub_docker_logs(holder):

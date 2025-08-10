@@ -3769,7 +3769,12 @@ def _cleanup_tc(ipr: Any | None, idx: int | None) -> None:
 
 
 def _parse_failure_modes(value: Any) -> set[str]:
-    """Return a normalized set of failure modes from ``value``."""
+    """Return a normalized set of failure modes from ``value``.
+
+    The helper accepts strings, iterables or mixed inputs and is agnostic to
+    the actual mode names so new modes such as ``hostile_input`` are supported
+    automatically.
+    """
     if not value:
         return set()
     modes: set[str] = set()
@@ -3845,6 +3850,21 @@ def _inject_failure_modes(snippet: str, modes: set[str]) -> str:
             "    time.sleep(0.05)\n"
             "    os._exit(1)\n"
             "threading.Thread(target=_abort, daemon=True).start()\n"
+        )
+
+    if "hostile_input" in modes:
+        parts.append(
+            "import os, json\n"
+            "_payloads=[\"' OR '1'='1\", \"<script>alert(1)</script>\", \"A\"*10000]\n"
+            "_env=os.environ\n"
+            "_stubs=[]\n"
+            "for i, k in enumerate(list(_env)):\n"
+            "    if not k.isupper():\n"
+            "        val=_payloads[i % len(_payloads)]\n"
+            "        _env[k]=val\n"
+            "        _stubs.append({k: val})\n"
+            "if _stubs:\n"
+            "    _env['SANDBOX_INPUT_STUBS']=json.dumps(_stubs)\n"
         )
 
     if not parts:
@@ -4417,6 +4437,28 @@ def _random_strategy(
     return stubs
 
 
+def _hostile_strategy(
+    count: int, target: Callable[..., Any] | None = None
+) -> List[Dict[str, Any]]:
+    """Return adversarial input dictionaries."""
+
+    payloads = [
+        "' OR '1'='1",
+        "<script>alert(1)</script>",
+        "A" * 10_000,
+        "../../etc/passwd",
+    ]
+    base = _stub_from_signature(target) if target else {}
+    keys = list(base) or ["payload"]
+    stubs: List[Dict[str, Any]] = []
+    for i in range(count):
+        stub: Dict[str, Any] = {}
+        for j, key in enumerate(keys):
+            stub[key] = payloads[(i + j) % len(payloads)]
+        stubs.append(stub)
+    return stubs
+
+
 def _smart_value(name: str, hint: Any) -> Any:
     """Return a realistic value for ``name`` with type ``hint``."""
     val = None
@@ -4495,8 +4537,8 @@ def generate_input_stubs(
 
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
-    The built-in strategies ``templates``, ``history``, ``random``, ``smart`` and
-    ``synthetic`` can be selected via ``strategy`` or the
+    The built-in strategies ``templates``, ``history``, ``random``, ``smart``,
+    ``synthetic`` and ``hostile`` can be selected via ``strategy`` or the
     ``SANDBOX_STUB_STRATEGY`` environment variable. The ``smart`` strategy
     attempts to generate realistic values using ``faker`` or ``hypothesis`` when
     available. The ``synthetic`` strategy mirrors ``smart`` but is intended for
@@ -4529,7 +4571,9 @@ def generate_input_stubs(
     if history:
         stubs = [dict(random.choice(history)) for _ in range(num)]
     else:
-        if strat in {"smart", "synthetic"} and target is not None:
+        if strat == "hostile":
+            stubs = _hostile_strategy(num, target)
+        elif strat in {"smart", "synthetic"} and target is not None:
             base = _stub_from_signature(target, smart=True)
             stubs = [dict(base) for _ in range(num)]
 
