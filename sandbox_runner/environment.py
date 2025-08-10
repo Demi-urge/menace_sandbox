@@ -5722,9 +5722,12 @@ def run_workflow_simulations(
     if env_presets is None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
             try:
-                from menace.environment_generator import generate_presets
+                from menace.environment_generator import (
+                    generate_presets,
+                    generate_canonical_presets,
+                )
 
-                env_presets = generate_presets()
+                env_presets = generate_canonical_presets() + generate_presets()
             except Exception:
                 env_presets = [{}]
         else:
@@ -5745,10 +5748,31 @@ def run_workflow_simulations(
         preset_map = {}
         all_presets = list(env_presets)
 
+    required = {"high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"}
+    existing = {p.get("SCENARIO_NAME") for p in all_presets}
+    missing = required - existing
+    if missing:
+        try:
+            from menace.environment_generator import generate_canonical_presets
+
+            canonical_map = {p["SCENARIO_NAME"]: p for p in generate_canonical_presets()}
+            for name in missing:
+                preset = canonical_map.get(name)
+                if not preset:
+                    continue
+                all_presets.append(preset)
+                if isinstance(env_presets, Mapping):
+                    preset_map.setdefault(name, []).append(preset)
+        except Exception:
+            pass
+
     tracker = tracker or ROITracker()
     scenario_names: List[str] = []
     for i, p in enumerate(all_presets):
-        name = p.get("SCENARIO_NAME", f"scenario_{i}")
+        name = p.get("SCENARIO_NAME")
+        if not name:
+            name = f"scenario_{i}"
+            p["SCENARIO_NAME"] = name
         if name not in scenario_names:
             scenario_names.append(name)
 
