@@ -4771,6 +4771,31 @@ def generate_input_stubs(
 
 
 # ----------------------------------------------------------------------
+
+def _scenario_specific_metrics(
+    scenario: str, metrics: Dict[str, float]
+) -> Dict[str, float]:
+    """Return additional metrics for the given *scenario*.
+
+    The helper inspects ``scenario`` and extracts or derives metrics that are
+    only meaningful for that scenario type. Returned values are merged into the
+    main metrics dictionary by the callers.
+    """
+
+    name = scenario.lower()
+    extra: Dict[str, float] = {}
+    if "latency" in name:
+        extra["latency_error_rate"] = float(metrics.get("error_rate", 0.0))
+    if "misuse" in name or "hostile" in name:
+        extra["misuse_failures"] = float(metrics.get("failure_count", 0.0))
+    if "concurrency" in name:
+        extra["concurrency_throughput"] = float(
+            metrics.get("throughput", metrics.get("concurrency_throughput", 0.0))
+        )
+    return extra
+
+
+# ----------------------------------------------------------------------
 def run_repo_section_simulations(
     repo_path: str,
     input_stubs: List[Dict[str, Any]] | None = None,
@@ -4829,9 +4854,13 @@ def run_repo_section_simulations(
         plugins = discover_metrics_plugins(os.environ)
 
         if isinstance(env_presets, Mapping):
-            preset_map: Dict[str, List[Dict[str, Any]]] = {
-                str(k): list(v) for k, v in env_presets.items()
-            }
+            preset_map: Dict[str, List[Dict[str, Any]]] = {}
+            for k, v in env_presets.items():
+                if isinstance(v, Mapping):
+                    flattened = [p for lst in v.values() for p in lst]
+                else:
+                    flattened = list(v)
+                preset_map[str(k)] = flattened
             all_presets: List[Dict[str, Any]] = [
                 p for lst in preset_map.values() for p in lst
             ]
@@ -4977,6 +5006,9 @@ def run_repo_section_simulations(
                     extra = collect_plugin_metrics(plugins, prev, actual, metrics)
                     if extra:
                         metrics.update(extra)
+                    specific = _scenario_specific_metrics(scenario, metrics)
+                    if specific:
+                        metrics.update(specific)
                     scenario_metrics = {
                         f"{k}:{scenario}": v for k, v in metrics.items()
                     }
@@ -5031,6 +5063,9 @@ def run_repo_section_simulations(
                         extra = collect_plugin_metrics(plugins, prev, actual, metrics)
                         if extra:
                             metrics.update(extra)
+                        specific = _scenario_specific_metrics(scenario, metrics)
+                        if specific:
+                            metrics.update(specific)
                         scenario_metrics = {
                             f"{k}:{scenario}": v for k, v in metrics.items()
                         }
@@ -5080,6 +5115,9 @@ def run_repo_section_simulations(
                             "code_quality",
                             "network_latency",
                             "throughput",
+                            "latency_error_rate",
+                            "misuse_failures",
+                            "concurrency_throughput",
                         ):
                             synergy_metrics.setdefault(
                                 f"synergy_{m}",
@@ -5601,7 +5639,7 @@ def append_orphan_modules_to_workflows(
 # ----------------------------------------------------------------------
 def run_workflow_simulations(
     workflows_db: str | Path = "workflows.db",
-    env_presets: List[Dict[str, Any]] | None = None,
+    env_presets: List[Dict[str, Any]] | Mapping[str, List[Dict[str, Any]]] | None = None,
     *,
     dynamic_workflows: bool = False,
     module_algorithm: str = "greedy",
@@ -5635,10 +5673,27 @@ def run_workflow_simulations(
         else:
             env_presets = [{}]
 
+    if isinstance(env_presets, Mapping):
+        preset_map: Dict[str, List[Dict[str, Any]]] = {}
+        for k, v in env_presets.items():
+            if isinstance(v, Mapping):
+                flattened = [p for lst in v.values() for p in lst]
+            else:
+                flattened = list(v)
+            preset_map[str(k)] = flattened
+        all_presets: List[Dict[str, Any]] = [
+            p for lst in preset_map.values() for p in lst
+        ]
+    else:
+        preset_map = {}
+        all_presets = list(env_presets)
+
     tracker = tracker or ROITracker()
-    scenario_names = [
-        p.get("SCENARIO_NAME", f"scenario_{i}") for i, p in enumerate(env_presets)
-    ]
+    scenario_names: List[str] = []
+    for i, p in enumerate(all_presets):
+        name = p.get("SCENARIO_NAME", f"scenario_{i}")
+        if name not in scenario_names:
+            scenario_names.append(name)
 
     wf_db = WorkflowDB(Path(workflows_db))
     workflows = wf_db.fetch()
@@ -5725,8 +5780,8 @@ def run_workflow_simulations(
                 debugger = SelfDebuggerSandbox(
                     object(), SelfCodingEngine(CodeDB(), MenaceMemoryManager())
                 )
-                for p_idx, preset in enumerate(env_presets):
-                    scenario = scenario_names[p_idx]
+                for preset in all_presets:
+                    scenario = preset.get("SCENARIO_NAME", "")
                     env_input = dict(preset)
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
@@ -5746,6 +5801,9 @@ def run_workflow_simulations(
         for _, fut, wid, scenario, preset, module in sorted(tasks, key=lambda x: x[0]):
             res, updates = await fut
             for prev, actual, metrics in updates:
+                specific = _scenario_specific_metrics(scenario, metrics)
+                if specific:
+                    metrics.update(specific)
                 scenario_metrics = {f"{k}:{scenario}": v for k, v in metrics.items()}
                 pred_roi, _ = tracker.forecast()
                 tracker.record_metric_prediction("roi", pred_roi, actual)
@@ -5782,6 +5840,9 @@ def run_workflow_simulations(
                 avg_metrics = {
                     m: totals[m] / counts[m] for m in totals if counts.get(m)
                 }
+                specific = _scenario_specific_metrics(scenario, avg_metrics)
+                if specific:
+                    avg_metrics.update(specific)
                 scenario_metrics = {f"{k}:{scenario}": v for k, v in avg_metrics.items()}
                 pred_roi, _ = tracker.forecast()
                 tracker.record_metric_prediction("roi", pred_roi, agg["roi"])
@@ -5799,8 +5860,8 @@ def run_workflow_simulations(
             combined_steps.extend(wf.workflow)
         combined_snippet = _wf_snippet(combined_steps)
         workflow_modules = [f"workflow_{wf.wid}" for wf in workflows]
-        for p_idx, preset in enumerate(env_presets):
-            scenario = scenario_names[p_idx]
+        for preset in all_presets:
+            scenario = preset.get("SCENARIO_NAME", "")
             env_input = dict(preset)
             res, updates = await _section_worker(
                 combined_snippet,
@@ -5808,6 +5869,9 @@ def run_workflow_simulations(
                 tracker.diminishing(),
             )
             for prev, actual, metrics in updates:
+                specific = _scenario_specific_metrics(scenario, metrics)
+                if specific:
+                    metrics.update(specific)
                 scenario_metrics = {f"{k}:{scenario}": v for k, v in metrics.items()}
                 pred_roi, _ = tracker.forecast()
                 tracker.record_metric_prediction("roi", pred_roi, actual)
@@ -5859,6 +5923,9 @@ def run_workflow_simulations(
                     "code_quality",
                     "network_latency",
                     "throughput",
+                    "latency_error_rate",
+                    "misuse_failures",
+                    "concurrency_throughput",
                 ):
                     synergy_metrics.setdefault(
                         f"synergy_{m}",
