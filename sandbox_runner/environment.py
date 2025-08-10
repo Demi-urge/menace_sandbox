@@ -4269,6 +4269,12 @@ async def _section_worker(
     async def _run() -> Dict[str, Any]:
         return await asyncio.to_thread(_run_snippet)
 
+    try:
+        concurrency = int(env_input.get("CONCURRENCY_LEVEL", 1))
+    except Exception:
+        concurrency = 1
+    concurrency = max(1, concurrency)
+
     updates: list[tuple[float, float, Dict[str, float]]] = []
     prev = 0.0
     attempt = 0
@@ -4276,7 +4282,9 @@ async def _section_worker(
     retried = False
     while True:
         try:
-            result = await _run()
+            start = time.perf_counter()
+            results = await asyncio.gather(*(_run() for _ in range(concurrency)))
+            duration = time.perf_counter() - start
         except Exception as exc:  # pragma: no cover - runtime failures
             record_error(exc)
             _log_diagnostic(str(exc), False)
@@ -4289,6 +4297,49 @@ async def _section_worker(
             continue
         attempt = 0
         delay = 0.5
+
+        stdout_combined = ""
+        stderr_combined = ""
+        metrics: Dict[str, float] = {}
+        error_count = 0
+        neg = False
+        for res in results:
+            stdout_combined += res.get("stdout", "")
+            stderr_combined += res.get("stderr", "")
+            ec = res.get("exit_code", 0)
+            if ec != 0:
+                error_count += 1
+            if ec < 0:
+                neg = True
+            for k, v in res.items():
+                if isinstance(v, (int, float)):
+                    metrics[k] = metrics.get(k, 0.0) + float(v)
+            metrics["stdout_len"] = metrics.get("stdout_len", 0.0) + float(
+                len(res.get("stdout", ""))
+            )
+            metrics["stderr_len"] = metrics.get("stderr_len", 0.0) + float(
+                len(res.get("stderr", ""))
+            )
+        for k in list(metrics.keys()):
+            metrics[k] /= float(concurrency)
+        error_rate = error_count / float(concurrency)
+        throughput = float(concurrency) / duration if duration > 0 else 0.0
+        metrics.update(
+            {
+                "concurrency_level": float(concurrency),
+                "concurrency_error_rate": error_rate,
+                "concurrency_throughput": throughput,
+            }
+        )
+        if SANDBOX_EXTRA_METRICS:
+            metrics.update(SANDBOX_EXTRA_METRICS)
+
+        result = results[0]
+        result = result.copy()
+        result["stdout"] = stdout_combined
+        result["stderr"] = stderr_combined
+        result["exit_code"] = -1 if neg else (0 if error_count == 0 else 1)
+
         if result.get("exit_code", 0) < 0:
             _log_diagnostic(str(result.get("stderr", "error")), False)
             if attempt >= 2:
@@ -4299,25 +4350,7 @@ async def _section_worker(
             delay *= 2
             continue
 
-        actual = 1.0 if result.get("exit_code") == 0 else 0.0
-        metrics = {
-            "exit_code": float(result.get("exit_code", 0)),
-            "stdout_len": float(len(result.get("stdout", ""))),
-            "stderr_len": float(len(result.get("stderr", ""))),
-            "cpu": float(result.get("cpu", 0.0)),
-            "memory": float(result.get("memory", 0.0)),
-            "disk_io": float(result.get("disk_io", 0.0)),
-            "net_io": float(result.get("net_io", 0.0)),
-            "gpu_usage": float(result.get("gpu_usage", 0.0)),
-            "netem_latency_ms": float(result.get("netem_latency_ms", 0.0)),
-            "netem_jitter_ms": float(result.get("netem_jitter_ms", 0.0)),
-            "netem_packet_loss": float(result.get("netem_packet_loss", 0.0)),
-            "netem_packet_duplication": float(
-                result.get("netem_packet_duplication", 0.0)
-            ),
-        }
-        if SANDBOX_EXTRA_METRICS:
-            metrics.update(SANDBOX_EXTRA_METRICS)
+        actual = 1.0 - error_rate
         updates.append((prev, actual, metrics))
         if abs(actual - prev) <= threshold:
             if retried:

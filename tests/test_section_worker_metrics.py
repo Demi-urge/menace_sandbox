@@ -28,3 +28,23 @@ def test_section_worker_returns_metrics(monkeypatch):
     for key in ("cpu", "memory", "disk_io", "net_io", "gpu_usage"):
         assert key in metrics
         assert isinstance(metrics[key], float)
+
+
+def test_section_worker_concurrency(monkeypatch):
+    monkeypatch.setattr(env, "_rlimits_supported", lambda: False)
+    monkeypatch.setattr(env, "psutil", None)
+
+    async def fake_exec(code, env_input, **kw):
+        return {"exit_code": 0.0, "cpu": 1.0}
+
+    monkeypatch.setattr(env, "_execute_in_container", fake_exec)
+    monkeypatch.setattr(env.time, "sleep", lambda s: None)
+
+    res, updates = asyncio.run(
+        env._section_worker("print('x')", {"CONCURRENCY_LEVEL": "2"}, 0.0)
+    )
+    assert res["exit_code"] == 0
+    metrics = updates[0][2]
+    assert metrics["concurrency_level"] == 2.0
+    assert "concurrency_throughput" in metrics
+    assert "concurrency_error_rate" in metrics
