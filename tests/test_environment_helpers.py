@@ -362,9 +362,17 @@ def test_generate_input_stubs_misuse(monkeypatch):
     monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
     import importlib
     importlib.reload(env)
-    stubs = env.generate_input_stubs(1)
-    val = next(iter(stubs[0].values()))
-    assert isinstance(val, str) and ("' OR '1'='1" in val or len(val) > 1000)
+    def target(a: int, name: str) -> None:
+        pass
+
+    stubs = env.generate_input_stubs(1, target=target)
+    stub = stubs[0]
+    assert (
+        "a" not in stub
+        or not isinstance(stub.get("a"), int)
+        or "name" not in stub
+        or not isinstance(stub.get("name"), str)
+    )
 
 
 def _stub_docker_logs(holder):

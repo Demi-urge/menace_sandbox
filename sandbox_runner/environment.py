@@ -4546,6 +4546,8 @@ def _hostile_strategy(
         "<script>alert(1)</script>",
         "A" * 10_000,
         "../../etc/passwd",
+        '{"id": 1,',  # malformed JSON
+        "[1, 2,]",  # malformed JSON array
         "",
         "\x00",
         0,
@@ -4584,6 +4586,44 @@ def _hostile_strategy(
         stub: Dict[str, Any] = {}
         for j, key in enumerate(keys):
             stub[key] = payloads[(i + j) % len(payloads)]
+        stubs.append(stub)
+    return stubs
+
+
+def _wrong_type(val: Any) -> Any:
+    """Return a value of a different type to ``val``."""
+    if isinstance(val, str):
+        return 123
+    if isinstance(val, (int, float)):
+        return "not_a_number"
+    if isinstance(val, list):
+        return {}
+    if isinstance(val, dict):
+        return []
+    if isinstance(val, bool):
+        return "not_bool"
+    return None
+
+
+def _misuse_strategy(
+    count: int, target: Callable[..., Any] | None = None
+) -> List[Dict[str, Any]]:
+    """Return stubs with missing fields or wrong types."""
+
+    base = _stub_from_signature(target) if target else {}
+    keys = list(base) or ["value"]
+    stubs: List[Dict[str, Any]] = []
+    for i in range(count):
+        stub = dict(base) or {keys[0]: 0}
+        if stub:
+            key = keys[i % len(keys)]
+            if key in stub:
+                stub[key] = _wrong_type(stub[key])
+            if len(keys) > 1:
+                missing = keys[(i + 1) % len(keys)]
+                stub.pop(missing, None)
+            else:
+                stub.pop(key, None)
         stubs.append(stub)
     return stubs
 
@@ -4682,8 +4722,11 @@ def generate_input_stubs(
     ``SANDBOX_INPUT_STUBS`` overrides all other behaviour. When unset the
     generator consults ``providers`` discovered via ``SANDBOX_STUB_PLUGINS``.
     The built-in strategies ``templates``, ``history``, ``random``, ``smart``,
-    ``synthetic`` and ``hostile`` (alias ``misuse``) can be selected via
-    ``strategy`` or the ``SANDBOX_STUB_STRATEGY`` environment variable. The
+    ``synthetic``, ``hostile`` and ``misuse`` can be selected via ``strategy``
+    or the ``SANDBOX_STUB_STRATEGY`` environment variable. The ``hostile``
+    strategy crafts adversarial payloads such as SQL injection strings,
+    oversized buffers and malformed JSON. The ``misuse`` strategy omits fields
+    or supplies values of incorrect types to mimic common user errors. The
     ``smart`` strategy attempts to generate realistic values using ``faker`` or
     ``hypothesis`` when available. The ``synthetic`` strategy mirrors ``smart``
     but is intended for language model based stub providers.
@@ -4717,8 +4760,10 @@ def generate_input_stubs(
     if history:
         stubs = [dict(random.choice(history)) for _ in range(num)]
     else:
-        if strat in {"hostile", "misuse"}:
+        if strat == "hostile":
             stubs = _hostile_strategy(num, target)
+        elif strat == "misuse":
+            stubs = _misuse_strategy(num, target)
         elif strat in {"smart", "synthetic"} and target is not None:
             base = _stub_from_signature(target, smart=True)
             stubs = [dict(base) for _ in range(num)]
