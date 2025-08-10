@@ -35,3 +35,17 @@ def test_generate_input_stubs_use_history(monkeypatch, tmp_path):
     monkeypatch.setattr(env, "_load_history", lambda p: [])
     stubs = env.generate_input_stubs(1)
     assert stubs == [expected]
+
+
+def test_generate_input_stubs_misuse_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("SANDBOX_INPUT_STUBS", raising=False)
+    monkeypatch.setenv("SANDBOX_STUB_STRATEGY", "random")
+    monkeypatch.setenv("SANDBOX_INPUT_TEMPLATES_FILE", "")
+    monkeypatch.setenv("SANDBOX_INPUT_HISTORY", "")
+    monkeypatch.setenv("SANDBOX_MISUSE_STUBS", "1")
+    importlib.reload(env)
+    stubs = env.generate_input_stubs(1)
+    flat_vals = [str(v) for s in stubs for v in s.values()]
+    assert any(
+        "' OR '1'='1" in v or "<script>" in v or "../.." in v for v in flat_vals
+    )
