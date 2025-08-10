@@ -3,6 +3,15 @@
 This guide describes the prerequisites and environment variables used when
 running the fully autonomous sandbox.
 
+For information on built-in scenario profiles, hostile input stubs and
+concurrency options, see the sections on [Predefined Profiles](sandbox_runner.md#predefined-profiles),
+[Hostile Input Stub Strategy](sandbox_runner.md#hostile-input-stub-strategy) and
+[Concurrency Settings](sandbox_runner.md#concurrency-settings) in
+`sandbox_runner.md` as well as [Predefined Profiles](environment_generator.md#predefined-profiles),
+[Hostile Input Stub Strategy](environment_generator.md#hostile-input-stub-strategy) and
+[Concurrency Settings](environment_generator.md#concurrency-settings) in
+`environment_generator.md`.
+
 ## First-time setup
 
 Follow these steps when launching the sandbox for the first time:
