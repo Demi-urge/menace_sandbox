@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from threading import Lock, Thread
-from typing import Optional
+from contextlib import contextmanager
+from typing import Optional, Dict, Generator
 import sqlite3
 
 from .retry_utils import publish_with_retry
@@ -110,6 +111,63 @@ def record_mutation_outcome(
         )
 
 
+@contextmanager
+def log_context(
+    *,
+    change: str,
+    reason: str,
+    trigger: str,
+    workflow_id: int,
+    before_metric: float = 0.0,
+    performance: float = 0.0,
+    after_metric: float | None = None,
+    parent_id: int | None = None,
+) -> Generator[Dict[str, float | int], None, None]:
+    """Context manager that logs a mutation and records its outcome.
+
+    Example
+    -------
+    >>> with log_context(change="patch", reason="test", trigger="unit", workflow_id=0) as rec:
+    ...     rec["after_metric"] = 1.0
+    ...     rec["performance"] = 1.0
+
+    Parameters
+    ----------
+    change, reason, trigger, workflow_id, before_metric, performance, after_metric, parent_id
+        Parameters forwarded to :func:`log_mutation`.
+
+    Yields
+    ------
+    dict
+        Mutable mapping where callers may store ``after_metric``, ``performance`` and
+        ``roi`` values which will be persisted on exit.
+    """
+
+    event_id = log_mutation(
+        change=change,
+        reason=reason,
+        trigger=trigger,
+        performance=performance,
+        workflow_id=workflow_id,
+        before_metric=before_metric,
+        after_metric=after_metric if after_metric is not None else before_metric,
+        parent_id=parent_id,
+    )
+    data: Dict[str, float | int] = {"event_id": event_id, "before_metric": before_metric}
+    try:
+        yield data
+    finally:
+        after = float(data.get("after_metric", after_metric if after_metric is not None else before_metric))
+        perf = float(data.get("performance", after - before_metric))
+        roi = float(data.get("roi", after - before_metric))
+        record_mutation_outcome(
+            event_id,
+            after_metric=after,
+            roi=roi,
+            performance=perf,
+        )
+
+
 def build_lineage(workflow_id: int) -> list[dict]:
     """Return the lineage tree for *workflow_id*."""
     with _lock:
@@ -121,4 +179,5 @@ __all__ = [
     "record_mutation_outcome",
     "build_lineage",
     "set_event_bus",
+    "log_context",
 ]

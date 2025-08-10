@@ -1461,23 +1461,18 @@ class SelfImprovementEngine:
                     after_metric = before_metric + delta
             else:
                 after_metric = before_metric + delta
-            event_id = MutationLogger.log_mutation(
+            with MutationLogger.log_context(
                 change=f"self_opt_patch_{patch_id}",
                 reason="self_improvement",
                 trigger="optimize_self",
-                performance=delta,
                 workflow_id=0,
                 before_metric=before_metric,
-                after_metric=after_metric,
                 parent_id=self._last_mutation_id,
-            )
-            MutationLogger.record_mutation_outcome(
-                event_id,
-                after_metric=after_metric,
-                roi=after_metric,
-                performance=delta,
-            )
-            self._last_mutation_id = event_id
+            ) as mutation:
+                mutation["after_metric"] = after_metric
+                mutation["performance"] = delta
+                mutation["roi"] = after_metric
+            self._last_mutation_id = int(mutation["event_id"])
             self._last_patch_id = patch_id
             return patch_id, reverted, delta
         except Exception as exc:
@@ -3216,23 +3211,18 @@ class SelfImprovementEngine:
                             after_metric = before_metric + delta
                     else:
                         after_metric = before_metric + delta
-                    event_id = MutationLogger.log_mutation(
+                    with MutationLogger.log_context(
                         change=f"helper_patch_{patch_id}",
                         reason="self-improvement helper patch",
                         trigger="automation_cycle",
-                        performance=delta,
                         workflow_id=0,
                         before_metric=before_metric,
-                        after_metric=after_metric,
                         parent_id=self._last_mutation_id,
-                    )
-                    MutationLogger.record_mutation_outcome(
-                        event_id,
-                        after_metric=after_metric,
-                        roi=after_metric,
-                        performance=delta,
-                    )
-                    self._last_mutation_id = event_id
+                    ) as mutation:
+                        mutation["after_metric"] = after_metric
+                        mutation["performance"] = delta
+                        mutation["roi"] = after_metric
+                    self._last_mutation_id = int(mutation["event_id"])
                     self._last_patch_id = patch_id
                     if self.policy:
                         try:
@@ -3504,23 +3494,18 @@ class SelfImprovementEngine:
                     self.policy.save()
                 except Exception as exc:  # pragma: no cover - best effort
                     self.logger.exception("policy save failed: %s", exc)
-            event_id = MutationLogger.log_mutation(
+            with MutationLogger.log_context(
                 change="self_improvement_cycle",
                 reason="cycle complete",
                 trigger="run_cycle",
-                performance=delta,
                 workflow_id=0,
                 before_metric=before_roi,
-                after_metric=after_roi,
                 parent_id=self._last_mutation_id,
-            )
-            MutationLogger.record_mutation_outcome(
-                event_id,
-                after_metric=after_roi,
-                roi=roi_value,
-                performance=delta,
-            )
-            self._last_mutation_id = event_id
+            ) as mutation:
+                mutation["after_metric"] = after_roi
+                mutation["performance"] = delta
+                mutation["roi"] = roi_value
+            self._last_mutation_id = int(mutation["event_id"])
             self.logger.info("cycle complete", extra=log_record(roi=roi_value))
             return result
         finally:
