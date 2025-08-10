@@ -3,16 +3,25 @@ from __future__ import annotations
 """Simple Flask dashboard with charts for metrics, evolution history and errors."""
 
 import threading
+import json
+import queue
 from typing import Iterable, Optional
+from pathlib import Path
+from types import SimpleNamespace
 
+import logging
 from flask import Flask, jsonify, render_template_string, request
 
-from .metrics_dashboard import MetricsDashboard
 from .data_bot import MetricsDB
 from .evolution_history_db import EvolutionHistoryDB
 from .error_bot import ErrorDB
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 from .lineage_tracker import LineageTracker
+
+try:  # optional dependency
+    from .unified_event_bus import UnifiedEventBus  # type: ignore
+except Exception:  # pragma: no cover - bus optional
+    UnifiedEventBus = None  # type: ignore
 
 
 _TEMPLATE = """
@@ -28,6 +37,18 @@ _TEMPLATE = """
 <canvas id="errors" width="400" height="200"></canvas>
 <div id="lineage"></div>
 <script>
+function render(nodes){
+  const ul=document.createElement('ul');
+  nodes.forEach(n=>{
+    const li=document.createElement('li');
+    li.textContent=`${n.action} (id=${n.rowid})`;
+    if(n.children && n.children.length){
+      li.appendChild(render(n.children));
+    }
+    ul.appendChild(li);
+  });
+  return ul;
+}
 async function load() {
   const m = await fetch('/metrics_data').then(r=>r.json());
   const e = await fetch('/evolution_data').then(r=>r.json());
@@ -36,19 +57,14 @@ async function load() {
   new Chart(document.getElementById('metrics'), {type:'line',data:{labels:m.labels,datasets:[{label:'CPU',data:m.cpu},{label:'Errors',data:m.errors}]}});
   new Chart(document.getElementById('evolution'), {type:'line',data:{labels:e.labels,datasets:[{label:'ROI',data:e.roi}]}});
   new Chart(document.getElementById('errors'), {type:'bar',data:{labels:err.labels,datasets:[{label:'Count',data:err.count}]}});
-  function render(nodes){
-    const ul=document.createElement('ul');
-    nodes.forEach(n=>{
-      const li=document.createElement('li');
-      li.textContent=`${n.action} (id=${n.rowid})`;
-      if(n.children && n.children.length){
-        li.appendChild(render(n.children));
-      }
-      ul.appendChild(li);
-    });
-    return ul;
-  }
   document.getElementById('lineage').appendChild(render(lin));
+  const source = new EventSource('/lineage_stream');
+  source.onmessage = e => {
+    const data = JSON.parse(e.data);
+    const div = document.getElementById('lineage');
+    div.innerHTML = '';
+    div.appendChild(render(data));
+  };
 }
 load();
 </script>
@@ -57,38 +73,35 @@ load();
 """
 
 
-class MonitoringDashboard(MetricsDashboard):
-    """Extend :class:`MetricsDashboard` with charts and reporting."""
+def MonitoringDashboard(
+    metrics_db: MetricsDB | None = None,
+    evolution_db: EvolutionHistoryDB | None = None,
+    error_db: ErrorDB | None = None,
+    orchestrator: object | None = None,
+    history_file: str | Path = "roi_history.json",
+    event_bus: UnifiedEventBus | None = None,
+):
+    """Factory returning a metrics dashboard extended with lineage streaming."""
 
-    def __init__(
-        self,
-        metrics_db: MetricsDB | None = None,
-        evolution_db: EvolutionHistoryDB | None = None,
-        error_db: ErrorDB | None = None,
-        orchestrator: object | None = None,
-        history_file: str | Path = "roi_history.json",
-    ) -> None:
-        super().__init__(history_file)
-        self.metrics_db = metrics_db or MetricsDB()
-        self.evolution_db = evolution_db or EvolutionHistoryDB()
-        self.error_db = error_db or ErrorDB()
-        self.lineage_tracker = LineageTracker(self.evolution_db)
-        self.reporter = ReportGenerationBot(self.metrics_db)
-        self.app.add_url_rule('/', 'index', self.index)
-        self.app.add_url_rule('/metrics_data', 'metrics_data', self.metrics_data)
-        self.app.add_url_rule('/evolution_data', 'evolution_data', self.evolution_data)
-        self.app.add_url_rule('/error_data', 'error_data', self.error_data)
-        self.app.add_url_rule('/lineage_data', 'lineage_data', self.lineage_data)
-        self.app.add_url_rule('/status', 'status', self.status)
-        self.orchestrator = orchestrator
-        self._report_timer: Optional[threading.Timer] = None
+    dash = SimpleNamespace()
+    dash.logger = logging.getLogger("MonitoringDashboard")
+    dash.app = Flask(__name__)
+    dash.history_file = Path(history_file)
+    dash.metrics_db = metrics_db or MetricsDB()
+    dash.evolution_db = evolution_db or EvolutionHistoryDB()
+    dash.error_db = error_db or ErrorDB()
+    dash.lineage_tracker = LineageTracker(dash.evolution_db)
+    dash.reporter = ReportGenerationBot(dash.metrics_db)
+    dash.orchestrator = orchestrator
+    dash._report_timer = None  # type: ignore[assignment]
+    dash.event_bus = event_bus
+    dash._lineage_updates: queue.Queue[list[dict]] = queue.Queue()
 
-    # ------------------------------------------------------------------
-    def index(self) -> tuple[str, int]:
+    def index() -> tuple[str, int]:
         return render_template_string(_TEMPLATE), 200
 
-    def metrics_data(self) -> tuple[str, int]:
-        rows = self.metrics_db.fetch(50)
+    def metrics_data() -> tuple[str, int]:
+        rows = dash.metrics_db.fetch(50)
         if hasattr(rows, 'to_dict'):
             data = rows.to_dict('records')  # type: ignore[no-any-return]
         else:
@@ -98,14 +111,14 @@ class MonitoringDashboard(MetricsDashboard):
         errors = [float(r.get('errors', 0.0)) for r in data][::-1]
         return jsonify({'labels': labels, 'cpu': cpu, 'errors': errors}), 200
 
-    def evolution_data(self) -> tuple[str, int]:
-        rows = self.evolution_db.fetch(50)
+    def evolution_data() -> tuple[str, int]:
+        rows = dash.evolution_db.fetch(50)
         labels = [r[9] for r in rows][::-1]
         roi = [float(r[3]) for r in rows][::-1]
         return jsonify({'labels': labels, 'roi': roi}), 200
 
-    def error_data(self) -> tuple[str, int]:
-        cur = self.error_db.conn.execute(
+    def error_data() -> tuple[str, int]:
+        cur = dash.error_db.conn.execute(
             "SELECT error_type, COUNT(*) FROM telemetry GROUP BY error_type"
         )
         rows = cur.fetchall()
@@ -113,33 +126,72 @@ class MonitoringDashboard(MetricsDashboard):
         count = [int(r[1]) for r in rows]
         return jsonify({'labels': labels, 'count': count}), 200
 
-    def lineage_data(self) -> tuple[str, int]:
+    def lineage_data() -> tuple[str, int]:
         workflow_id = request.args.get('workflow_id', type=int)
-        data = self.lineage_tracker.build_tree(workflow_id)
+        data = dash.lineage_tracker.build_tree(workflow_id)
         return jsonify(data), 200
 
-    def status(self) -> tuple[str, int]:
-        if self.orchestrator and hasattr(self.orchestrator, 'status_summary'):
+    def _handle_mutation(topic: str, payload: object) -> None:
+        try:
+            if isinstance(payload, dict):
+                workflow_id = payload.get('workflow_id')
+                if workflow_id is not None:
+                    data = dash.lineage_tracker.build_tree(workflow_id)
+                    dash._lineage_updates.put(data)
+        except Exception:
+            dash.logger.exception('failed handling mutation event')
+
+    def lineage_stream():
+        def _gen():
+            while True:
+                data = dash._lineage_updates.get()
+                yield f"data: {json.dumps(data)}\n\n"
+
+        return dash.app.response_class(_gen(), mimetype='text/event-stream')
+
+    def status() -> tuple[str, int]:
+        if dash.orchestrator and hasattr(dash.orchestrator, 'status_summary'):
             try:
-                data = self.orchestrator.status_summary()
+                data = dash.orchestrator.status_summary()
                 return jsonify(data), 200
             except Exception as exc:
-                self.logger.warning("status_summary failed: %s", exc)
+                dash.logger.warning('status_summary failed: %s', exc)
         return jsonify({}), 200
 
-    # ------------------------------------------------------------------
     def schedule_reports(
-        self,
         metrics: Iterable[str] | None = None,
         *,
         recipients: Iterable[str] | None = None,
         interval: int = 60 * 60 * 24,
     ) -> None:
-        """Periodically send or save dashboard summaries."""
-
         options = ReportOptions(metrics=list(metrics or ['cpu', 'errors']))
         if recipients:
             options.recipients = list(recipients)
-        self.reporter.schedule(options, interval=interval)
+        dash.reporter.schedule(options, interval=interval)
 
-__all__ = ['MonitoringDashboard']
+    # bind methods and routes
+    dash.index = index
+    dash.metrics_data = metrics_data
+    dash.evolution_data = evolution_data
+    dash.error_data = error_data
+    dash.lineage_data = lineage_data
+    dash._handle_mutation = _handle_mutation
+    dash.lineage_stream = lineage_stream
+    dash.status = status
+    dash.schedule_reports = schedule_reports
+
+    dash.app.add_url_rule('/', 'index', index)
+    dash.app.add_url_rule('/metrics_data', 'metrics_data', metrics_data)
+    dash.app.add_url_rule('/evolution_data', 'evolution_data', evolution_data)
+    dash.app.add_url_rule('/error_data', 'error_data', error_data)
+    dash.app.add_url_rule('/lineage_data', 'lineage_data', lineage_data)
+    dash.app.add_url_rule('/status', 'status', status)
+    dash.app.add_url_rule('/lineage_stream', 'lineage_stream', lineage_stream)
+
+    if dash.event_bus is not None:
+        dash.event_bus.subscribe('mutation_recorded', _handle_mutation)
+
+    return dash
+
+
+__all__ = ["MonitoringDashboard"]

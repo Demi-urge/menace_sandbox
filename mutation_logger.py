@@ -7,6 +7,8 @@ from threading import Lock
 from typing import Optional
 import sqlite3
 
+from .retry_utils import publish_with_retry
+
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 
 try:  # optional dependency
@@ -38,6 +40,15 @@ if UnifiedEventBus is not None:
         _event_bus = None
 else:  # pragma: no cover - bus not available
     _event_bus = None
+
+
+def set_event_bus(bus: Optional[UnifiedEventBus]) -> None:
+    """Override the global event bus instance.
+
+    This allows tests or applications to provide a shared bus.
+    """
+    global _event_bus
+    _event_bus = bus
 
 
 def log_mutation(
@@ -72,7 +83,7 @@ def log_mutation(
     if _event_bus is not None:
         try:
             payload = {"event_id": event_id, **event.__dict__}
-            _event_bus.publish("mutation_recorded", payload)
+            publish_with_retry(_event_bus, "mutation_recorded", payload)
         except Exception as exc:  # pragma: no cover - best effort
             _logger.error("failed publishing mutation_recorded: %s", exc)
     return event_id
@@ -84,4 +95,4 @@ def build_lineage(workflow_id: int) -> list[dict]:
         return _history_db.lineage_tree(workflow_id)
 
 
-__all__ = ["log_mutation", "build_lineage"]
+__all__ = ["log_mutation", "build_lineage", "set_event_bus"]
