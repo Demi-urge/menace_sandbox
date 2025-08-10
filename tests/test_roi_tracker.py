@@ -38,6 +38,23 @@ def test_register_metrics_pads_synergy_series():
     assert tracker.synergy_metrics_history["synergy_profitability"] == [0.0]
 
 
+def test_register_scenario_metrics():
+    tracker = rt.ROITracker()
+    tracker.register_metrics(
+        "latency_error_rate",
+        "hostile_failures",
+        "misuse_failures",
+        "concurrency_throughput",
+    )
+    for name in (
+        "synergy_latency_error_rate",
+        "synergy_hostile_failures",
+        "synergy_misuse_failures",
+        "synergy_concurrency_throughput",
+    ):
+        assert name in tracker.synergy_metrics_history
+
+
 def test_roi_forecast_linear_sequence():
     tracker = rt.ROITracker()
     for i in range(1, 6):

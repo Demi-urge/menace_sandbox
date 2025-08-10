@@ -787,6 +787,7 @@ class SelfImprovementEngine:
         self._cycle_count = 0
         self._last_mutation_id: int | None = None
         self._last_patch_id: int | None = None
+        self._last_scenario_metrics: dict[str, float] = {}
         if self.event_bus:
             if self.learning_engine:
                 try:
@@ -3429,6 +3430,31 @@ class SelfImprovementEngine:
                         trigger="run_cycle",
                         parent_event_id=self._last_mutation_id,
                     )
+                    scenario_metrics: dict[str, float] = {}
+                    tracker = getattr(self, "tracker", None)
+                    if tracker is not None:
+                        db = getattr(self.data_bot, "db", None)
+                        for name in (
+                            "latency_error_rate",
+                            "hostile_failures",
+                            "misuse_failures",
+                            "concurrency_throughput",
+                        ):
+                            vals = tracker.metrics_history.get(name)
+                            if vals:
+                                val = float(vals[-1])
+                                scenario_metrics[name] = val
+                                if db is not None:
+                                    try:
+                                        db.log_eval("self_improvement", name, val)
+                                    except Exception:
+                                        pass
+                    if scenario_metrics:
+                        self._last_scenario_metrics = dict(scenario_metrics)
+                        self.logger.info(
+                            "scenario metrics",
+                            extra=log_record(**scenario_metrics),
+                        )
                     self.logger.info(
                         "cycle metrics",
                         extra=log_record(

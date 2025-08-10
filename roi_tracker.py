@@ -73,6 +73,10 @@ class ROITracker:
         self.cluster_deltas: Dict[int, List[float]] = {}
         self.metrics_history: Dict[str, List[float]] = {
             "recovery_time": [],
+            "latency_error_rate": [],
+            "hostile_failures": [],
+            "misuse_failures": [],
+            "concurrency_throughput": [],
             "synergy_adaptability": [],
             "synergy_recovery_time": [],
             "synergy_discrepancy_count": [],
@@ -90,6 +94,10 @@ class ROITracker:
             "synergy_code_quality": [],
             "synergy_network_latency": [],
             "synergy_throughput": [],
+            "synergy_latency_error_rate": [],
+            "synergy_hostile_failures": [],
+            "synergy_misuse_failures": [],
+            "synergy_concurrency_throughput": [],
             "synergy_risk_index": [],
             "synergy_safety_rating": [],
             "synergy_efficiency": [],
@@ -117,6 +125,10 @@ class ROITracker:
             "synergy_code_quality": [],
             "synergy_network_latency": [],
             "synergy_throughput": [],
+            "synergy_latency_error_rate": [],
+            "synergy_hostile_failures": [],
+            "synergy_misuse_failures": [],
+            "synergy_concurrency_throughput": [],
             "synergy_risk_index": [],
             "synergy_safety_rating": [],
             "synergy_efficiency": [],
@@ -201,6 +213,10 @@ class ROITracker:
                 "code_quality": "synergy_code_quality",
                 "network_latency": "synergy_network_latency",
                 "throughput": "synergy_throughput",
+                "latency_error_rate": "synergy_latency_error_rate",
+                "hostile_failures": "synergy_hostile_failures",
+                "misuse_failures": "synergy_misuse_failures",
+                "concurrency_throughput": "synergy_concurrency_throughput",
                 "risk_index": "synergy_risk_index",
                 "recovery_time": "synergy_recovery_time",
                 "reliability": "synergy_reliability",
@@ -797,6 +813,14 @@ class ROITracker:
         results: Dict[str, float] = {}
         vec = list(features or [])
         for name, history in list(self.metrics_history.items()):
+            if name.startswith("synergy_"):
+                continue
+            if name in ("roi_reliability",):
+                continue
+            if not history and name not in self.predicted_metrics:
+                continue
+            if history and all(float(v) == 0.0 for v in history) and name not in self.predicted_metrics:
+                continue
             actual = history[-1] if history else None
             try:
                 pred = self.predict_metric_with_manager(
@@ -1272,7 +1296,6 @@ class ROITracker:
                     self.metrics_history = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("metrics_history", {}).items()
-                        if not str(m).startswith("synergy_")
                     }
                     self.synergy_metrics_history = {
                         str(m): [float(v) for v in vals]
@@ -1332,18 +1355,10 @@ class ROITracker:
                             str(m): [float(v) for v in vals]
                             for m, vals in data.get("actual_metrics", {}).items()
                         }
-                    for name in {
-                        **self.metrics_history,
-                        **self.synergy_metrics_history,
-                    }:
-                        self.predicted_metrics.setdefault(name, [])
-                        self.actual_metrics.setdefault(name, [])
                     n = len(self.roi_history)
                     self.metrics_history.setdefault("recovery_time", [0.0] * n)
                     while len(self.metrics_history["recovery_time"]) < n:
                         self.metrics_history["recovery_time"].append(0.0)
-                    self.predicted_metrics.setdefault("recovery_time", [])
-                    self.actual_metrics.setdefault("recovery_time", [])
                     for key in (
                         "synergy_discrepancy_count",
                         "synergy_gpu_usage",
@@ -1353,8 +1368,6 @@ class ROITracker:
                         "synergy_long_term_lucrativity",
                     ):
                         self.synergy_metrics_history.setdefault(key, [])
-                        self.predicted_metrics.setdefault(key, [])
-                        self.actual_metrics.setdefault(key, [])
             except Exception:
                 self.roi_history = []
                 self.module_deltas = {}
@@ -1424,6 +1437,8 @@ class ROITracker:
                 target.setdefault(str(name), [])
             else:
                 target.setdefault(str(name), []).append(float(val))
+        for name, vals in self.synergy_metrics_history.items():
+            self.metrics_history.setdefault(name, list(vals))
         self.predicted_metrics = {}
         self.actual_metrics = {}
         for m, pred, act in metric_pred_rows:
@@ -1449,15 +1464,10 @@ class ROITracker:
                     )
             except Exception:
                 continue
-        for name in {**self.metrics_history, **self.synergy_metrics_history}:
-            self.predicted_metrics.setdefault(name, [])
-            self.actual_metrics.setdefault(name, [])
         n = len(self.roi_history)
         self.metrics_history.setdefault("recovery_time", [0.0] * n)
         while len(self.metrics_history["recovery_time"]) < n:
             self.metrics_history["recovery_time"].append(0.0)
-        self.predicted_metrics.setdefault("recovery_time", [])
-        self.actual_metrics.setdefault("recovery_time", [])
         for key in (
             "synergy_discrepancy_count",
             "synergy_gpu_usage",
@@ -1469,8 +1479,6 @@ class ROITracker:
             "synergy_throughput",
         ):
             self.synergy_metrics_history.setdefault(key, [])
-            self.predicted_metrics.setdefault(key, [])
-            self.actual_metrics.setdefault(key, [])
 
     # ------------------------------------------------------------------
     def plot_history(self, output_path: str) -> None:
