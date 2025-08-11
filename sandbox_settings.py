@@ -91,6 +91,11 @@ class SandboxSettings(BaseSettings):
         env="SCENARIO_METRIC_THRESHOLDS",
         description="Thresholds for scenario-specific metrics returned by _scenario_specific_metrics.",
     )
+    fail_on_missing_scenarios: bool = Field(
+        False,
+        env="SANDBOX_FAIL_ON_MISSING_SCENARIOS",
+        description="Raise an error when canonical scenarios are missing coverage.",
+    )
 
     # self test integration scoring knobs
     integration_score_threshold: float = Field(

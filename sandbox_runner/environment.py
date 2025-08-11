@@ -5340,7 +5340,8 @@ def run_repo_section_simulations(
         await _gather_tasks()
 
         save_coverage_data()
-        verify_scenario_coverage()
+        settings = SandboxSettings()
+        verify_scenario_coverage(raise_on_missing=settings.fail_on_missing_scenarios)
 
         if all_diminished:
             combined: List[str] = []

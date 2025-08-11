@@ -1044,6 +1044,13 @@ def main(argv: List[str] | None = None) -> None:
         help="display scenario summary after runs",
     )
     parser.add_argument(
+        "--fail-on-missing-scenarios",
+        action="store_true",
+        help=(
+            "treat missing canonical scenarios as errors (or set SANDBOX_FAIL_ON_MISSING_SCENARIOS=1)"
+        ),
+    )
+    parser.add_argument(
         "--max-recursion-depth",
         type=int,
         default=os.getenv("SANDBOX_MAX_RECURSION_DEPTH"),
@@ -1385,9 +1392,15 @@ def main(argv: List[str] | None = None) -> None:
     if auto_include_isolated:
         recursive_isolated = True
 
+    fail_on_missing = bool(
+        getattr(settings, "fail_on_missing_scenarios", False)
+        or getattr(args, "fail_on_missing_scenarios", False)
+    )
+
     args.auto_include_isolated = auto_include_isolated
     args.recursive_orphans = recursive_orphans
     args.recursive_isolated = recursive_isolated
+    args.fail_on_missing_scenarios = fail_on_missing
 
     os.environ["SANDBOX_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
     os.environ["SELF_TEST_AUTO_INCLUDE_ISOLATED"] = "1" if auto_include_isolated else "0"
@@ -1400,6 +1413,7 @@ def main(argv: List[str] | None = None) -> None:
     if auto_include_isolated:
         os.environ["SANDBOX_DISCOVER_ISOLATED"] = "1"
         os.environ["SELF_TEST_DISCOVER_ISOLATED"] = "1"
+    os.environ["SANDBOX_FAIL_ON_MISSING_SCENARIOS"] = "1" if fail_on_missing else "0"
 
     level_str = str(getattr(args, "log_level", "INFO"))
     try:

@@ -74,6 +74,8 @@ Set `SANDBOX_PRESET_MODE=canonical` to use a deterministic set of presets
 returned by `generate_canonical_presets()`. These cover common scenarios such
 as `high_latency_api`, `hostile_input`, `user_misuse` and `concurrency_spike`
 so every module is exercised under each condition.
+Set `SANDBOX_FAIL_ON_MISSING_SCENARIOS=1` to raise an error when a module skips
+any canonical scenario during coverage verification.
 
 ## Predefined Profiles
 
