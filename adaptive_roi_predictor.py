@@ -83,10 +83,21 @@ class AdaptiveROIPredictor:
     ) -> None:
         self.model_path = Path(model_path)
         self.cv = cv
-        self.param_grid: Dict[str, Dict[str, Any]] = param_grid or {}
+        default_grid = {
+            "GradientBoostingRegressor": {
+                "n_estimators": [50, 100],
+                "learning_rate": [0.01, 0.1],
+            },
+            "SGDRegressor": {
+                "sgdregressor__alpha": [0.0001, 0.001],
+                "sgdregressor__penalty": ["l2", "l1"],
+            },
+        }
+        self.param_grid: Dict[str, Dict[str, Any]] = param_grid or default_grid
         self._model = None
         self.best_params: Dict[str, Any] | None = None
         self.best_score: float | None = None
+        self.validation_scores: Dict[str, float] = {}
         self.slope_threshold: float | None = slope_threshold
         self.curvature_threshold: float | None = curvature_threshold
         self._load()
@@ -195,29 +206,42 @@ class AdaptiveROIPredictor:
 
         candidates: list[tuple[str, Any]] = []
         if GradientBoostingRegressor is not None:
+            params: Dict[str, Any] = {}
+            if self.best_params and self.best_params.get("model") == "GradientBoostingRegressor":
+                params = {k: v for k, v in self.best_params.items() if k != "model"}
             candidates.append(
-                ("GradientBoostingRegressor", GradientBoostingRegressor(random_state=0))
+                (
+                    "GradientBoostingRegressor",
+                    GradientBoostingRegressor(random_state=0, **params),
+                )
             )
         if (
             SGDRegressor is not None
             and PolynomialFeatures is not None
             and make_pipeline is not None
         ):
+            params = {}
+            if self.best_params and self.best_params.get("model") == "SGDRegressor":
+                params = {k: v for k, v in self.best_params.items() if k != "model"}
             candidates.append(
                 (
                     "SGDRegressor",
                     make_pipeline(
                         PolynomialFeatures(degree=2),
-                        SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0),
+                        SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0, **params),
                     ),
                 )
             )
         if LinearRegression is not None:
-            candidates.append(("LinearRegression", LinearRegression()))
+            params = {}
+            if self.best_params and self.best_params.get("model") == "LinearRegression":
+                params = {k: v for k, v in self.best_params.items() if k != "model"}
+            candidates.append(("LinearRegression", LinearRegression(**params)))
 
         best_model = None
         best_score = float("inf")
         best_params: Dict[str, Any] | None = None
+        self.validation_scores = {}
 
         for name, model in candidates:
             grid = param_grid.get(name, {}) if isinstance(param_grid, dict) else {}
@@ -264,6 +288,7 @@ class AdaptiveROIPredictor:
                 except Exception:  # pragma: no cover - fit failure
                     continue
 
+            self.validation_scores[name] = score
             if score < best_score:
                 best_score = score
                 best_model = model
@@ -279,12 +304,12 @@ class AdaptiveROIPredictor:
                     first_diff = np.diff(preds)
                     if self.slope_threshold is None:
                         self.slope_threshold = float(
-                            np.mean(np.abs(first_diff))
+                            np.mean(np.abs(first_diff)) * 0.5
                         ) if first_diff.size else 0.05
                     second_diff = np.diff(first_diff)
                     if self.curvature_threshold is None:
                         self.curvature_threshold = float(
-                            np.mean(np.abs(second_diff))
+                            np.mean(np.abs(second_diff)) * 0.5
                         ) if second_diff.size else 0.01
                 except Exception:
                     if self.slope_threshold is None:
