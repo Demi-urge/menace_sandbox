@@ -171,6 +171,7 @@ def rank_scenario_synergy(paths: list[str], metric: str = "roi") -> None:
                 val,
                 extra={"preset": name, "metric": metric, "value": val},
             )
+            print(f"{name} {metric}={val:.3f}")
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 

@@ -5019,15 +5019,17 @@ def run_repo_section_simulations(
                     continue
                 try:
                     from menace.environment_generator import (
+                        CANONICAL_PROFILES,
                         generate_presets,
                         suggest_profiles_for_module,
                     )
 
                     profiles = suggest_profiles_for_module(module)
-                    if profiles:
-                        new_presets = generate_presets(profiles=profiles)
-                        preset_map[module] = new_presets
-                        all_presets.extend(new_presets)
+                    if not profiles:
+                        profiles = CANONICAL_PROFILES
+                    new_presets = generate_presets(profiles=profiles)
+                    preset_map[module] = new_presets
+                    all_presets.extend(new_presets)
                 except Exception:
                     pass
         else:
@@ -5188,8 +5190,16 @@ def run_repo_section_simulations(
                     )
                 if updates:
                     _update_coverage(module, scenario)
-                    synergy_data[scenario]["roi"].append(updates[-1][1])
-                    synergy_data[scenario]["metrics"].append(updates[-1][2])
+                    final_roi = updates[-1][1]
+                    final_metrics = updates[-1][2]
+                    synergy_data[scenario]["roi"].append(final_roi)
+                    synergy_data[scenario]["metrics"].append(final_metrics)
+                    logger.info(
+                        "scenario %s roi=%s metrics=%s",
+                        scenario,
+                        final_roi,
+                        final_metrics,
+                    )
                 if return_details:
                     details.setdefault(module, {}).setdefault(scenario, []).append(
                         {
@@ -5303,6 +5313,11 @@ def run_repo_section_simulations(
                         )
                         scenario_synergy.setdefault(scenario, []).append(
                             synergy_metrics
+                        )
+                        logger.info(
+                            "scenario synergy %s metrics=%s",
+                            scenario,
+                            synergy_metrics,
                         )
                         if hasattr(tracker, "scenario_synergy"):
                             tracker.scenario_synergy.setdefault(scenario, []).append(
