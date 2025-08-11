@@ -1423,15 +1423,39 @@ class SelfImprovementEngine:
         return feats
 
     def _candidate_features(self, module: str) -> list[list[float]]:
-        """Return ROI-based features for a patch candidate."""
-        roi_val = 0.0
+        """Return features ``[historical_roi, performance_delta, gpt_score]``.
+
+        The predictor expects a sequence of feature vectors.  Historical ROI is
+        obtained from the :class:`PreExecutionROIBot` when available.  The
+        performance delta is derived from recent synergy ROI trends while the
+        GPT score is taken from the most recent entry in the patch score backend
+        if configured.  Missing values default to ``0.0`` so the predictor can
+        still operate in reduced environments.
+        """
+
+        # Historical ROI forecast for the module
+        hist_roi = 0.0
         if self.pre_roi_bot:
             try:
                 res = self.pre_roi_bot.predict_model_roi(module, [])
-                roi_val = float(getattr(res, "roi", 0.0))
+                hist_roi = float(getattr(res, "roi", 0.0))
             except Exception:
                 self.logger.exception("pre ROI forecast failed for %s", module)
-        return [[roi_val, 0.0]]
+
+        # Recent performance delta from tracker metrics
+        perf_delta = self._metric_delta("synergy_roi")
+
+        # GPT score from patch scoring backend (if available)
+        gpt_score = 0.0
+        if self._score_backend:
+            try:  # pragma: no cover - backend optional
+                rows = self._score_backend.fetch_recent(1)
+                if rows:
+                    gpt_score = float(rows[0][-1])
+            except Exception:
+                pass
+
+        return [[hist_roi, perf_delta, gpt_score]]
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
@@ -1534,7 +1558,20 @@ class SelfImprovementEngine:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
         if not self.self_coding_engine:
             return None, False, 0.0
+        # Consult ROI predictor before applying a self optimisation patch.  Skip
+        # the patch when growth is not expected to be exponential.
         try:
+            features = self._candidate_features(self.bot_name)
+            try:
+                _, growth = self.roi_predictor.predict(features)
+            except Exception:
+                growth = "unknown"
+            if growth != "exponential":
+                self.logger.info(
+                    "self optimisation skipped", extra=log_record(growth_type=growth)
+                )
+                return None, False, 0.0
+
             patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                 Path(__file__),
                 "self_improvement",
