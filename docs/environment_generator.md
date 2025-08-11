@@ -33,6 +33,15 @@ Generate a preset that combines hostile inputs with a concurrency spike:
 python environment_cli.py --profiles hostile_input concurrency_spike --count 1
 ```
 
+## Automatic Runner Coverage
+
+`run_repo_section_simulations` ensures comprehensive testing by appending the
+canonical profiles – `high_latency_api`, `hostile_input`, `user_misuse` and
+`concurrency_spike` – whenever a custom preset list omits them. The runner also
+requests additional module‑specific presets from the generator. These are built
+through keyword matching on module paths so features like databases or parsers
+receive scenarios tailored to their domain.
+
 ## Configuring and Extending Presets
 
 Profiles are simple dictionaries merged into the randomly generated fields.
