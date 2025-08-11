@@ -255,6 +255,12 @@ prediction_mae = Gauge(
     ["metric"],
 )
 
+prediction_reliability = Gauge(
+    "prediction_reliability",
+    "Rolling reliability score for predictions",
+    ["metric"],
+)
+
 # New gauges for extended metrics
 security_score_gauge = Gauge(
     "security_score", "Overall security score of the system"
@@ -601,6 +607,7 @@ __all__ = [
     "synergy_threshold_gauge",
     "prediction_error",
     "prediction_mae",
+    "prediction_reliability",
     "error_bot_exceptions",
     "learning_engine_exceptions",
     "synergy_weight_updates_total",
