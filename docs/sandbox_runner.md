@@ -100,6 +100,24 @@ python environment_cli.py --profiles hostile_input concurrency_spike --count 1 >
 SANDBOX_ENV_PRESETS="$(cat presets.json)" python sandbox_runner.py
 ```
 
+### Custom keyword profile mappings
+
+`environment_generator` suggests profiles for modules by scanning their paths
+for known domain keywords. The defaults cover terms like `api`, `parser` and
+`concurrency`. Create a `sandbox_settings.yaml` file with a `keyword_profiles`
+section to override or extend these mappings without touching the code:
+
+```yaml
+keyword_profiles:
+  database: [high_latency_api, concurrency_spike]
+  cache: [high_latency_api]
+  auth: [user_misuse, hostile_input]
+```
+
+Set the `SANDBOX_SETTINGS_YAML` environment variable to point to an alternate
+configuration file if needed. When present the mappings are merged with the
+defaults before profile suggestions are made.
+
 ## Hostile Input Stub Strategy
 
 The hostile profile or the `hostile_input` failure mode forces the sandbox to

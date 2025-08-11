@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Sequence, Union, TYPE_CHECKING
 import json
 import logging
 from logging_utils import log_record
+import yaml
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
@@ -147,7 +150,41 @@ _KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
     "input": ["hostile_input"],
     "concurrency": ["concurrency_spike"],
     "thread": ["concurrency_spike"],
+    "database": ["high_latency_api", "concurrency_spike"],
+    "cache": ["high_latency_api"],
+    "auth": ["user_misuse", "hostile_input"],
 }
+
+
+def _load_keyword_overrides() -> Dict[str, List[str]]:
+    """Load optional keyword profile overrides from YAML config."""
+
+    path = os.getenv("SANDBOX_SETTINGS_YAML", "sandbox_settings.yaml")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:  # pragma: no cover - log and ignore
+        logger.debug("failed to load %s: %s", path, exc)
+        return {}
+
+    overrides = data.get("keyword_profiles", {})
+    result: Dict[str, List[str]] = {}
+    if isinstance(overrides, dict):
+        for key, profs in overrides.items():
+            if isinstance(profs, str):
+                result[key] = [profs]
+            else:
+                try:
+                    result[key] = list(profs)
+                except TypeError:
+                    continue
+    return result
+
+
+# merge optional overrides without modifying global if file missing
+_KEYWORD_PROFILE_MAP.update(_load_keyword_overrides())
 
 
 def suggest_profiles_for_module(module_name: str) -> List[str]:
@@ -174,8 +211,6 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
 
 # probability of injecting a random profile when none specified
 _PROFILE_PROB = 0.3
-
-logger = logging.getLogger(__name__)
 
 # minimum ROI history length for the adaptive RL agent
 _ADAPTIVE_THRESHOLD = 5
