@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import os
+import ast
 from typing import Any, Dict, List, Sequence, Union, TYPE_CHECKING
 import json
 import logging
@@ -201,14 +202,92 @@ def _load_keyword_overrides() -> Dict[str, List[str]]:
 _KEYWORD_PROFILE_MAP.update(_load_keyword_overrides())
 
 
+def infer_profiles_from_ast(module_path: str) -> List[str]:
+    """Infer scenario profiles by inspecting a module's AST.
+
+    The parser looks for import statements, decorator names and uppercase
+    configuration flags. Any tokens that match :data:`_KEYWORD_PROFILE_MAP`
+    keys will contribute their associated profiles. The resulting list
+    preserves order and removes duplicates.
+    """
+
+    tokens: List[str] = []
+    try:
+        with open(module_path, "r", encoding="utf-8") as fh:
+            tree = ast.parse(fh.read(), filename=module_path)
+    except Exception:
+        return []
+
+    def _name(expr: ast.AST) -> str:
+        if isinstance(expr, ast.Name):
+            return expr.id
+        if isinstance(expr, ast.Attribute):
+            return expr.attr
+        if isinstance(expr, ast.Call):
+            return _name(expr.func)
+        return ""
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_Import(self, node: ast.Import) -> None:  # pragma: no cover - trivial
+            for alias in node.names:
+                tokens.append(alias.name)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom) -> None:  # pragma: no cover - trivial
+            if node.module:
+                tokens.append(node.module)
+            for alias in node.names:
+                tokens.append(alias.name)
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # pragma: no cover - trivial
+            for dec in node.decorator_list:
+                tokens.append(_name(dec))
+            self.generic_visit(node)
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[attr-defined]
+
+        def visit_ClassDef(self, node: ast.ClassDef) -> None:  # pragma: no cover - trivial
+            for dec in node.decorator_list:
+                tokens.append(_name(dec))
+            self.generic_visit(node)
+
+        def visit_Assign(self, node: ast.Assign) -> None:  # pragma: no cover - trivial
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name) and tgt.id.isupper():
+                    tokens.append(tgt.id)
+            self.generic_visit(node)
+
+        def visit_AnnAssign(self, node: ast.AnnAssign) -> None:  # pragma: no cover - trivial
+            tgt = node.target
+            if isinstance(tgt, ast.Name) and tgt.id.isupper():
+                tokens.append(tgt.id)
+            self.generic_visit(node)
+
+    _Visitor().visit(tree)
+
+    tokens_l = [t.lower() for t in tokens]
+    profiles: List[str] = []
+    for key, profs in _KEYWORD_PROFILE_MAP.items():
+        if any(key in t for t in tokens_l):
+            profiles.extend(profs)
+
+    seen: set[str] = set()
+    result: List[str] = []
+    for prof in profiles:
+        if prof not in seen:
+            result.append(prof)
+            seen.add(prof)
+    return result
+
+
 def suggest_profiles_for_module(module_name: str) -> List[str]:
     """Return profile names relevant to ``module_name``.
 
-    The helper performs a simple keyword lookup on the module path and
-    returns matching scenario profile names. When multiple keywords match
-    the resulting list preserves order and duplicates are removed. If no
-    keyword matches are found the full canonical profile list is returned
-    to ensure broad coverage.
+    The helper performs a keyword lookup on the module path and supplements
+    the results with :func:`infer_profiles_from_ast` which analyses the
+    module's source code for imports, decorators and configuration flags.
+    When multiple hints match the resulting list preserves order and removes
+    duplicates. If no hints are found the full canonical profile list is
+    returned to ensure broad coverage.
     """
 
     name = module_name.lower()
@@ -216,6 +295,21 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
     for key, profs in _KEYWORD_PROFILE_MAP.items():
         if key and key in name:
             profiles.extend(profs)
+
+    path = module_name
+    if not os.path.isfile(path):
+        mod_path = module_name.replace(".", "/")
+        if os.path.isdir(mod_path):
+            mod_path = os.path.join(mod_path, "__init__.py")
+        else:
+            mod_path = f"{mod_path}.py"
+        if os.path.isfile(mod_path):
+            path = mod_path
+        else:
+            path = ""
+
+    if path:
+        profiles.extend(infer_profiles_from_ast(path))
 
     if not profiles:
         return list(CANONICAL_PROFILES)

@@ -711,3 +711,42 @@ def test_synergy_network_latency_prediction_cancels_increase():
     new = eg.adapt_presets(tracker, presets)
     assert new[0]["NETWORK_LATENCY_MS"] == 100
 
+
+def test_infer_profiles_from_ast(tmp_path):
+    mod = tmp_path / "sample_mod.py"
+    mod.write_text(
+        "import network_utils\n"
+        "from threading import Thread\n"
+        "ENABLE_AUTH = True\n"
+        "@cache_response\n"
+        "def handler():\n"
+        "    pass\n"
+    )
+    from environment_generator import infer_profiles_from_ast
+
+    profiles = infer_profiles_from_ast(str(mod))
+    assert set(profiles) == {
+        "high_latency_api",
+        "concurrency_spike",
+        "user_misuse",
+        "hostile_input",
+    }
+
+
+def test_suggest_profiles_merges_ast_and_name(tmp_path):
+    mod = tmp_path / "auth_helper.py"
+    mod.write_text(
+        "import threading\n"
+        "@cache_response\n"
+        "def run():\n    pass\n"
+    )
+    from environment_generator import suggest_profiles_for_module
+
+    profiles = suggest_profiles_for_module(str(mod))
+    assert set(profiles) == {
+        "high_latency_api",
+        "concurrency_spike",
+        "user_misuse",
+        "hostile_input",
+    }
+
