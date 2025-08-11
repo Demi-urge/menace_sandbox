@@ -21,6 +21,24 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Adaptive ROI Prediction
+
+`SelfImprovementEngine` can call the `AdaptiveROIPredictor` to estimate the
+ROI impact of planned actions. Train or refresh the model with the helper
+CLI:
+
+```bash
+python scripts/adaptive_roi_cli.py train
+python scripts/adaptive_roi_cli.py retrain
+```
+
+During a cycle the engine feeds feature sequences to the predictor and
+receives an ROI estimate alongside a growth classification such as
+"exponential" or "marginal". Meaningful forecasts require the optional
+`scikit-learn` dependency and a non‑empty history; otherwise a naive
+baseline is used, so predictions should be viewed as guidance rather than
+hard guarantees.
+
 ## Scenario Types
 
 Improvement cycles inherit the sandbox scenario presets. Use profiles such as

@@ -24,6 +24,25 @@ entries when desired.
 
 `ROITracker` can incorporate CPU, memory, disk and time usage when predicting the next delta. Pass a `ROIHistoryDB` instance to the constructor and provide the `resources` argument to `update()`. These values act as exogenous variables for ARIMA or as additional regression features.
 
+## Adaptive ROI Prediction
+
+Longer term ROI trends can be estimated with the lightweight
+`AdaptiveROIPredictor` model. The helper script
+`scripts/adaptive_roi_cli.py` exposes simple subcommands:
+
+```bash
+python scripts/adaptive_roi_cli.py train
+python scripts/adaptive_roi_cli.py predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]"
+python scripts/adaptive_roi_cli.py retrain
+```
+
+`train` fits a new model on available history, `predict` returns the
+forecasted ROI and growth type for a JSON encoded feature matrix and
+`retrain` updates an existing model with the latest data. The predictor
+uses `scikit-learn` when installed and falls back to a naive baseline if
+no regression backend or dataset is available, so results should be
+treated as coarse guidance rather than exact forecasts.
+
 
 ## Usage Example
 ```python
