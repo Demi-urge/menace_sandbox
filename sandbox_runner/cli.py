@@ -1038,6 +1038,11 @@ def main(argv: List[str] | None = None) -> None:
         "--summary-depth", type=int, help="lines to keep when summarising snippets"
     )
     parser.add_argument(
+        "--print-scenario-summary",
+        action="store_true",
+        help="display scenario summary after runs",
+    )
+    parser.add_argument(
         "--max-recursion-depth",
         type=int,
         default=os.getenv("SANDBOX_MAX_RECURSION_DEPTH"),
@@ -1471,7 +1476,10 @@ def main(argv: List[str] | None = None) -> None:
         return
 
     if args.workflow_sim:
-        from sandbox_runner.environment import run_workflow_simulations
+        from sandbox_runner.environment import (
+            run_workflow_simulations,
+            load_scenario_summary,
+        )
 
         run_workflow_simulations(
             args.workflow_db,
@@ -1482,8 +1490,14 @@ def main(argv: List[str] | None = None) -> None:
             else 0.1,
             module_semantic=args.module_semantic,
         )
+        if getattr(args, "print_scenario_summary", False):
+            print(json.dumps(load_scenario_summary(), indent=2))
     else:
         _run_sandbox(args)
+        if getattr(args, "print_scenario_summary", False):
+            from sandbox_runner.environment import load_scenario_summary
+
+            print(json.dumps(load_scenario_summary(), indent=2))
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI usage

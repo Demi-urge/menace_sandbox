@@ -26,6 +26,7 @@ _TEMPLATE = """
 <canvas id="roi" width="400" height="200"></canvas>
 <canvas id="security" width="400" height="200"></canvas>
 <canvas id="weights" width="400" height="200"></canvas>
+<canvas id="scenarios" width="400" height="200"></canvas>
 <script>
 async function load() {
   const data = await fetch('/roi_data').then(r => r.json());
@@ -40,6 +41,10 @@ async function load() {
   }
   if (ds.length) {
     new Chart(document.getElementById('weights'), {type:'line',data:{labels:wdata.labels,datasets:ds}});
+  }
+  const sdata = await fetch('/scenario_summary').then(r => r.json());
+  if (!sdata.error && sdata.labels.length) {
+    new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
   }
 }
 load();
@@ -56,13 +61,16 @@ class SandboxDashboard(MetricsDashboard):
         self,
         history_file: str | Path = "roi_history.json",
         weights_log: str | Path = synergy_weight_cli.LOG_PATH,
+        summary_file: str | Path = Path("sandbox_data") / "scenario_summary.json",
     ) -> None:
         super().__init__(history_file)
         self.load_error = ""
         self.weights_log = Path(weights_log)
+        self.summary_file = Path(summary_file)
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/roi_data', 'roi_data', self.roi_data)
         self.app.add_url_rule('/weights', 'weights', self.weights_data)
+        self.app.add_url_rule('/scenario_summary', 'scenario_summary', self.scenario_summary_data)
 
     # ------------------------------------------------------------------
     def _load_tracker(self) -> ROITracker:
@@ -107,6 +115,21 @@ class SandboxDashboard(MetricsDashboard):
                 weights[key] = [float(h.get(key, 0.0)) for h in history]
         return jsonify({'labels': labels, 'weights': weights}), 200
 
+    def scenario_summary_data(self) -> tuple[str, int]:
+        try:
+            with open(self.summary_file, encoding='utf-8') as fh:
+                data = json.load(fh)
+        except Exception as exc:
+            self.logger.exception(
+                "Failed to load scenario summary from %s", self.summary_file
+            )
+            return jsonify({'error': str(exc)}), 500
+        labels = list(data.keys())
+        roi = [float(data[k].get('roi', 0.0)) for k in labels]
+        failures = [float(data[k].get('failures', 0)) for k in labels]
+        successes = [float(data[k].get('successes', 0)) for k in labels]
+        return jsonify({'labels': labels, 'roi': roi, 'failures': failures, 'successes': successes}), 200
+
 
 __all__ = ["SandboxDashboard"]
 
@@ -121,10 +144,15 @@ def cli(argv: List[str] | None = None) -> None:
         default=str(Path('sandbox_data') / 'roi_history.json'),
         help='Path to roi_history.json'
     )
+    parser.add_argument(
+        '--summary-file',
+        default=str(Path('sandbox_data') / 'scenario_summary.json'),
+        help='Path to scenario_summary.json'
+    )
     parser.add_argument('--port', type=int, default=8002, help='HTTP port')
     args = parser.parse_args(argv)
 
-    dash = SandboxDashboard(args.file)
+    dash = SandboxDashboard(args.file, summary_file=args.summary_file)
     dash.run(port=args.port)
 
 
