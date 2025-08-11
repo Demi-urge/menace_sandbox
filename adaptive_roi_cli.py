@@ -13,7 +13,11 @@ from .adaptive_roi_dataset import build_dataset
 def _train(args: argparse.Namespace) -> None:
     """Train a new predictor and persist it."""
     dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
-    predictor = AdaptiveROIPredictor(model_path=args.model)
+    predictor = AdaptiveROIPredictor(
+        model_path=args.model,
+        slope_threshold=args.slope_threshold,
+        curvature_threshold=args.curvature_threshold,
+    )
     predictor.train(dataset)
     print(f"model trained on {len(dataset[0])} samples -> {args.model}")
 
@@ -22,7 +26,11 @@ def _train(args: argparse.Namespace) -> None:
 def _predict(args: argparse.Namespace) -> None:
     """Run prediction for ``features`` and print JSON result."""
     features = json.loads(args.features)
-    predictor = AdaptiveROIPredictor(model_path=args.model)
+    predictor = AdaptiveROIPredictor(
+        model_path=args.model,
+        slope_threshold=args.slope_threshold,
+        curvature_threshold=args.curvature_threshold,
+    )
     roi, growth = predictor.predict(features)
     print(json.dumps({"roi": roi, "growth": growth}))
 
@@ -31,7 +39,11 @@ def _predict(args: argparse.Namespace) -> None:
 def _retrain(args: argparse.Namespace) -> None:
     """Retrain an existing model with updated data."""
     dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
-    predictor = AdaptiveROIPredictor(model_path=args.model)
+    predictor = AdaptiveROIPredictor(
+        model_path=args.model,
+        slope_threshold=args.slope_threshold,
+        curvature_threshold=args.curvature_threshold,
+    )
     predictor.train(dataset)
     print(f"model retrained on {len(dataset[0])} samples -> {args.model}")
 
@@ -40,6 +52,10 @@ def _retrain(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="adaptive_roi_model.pkl", help="Model path")
+    parser.add_argument("--slope-threshold", type=float, default=None, help="Slope threshold")
+    parser.add_argument(
+        "--curvature-threshold", type=float, default=None, help="Curvature threshold"
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_train = sub.add_parser("train", help="train a new model")
