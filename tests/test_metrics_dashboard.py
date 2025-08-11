@@ -5,36 +5,32 @@ from pathlib import Path
 
 from menace.roi_tracker import ROITracker
 
-if "menace.metrics_dashboard" in sys.modules:
-    from menace.metrics_dashboard import MetricsDashboard
-    from menace import metrics_exporter
-else:  # pragma: no cover - allow running file directly
-    pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
-    pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
-    spec_me = importlib.util.spec_from_file_location(
-        "menace.metrics_exporter",
-        Path(__file__).resolve().parents[1] / "metrics_exporter.py",
-        submodule_search_locations=pkg.__path__,
-    )
-    me = importlib.util.module_from_spec(spec_me)
-    me.__package__ = "menace"
-    sys.modules["menace.metrics_exporter"] = me
-    spec_me.loader.exec_module(me)
+pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
+pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+spec_me = importlib.util.spec_from_file_location(
+    "menace.metrics_exporter",
+    Path(__file__).resolve().parents[1] / "metrics_exporter.py",
+    submodule_search_locations=pkg.__path__,
+)
+me = importlib.util.module_from_spec(spec_me)
+me.__package__ = "menace"
+sys.modules["menace.metrics_exporter"] = me
+spec_me.loader.exec_module(me)
 
-    spec_md = importlib.util.spec_from_file_location(
-        "menace.metrics_dashboard",
-        Path(__file__).resolve().parents[1] / "metrics_dashboard.py",
-        submodule_search_locations=pkg.__path__,
-    )
-    md = importlib.util.module_from_spec(spec_md)
-    md.__package__ = "menace"
-    sys.modules["menace.metrics_dashboard"] = md
-    spec_md.loader.exec_module(md)
+spec_md = importlib.util.spec_from_file_location(
+    "menace.metrics_dashboard",
+    Path(__file__).resolve().parents[1] / "metrics_dashboard.py",
+    submodule_search_locations=pkg.__path__,
+)
+md = importlib.util.module_from_spec(spec_md)
+md.__package__ = "menace"
+sys.modules["menace.metrics_dashboard"] = md
+spec_md.loader.exec_module(md)
 
-    pkg.metrics_exporter = me
-    pkg.metrics_dashboard = md
-    MetricsDashboard = md.MetricsDashboard
-    metrics_exporter = me
+pkg.metrics_exporter = me
+pkg.metrics_dashboard = md
+MetricsDashboard = md.MetricsDashboard
+metrics_exporter = me
 
 
 def _make_history(path):
@@ -71,6 +67,7 @@ def test_roi_and_metric_routes(tmp_path):
     data = resp.get_json()
     assert data["roi"] == [1.0]
     assert data["labels"] == [0]
+    assert data["category_counts"] == {}
     assert data["synergy_roi"] == [0.1]
     assert data["synergy_security_score"] == [0.05]
     assert data["synergy_risk_index"] == [0.4]
@@ -123,9 +120,9 @@ def test_roi_and_metric_routes(tmp_path):
 
     metrics_exporter.visual_agent_queue_depth.set(1)
     metrics_exporter.visual_agent_wait_time.set(0.2)
-    metrics_exporter.container_creation_success_total.set(3)
-    metrics_exporter.container_creation_failures_total.set(1)
-    metrics_exporter.container_creation_alerts_total.set(2)
+    metrics_exporter.container_creation_success_total.labels("img").set(3)
+    metrics_exporter.container_creation_failures_total.labels("img").set(1)
+    metrics_exporter.container_creation_alerts_total.labels("img").set(2)
     metrics_exporter.synergy_weight_update_failures_total.set(4)
 
     from menace import synergy_auto_trainer as sat

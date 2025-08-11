@@ -41,8 +41,14 @@ class MetricsDashboard:
                 return gauge._value.get()  # type: ignore[attr-defined]
             except Exception:
                 try:
-                    wrappers = getattr(gauge, "_values", {})
-                    return float(sum(w.get() for w in wrappers.values()))
+                    wrappers = getattr(gauge, "_values", None)
+                    if wrappers:
+                        return float(sum(w.get() for w in wrappers.values()))
+                    wrappers = getattr(gauge, "_metrics", None)
+                    if wrappers:
+                        return float(
+                            sum(getattr(w, "_value", 0).get() for w in wrappers.values())
+                        )
                 except Exception:
                     return 0.0
 
@@ -98,6 +104,7 @@ class MetricsDashboard:
             "roi": tracker.roi_history,
             "predicted": tracker.predicted_roi,
             "actual": tracker.actual_roi,
+            "category_counts": tracker.category_summary(),
         }
         synergy_names = {
             n for n in tracker.metrics_history if n.startswith("synergy_")

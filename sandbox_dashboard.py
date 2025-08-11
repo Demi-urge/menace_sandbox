@@ -96,7 +96,12 @@ class SandboxDashboard(MetricsDashboard):
             return jsonify({'error': self.load_error}), 500
         labels = list(range(len(tracker.roi_history)))
         security = tracker.metrics_history.get('security_score', [])
-        return jsonify({'labels': labels, 'roi': tracker.roi_history, 'security': security}), 200
+        return jsonify({
+            'labels': labels,
+            'roi': tracker.roi_history,
+            'security': security,
+            'category_counts': tracker.category_summary(),
+        }), 200
 
     def weights_data(self) -> tuple[str, int]:
         history: list[dict[str, float]] = []
