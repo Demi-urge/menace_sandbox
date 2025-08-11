@@ -186,14 +186,31 @@ def verify_scenario_coverage(
 
 
 def save_coverage_data() -> None:
-    """Persist :data:`COVERAGE_TRACKER` to ``sandbox_data/coverage.json``."""
-    path = Path(os.getenv("SANDBOX_COVERAGE_FILE", ROOT / "sandbox_data" / "coverage.json"))
+    """Persist :data:`COVERAGE_TRACKER` and its summary to ``sandbox_data`` files."""
+
+    path = Path(
+        os.getenv("SANDBOX_COVERAGE_FILE", ROOT / "sandbox_data" / "coverage.json")
+    )
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             json.dump(COVERAGE_TRACKER, fh, indent=2, sort_keys=True)
     except Exception as exc:  # pragma: no cover - best effort only
         logger.exception("failed to save coverage data: %s", exc)
+
+    summary_path = Path(
+        os.getenv(
+            "SANDBOX_COVERAGE_SUMMARY",
+            ROOT / "sandbox_data" / "coverage_summary.json",
+        )
+    )
+    summary = coverage_summary()
+    try:  # pragma: no cover - best effort only
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        with summary_path.open("w", encoding="utf-8") as fh:
+            json.dump(summary, fh, indent=2, sort_keys=True)
+    except Exception as exc:
+        logger.exception("failed to save coverage summary: %s", exc)
 
 
 def _scenario_summary_path() -> Path:
