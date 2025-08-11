@@ -140,9 +140,49 @@ def _update_coverage(module: str, scenario: str) -> None:
     mod_map[scenario] = mod_map.get(scenario, 0) + 1
 
 
-def coverage_summary() -> Dict[str, Dict[str, int]]:
-    """Return a copy of the current coverage statistics."""
-    return {m: dict(s) for m, s in COVERAGE_TRACKER.items()}
+def coverage_summary() -> Dict[str, Dict[str, Any]]:
+    """Return coverage counts and missing canonical scenarios per module."""
+    try:
+        from menace.environment_generator import CANONICAL_PROFILES
+    except Exception:  # pragma: no cover - environment generator optional
+        profiles: List[str] = []
+    else:
+        profiles = list(CANONICAL_PROFILES)
+    summary: Dict[str, Dict[str, Any]] = {}
+    for mod, scen_map in COVERAGE_TRACKER.items():
+        missing = [p for p in profiles if p not in scen_map]
+        summary[mod] = {"counts": dict(scen_map), "missing": missing}
+    return summary
+
+
+def verify_scenario_coverage(
+    *, raise_on_missing: bool = False
+) -> Dict[str, List[str]]:
+    """Verify that each module covers all canonical scenarios.
+
+    Parameters
+    ----------
+    raise_on_missing:
+        When ``True`` a :class:`RuntimeError` is raised if coverage gaps are
+        detected. Otherwise warnings are logged.
+
+    Returns
+    -------
+    Mapping of modules to lists of missing scenario names.
+    """
+    summary = coverage_summary()
+    missing: Dict[str, List[str]] = {
+        mod: info["missing"] for mod, info in summary.items() if info["missing"]
+    }
+    for mod, scenarios in missing.items():
+        msg = f"module {mod} missing scenarios: {', '.join(scenarios)}"
+        if raise_on_missing:
+            logger.error(msg)
+        else:
+            logger.warning(msg)
+    if raise_on_missing and missing:
+        raise RuntimeError("scenario coverage incomplete")
+    return missing
 
 
 def save_coverage_data() -> None:
@@ -5215,6 +5255,7 @@ def run_repo_section_simulations(
         await _gather_tasks()
 
         save_coverage_data()
+        verify_scenario_coverage()
 
         if all_diminished:
             combined: List[str] = []
