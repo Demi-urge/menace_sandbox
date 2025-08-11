@@ -11,11 +11,12 @@ forecast and a qualitative growth label:
 """
 
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 import joblib
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.metrics import mean_squared_error, r2_score
 
 from .adaptive_roi_dataset import build_dataset
 
@@ -46,6 +47,38 @@ def train(save_path: Path | str = MODEL_PATH) -> GradientBoostingRegressor:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, save_path)
     return model
+
+
+def retrain(save_path: Path | str = MODEL_PATH) -> Dict[str, float]:
+    """Retrain the ROI forecasting model and return training metrics.
+
+    Parameters
+    ----------
+    save_path:
+        Location where the trained model should be written.  Defaults to
+        :data:`MODEL_PATH`.
+    """
+
+    data = build_dataset()
+    if data.empty:
+        raise RuntimeError("Training dataset is empty")
+
+    features = data[["performance_delta", "gpt_score"]]
+    target = data["roi_delta"]
+
+    model = GradientBoostingRegressor(random_state=0)
+    model.fit(features, target)
+
+    preds = model.predict(features)
+    metrics = {
+        "mse": float(mean_squared_error(target, preds)),
+        "r2": float(r2_score(target, preds)),
+        "n_samples": float(len(target)),
+    }
+
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    joblib.dump(model, save_path)
+    return metrics
 
 
 def load(model_path: Path | str = MODEL_PATH) -> GradientBoostingRegressor:
@@ -121,6 +154,7 @@ __all__ = [
     "MODEL_DIR",
     "MODEL_PATH",
     "train",
+    "retrain",
     "load",
     "forecast",
     "classify_growth",
