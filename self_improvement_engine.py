@@ -1828,14 +1828,19 @@ class SelfImprovementEngine:
                     continue
                 scenarios = details.get(m, {})
                 scenario_synergy = getattr(tracker_res, "scenario_synergy", {})
+                info = self.orphan_traces.setdefault(m, {"parents": []})
+                scen_info = info.setdefault("scenarios", {})
                 worst_roi = math.inf
                 scenario_failed = False
+                try:
+                    from environment_generator import CANONICAL_PROFILES
+                except Exception:  # pragma: no cover - optional dependency
+                    CANONICAL_PROFILES = []  # type: ignore[assignment]
+
                 for scen, runs in scenarios.items():
-                    if any(r.get("result", {}).get("exit_code") for r in runs):
-                        scenario_failed = True
-                        break
+                    names = [s.strip() for s in scen.split("+") if s.strip()]
+                    sy_list = scenario_synergy.get(scen, [])
                     try:
-                        sy_list = scenario_synergy.get(scen, [])
                         scen_roi = (
                             float(sy_list[-1].get("synergy_roi", 0.0))
                             if sy_list
@@ -1843,8 +1848,17 @@ class SelfImprovementEngine:
                         )
                     except Exception:
                         scen_roi = 0.0
+                    failed = any(r.get("result", {}).get("exit_code") for r in runs)
                     worst_roi = min(worst_roi, scen_roi)
-                info = self.orphan_traces.setdefault(m, {"parents": []})
+                    scenario_failed = scenario_failed or failed
+                    recorded = False
+                    for name in names:
+                        if name in CANONICAL_PROFILES:
+                            scen_info[name] = {"roi": scen_roi, "failed": failed}
+                            recorded = True
+                    if not recorded:
+                        scen_info[scen] = {"roi": scen_roi, "failed": failed}
+
                 if worst_roi is math.inf:
                     worst_roi = 0.0
                 info["robustness"] = float(worst_roi)
