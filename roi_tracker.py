@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
 import json
 import os
 import sqlite3
+from collections import Counter
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -54,7 +55,7 @@ class ROITracker:
             forecasts.
         """
         self.roi_history: List[float] = []
-        self.growth_history: List[str] = []
+        self.category_history: List[str] = []
         self.window = window
         self.tolerance = tolerance
         self.filter_outliers = filter_outliers
@@ -354,6 +355,12 @@ class ROITracker:
         return float(arr.mean()) if arr.size else 0.0
 
     # ------------------------------------------------------------------
+    def category_summary(self) -> Dict[str, int]:
+        """Return counts of predicted ROI categories."""
+
+        return dict(Counter(self.category_history))
+
+    # ------------------------------------------------------------------
     def synergy_reliability(self, window: int | None = None) -> float:
         """Return the mean absolute error of ``synergy_roi`` forecasts.
 
@@ -455,14 +462,15 @@ class ROITracker:
         modules: Optional[List[str]] = None,
         resources: Optional[Dict[str, float]] = None,
         metrics: Optional[Dict[str, float]] = None,
-        growth_type: str | None = None,
+        category: str | None = None,
     ) -> Tuple[Optional[int], List[float], bool]:
         """Record ROI delta and evaluate stopping criteria.
 
         When ``modules`` is provided, track ROI contributions per module. When
         ``resources`` is given, CPU, memory, disk, time and GPU metrics are stored for
         use in forecasting. ``metrics`` allows arbitrary named metrics to be
-        recorded for later forecasting with :meth:`forecast_metric`.
+        recorded for later forecasting with :meth:`forecast_metric`. ``category``
+        captures the predicted ROI growth classification for this iteration.
         """
         if self._next_prediction is not None:
             self.record_prediction(self._next_prediction, roi_after)
@@ -477,12 +485,12 @@ class ROITracker:
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
-        if growth_type is not None:
-            self.growth_history.append(growth_type)
+        if category is not None:
+            self.category_history.append(category)
         weight = 1.0
-        if growth_type == "exponential":
+        if category == "exponential":
             weight = 1.5
-        elif growth_type == "marginal":
+        elif category == "marginal":
             weight = 0.5
         if filtered is not None:
             adjusted = filtered * weight
@@ -539,7 +547,7 @@ class ROITracker:
                     self.synergy_metrics_history[name].append(last)
             logger.info(
                 "roi update",
-                extra=log_record(delta=delta, growth_type=growth_type, adjusted=adjusted),
+                extra=log_record(delta=delta, category=category, adjusted=adjusted),
             )
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
@@ -554,6 +562,14 @@ class ROITracker:
                 avg = float(np.dot(data, self.weights))
             if abs(avg) < self.tolerance:
                 stop = True
+        # predicted gain-based termination when recent categories are marginal
+        predicted_gain, _ = self.forecast()
+        if (
+            len(self.category_history) >= self.window
+            and all(c == "marginal" for c in self.category_history[-self.window:])
+            and abs(predicted_gain) < self.tolerance
+        ):
+            stop = True
         return vertex, preds, stop
 
     # ------------------------------------------------------------------
@@ -1181,6 +1197,7 @@ class ROITracker:
                 "module_deltas": self.module_deltas,
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
+                "category_history": self.category_history,
                 "metrics_history": self.metrics_history,
                 "synergy_metrics_history": self.synergy_metrics_history,
                 "synergy_history": self.synergy_history,
@@ -1222,6 +1239,15 @@ class ROITracker:
                         (float(p), float(a))
                         for p, a in zip(self.predicted_roi, self.actual_roi)
                     ],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS categories (category TEXT)"
+            )
+            conn.execute("DELETE FROM categories")
+            if self.category_history:
+                conn.executemany(
+                    "INSERT INTO categories (category) VALUES (?)",
+                    [(str(c),) for c in self.category_history],
                 )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS metric_predictions (metric TEXT, pred REAL, actual REAL)"
@@ -1292,6 +1318,7 @@ class ROITracker:
                     self.module_deltas = {}
                     self.predicted_roi = []
                     self.actual_roi = []
+                    self.category_history = []
                     self.metrics_history = {}
                     self.predicted_metrics = {}
                     self.actual_metrics = {}
@@ -1307,6 +1334,9 @@ class ROITracker:
                         float(x) for x in data.get("predicted_roi", [])
                     ]
                     self.actual_roi = [float(x) for x in data.get("actual_roi", [])]
+                    self.category_history = [
+                        str(x) for x in data.get("category_history", [])
+                    ]
                     self.metrics_history = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("metrics_history", {}).items()
@@ -1423,6 +1453,12 @@ class ROITracker:
                     ).fetchall()
                 except Exception:
                     scenario_rows = []
+                try:
+                    cat_rows = conn.execute(
+                        "SELECT category FROM categories ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    cat_rows = []
         except Exception:
             self.roi_history = []
             self.module_deltas = {}
@@ -1432,6 +1468,7 @@ class ROITracker:
             self.predicted_metrics = {}
             self.actual_metrics = {}
             self.scenario_synergy = {}
+            self.category_history = []
             return
         self.roi_history = [float(r[0]) for r in rows]
         self.module_deltas = {}
@@ -1439,6 +1476,7 @@ class ROITracker:
             self.module_deltas.setdefault(str(mod), []).append(float(delta))
         self.predicted_roi = [float(r[0]) for r in pred_rows]
         self.actual_roi = [float(r[1]) for r in pred_rows]
+        self.category_history = [str(r[0]) for r in cat_rows]
         self.metrics_history = {}
         self.synergy_metrics_history = {}
         for name, val in metric_rows:
