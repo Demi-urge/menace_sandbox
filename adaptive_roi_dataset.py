@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-"""Utility for assembling training data from evolution and evaluation history.
+"""Utilities for assembling ROI training datasets.
 
-This module extracts ROI and performance deltas from :mod:`evolution_history_db`
-entries and pairs them with evaluation feedback from
-:mod:`evaluation_history_db`.  The resulting data is normalised and returned as
-NumPy arrays suitable for use in machine learning workflows.
+Historically this module exposed :func:`load_adaptive_roi_dataset` which only
+combined evolution and evaluation history.  The new
+:func:`build_dataset` entry point augments this by also incorporating resource
+usage deltas from ``roi.db`` (see :mod:`pre_execution_roi_bot`).  Each row in
+the returned feature matrix corresponds to a single improvement cycle and
+contains:
+
+* pre and post performance metrics
+* changes in resource usage (API cost, CPU seconds, success rate)
+* the GPT evaluation score for the cycle
+
+The target vector contains the realised ROI outcome for the cycle calculated
+from the ROI history.  Both functions remain available so existing code and
+tests continue to operate.
 """
 
 from collections import defaultdict
@@ -13,12 +23,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Tuple
 
+import sqlite3
 import numpy as np
 
 from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB
 
-__all__ = ["load_adaptive_roi_dataset"]
+__all__ = ["load_adaptive_roi_dataset", "build_dataset"]
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +59,44 @@ def _collect_events(db: EvolutionHistoryDB) -> dict[str, list[tuple[datetime, fl
     for ev_list in events.values():
         ev_list.sort(key=lambda e: e[0])
     return events
+
+
+# ---------------------------------------------------------------------------
+def _collect_roi_history(conn: sqlite3.Connection) -> dict[
+    str, list[tuple[datetime, float, float, float, float]]
+]:
+    """Return ROI records grouped by action.
+
+    Each list entry is ``(timestamp, revenue, api_cost, cpu_seconds, success_rate)``
+    sorted by timestamp.
+    """
+
+    records: dict[str, list[tuple[datetime, float, float, float, float]]] = defaultdict(list)
+    cur = conn.execute(
+        "SELECT action, revenue, api_cost, cpu_seconds, success_rate, ts FROM action_roi"
+    )
+    for action, rev, api, cpu, sr, ts in cur.fetchall():
+        records[action].append(
+            (_parse_ts(ts), float(rev), float(api), float(cpu), float(sr))
+        )
+    for recs in records.values():
+        recs.sort(key=lambda r: r[0])
+    return records
+
+
+# ---------------------------------------------------------------------------
+def _collect_eval_history(db: EvaluationHistoryDB) -> dict[str, list[tuple[datetime, float]]]:
+    """Return evaluation scores grouped by engine."""
+
+    history: dict[str, list[tuple[datetime, float]]] = {}
+    for eng in db.engines():
+        records = [
+            (_parse_ts(ts), float(score))
+            for score, ts, _passed, _err in db.history(eng, limit=1000000)
+        ]
+        records.sort(key=lambda r: r[0])
+        history[eng] = records
+    return history
 
 
 # ---------------------------------------------------------------------------
@@ -123,3 +172,91 @@ def load_adaptive_roi_dataset(
     y = (y - y_mean) / y_std
 
     return X, y, p
+
+
+# ---------------------------------------------------------------------------
+def build_dataset(
+    evolution_path: str | Path = "evolution_history.db",
+    roi_path: str | Path = "roi.db",
+    evaluation_path: str | Path = "evaluation_history.db",
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Assemble a training dataset combining evolution, ROI and evaluation data.
+
+    Parameters
+    ----------
+    evolution_path:
+        Path to the evolution history SQLite database.
+    roi_path:
+        Path to the ROI history database (``action_roi`` table).
+    evaluation_path:
+        Path to the evaluation history database containing GPT scores.
+
+    Returns
+    -------
+    tuple
+        ``(features, targets)`` where ``features`` is a matrix with columns
+        ``[before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
+        success_rate_delta, gpt_score]`` and ``targets`` is the vector of ROI
+        outcomes ``(revenue - api_cost)`` for each cycle.
+    """
+
+    evo_db = EvolutionHistoryDB(evolution_path)
+    eval_db = EvaluationHistoryDB(evaluation_path)
+    roi_conn = sqlite3.connect(roi_path)
+
+    roi_hist = _collect_roi_history(roi_conn)
+    eval_hist = _collect_eval_history(eval_db)
+
+    features: list[list[float]] = []
+    targets: list[float] = []
+
+    cur = evo_db.conn.execute(
+        "SELECT action, before_metric, after_metric, ts FROM evolution_history ORDER BY ts"
+    )
+    for action, before, after, ts in cur.fetchall():
+        ts_dt = _parse_ts(ts)
+
+        # find evaluation score after the event
+        eval_list = eval_hist.get(action)
+        if not eval_list:
+            continue
+        eval_score = None
+        for e_ts, score in eval_list:
+            if e_ts >= ts_dt:
+                eval_score = score
+                break
+        if eval_score is None:
+            continue
+
+        roi_list = roi_hist.get(action)
+        if not roi_list:
+            continue
+        prev_roi = None
+        next_roi = None
+        for rec in roi_list:
+            if rec[0] <= ts_dt:
+                prev_roi = rec
+            elif rec[0] > ts_dt and next_roi is None:
+                next_roi = rec
+                break
+        if prev_roi is None or next_roi is None:
+            continue
+
+        api_delta = next_roi[2] - prev_roi[2]
+        cpu_delta = next_roi[3] - prev_roi[3]
+        sr_delta = next_roi[4] - prev_roi[4]
+        roi_outcome = next_roi[1] - next_roi[2]
+
+        features.append(
+            [
+                float(before),
+                float(after),
+                float(api_delta),
+                float(cpu_delta),
+                float(sr_delta),
+                float(eval_score),
+            ]
+        )
+        targets.append(float(roi_outcome))
+
+    return np.asarray(features, dtype=float), np.asarray(targets, dtype=float)
