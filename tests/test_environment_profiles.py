@@ -131,12 +131,24 @@ def test_canonical_profiles_autoload(monkeypatch):
         return {"exit_code": 0}, [(0.0, 1.0, {"throughput": 1.0})]
 
     monkeypatch.setattr(env, "_section_worker", fake_section_worker)
-    canonical = [
-        {"SCENARIO_NAME": "high_latency_api"},
-        {"SCENARIO_NAME": "hostile_input"},
-        {"SCENARIO_NAME": "user_misuse"},
-        {"SCENARIO_NAME": "concurrency_spike"},
-    ]
+    canonical = {
+        "high_latency_api": {
+            "low": {"SCENARIO_NAME": "high_latency_api"},
+            "high": {"SCENARIO_NAME": "high_latency_api"},
+        },
+        "hostile_input": {
+            "low": {"SCENARIO_NAME": "hostile_input"},
+            "high": {"SCENARIO_NAME": "hostile_input"},
+        },
+        "user_misuse": {
+            "low": {"SCENARIO_NAME": "user_misuse"},
+            "high": {"SCENARIO_NAME": "user_misuse"},
+        },
+        "concurrency_spike": {
+            "low": {"SCENARIO_NAME": "concurrency_spike"},
+            "high": {"SCENARIO_NAME": "concurrency_spike"},
+        },
+    }
     _stub_module(
         monkeypatch,
         "menace.environment_generator",

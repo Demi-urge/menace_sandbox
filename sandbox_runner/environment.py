@@ -5044,34 +5044,45 @@ def run_repo_section_simulations(
         plugins = discover_metrics_plugins(os.environ)
 
         if isinstance(env_presets, Mapping):
-            preset_map: Dict[str, List[Dict[str, Any]]] = {}
-            for k, v in env_presets.items():
-                if isinstance(v, Mapping):
-                    flattened = [p for lst in v.values() for p in lst]
-                else:
-                    flattened = list(v)
-                preset_map[str(k)] = flattened
-            all_presets: List[Dict[str, Any]] = [
-                p for lst in preset_map.values() for p in lst
-            ]
-            for module in sections:
-                if module in preset_map:
-                    continue
-                try:
-                    from menace.environment_generator import (
-                        CANONICAL_PROFILES,
-                        generate_presets,
-                        suggest_profiles_for_module,
-                    )
+            keys = {str(k) for k in env_presets}
+            section_keys = set(sections.keys())
+            if keys & section_keys:
+                preset_map: Dict[str, List[Dict[str, Any]]] = {}
+                for k, v in env_presets.items():
+                    if isinstance(v, Mapping):
+                        flattened = [p for lst in v.values() for p in lst]
+                    else:
+                        flattened = list(v)
+                    preset_map[str(k)] = flattened
+                all_presets: List[Dict[str, Any]] = [
+                    p for lst in preset_map.values() for p in lst
+                ]
+                for module in sections:
+                    if module in preset_map:
+                        continue
+                    try:
+                        from menace.environment_generator import (
+                            CANONICAL_PROFILES,
+                            generate_presets,
+                            suggest_profiles_for_module,
+                        )
 
-                    profiles = suggest_profiles_for_module(module)
-                    if not profiles:
-                        profiles = CANONICAL_PROFILES
-                    new_presets = generate_presets(profiles=profiles)
-                    preset_map[module] = new_presets
-                    all_presets.extend(new_presets)
-                except Exception:
-                    pass
+                        profiles = suggest_profiles_for_module(module)
+                        if not profiles:
+                            profiles = CANONICAL_PROFILES
+                        new_presets = generate_presets(profiles=profiles)
+                        preset_map[module] = new_presets
+                        all_presets.extend(new_presets)
+                    except Exception:
+                        pass
+            else:
+                preset_map = {}
+                all_presets = []
+                for v in env_presets.values():
+                    if isinstance(v, Mapping):
+                        all_presets.extend(v.values())
+                    else:
+                        all_presets.extend(list(v))
         else:
             preset_map = {}
             all_presets = list(env_presets)
@@ -5898,7 +5909,9 @@ def run_workflow_simulations(
                     generate_canonical_presets,
                 )
 
-                env_presets = generate_canonical_presets() + generate_presets()
+                canonical = generate_canonical_presets()
+                flat_canonical = [p for levels in canonical.values() for p in levels.values()]
+                env_presets = flat_canonical + generate_presets()
             except Exception:
                 env_presets = [{}]
         else:
@@ -5926,7 +5939,10 @@ def run_workflow_simulations(
         try:
             from menace.environment_generator import generate_canonical_presets
 
-            canonical_map = {p["SCENARIO_NAME"]: p for p in generate_canonical_presets()}
+            canonical_map: Dict[str, Dict[str, Any]] = {}
+            for levels in generate_canonical_presets().values():
+                for p in levels.values():
+                    canonical_map[p["SCENARIO_NAME"]] = p
             for name in missing:
                 preset = canonical_map.get(name)
                 if not preset:

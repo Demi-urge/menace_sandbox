@@ -86,6 +86,19 @@ deterministic scenarios:
 - `user_misuse` – attempts incorrect API usage and unauthorized access.
 - `concurrency_spike` – spawns bursts of threads and async tasks.
 
+Each profile provides a `low` and `high` severity preset. The mapping returned
+by `generate_canonical_presets()` can be passed directly to
+`run_repo_section_simulations`, which will exercise every module under both
+levels for the same scenario:
+
+```python
+from environment_generator import generate_canonical_presets
+from sandbox_runner import run_repo_section_simulations
+
+presets = generate_canonical_presets()
+tracker = run_repo_section_simulations("/repo", env_presets=presets)
+```
+
 Run all canonical profiles with:
 
 ```bash

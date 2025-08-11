@@ -253,51 +253,34 @@ def _select_failures() -> list[str]:
     return [mode] if mode else []
 
 
-def generate_canonical_presets() -> List[Dict[str, Any]]:
-    """Return deterministic presets for common sandbox scenarios."""
+def generate_canonical_presets() -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """Return deterministic presets for common sandbox scenarios.
 
-    return [
-        {
-            "SCENARIO_NAME": "high_latency_api",
-            "CPU_LIMIT": "1",
-            "MEMORY_LIMIT": "512Mi",
-            "NETWORK_LATENCY_MS": 500,
-            "NETWORK_JITTER_MS": 50,
-            "PACKET_LOSS": 0.1,
-            "API_LATENCY_MS": 1000,
-            "FAILURE_MODES": "api_latency",
-        },
-        {
-            "SCENARIO_NAME": "hostile_input",
-            "CPU_LIMIT": "1",
-            "MEMORY_LIMIT": "512Mi",
-            "FAILURE_MODES": "hostile_input",
-            "SANDBOX_STUB_STRATEGY": "hostile",
-            "PAYLOAD_INDICATOR": "corrupted_bytes",
-            "MALICIOUS_DATA": True,
-        },
-        {
-            "SCENARIO_NAME": "user_misuse",
-            "CPU_LIMIT": "1",
-            "MEMORY_LIMIT": "512Mi",
-            "FAILURE_MODES": "user_misuse",
-            "SANDBOX_STUB_STRATEGY": "misuse",
-            "INVALID_CONFIG": True,
-            "INVALID_PARAM_TYPES": True,
-            "UNEXPECTED_API_CALLS": True,
-        },
-        {
-            "SCENARIO_NAME": "concurrency_spike",
-            "CPU_LIMIT": "1",
-            "MEMORY_LIMIT": "512Mi",
-            "FAILURE_MODES": ["concurrency_spike", "cpu_spike"],
-            "THREAD_BURST": 50,
-            "ASYNC_TASK_BURST": 100,
-            "MAX_THREADS": 200,
-            "CPU_SPIKE": True,
-            "CONCURRENCY_LEVEL": 100,
-        },
-    ]
+    Each canonical profile exposes a ``low`` and ``high`` severity level as
+    defined in :data:`_PROFILES`. The returned mapping groups presets by
+    scenario name and then by severity level so callers can iterate over the
+    different intensities explicitly.
+    """
+
+    presets: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    for name in CANONICAL_PROFILES:
+        prof = _PROFILES.get(name)
+        if not prof:
+            continue
+        levels = prof.get("levels") if isinstance(prof, dict) else None
+        if not levels:
+            continue
+        lvl_map: Dict[str, Dict[str, Any]] = {}
+        for level_name, data in levels.items():
+            preset = {
+                "SCENARIO_NAME": name,
+                "CPU_LIMIT": "1",
+                "MEMORY_LIMIT": "512Mi",
+            }
+            preset.update(data)
+            lvl_map[level_name] = preset
+        presets[name] = lvl_map
+    return presets
 
 
 def generate_combined_presets(
