@@ -12,10 +12,11 @@ becomes available.
 """
 
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Sequence, Tuple, Dict, Any
 
 import numpy as np
 import sqlite3
+import json
 
 try:  # pragma: no cover - optional dependency
     import pandas as pd  # type: ignore
@@ -36,6 +37,12 @@ except Exception:  # pragma: no cover - sklearn missing
     SGDRegressor = None  # type: ignore
     PolynomialFeatures = None  # type: ignore
     make_pipeline = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from sklearn.model_selection import GridSearchCV, KFold  # type: ignore
+except Exception:  # pragma: no cover - sklearn missing
+    GridSearchCV = None  # type: ignore
+    KFold = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     import joblib  # type: ignore
@@ -66,12 +73,21 @@ class AdaptiveROIPredictor:
     from scratch.
     """
 
-    def __init__(self, model_path: str | Path = "sandbox_data/adaptive_roi.pkl") -> None:
+    def __init__(
+        self,
+        model_path: str | Path = "sandbox_data/adaptive_roi.pkl",
+        cv: int = 3,
+        param_grid: Dict[str, Dict[str, Any]] | None = None,
+    ) -> None:
         self.model_path = Path(model_path)
+        self.cv = cv
+        self.param_grid: Dict[str, Dict[str, Any]] = param_grid or {}
         self._model = None
+        self.best_params: Dict[str, Any] | None = None
+        self.best_score: float | None = None
         self._load()
         if self._model is None:
-            self.train()
+            self.train(cv=self.cv, param_grid=self.param_grid)
 
     # ------------------------------------------------------------------
     # persistence helpers
@@ -88,6 +104,16 @@ class AdaptiveROIPredictor:
             except Exception:  # pragma: no cover - corrupted file
                 self._model = None
 
+        meta_path = self.model_path.with_suffix(".meta.json")
+        if meta_path.exists():
+            try:
+                data = json.loads(meta_path.read_text())
+                self.best_params = data.get("best_params")
+                self.best_score = data.get("best_score")
+            except Exception:
+                self.best_params = None
+                self.best_score = None
+
     def _save(self) -> None:
         """Persist the current model to disk."""
 
@@ -102,10 +128,27 @@ class AdaptiveROIPredictor:
                     pickle.dump(self._model, fh)
         except Exception:
             pass
+        self._save_meta()
+
+    def _save_meta(self) -> None:
+        """Persist metadata about the trained model."""
+
+        try:  # pragma: no cover - disk issues
+            meta = {"best_params": self.best_params, "best_score": self.best_score}
+            meta_path = self.model_path.with_suffix(".meta.json")
+            self.model_path.parent.mkdir(parents=True, exist_ok=True)
+            meta_path.write_text(json.dumps(meta))
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # training
-    def train(self, dataset: Tuple[np.ndarray, np.ndarray] | None = None) -> None:
+    def train(
+        self,
+        dataset: Tuple[np.ndarray, np.ndarray] | None = None,
+        cv: int | None = None,
+        param_grid: Dict[str, Dict[str, Any]] | None = None,
+    ) -> None:
         """Fit the underlying model on ``dataset``.
 
         Parameters
@@ -113,30 +156,107 @@ class AdaptiveROIPredictor:
         dataset:
             Optional tuple ``(features, targets)``.  When omitted the data is
             loaded using :func:`build_dataset`.
+        cv:
+            Number of cross-validation folds.  When ``None`` the instance's
+            default is used.  Values less than 2 disable cross-validation.
+        param_grid:
+            Optional mapping of model names to parameter grids for
+            :class:`~sklearn.model_selection.GridSearchCV`.
         """
 
         if dataset is None:
             X, y = build_dataset()
         else:
             X, y = dataset
+
         if X.size == 0 or y.size == 0:
             self._model = None
             return
+
+        cv = (cv if cv is not None else self.cv) or 0
+        param_grid = param_grid if param_grid is not None else self.param_grid
+
+        candidates: list[tuple[str, Any]] = []
         if GradientBoostingRegressor is not None:
-            model = GradientBoostingRegressor(random_state=0)
-        elif SGDRegressor is not None and PolynomialFeatures is not None and make_pipeline is not None:
-            model = make_pipeline(
-                PolynomialFeatures(degree=2),
-                SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0),
+            candidates.append(
+                ("GradientBoostingRegressor", GradientBoostingRegressor(random_state=0))
             )
-        elif LinearRegression is not None:
-            model = LinearRegression()
-        else:  # pragma: no cover - extremely minimal environment
-            model = None
-        self._model = model
+        if (
+            SGDRegressor is not None
+            and PolynomialFeatures is not None
+            and make_pipeline is not None
+        ):
+            candidates.append(
+                (
+                    "SGDRegressor",
+                    make_pipeline(
+                        PolynomialFeatures(degree=2),
+                        SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0),
+                    ),
+                )
+            )
+        if LinearRegression is not None:
+            candidates.append(("LinearRegression", LinearRegression()))
+
+        best_model = None
+        best_score = float("inf")
+        best_params: Dict[str, Any] | None = None
+
+        for name, model in candidates:
+            grid = param_grid.get(name, {}) if isinstance(param_grid, dict) else {}
+            score = float("inf")
+            params: Dict[str, Any] = {"model": name}
+
+            if GridSearchCV is not None and grid and len(X) >= max(cv, 2):
+                try:
+                    gs = GridSearchCV(
+                        model,
+                        grid,
+                        cv=cv,
+                        scoring="neg_mean_absolute_error",
+                    )
+                    gs.fit(X, y)
+                    score = float(-gs.best_score_)
+                    model = gs.best_estimator_
+                    params.update(gs.best_params_)
+                except Exception:  # pragma: no cover - grid search failure
+                    pass
+            elif KFold is not None and cv > 1 and len(X) >= cv:
+                kf = KFold(n_splits=cv, shuffle=True, random_state=0)
+                errors: list[float] = []
+                for train_idx, test_idx in kf.split(X):
+                    m = pickle.loads(pickle.dumps(model))
+                    try:
+                        m.fit(X[train_idx], y[train_idx])
+                        preds = m.predict(X[test_idx])
+                        errors.append(float(np.mean(np.abs(preds - y[test_idx]))))
+                    except Exception:  # pragma: no cover - fit failure
+                        errors.append(float("inf"))
+                score = float(np.mean(errors))
+                try:
+                    model.fit(X, y)
+                except Exception:  # pragma: no cover - fit failure
+                    continue
+                params.update(getattr(model, "get_params", lambda: {})())
+            else:
+                try:
+                    model.fit(X, y)
+                    preds = model.predict(X)
+                    score = float(np.mean(np.abs(preds - y)))
+                    params.update(getattr(model, "get_params", lambda: {})())
+                except Exception:  # pragma: no cover - fit failure
+                    continue
+
+            if score < best_score:
+                best_score = score
+                best_model = model
+                best_params = params
+
+        self._model = best_model
+        self.best_score = None if best_score == float("inf") else best_score
+        self.best_params = best_params
         if self._model is not None:
             try:
-                self._model.fit(X, y)
                 self._save()
             except Exception:  # pragma: no cover - training failure
                 self._model = None

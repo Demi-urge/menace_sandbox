@@ -76,6 +76,22 @@ def test_training_and_prediction(monkeypatch):
     assert growth == "linear"
 
 
+def test_cross_validation_persistence(tmp_path, monkeypatch):
+    """Cross-validation stores metadata about the best model."""
+
+    X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y)
+    )
+    model_path = tmp_path / "adaptive_roi.pkl"
+    predictor = AdaptiveROIPredictor(model_path=model_path, cv=2)
+    assert predictor.best_params is not None
+    assert predictor.best_score is not None
+    meta_path = model_path.with_suffix(".meta.json")
+    assert meta_path.exists()
+
+
 def test_evaluate_model_retrains(monkeypatch):
     """evaluate_model triggers retraining when error is high."""
 
