@@ -75,6 +75,19 @@ class _ROITracker:
 def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
     monkeypatch.setenv('MENACE_LIGHT_IMPORTS', '1')
 
+    _stub_module(
+        monkeypatch,
+        'sandbox_settings',
+        SandboxSettings=lambda: types.SimpleNamespace(
+            scenario_metric_thresholds={
+                'latency_error_rate': 0.5,
+                'hostile_failures': 1.0,
+                'misuse_failures': 2.0,
+                'concurrency_throughput': 1.0,
+            }
+        ),
+    )
+
     _stub_module(monkeypatch, 'menace.unified_event_bus', UnifiedEventBus=DummyBot)
     _stub_module(monkeypatch, 'menace.menace_orchestrator', MenaceOrchestrator=DummyBot)
     _stub_module(monkeypatch, 'menace.self_improvement_policy', SelfImprovementPolicy=DummyBot)
@@ -181,3 +194,32 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
 
     roi_values = [tracker.scenario_synergy[s][0]['synergy_roi'] for s in expected_keys]
     assert len(set(roi_values)) == 4
+
+    found = set()
+    for m in tracker.metrics:
+        if (
+            'latency_error_rate:high_latency_api' in m
+            and m.get('latency_error_rate_breach') == 1.0
+        ):
+            found.add('high_latency_api')
+        if (
+            'hostile_failures:hostile_input' in m
+            and m.get('hostile_failures_breach') == 1.0
+        ):
+            found.add('hostile_input')
+        if (
+            'misuse_failures:user_misuse' in m
+            and m.get('misuse_failures_breach') == 1.0
+        ):
+            found.add('user_misuse')
+        if (
+            'concurrency_throughput:concurrency_spike' in m
+            and m.get('concurrency_throughput_breach') == 1.0
+        ):
+            found.add('concurrency_spike')
+    assert found == {
+        'high_latency_api',
+        'hostile_input',
+        'user_misuse',
+        'concurrency_spike',
+    }

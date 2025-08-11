@@ -86,6 +86,11 @@ class SandboxSettings(BaseSettings):
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
+    scenario_metric_thresholds: dict[str, float] = Field(
+        default_factory=dict,
+        env="SCENARIO_METRIC_THRESHOLDS",
+        description="Thresholds for scenario-specific metrics returned by _scenario_specific_metrics.",
+    )
 
     # self test integration scoring knobs
     integration_score_threshold: float = Field(
