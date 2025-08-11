@@ -26,6 +26,21 @@ class MetricsDashboard:
         self.app.add_url_rule(
             "/plots/predictions.png", "plot_predictions", self.plot_predictions
         )
+        self.app.add_url_rule(
+            "/plots/prediction_error.png",
+            "plot_prediction_error",
+            self.plot_prediction_error,
+        )
+        self.app.add_url_rule(
+            "/plots/roi_category_distribution.png",
+            "plot_roi_categories",
+            self.plot_roi_categories,
+        )
+        self.app.add_url_rule(
+            "/plots/roi_improvement.png",
+            "plot_roi_improvement",
+            self.plot_roi_improvement,
+        )
 
     # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
@@ -239,6 +254,80 @@ class MetricsDashboard:
             idx += 1
 
         fig.tight_layout()
+        from io import BytesIO
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def plot_prediction_error(self) -> tuple[bytes, int, dict[str, str]]:
+        """Return a PNG plot of absolute prediction error over time."""
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        tracker = self._load_tracker()
+        errors = [abs(p - a) for p, a in zip(tracker.predicted_roi, tracker.actual_roi)]
+        fig, ax = plt.subplots()
+        ax.plot(errors, label="error")
+        ax.set_title("Prediction Error Over Time")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Absolute Error")
+        ax.legend()
+        from io import BytesIO
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def plot_roi_categories(self) -> tuple[bytes, int, dict[str, str]]:
+        """Return a PNG bar chart of predicted ROI category distribution."""
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        tracker = self._load_tracker()
+        counts = tracker.category_summary()
+        if not counts:
+            return b"", 200, {"Content-Type": "image/png"}
+        labels = list(counts.keys())
+        values = list(counts.values())
+        fig, ax = plt.subplots()
+        ax.bar(range(len(labels)), values)
+        ax.set_title("Predicted ROI Category Distribution")
+        ax.set_ylabel("Count")
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels(labels, rotation=45, ha="right")
+        from io import BytesIO
+
+        buf = BytesIO()
+        fig.tight_layout()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def plot_roi_improvement(self) -> tuple[bytes, int, dict[str, str]]:
+        """Return a PNG plot of predicted vs. actual ROI improvements."""
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        tracker = self._load_tracker()
+        fig, ax = plt.subplots()
+        ax.plot(tracker.predicted_roi, label="predicted")
+        ax.plot(tracker.actual_roi, label="actual")
+        ax.set_title("Actual ROI Improvements vs Predictions")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("ROI")
+        ax.legend()
         from io import BytesIO
 
         buf = BytesIO()

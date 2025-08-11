@@ -243,6 +243,18 @@ synergy_threshold_gauge = Gauge(
     "Current synergy convergence threshold",
 )
 
+# Gauges for prediction accuracy
+prediction_error = Gauge(
+    "prediction_error",
+    "Latest absolute prediction error",
+    ["metric"],
+)
+prediction_mae = Gauge(
+    "prediction_mae",
+    "Rolling mean absolute error for predictions",
+    ["metric"],
+)
+
 # New gauges for extended metrics
 security_score_gauge = Gauge(
     "security_score", "Overall security score of the system"
@@ -587,6 +599,8 @@ __all__ = [
     "synergy_forecast_gauge",
     "roi_threshold_gauge",
     "synergy_threshold_gauge",
+    "prediction_error",
+    "prediction_mae",
     "error_bot_exceptions",
     "learning_engine_exceptions",
     "synergy_weight_updates_total",
