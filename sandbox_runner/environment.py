@@ -5993,6 +5993,7 @@ def run_workflow_simulations(
     from menace.self_coding_engine import SelfCodingEngine
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
+    from sandbox_settings import SandboxSettings
 
     if env_presets is None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
@@ -6197,8 +6198,10 @@ def run_workflow_simulations(
 
         for _, fut, wid, scenario, preset, module, mod_name in sorted(tasks, key=lambda x: x[0]):
             res, updates = await fut
-            if mod_name in coverage_summary and scenario in coverage_summary[mod_name]:
-                coverage_summary[mod_name][scenario] = True
+            if updates:
+                if mod_name in coverage_summary and scenario in coverage_summary[mod_name]:
+                    coverage_summary[mod_name][scenario] = True
+                _update_coverage(mod_name, scenario)
             for prev, actual, metrics in updates:
                 specific = _scenario_specific_metrics(scenario, metrics)
                 if specific:
@@ -6356,6 +6359,9 @@ def run_workflow_simulations(
                 dispatch_alert("sandbox_coverage", {"coverage": coverage_summary})
         except Exception:
             logger.exception("failed to dispatch coverage alert")
+        save_coverage_data()
+        settings = SandboxSettings()
+        verify_scenario_coverage(raise_on_missing=settings.fail_on_missing_scenarios)
         summary = save_scenario_summary(synergy_data)
         setattr(tracker, "scenario_summary", summary)
         setattr(tracker, "coverage_summary", coverage_summary)
