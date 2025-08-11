@@ -151,7 +151,17 @@ class ROITracker:
         self.actual_roi: List[float] = []
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
+        self.predicted_classes: List[str] = []
+        self.actual_classes: List[str] = []
         self._next_prediction: float | None = None
+        self._next_category: str | None = None
+        self._adaptive_predictor = None
+        try:
+            from .adaptive_roi_predictor import AdaptiveROIPredictor
+
+            self._adaptive_predictor = AdaptiveROIPredictor()
+        except Exception:
+            self._adaptive_predictor = None
         if self.resource_db:
             try:
                 df = self.resource_db.history()
@@ -346,6 +356,11 @@ class ROITracker:
             )
         except Exception:
             pass
+
+    def record_class_prediction(self, predicted: str, actual: str) -> None:
+        """Store predicted and actual ROI classes."""
+        self.predicted_classes.append(str(predicted))
+        self.actual_classes.append(str(actual))
 
     def record_metric_prediction(
         self, metric: str, predicted: float, actual: float
@@ -542,9 +557,11 @@ class ROITracker:
         recorded for later forecasting with :meth:`forecast_metric`. ``category``
         captures the predicted ROI growth classification for this iteration.
         """
+        predicted_class = self._next_category
         if self._next_prediction is not None:
             self.record_prediction(self._next_prediction, roi_after)
-            self._next_prediction = None
+        self._next_prediction = None
+        self._next_category = None
         if metrics is None:
             metrics = {}
         metrics.setdefault("roi_reliability", self.reliability())
@@ -558,6 +575,8 @@ class ROITracker:
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
+        if category is None and predicted_class is not None:
+            category = predicted_class
         if category is not None:
             self.category_history.append(category)
         weight = 1.0
@@ -622,6 +641,15 @@ class ROITracker:
                 "roi update",
                 extra=log_record(delta=delta, category=category, adjusted=adjusted),
             )
+        actual_class = None
+        if self._adaptive_predictor is not None:
+            try:
+                feats = [[float(x)] for x in self.roi_history] or [[0.0]]
+                _, actual_class = self._adaptive_predictor.predict(feats)
+            except Exception:
+                actual_class = None
+        if predicted_class is not None and actual_class is not None:
+            self.record_class_prediction(predicted_class, actual_class)
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
         stop = False
@@ -654,6 +682,16 @@ class ROITracker:
         history changes. If ``statsmodels`` is missing or fitting fails, a
         simple linear regression forecast is used instead.
         """
+        if self._adaptive_predictor is not None:
+            try:
+                feats = [[float(x)] for x in self.roi_history] or [[0.0]]
+                _, cls = self._adaptive_predictor.predict(feats)
+                self._next_category = cls
+            except Exception:
+                self._next_category = None
+        else:
+            self._next_category = None
+
         if not self.roi_history:
             self._next_prediction = 0.0
             return 0.0, (0.0, 0.0)

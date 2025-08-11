@@ -25,6 +25,10 @@ from .task_handoff_bot import WorkflowDB
 from .database_manager import DB_PATH, update_model, init_db
 from .prediction_manager_bot import PredictionManager
 from .unified_event_bus import UnifiedEventBus
+try:  # pragma: no cover - optional dependency
+    from .adaptive_roi_predictor import AdaptiveROIPredictor
+except Exception:  # pragma: no cover - predictor missing
+    AdaptiveROIPredictor = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,7 @@ class ROIResult:
     time: float
     roi: float
     margin: float
+    predicted_class: str = ""
 
 
 class ROIHistoryDB:
@@ -147,6 +152,12 @@ class PreExecutionROIBot:
                 self.assigned_prediction_bots = self.prediction_manager.assign_prediction_bots(self)
             except Exception as exc:
                 logger.exception("Failed to assign prediction bots: %s", exc)
+        self.predictor = None
+        if AdaptiveROIPredictor is not None:
+            try:
+                self.predictor = AdaptiveROIPredictor()
+            except Exception:
+                self.predictor = None
 
     def _apply_prediction_bots(self, base: float, feats: Iterable[float]) -> float:
         """Combine predictions from assigned bots."""
@@ -363,7 +374,28 @@ class PreExecutionROIBot:
         income = projected_income / (1 + len(data) / 10)
         roi = income - cost
         margin = abs(roi) * 0.1
-        return ROIResult(income=income, cost=cost, time=time, roi=roi, margin=margin)
+        predicted_class = ""
+        if self.predictor is not None:
+            try:
+                feats = [
+                    [t.complexity, t.frequency, t.expected_income]
+                    for t in data
+                ] or [[0.0, 0.0, 0.0]]
+                _, predicted_class = self.predictor.predict(feats)
+            except Exception:
+                predicted_class = ""
+        logger.info(
+            "forecast_roi",
+            extra={"predicted_class": predicted_class, "roi": roi},
+        )
+        return ROIResult(
+            income=income,
+            cost=cost,
+            time=time,
+            roi=roi,
+            margin=margin,
+            predicted_class=predicted_class,
+        )
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -379,7 +411,14 @@ class PreExecutionROIBot:
         factor = self._diminishing_factor(projected_income)
         income = base.income * factor
         roi = income - base.cost
-        return ROIResult(income=income, cost=base.cost, time=base.time, roi=roi, margin=abs(roi) * 0.1)
+        return ROIResult(
+            income=income,
+            cost=base.cost,
+            time=base.time,
+            roi=roi,
+            margin=abs(roi) * 0.1,
+            predicted_class=base.predicted_class,
+        )
 
     def predict_model_roi(self, model: str, tasks: Iterable[BuildTask]) -> ROIResult:
         result = self.forecast_roi(tasks, sum(t.expected_income for t in tasks))
@@ -399,6 +438,7 @@ class PreExecutionROIBot:
             time=result.time,
             roi=final_roi,
             margin=abs(final_roi) * 0.1,
+            predicted_class=result.predicted_class,
         )
         try:
             with sqlite3.connect(self.models_db) as conn:

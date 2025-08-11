@@ -28,6 +28,8 @@ class EvolutionEvent:
     trigger: str = ""
     performance: float = 0.0
     parent_event_id: int | None = None
+    predicted_class: str = ""
+    actual_class: str = ""
 
 
 class EvolutionHistoryDB:
@@ -52,7 +54,9 @@ class EvolutionHistoryDB:
                 reason TEXT,
                 "trigger" TEXT,
                 performance REAL DEFAULT 0,
-                parent_event_id INTEGER
+                parent_event_id INTEGER,
+                predicted_class TEXT,
+                actual_class TEXT
             )
             """
         )
@@ -86,11 +90,19 @@ class EvolutionHistoryDB:
                 self.conn.execute(
                     "ALTER TABLE evolution_history ADD COLUMN parent_event_id INTEGER"
                 )
+        if "predicted_class" not in cols:
+            self.conn.execute(
+                "ALTER TABLE evolution_history ADD COLUMN predicted_class TEXT"
+            )
+        if "actual_class" not in cols:
+            self.conn.execute(
+                "ALTER TABLE evolution_history ADD COLUMN actual_class TEXT"
+            )
         self.conn.commit()
 
     def add(self, event: EvolutionEvent) -> int:
         cur = self.conn.execute(
-            'INSERT INTO evolution_history(action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO evolution_history(action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (
                 event.action,
                 event.before_metric,
@@ -107,6 +119,8 @@ class EvolutionHistoryDB:
                 event.trigger,
                 event.performance,
                 event.parent_event_id,
+                event.predicted_class,
+                event.actual_class,
             ),
         )
         self.conn.commit()
@@ -138,10 +152,12 @@ class EvolutionHistoryDB:
             str,
             float,
             int | None,
+            str,
+            str,
         ]
     ]:
         cur = self.conn.execute(
-            'SELECT action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history ORDER BY ts DESC LIMIT ?',
+            'SELECT action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history ORDER BY ts DESC LIMIT ?',
             (limit,),
         )
         return cur.fetchall()
@@ -166,10 +182,12 @@ class EvolutionHistoryDB:
             str,
             float,
             int | None,
+            str,
+            str,
         ]
     ]:
         cur = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE parent_event_id=?',
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE parent_event_id=?',
             (parent_event_id,),
         )
         return cur.fetchall()
@@ -195,6 +213,8 @@ class EvolutionHistoryDB:
             str,
             float,
             int | None,
+            str,
+            str,
         ]
     ]:
         """Alias for :meth:`fetch_children` for backwards compatibility."""
@@ -222,13 +242,15 @@ class EvolutionHistoryDB:
             str,
             float,
             int | None,
+            str,
+            str,
         ]
     ]:
         """Return lineage from root to ``event_id``."""
 
         rows = []
         row = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
             (event_id,),
         ).fetchone()
         while row:
@@ -237,7 +259,7 @@ class EvolutionHistoryDB:
             if parent is None:
                 break
             row = self.conn.execute(
-                'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+                'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
                 (parent,),
             ).fetchone()
         return list(reversed(rows))
@@ -263,6 +285,8 @@ class EvolutionHistoryDB:
             "trigger",
             "performance",
             "parent_event_id",
+            "predicted_class",
+            "actual_class",
         ]
 
         def build(row: Tuple) -> dict:
@@ -272,7 +296,7 @@ class EvolutionHistoryDB:
             return node
 
         row = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE rowid=?',
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE rowid=?',
             (event_id,),
         ).fetchone()
         if not row:
@@ -318,7 +342,7 @@ class EvolutionHistoryDB:
 
     def lineage_tree(self, workflow_id: int) -> List[dict]:
         cur = self.conn.execute(
-            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id FROM evolution_history WHERE workflow_id=?',
+            'SELECT rowid, action, before_metric, after_metric, roi, predicted_roi, efficiency, bottleneck, patch_id, workflow_id, ts, trending_topic, reason, "trigger", performance, parent_event_id, predicted_class, actual_class FROM evolution_history WHERE workflow_id=?',
             (workflow_id,),
         )
         rows = cur.fetchall()
@@ -347,6 +371,8 @@ class EvolutionHistoryDB:
                         "trigger": r[13],
                         "performance": r[14],
                         "parent_event_id": r[15],
+                        "predicted_class": r[16],
+                        "actual_class": r[17],
                         "children": build(r[0]),
                     }
                 )
