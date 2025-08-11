@@ -136,6 +136,14 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# canonical profile names for core sandbox scenarios
+CANONICAL_PROFILES: List[str] = [
+    "high_latency_api",
+    "hostile_input",
+    "user_misuse",
+    "concurrency_spike",
+]
+
 # legacy aliases mapping to canonical scenario names
 _PROFILE_ALIASES = {
     "high_latency": "high_latency_api",
@@ -153,6 +161,12 @@ _KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
     "database": ["high_latency_api", "concurrency_spike"],
     "cache": ["high_latency_api"],
     "auth": ["user_misuse", "hostile_input"],
+    # ambiguous or generic modules should exercise all core scenarios
+    "util": CANONICAL_PROFILES,
+    "utils": CANONICAL_PROFILES,
+    "common": CANONICAL_PROFILES,
+    "misc": CANONICAL_PROFILES,
+    "shared": CANONICAL_PROFILES,
 }
 
 
@@ -192,14 +206,19 @@ def suggest_profiles_for_module(module_name: str) -> List[str]:
 
     The helper performs a simple keyword lookup on the module path and
     returns matching scenario profile names. When multiple keywords match
-    the resulting list preserves order and duplicates are removed.
+    the resulting list preserves order and duplicates are removed. If no
+    keyword matches are found the full canonical profile list is returned
+    to ensure broad coverage.
     """
 
     name = module_name.lower()
     profiles: List[str] = []
     for key, profs in _KEYWORD_PROFILE_MAP.items():
-        if key in name:
+        if key and key in name:
             profiles.extend(profs)
+
+    if not profiles:
+        return list(CANONICAL_PROFILES)
 
     seen: set[str] = set()
     unique: List[str] = []
