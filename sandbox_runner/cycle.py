@@ -40,6 +40,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 logger = get_logger(__name__)
 
+from analytics import adaptive_roi_model
+
+ADAPTIVE_ROI_RETRAIN_INTERVAL = int(
+    os.getenv("ADAPTIVE_ROI_RETRAIN_INTERVAL", "20")
+)
+
 from metrics_exporter import (
     orphan_modules_reintroduced_total,
     orphan_modules_tested_total,
@@ -1239,6 +1245,19 @@ def _sandbox_cycle_runner(
             ctx.synergy_needed = True
         logger.info("cycle %d complete", idx)
         logger.info("cycle roi", extra={"iteration": idx, "roi": roi})
+
+        if (idx + 1) % ADAPTIVE_ROI_RETRAIN_INTERVAL == 0:
+            logger.info(
+                "adaptive roi model retrain", extra=log_record(cycle=idx)
+            )
+            try:
+                metrics = adaptive_roi_model.retrain()
+                logger.info(
+                    "adaptive roi model retrain complete",
+                    extra=log_record(cycle=idx, **metrics),
+                )
+            except Exception:
+                logger.exception("adaptive roi model retrain failed")
 
     flagged = []
     if ctx.adapt_presets:
