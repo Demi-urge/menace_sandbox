@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Sequence, Tuple
 
 import numpy as np
+import sqlite3
+
+try:  # pragma: no cover - optional dependency
+    import pandas as pd  # type: ignore
+except Exception:  # pragma: no cover - pandas missing
+    pd = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from sklearn.ensemble import GradientBoostingRegressor  # type: ignore
@@ -33,8 +39,16 @@ except Exception:  # pragma: no cover - joblib missing
 import pickle
 
 from .adaptive_roi_dataset import build_dataset
+from .roi_tracker import ROITracker
+from .evaluation_history_db import EvaluationHistoryDB
+from .evolution_history_db import EvolutionHistoryDB
 
-__all__ = ["AdaptiveROIPredictor", "predict_growth_type", "predict"]
+__all__ = [
+    "AdaptiveROIPredictor",
+    "predict_growth_type",
+    "predict",
+    "load_training_data",
+]
 
 
 class AdaptiveROIPredictor:
@@ -196,4 +210,100 @@ def predict(action_features: Sequence[Sequence[float]]) -> tuple[float, str]:
     if _predictor is None:
         _predictor = AdaptiveROIPredictor()
     return _predictor.predict(action_features)
+
+
+def load_training_data(
+    tracker: ROITracker,
+    evolution_path: str | Path = "evolution_history.db",
+    evaluation_path: str | Path = "evaluation_history.db",
+    roi_events_path: str | Path = "roi_events.db",
+    output_path: str | Path = "sandbox_data/adaptive_roi.csv",
+) -> "pd.DataFrame":
+    """Collect and normalise ROI training data.
+
+    Parameters
+    ----------
+    tracker:
+        :class:`ROITracker` instance providing in-memory histories.
+    evolution_path:
+        Path to the evolution history database supplying ROI outcome labels.
+    evaluation_path:
+        Path to the evaluation history database with GPT scores.
+    roi_events_path:
+        Path to the ROI event log database used for additional ROI deltas.
+    output_path:
+        CSV file where the assembled dataset will be written.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The merged and normalised dataset.  Requires :mod:`pandas` to be
+        available.
+    """
+
+    if pd is None:  # pragma: no cover - pandas not installed
+        raise RuntimeError("pandas is required for load_training_data")
+
+    n = len(tracker.roi_history)
+    data: dict[str, list[float]] = {
+        "roi_delta": [float(x) for x in tracker.roi_history]
+    }
+    for name, vals in tracker.metrics_history.items():
+        seq = [float(v) for v in vals]
+        if len(seq) < n:
+            seq.extend([0.0] * (n - len(seq)))
+        data[name] = seq[:n]
+    df = pd.DataFrame(data)
+
+    # GPT evaluation scores -------------------------------------------------
+    eval_db = EvaluationHistoryDB(evaluation_path)
+    recs: list[tuple[pd.Timestamp, float]] = []
+    for eng in eval_db.engines():
+        for score, ts, _passed, _err in eval_db.history(eng, limit=1_000_000):
+            recs.append((pd.to_datetime(ts), float(score)))
+    recs.sort(key=lambda r: r[0])
+    scores = [r[1] for r in recs[:n]]
+    if len(scores) < n:
+        scores.extend([0.0] * (n - len(scores)))
+    df["gpt_score"] = scores
+
+    # ROI event deltas ------------------------------------------------------
+    roi_conn = sqlite3.connect(roi_events_path)
+    try:
+        roi_df = pd.read_sql(
+            "SELECT roi_after - roi_before AS roi_event_delta FROM roi_events ORDER BY ts",
+            roi_conn,
+        )
+    except Exception:  # pragma: no cover - missing table or DB
+        roi_df = pd.DataFrame(columns=["roi_event_delta"])
+    finally:
+        roi_conn.close()
+    event_deltas = roi_df.get("roi_event_delta", pd.Series(dtype=float)).astype(float).tolist()
+    if len(event_deltas) < n:
+        event_deltas.extend([0.0] * (n - len(event_deltas)))
+    df["roi_event_delta"] = event_deltas[:n]
+
+    # ROI outcome labels ----------------------------------------------------
+    evo_db = EvolutionHistoryDB(evolution_path)
+    events = sorted(evo_db.fetch(limit=1_000_000), key=lambda r: r[9])
+    outcomes = [float(ev[3]) for ev in events[:n]]
+    if len(outcomes) < n:
+        outcomes.extend([0.0] * (n - len(outcomes)))
+    df["roi_outcome"] = outcomes
+
+    # Normalise feature columns --------------------------------------------
+    for col in df.columns:
+        if col == "roi_outcome":
+            continue
+        series = df[col]
+        if series.empty:
+            continue
+        mean = float(series.mean())
+        std = float(series.std()) or 1.0
+        df[col] = (series - mean) / std
+
+    out_path = Path(output_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_path, index=False)
+    return df
 
