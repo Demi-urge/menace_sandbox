@@ -218,3 +218,71 @@ def test_run_sandbox_hostile_misuse_concurrency_metrics(monkeypatch, tmp_path):
     for scen, key in expected_keys.items():
         data = tracker.scenario_synergy.get(scen)
         assert data and key in data[0] and 'synergy_resilience' in data[0]
+
+
+@pytest.mark.parametrize(
+    "steps",
+    [
+        ["simple_functions:foo"],
+        ["self_improvement_engine:cycle"],
+    ],
+)
+def test_run_workflow_multiscenario(monkeypatch, tmp_path, steps):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=_ROITracker)
+    _stub_module(
+        monkeypatch,
+        "menace.environment_generator",
+        generate_canonical_presets=lambda: [],
+        generate_presets=lambda profiles=None: [],
+        _CPU_LIMITS={},
+        _MEMORY_LIMITS={},
+    )
+
+    class FakeWorkflowRecord:
+        def __init__(self, workflow, wid=1, title="t"):
+            self.workflow = workflow
+            self.wid = wid
+            self.title = title
+
+    class FakeWorkflowDB:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def fetch(self, limit=None):
+            return [FakeWorkflowRecord(steps, wid=1)]
+
+    _stub_module(
+        monkeypatch,
+        "menace.task_handoff_bot",
+        WorkflowDB=FakeWorkflowDB,
+        WorkflowRecord=FakeWorkflowRecord,
+    )
+
+    import sandbox_runner
+    import sandbox_runner.environment as env
+
+    monkeypatch.setattr(env, "simulate_execution_environment", lambda *a, **k: {})
+
+    async def fake_worker(snippet, env_input, threshold):
+        return {"exit_code": 0}, [(0.0, 1.0, {"m": 1.0})]
+
+    monkeypatch.setattr(env, "_section_worker", fake_worker)
+
+    presets = [
+        {"SCENARIO_NAME": "one"},
+        {"SCENARIO_NAME": "two"},
+    ]
+
+    tracker = sandbox_runner.run_workflow_simulations("wf.db", env_presets=presets)
+
+    expected = {p["SCENARIO_NAME"] for p in presets}
+    scenarios = {mods[1] for mods in tracker.calls if mods}
+    assert expected <= scenarios
+    for scen in expected:
+        assert any(f"m:{scen}" in m for m in tracker.metrics)
