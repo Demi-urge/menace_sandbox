@@ -27,13 +27,13 @@ entries when desired.
 ## Adaptive ROI Prediction
 
 Longer term ROI trends can be estimated with the lightweight
-`AdaptiveROIPredictor` model. The helper script
-`scripts/adaptive_roi_cli.py` exposes simple subcommands:
+`AdaptiveROIPredictor` model. The `adaptive_roi_cli` module exposes
+simple subcommands and can be executed via ``python -m menace_sandbox.adaptive_roi_cli``:
 
 ```bash
-python scripts/adaptive_roi_cli.py train
-python scripts/adaptive_roi_cli.py predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]"
-python scripts/adaptive_roi_cli.py retrain
+python -m menace_sandbox.adaptive_roi_cli train
+python -m menace_sandbox.adaptive_roi_cli predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]"
+python -m menace_sandbox.adaptive_roi_cli retrain
 ```
 
 `train` fits a new model on available history, `predict` returns the

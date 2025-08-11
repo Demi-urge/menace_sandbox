@@ -28,8 +28,8 @@ ROI impact of planned actions. Train or refresh the model with the helper
 CLI:
 
 ```bash
-python scripts/adaptive_roi_cli.py train
-python scripts/adaptive_roi_cli.py retrain
+python -m menace_sandbox.adaptive_roi_cli train
+python -m menace_sandbox.adaptive_roi_cli retrain
 ```
 
 During a cycle the engine feeds feature sequences to the predictor and
