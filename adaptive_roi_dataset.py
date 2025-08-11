@@ -28,6 +28,7 @@ import numpy as np
 
 from .evolution_history_db import EvolutionHistoryDB
 from .evaluation_history_db import EvaluationHistoryDB
+from .roi_tracker import ROITracker
 
 __all__ = ["load_adaptive_roi_dataset", "build_dataset"]
 
@@ -97,6 +98,25 @@ def _collect_eval_history(db: EvaluationHistoryDB) -> dict[str, list[tuple[datet
         records.sort(key=lambda r: r[0])
         history[eng] = records
     return history
+
+
+# ---------------------------------------------------------------------------
+def _collect_metrics_history(
+    conn: sqlite3.Connection, metric_names: list[str]
+) -> dict[str, list[float]]:
+    """Return ordered metric histories for known ``metric_names``."""
+
+    metrics: dict[str, list[float]] = {name: [] for name in metric_names}
+    try:
+        cur = conn.execute(
+            "SELECT metric, value FROM metrics_history ORDER BY rowid"
+        )
+    except Exception:
+        return metrics
+    for name, value in cur.fetchall():
+        if name in metrics:
+            metrics[name].append(0.0 if value is None else float(value))
+    return metrics
 
 
 # ---------------------------------------------------------------------------
@@ -196,8 +216,21 @@ def build_dataset(
     tuple
         ``(features, targets)`` where ``features`` is a matrix with columns
         ``[before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
-        success_rate_delta, gpt_score]`` and ``targets`` is the vector of ROI
-        outcomes ``(revenue - api_cost)`` for each cycle.
+        success_rate_delta, gpt_score, recovery_time, latency_error_rate,
+        hostile_failures, misuse_failures, concurrency_throughput,
+        synergy_adaptability, synergy_recovery_time, synergy_discrepancy_count,
+        synergy_gpu_usage, synergy_cpu_usage, synergy_memory_usage,
+        synergy_long_term_lucrativity, synergy_shannon_entropy,
+        synergy_flexibility, synergy_energy_consumption, synergy_profitability,
+        synergy_revenue, synergy_projected_lucrativity, synergy_maintainability,
+        synergy_code_quality, synergy_network_latency, synergy_throughput,
+        synergy_latency_error_rate, synergy_hostile_failures,
+        synergy_misuse_failures, synergy_concurrency_throughput,
+        synergy_risk_index, synergy_safety_rating, synergy_efficiency,
+        synergy_antifragility, synergy_resilience, synergy_security_score,
+        synergy_reliability, roi_reliability, long_term_roi_reliability]`` and
+        ``targets`` is the vector of ROI outcomes ``(revenue - api_cost)`` for
+        each cycle.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -206,9 +239,12 @@ def build_dataset(
 
     roi_hist = _collect_roi_history(roi_conn)
     eval_hist = _collect_eval_history(eval_db)
+    metric_names = list(ROITracker().metrics_history.keys())
+    metrics_hist = _collect_metrics_history(roi_conn, metric_names)
 
     features: list[list[float]] = []
     targets: list[float] = []
+    cycle_idx = 0
 
     cur = evo_db.conn.execute(
         "SELECT action, before_metric, after_metric, ts FROM evolution_history ORDER BY ts"
@@ -247,16 +283,33 @@ def build_dataset(
         sr_delta = next_roi[4] - prev_roi[4]
         roi_outcome = next_roi[1] - next_roi[2]
 
-        features.append(
-            [
-                float(before),
-                float(after),
-                float(api_delta),
-                float(cpu_delta),
-                float(sr_delta),
-                float(eval_score),
-            ]
-        )
+        row = [
+            float(before),
+            float(after),
+            float(api_delta),
+            float(cpu_delta),
+            float(sr_delta),
+            float(eval_score),
+        ]
+        for name in metric_names:
+            seq = metrics_hist.get(name, [])
+            val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
+            row.append(float(val))
+        features.append(row)
         targets.append(float(roi_outcome))
+        cycle_idx += 1
 
-    return np.asarray(features, dtype=float), np.asarray(targets, dtype=float)
+    X = np.asarray(features, dtype=float)
+    y = np.asarray(targets, dtype=float)
+
+    # normalise all feature columns
+    if X.size:
+        for i in range(X.shape[1]):
+            col = X[:, i]
+            mean = col.mean()
+            std = col.std()
+            if std == 0:
+                std = 1.0
+            X[:, i] = (col - mean) / std
+
+    return X, y
