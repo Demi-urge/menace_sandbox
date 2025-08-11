@@ -113,6 +113,16 @@ python environment_cli.py --profiles hostile_input concurrency_spike --count 1 >
 SANDBOX_ENV_PRESETS="$(cat presets.json)" python sandbox_runner.py
 ```
 
+## Automatic Failure Mode Coverage
+
+`run_repo_section_simulations` guarantees that every module experiences the
+four canonical stress profiles – `high_latency_api`, `hostile_input`,
+`user_misuse` and `concurrency_spike`. If a provided preset set omits any of
+them, the runner injects additional runs so these failure modes are still
+exercised. It also performs keyword matching on module paths to generate
+module‑specific presets, ensuring that components such as databases or parsers
+receive relevant scenarios.
+
 ### Custom keyword profile mappings
 
 `environment_generator` suggests profiles for modules by scanning their paths
