@@ -138,6 +138,7 @@ from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
+from .adaptive_roi_predictor import predict_growth_type
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -682,6 +683,7 @@ class SelfImprovementEngine:
         self.roi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
+        self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
@@ -1406,6 +1408,17 @@ class SelfImprovementEngine:
             int(round(syn_res * 10)),
             int(round(syn_af * 10)),
         )
+
+    # ------------------------------------------------------------------
+    def _collect_action_features(self) -> list[list[float]]:
+        """Return recent ROI deltas and their changes for growth prediction."""
+        feats: list[list[float]] = []
+        history = self.roi_history[-5:]
+        prev = 0.0
+        for val in history:
+            feats.append([float(val), float(val - prev)])
+            prev = val
+        return feats
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
@@ -3365,6 +3378,11 @@ class SelfImprovementEngine:
                 "running automation pipeline", extra=log_record(energy=energy)
             )
             result = self.pipeline.run(self.bot_name, energy=energy)
+            actions = getattr(getattr(result, "package", None), "actions", None)
+            self.logger.info(
+                "selected actions",
+                extra=log_record(actions=actions, growth_type=self._last_growth_type),
+            )
             self.logger.info(
                 "pipeline complete",
                 extra=log_record(roi=getattr(result.roi, "roi", 0.0)),
@@ -3664,6 +3682,7 @@ class SelfImprovementEngine:
                     roi_trend=trend,
                     anomaly=anomaly,
                     synergy_weights=self.synergy_learner.weights,
+                    growth_type=self._last_growth_type,
                 ),
             )
             if self._score_backend:
@@ -3742,6 +3761,17 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("energy check failed: %s", exc)
                     current_energy = energy
+            features = self._collect_action_features()
+            growth_type = predict_growth_type(features)
+            self.logger.info(
+                "growth prediction",
+                extra=log_record(growth_type=growth_type, features=features),
+            )
+            self._last_growth_type = growth_type
+            if growth_type == "exponential":
+                current_energy *= 1.2
+            elif growth_type == "marginal":
+                current_energy *= 0.8
             if current_energy >= self.energy_threshold and not self._cycle_running:
                 try:
                     await asyncio.to_thread(
