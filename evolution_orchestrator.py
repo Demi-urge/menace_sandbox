@@ -5,14 +5,18 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Iterable
 import time
+
+import numpy as np
 
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .self_improvement_engine import SelfImprovementEngine
 from .system_evolution_manager import SystemEvolutionManager, EvolutionCycleResult
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
+from .evaluation_history_db import EvaluationHistoryDB
 from .trend_predictor import TrendPredictor, TrendPrediction
 from .bot_creation_bot import BotCreationBot
 from .resource_allocation_optimizer import ResourceAllocationOptimizer
@@ -54,6 +58,8 @@ class EvolutionOrchestrator:
         multi_predictor: object | None = None,
         event_bus: UnifiedEventBus | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
+        dataset_path: str | Path = "roi_eval_dataset.csv",
+        retrain_interval: int = 10,
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
@@ -71,6 +77,8 @@ class EvolutionOrchestrator:
         self.trend_predictor = trend_predictor
         self.event_bus = event_bus
         self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+        self.dataset_path = Path(dataset_path)
+        self.retrain_interval = retrain_interval
         if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
             try:
                 self.capital_bot.trend_predictor = trend_predictor
@@ -85,6 +93,14 @@ class EvolutionOrchestrator:
         self._workflow_roi_history: dict[str, list[float]] = {}
         self._last_mutation_id: int | None = None
         self._workflow_event_ids: dict[int | str, int] = {}
+        if not self.dataset_path.exists():
+            try:
+                self.dataset_path.write_text(
+                    "before_roi,error_rate,eval_score,actual_roi,predicted_roi,error\n",
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
         if self.event_bus:
             try:
                 self.event_bus.subscribe("evolve:system", lambda *_: self.run_cycle())
@@ -118,6 +134,58 @@ class EvolutionOrchestrator:
         except Exception:
             return 0.0
 
+    def _latest_eval_score(self) -> float:
+        """Return the most recent evaluation score for the improvement engine."""
+
+        try:
+            eng = getattr(self.improvement_engine, "bot_name", None)
+            if not eng:
+                return 0.0
+            db = EvaluationHistoryDB()
+            hist = db.history(eng, limit=1)
+            if hist:
+                return float(hist[0][0])
+        except Exception:
+            pass
+        return 0.0
+
+    def _append_dataset(
+        self,
+        before: float,
+        err_rate: float,
+        eval_score: float,
+        actual: float,
+        predicted: float,
+    ) -> None:
+        """Persist a single training sample to the unified dataset."""
+
+        try:
+            error = actual - predicted
+            line = f"{before},{err_rate},{eval_score},{actual},{predicted},{error}\n"
+            with self.dataset_path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+            self.logger.info(
+                "roi_prediction_error",
+                extra={"predicted_roi": predicted, "actual_roi": actual, "error": error},
+            )
+        except Exception:
+            self.logger.exception("failed to append ROI dataset")
+
+    def _load_dataset(self) -> tuple[np.ndarray, np.ndarray] | None:
+        """Load the accumulated dataset from ``dataset_path``."""
+
+        try:
+            data = np.loadtxt(self.dataset_path, delimiter=",", skiprows=1)
+        except Exception:
+            return None
+        if data.size == 0:
+            return None
+        if data.ndim == 1:
+            data = data[None, :]
+        X = data[:, :3]
+        y = data[:, 3]
+        return X, y
+
     # ------------------------------------------------------------------
     def run_cycle(self) -> None:
         """Check triggers and run appropriate evolution steps."""
@@ -130,6 +198,7 @@ class EvolutionOrchestrator:
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
         error_rate = self._error_rate()
+        model_pred, _ = self.roi_predictor.predict([[before_roi, error_rate]])
         pred_roi = before_roi
         pred_err = error_rate
         if self.trend_predictor:
@@ -448,6 +517,16 @@ class EvolutionOrchestrator:
                 self.multi_predictor.train()
             except Exception:
                 self.logger.exception("multi predictor training failed")
+        final_roi = self._latest_roi()
+        eval_score = self._latest_eval_score()
+        self._append_dataset(before_roi, error_rate, eval_score, final_roi, model_pred)
+        if self._cycles % self.retrain_interval == 0:
+            dataset = self._load_dataset()
+            if dataset is not None:
+                try:
+                    self.roi_predictor.train(dataset)
+                except Exception:
+                    self.logger.exception("roi predictor retrain failed")
         
     # ------------------------------------------------------------------
     def _run_workflow_experiments(self, limit: int = 3) -> None:
