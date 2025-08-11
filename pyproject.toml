@@ -72,6 +72,7 @@ dependencies = [
 menace-master = "service_supervisor:main"
 environment-cli = "environment_cli:main"
 menace = "menace_cli:main"
+adaptive-roi = "adaptive_roi_cli:main"
 
 [project.optional-dependencies]
 test = [
