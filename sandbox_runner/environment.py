@@ -156,6 +156,52 @@ def save_coverage_data() -> None:
         logger.exception("failed to save coverage data: %s", exc)
 
 
+def _scenario_summary_path() -> Path:
+    data_dir = Path(os.getenv("SANDBOX_DATA_DIR", ROOT / "sandbox_data"))
+    default = data_dir / "scenario_summary.json"
+    return Path(os.getenv("SANDBOX_SCENARIO_SUMMARY", str(default)))
+
+
+def save_scenario_summary(
+    synergy_data: Dict[str, Dict[str, list]]
+) -> Dict[str, Dict[str, float]]:
+    """Persist aggregated ROI and success metrics per scenario."""
+    summary: Dict[str, Dict[str, float]] = {}
+    for scen, data in synergy_data.items():
+        roi_total = sum(float(r) for r in data.get("roi", []))
+        metrics = data.get("metrics", [])
+        failure_runs = 0
+        for m in metrics:
+            fails = float(m.get("hostile_failures", 0.0)) + float(
+                m.get("misuse_failures", 0.0)
+            )
+            if fails > 0:
+                failure_runs += 1
+        summary[scen] = {
+            "roi": roi_total,
+            "successes": max(0, len(metrics) - failure_runs),
+            "failures": failure_runs,
+        }
+    path = _scenario_summary_path()
+    try:  # pragma: no cover - best effort only
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(summary, fh, indent=2, sort_keys=True)
+    except Exception as exc:
+        logger.exception("failed to save scenario summary: %s", exc)
+    return summary
+
+
+def load_scenario_summary() -> Dict[str, Any]:
+    """Return the saved scenario summary if available."""
+    path = _scenario_summary_path()
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 def record_error(exc: Exception) -> None:
     """Log *exc* via :class:`ErrorLogger` and track its category."""
     stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -5267,6 +5313,8 @@ def run_repo_section_simulations(
                             "all", []
                         ).append({"preset": preset, "stub": stub, "result": res})
 
+        summary = save_scenario_summary(synergy_data)
+        setattr(tracker, "scenario_summary", summary)
         if hasattr(tracker, "scenario_synergy"):
             tracker.scenario_synergy = scenario_synergy
         return (tracker, details) if return_details else tracker
@@ -6143,6 +6191,8 @@ def run_workflow_simulations(
                 dispatch_alert("sandbox_coverage", {"coverage": coverage_summary})
         except Exception:
             logger.exception("failed to dispatch coverage alert")
+        summary = save_scenario_summary(synergy_data)
+        setattr(tracker, "scenario_summary", summary)
         setattr(tracker, "coverage_summary", coverage_summary)
         return (tracker, details) if return_details else tracker
 
