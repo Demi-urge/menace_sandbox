@@ -487,6 +487,32 @@ def test_reliability_metric_scores():
     assert tracker.reliability(metric="profit") == pytest.approx(err)
 
 
+def test_prediction_metrics_exported():
+    tracker = rt.ROITracker()
+    tracker.record_prediction(1.0, 1.5)
+    from menace_sandbox import metrics_exporter as me
+
+    def _get_value(gauge):
+        try:
+            return gauge._value.get()
+        except Exception:
+            try:
+                wrappers = getattr(gauge, "_values", None)
+                if wrappers:
+                    return float(sum(w.get() for w in wrappers.values()))
+                wrappers = getattr(gauge, "_metrics", None)
+                if wrappers:
+                    return float(
+                        sum(getattr(w, "_value", 0).get() for w in wrappers.values())
+                    )
+            except Exception:
+                return 0.0
+        return 0.0
+
+    assert _get_value(me.prediction_error) == pytest.approx(0.5)
+    assert _get_value(me.prediction_mae) == pytest.approx(0.5)
+
+
 def test_synergy_reliability():
     tracker = rt.ROITracker()
     tracker.record_metric_prediction("synergy_roi", 1.0, 1.5)

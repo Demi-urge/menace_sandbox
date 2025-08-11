@@ -325,6 +325,14 @@ class ROITracker:
         """Store ``predicted`` and ``actual`` ROI values for reliability stats."""
         self.predicted_roi.append(float(predicted))
         self.actual_roi.append(float(actual))
+        try:
+            from . import metrics_exporter as _me
+
+            err = abs(float(predicted) - float(actual))
+            _me.prediction_error.labels(metric="roi").set(err)
+            _me.prediction_mae.labels(metric="roi").set(self.rolling_mae())
+        except Exception:
+            pass
 
     def record_metric_prediction(
         self, metric: str, predicted: float, actual: float
@@ -333,6 +341,16 @@ class ROITracker:
         name = str(metric)
         self.predicted_metrics.setdefault(name, []).append(float(predicted))
         self.actual_metrics.setdefault(name, []).append(float(actual))
+        try:
+            from . import metrics_exporter as _me
+
+            err = abs(float(predicted) - float(actual))
+            _me.prediction_error.labels(metric=name).set(err)
+            _me.prediction_mae.labels(metric=name).set(
+                self.rolling_mae_metric(name)
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     def rolling_mae(self, window: int | None = None) -> float:
