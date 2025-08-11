@@ -554,8 +554,14 @@ class SelfImprovementEngine:
         )
         self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
-        self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
         settings = SandboxSettings()
+        self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
+        if roi_predictor is not None and self.use_adaptive_roi:
+            self.roi_predictor = roi_predictor
+        elif self.use_adaptive_roi:
+            self.roi_predictor = AdaptiveROIPredictor()
+        else:
+            self.roi_predictor = None
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
@@ -1457,6 +1463,16 @@ class SelfImprovementEngine:
 
         return [[hist_roi, perf_delta, gpt_score]]
 
+    def _improvement_score(self, category: str) -> int:
+        """Return numeric score for ROI growth categories.
+
+        Higher scores indicate improvements with greater compounding
+        potential.  ``"exponential"`` growth ranks highest, followed by
+        ``"linear"`` and then ``"marginal"``.
+        """
+
+        return {"exponential": 2, "linear": 1, "marginal": 0}.get(category, 0)
+
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
         if getattr(self, "_force_rerun", False):
@@ -1561,16 +1577,17 @@ class SelfImprovementEngine:
         # Consult ROI predictor before applying a self optimisation patch.  Skip
         # the patch when growth is not expected to be exponential.
         try:
-            features = self._candidate_features(self.bot_name)
-            try:
-                _, growth = self.roi_predictor.predict(features)
-            except Exception:
-                growth = "unknown"
-            if growth != "exponential":
-                self.logger.info(
-                    "self optimisation skipped", extra=log_record(growth_type=growth)
-                )
-                return None, False, 0.0
+            if self.roi_predictor and self.use_adaptive_roi:
+                features = self._candidate_features(self.bot_name)
+                try:
+                    _, growth = self.roi_predictor.predict(features)
+                except Exception:
+                    growth = "unknown"
+                if growth != "exponential":
+                    self.logger.info(
+                        "self optimisation skipped", extra=log_record(growth_type=growth)
+                    )
+                    return None, False, 0.0
 
             patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                 Path(__file__),
@@ -3109,14 +3126,19 @@ class SelfImprovementEngine:
         scored = []
         for mod in queue:
             features = self._candidate_features(mod)
-            try:
-                roi_est, category = self.roi_predictor.predict(features)
-            except Exception:
+            if self.roi_predictor:
+                try:
+                    roi_est, category = self.roi_predictor.predict(features)
+                except Exception:
+                    roi_est, category = 0.0, "unknown"
+            else:
                 roi_est, category = 0.0, "unknown"
             scored.append((mod, roi_est, category))
-        cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
-        scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-        scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+        if self.use_adaptive_roi:
+            scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
+            scored.sort(key=lambda x: (-self._improvement_score(x[2]), -x[1]))
+        else:
+            scored.sort(key=lambda x: -x[1])
         for mod, roi_est, category in scored:
             self.logger.info(
                 "patch candidate",
@@ -3168,14 +3190,19 @@ class SelfImprovementEngine:
             scored = []
             for mod in high_risk:
                 features = self._candidate_features(mod)
-                try:
-                    roi_est, category = self.roi_predictor.predict(features)
-                except Exception:
+                if self.roi_predictor:
+                    try:
+                        roi_est, category = self.roi_predictor.predict(features)
+                    except Exception:
+                        roi_est, category = 0.0, "unknown"
+                else:
                     roi_est, category = 0.0, "unknown"
                 scored.append((mod, roi_est, category))
-            cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
-            scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-            scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+            if self.use_adaptive_roi:
+                scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
+                scored.sort(key=lambda x: (-self._improvement_score(x[2]), -x[1]))
+            else:
+                scored.sort(key=lambda x: -x[1])
             self.logger.info(
                 "high risk modules",
                 extra=log_record(modules=[m for m, _, _ in scored]),
@@ -3848,21 +3875,24 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("energy check failed: %s", exc)
                     current_energy = energy
-            features = self._collect_action_features()
-            roi_estimate, growth_type = self.roi_predictor.predict(features)
-            self.logger.info(
-                "growth prediction",
-                extra=log_record(
-                    growth_type=growth_type,
-                    roi_estimate=roi_estimate,
-                    features=features,
-                ),
-            )
-            self._last_growth_type = growth_type
-            if growth_type == "exponential":
-                current_energy *= 1.2
-            elif growth_type == "marginal":
-                current_energy *= 0.8
+            if self.roi_predictor and self.use_adaptive_roi:
+                features = self._collect_action_features()
+                roi_estimate, growth_type = self.roi_predictor.predict(features)
+                self.logger.info(
+                    "growth prediction",
+                    extra=log_record(
+                        growth_type=growth_type,
+                        roi_estimate=roi_estimate,
+                        features=features,
+                    ),
+                )
+                self._last_growth_type = growth_type
+                if growth_type == "exponential":
+                    current_energy *= 1.2
+                elif growth_type == "marginal":
+                    current_energy *= 0.8
+            else:
+                self._last_growth_type = None
             if current_energy >= self.energy_threshold and not self._cycle_running:
                 try:
                     await asyncio.to_thread(

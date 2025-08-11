@@ -18,6 +18,8 @@ except Exception:  # pragma: no cover - optional dependency
             import pandas as pd
             return pd.DataFrame()
 from .unified_event_bus import UnifiedEventBus
+from .adaptive_roi_predictor import AdaptiveROIPredictor
+from sandbox_settings import SandboxSettings
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,8 @@ class ActionPlanner:
         discount: float = 0.9,
         model_path: Optional[str] = None,
         event_bus: Optional[UnifiedEventBus] = None,
+        roi_predictor: AdaptiveROIPredictor | None = None,
+        use_adaptive_roi: bool | None = None,
     ) -> None:
         self.pathway_db = pathway_db
         self.roi_db = roi_db
@@ -119,6 +123,16 @@ class ActionPlanner:
         self.multi_step = multi_step
         self.discount = discount
         self.event_bus = event_bus
+        if use_adaptive_roi is None:
+            try:
+                use_adaptive_roi = SandboxSettings().adaptive_roi_prioritization
+            except Exception:
+                use_adaptive_roi = True
+        self.use_adaptive_roi = bool(use_adaptive_roi)
+        if self.use_adaptive_roi:
+            self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+        else:
+            self.roi_predictor = None
         if self.event_bus:
             try:
                 self.event_bus.subscribe("pathway:new", self._on_new_pathway)
@@ -208,7 +222,22 @@ class ActionPlanner:
             return None
         state_steps = steps[-self.state_length :]
         state = self._state_key(state_steps)
-        return self.model.best_action(state)
+        values = self.model.q.get(state)
+        if not values:
+            return None
+        if self.roi_predictor and self.use_adaptive_roi and self.feature_fn:
+            scored = []
+            for action, val in values.items():
+                try:
+                    feats = [list(self.feature_fn(action))]
+                    _, category = self.roi_predictor.predict(feats)
+                except Exception:
+                    category = "marginal"
+                scored.append((action, val, category))
+            cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
+            scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+            return scored[0][0]
+        return max(values, key=values.get)
 
     # ------------------------------------------------------------------
     def _on_new_pathway(self, topic: str, payload: object) -> None:
