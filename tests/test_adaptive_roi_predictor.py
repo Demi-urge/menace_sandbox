@@ -1,38 +1,134 @@
+"""Tests for :mod:`adaptive_roi_predictor` and ROITracker integration."""
+
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
 import numpy as np
-from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor
-
-
 import pytest
 
+from menace_sandbox.adaptive_roi_dataset import build_dataset
+from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor
+from menace_sandbox.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
+from menace_sandbox.evolution_history_db import EvolutionHistoryDB
+from menace_sandbox.roi_tracker import ROITracker
 
-@pytest.fixture()
-def predictor(monkeypatch):
-    """Return predictor with training dataset stubbed out."""
 
-    # Avoid training by supplying an empty dataset
+def test_build_dataset(tmp_path: Path) -> None:
+    """Dataset generation combines evolution, ROI and evaluation data."""
+
+    evo_path = tmp_path / "evolution_history.db"
+    eval_path = tmp_path / "evaluation_history.db"
+    roi_path = tmp_path / "roi.db"
+
+    evo = EvolutionHistoryDB(evo_path)
+    eval_db = EvaluationHistoryDB(eval_path)
+    conn = sqlite3.connect(roi_path)
+    conn.execute(
+        "CREATE TABLE action_roi(action TEXT, revenue REAL, api_cost REAL, cpu_seconds REAL, success_rate REAL, ts TEXT)"
+    )
+
+    # ROI records before and after the evolution event
+    conn.execute(
+        "INSERT INTO action_roi VALUES (?,?,?,?,?,?)",
+        ("test", 10.0, 1.0, 0.0, 1.0, "2022-12-31T00:00:00"),
+    )
+    conn.execute(
+        "INSERT INTO action_roi VALUES (?,?,?,?,?,?)",
+        ("test", 12.0, 1.0, 0.0, 1.0, "2023-01-02T00:00:00"),
+    )
+    conn.commit()
+
+    # Evaluation score after the evolution event
+    eval_db.add(
+        EvaluationRecord(
+            engine="test", cv_score=0.5, passed=True, ts="2023-01-01T01:00:00"
+        )
+    )
+
+    # Evolution event
+    evo.conn.execute(
+        "INSERT INTO evolution_history(action, before_metric, after_metric, roi, ts) VALUES (?,?,?,?,?)",
+        ("test", 1.0, 2.0, 0.0, "2023-01-01T00:00:00"),
+    )
+    evo.conn.commit()
+
+    X, y = build_dataset(evo_path, roi_path, eval_path)
+    assert X.shape == (1, 6)
+    assert y.shape == (1,)
+    # Target is revenue minus API cost after the event
+    assert y[0] == pytest.approx(11.0)
+
+
+def test_training_and_prediction(monkeypatch):
+    """Model trains on provided dataset and forecasts growth."""
+
+    X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y)
+    )
+    predictor = AdaptiveROIPredictor()
+    assert predictor._model is not None
+    roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0]])
+    assert roi == pytest.approx(3.0, abs=1e-3)
+    assert growth == "linear"
+
+
+def test_evaluate_model_retrains(monkeypatch):
+    """evaluate_model triggers retraining when error is high."""
+
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset",
-        lambda: (np.empty((0, 2)), np.empty(0)),
+        lambda: (np.array([[0.0]]), np.array([0.0])),
     )
-    return AdaptiveROIPredictor()
+    predictor = AdaptiveROIPredictor()
+    calls: list[int] = []
+
+    def fake_train(dataset=None):
+        calls.append(1)
+
+    predictor.train = fake_train  # type: ignore
+    tracker = ROITracker()
+    tracker.predicted_roi = [0.0, 0.0]
+    tracker.actual_roi = [1.0, 1.0]
+    tracker.predicted_classes = ["linear", "linear"]
+    tracker.actual_classes = ["exponential", "exponential"]
+
+    acc, mae = predictor.evaluate_model(
+        tracker, window=2, mae_threshold=0.1, acc_threshold=0.9
+    )
+    assert mae > 0.1
+    assert acc < 0.9
+    assert calls  # retraining triggered
 
 
-def test_predicts_exponential_growth(predictor):
-    feats = [[1, 0], [2, 1], [4, 2], [8, 4], [16, 8]]
-    roi, growth = predictor.predict(feats)
-    assert growth == "exponential"
-    assert roi == pytest.approx(16.0)
+def test_tracker_integration(monkeypatch):
+    """ROITracker uses predictor to log class predictions and evaluate."""
 
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset",
+        lambda: (np.array([[0.0]]), np.array([0.0])),
+    )
+    predictor = AdaptiveROIPredictor()
+    tracker = ROITracker()
+    tracker._adaptive_predictor = predictor
 
-def test_predicts_linear_growth(predictor):
-    feats = [[1, 0], [2, 1], [3, 1], [4, 1], [5, 1]]
-    roi, growth = predictor.predict(feats)
-    assert growth == "linear"
-    assert roi == pytest.approx(5.0)
+    called: list[int] = []
 
+    def fake_eval(t: ROITracker, **_kwargs):
+        called.append(1)
+        return (1.0, 0.0)
 
-def test_predicts_marginal_growth(predictor):
-    feats = [[1, 0], [1, 0], [1, 0], [1, 0], [1, 0]]
-    roi, growth = predictor.predict(feats)
-    assert growth == "marginal"
-    assert roi == pytest.approx(1.0)
+    predictor.evaluate_model = fake_eval  # type: ignore
+
+    tracker.roi_history = [0.1, 0.2]
+    tracker._next_prediction = 0.25
+    tracker._next_category = "linear"
+    tracker.update(0.0, 0.3)
+
+    assert tracker.predicted_classes == ["linear"]
+    assert len(tracker.actual_classes) == 1
+    assert called  # evaluate_model invoked
+

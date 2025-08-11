@@ -333,9 +333,33 @@ class ROITracker:
 
     # ------------------------------------------------------------------
     def record_prediction(self, predicted: float, actual: float) -> None:
-        """Store ``predicted`` and ``actual`` ROI values for reliability stats."""
+        """Store ``predicted``/``actual`` ROI values and log prediction stats."""
+
         self.predicted_roi.append(float(predicted))
         self.actual_roi.append(float(actual))
+
+        predicted_class = self._next_category
+        actual_class: str | None = None
+        if self._adaptive_predictor is not None:
+            try:
+                feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
+                _, actual_class = self._adaptive_predictor.predict(feats)
+                self._adaptive_predictor.evaluate_model(self)
+            except Exception:
+                actual_class = None
+        if predicted_class is not None and actual_class is not None:
+            self.record_class_prediction(predicted_class, actual_class)
+
+        logger.info(
+            "roi prediction",
+            extra=log_record(
+                iteration=len(self.predicted_roi),
+                predicted=float(predicted),
+                actual=float(actual),
+                predicted_class=predicted_class,
+                actual_class=actual_class,
+            ),
+        )
         try:
             from . import metrics_exporter as _me
             for g in (
@@ -641,15 +665,6 @@ class ROITracker:
                 "roi update",
                 extra=log_record(delta=delta, category=category, adjusted=adjusted),
             )
-        actual_class = None
-        if self._adaptive_predictor is not None:
-            try:
-                feats = [[float(x)] for x in self.roi_history] or [[0.0]]
-                _, actual_class = self._adaptive_predictor.predict(feats)
-            except Exception:
-                actual_class = None
-        if predicted_class is not None and actual_class is not None:
-            self.record_class_prediction(predicted_class, actual_class)
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
         stop = False
