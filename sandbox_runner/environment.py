@@ -5084,24 +5084,6 @@ def run_repo_section_simulations(
                 all_presets: List[Dict[str, Any]] = [
                     p for lst in preset_map.values() for p in lst
                 ]
-                for module in sections:
-                    if module in preset_map:
-                        continue
-                    try:
-                        from menace.environment_generator import (
-                            CANONICAL_PROFILES,
-                            generate_presets,
-                            suggest_profiles_for_module,
-                        )
-
-                        profiles = suggest_profiles_for_module(module)
-                        if not profiles:
-                            profiles = CANONICAL_PROFILES
-                        new_presets = generate_presets(profiles=profiles)
-                        preset_map[module] = new_presets
-                        all_presets.extend(new_presets)
-                    except Exception:
-                        pass
             else:
                 preset_map = {}
                 all_presets = []
@@ -5117,6 +5099,33 @@ def run_repo_section_simulations(
         else:
             preset_map = {}
             all_presets = list(env_presets)
+
+        try:
+            from menace.environment_generator import (
+                generate_presets,
+                suggest_profiles_for_module,
+            )
+        except Exception:
+            generate_presets = None  # type: ignore
+            suggest_profiles_for_module = None  # type: ignore
+
+        for module in sections:
+            mod_presets = list(preset_map.get(module, []))
+            for preset in all_presets:
+                if preset not in mod_presets:
+                    mod_presets.append(preset)
+            if generate_presets and suggest_profiles_for_module:
+                try:
+                    profiles = suggest_profiles_for_module(module) or []
+                    new_presets = generate_presets(profiles=profiles)
+                except Exception:
+                    new_presets = []
+                for preset in new_presets:
+                    if preset not in mod_presets:
+                        mod_presets.append(preset)
+                    if preset not in all_presets:
+                        all_presets.append(preset)
+            preset_map[module] = mod_presets
 
         required_names = {
             "high_latency_api",
@@ -5142,10 +5151,14 @@ def run_repo_section_simulations(
                         extra_presets.extend(levels.values())
             except Exception:
                 pass
-            all_presets.extend(extra_presets)
-            if isinstance(env_presets, Mapping):
-                for m in preset_map:
-                    preset_map[m].extend(extra_presets)
+            for preset in extra_presets:
+                if preset not in all_presets:
+                    all_presets.append(preset)
+            for m in preset_map:
+                mod_list = preset_map[m]
+                for preset in extra_presets:
+                    if preset not in mod_list:
+                        mod_list.append(preset)
 
         scenario_names: List[str] = []
         for i, preset in enumerate(all_presets):
@@ -5205,20 +5218,7 @@ def run_repo_section_simulations(
                 try:
                     for sec_name, lines in sec_map.items():
                         code_str = "\n".join(lines)
-                        module_presets = preset_map.get(module)
-                        if module_presets is None:
-                            module_presets = all_presets
-                        else:
-                            seen = {
-                                p.get("SCENARIO_NAME")
-                                for p in module_presets
-                                if p.get("SCENARIO_NAME")
-                            }
-                            for preset in all_presets:
-                                name = preset.get("SCENARIO_NAME")
-                                if name not in seen:
-                                    module_presets.append(preset)
-                                    seen.add(name)
+                        module_presets = preset_map.get(module, all_presets)
                         for p_idx, preset in enumerate(module_presets):
                             scenario = preset.get(
                                 "SCENARIO_NAME", f"scenario_{p_idx}"
