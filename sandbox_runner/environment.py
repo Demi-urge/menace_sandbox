@@ -5107,12 +5107,45 @@ def run_repo_section_simulations(
                 all_presets = []
                 for v in env_presets.values():
                     if isinstance(v, Mapping):
-                        all_presets.extend(v.values())
+                        high = v.get("high")
+                        if high:
+                            all_presets.append(high)
+                        else:
+                            all_presets.append(next(iter(v.values())))
                     else:
                         all_presets.extend(list(v))
         else:
             preset_map = {}
             all_presets = list(env_presets)
+
+        required_names = {
+            "high_latency_api",
+            "hostile_input",
+            "user_misuse",
+            "concurrency_spike",
+        }
+        present_names = {
+            p.get("SCENARIO_NAME")
+            for p in all_presets
+            if p.get("SCENARIO_NAME")
+        }
+        missing_names = required_names - present_names
+        if missing_names:
+            extra_presets: List[Dict[str, Any]] = []
+            try:
+                from menace.environment_generator import generate_canonical_presets
+
+                canonical_map = generate_canonical_presets()
+                for name in missing_names:
+                    levels = canonical_map.get(name)
+                    if levels:
+                        extra_presets.extend(levels.values())
+            except Exception:
+                pass
+            all_presets.extend(extra_presets)
+            if isinstance(env_presets, Mapping):
+                for m in preset_map:
+                    preset_map[m].extend(extra_presets)
 
         scenario_names: List[str] = []
         for i, preset in enumerate(all_presets):
@@ -5172,7 +5205,20 @@ def run_repo_section_simulations(
                 try:
                     for sec_name, lines in sec_map.items():
                         code_str = "\n".join(lines)
-                        module_presets = preset_map.get(module, all_presets)
+                        module_presets = preset_map.get(module)
+                        if module_presets is None:
+                            module_presets = all_presets
+                        else:
+                            seen = {
+                                p.get("SCENARIO_NAME")
+                                for p in module_presets
+                                if p.get("SCENARIO_NAME")
+                            }
+                            for preset in all_presets:
+                                name = preset.get("SCENARIO_NAME")
+                                if name not in seen:
+                                    module_presets.append(preset)
+                                    seen.add(name)
                         for p_idx, preset in enumerate(module_presets):
                             scenario = preset.get(
                                 "SCENARIO_NAME", f"scenario_{p_idx}"
