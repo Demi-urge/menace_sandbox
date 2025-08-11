@@ -69,13 +69,16 @@ def test_generate_canonical_presets():
     from menace import environment_generator as eg
 
     presets = eg.generate_canonical_presets()
-    names = [p.get("SCENARIO_NAME") for p in presets]
-    assert names == [
+    assert set(presets) == {
         "high_latency_api",
         "hostile_input",
         "user_misuse",
         "concurrency_spike",
-    ]
+    }
+    for levels in presets.values():
+        assert set(levels) == {"low", "high"}
+        for lvl, data in levels.items():
+            assert data["SCENARIO_NAME"] in presets
     # deterministic
     assert presets == eg.generate_canonical_presets()
 
@@ -139,4 +142,5 @@ def test_run_repo_section_simulations_canonical(monkeypatch, tmp_path):
     assert set(calls) == expected
     assert set(tracker.scenario_synergy) == expected
     for name in expected:
+        assert counts[name] == 2
         assert "synergy_roi" in tracker.scenario_synergy[name][0]

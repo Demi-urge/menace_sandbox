@@ -22,6 +22,21 @@ scenarios include:
 - **user_misuse** – invalid API calls and file access attempts.
 - **concurrency_spike** – bursts of threads and async tasks.
 
+Each profile exposes both "low" and "high" severity levels. The helper
+`generate_canonical_presets()` returns a mapping of scenarios to these levels so
+every module can be exercised under both intensities:
+
+```python
+from environment_generator import generate_canonical_presets
+
+presets = generate_canonical_presets()
+# access individual levels
+low_latency = presets["high_latency_api"]["low"]
+high_latency = presets["high_latency_api"]["high"]
+# run all scenarios under both severities
+run_repo_section_simulations(repo_path, env_presets=presets)
+```
+
 Generate presets for specific scenarios and supply them to the sandbox:
 
 ```bash
