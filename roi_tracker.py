@@ -12,7 +12,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
-from .logging_utils import get_logger
+from .logging_utils import get_logger, log_record
 
 logger = get_logger(__name__)
 
@@ -54,6 +54,7 @@ class ROITracker:
             forecasts.
         """
         self.roi_history: List[float] = []
+        self.growth_history: List[str] = []
         self.window = window
         self.tolerance = tolerance
         self.filter_outliers = filter_outliers
@@ -454,6 +455,7 @@ class ROITracker:
         modules: Optional[List[str]] = None,
         resources: Optional[Dict[str, float]] = None,
         metrics: Optional[Dict[str, float]] = None,
+        growth_type: str | None = None,
     ) -> Tuple[Optional[int], List[float], bool]:
         """Record ROI delta and evaluate stopping criteria.
 
@@ -475,15 +477,23 @@ class ROITracker:
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
+        if growth_type is not None:
+            self.growth_history.append(growth_type)
+        weight = 1.0
+        if growth_type == "exponential":
+            weight = 1.5
+        elif growth_type == "marginal":
+            weight = 0.5
         if filtered is not None:
-            self.roi_history.append(filtered)
+            adjusted = filtered * weight
+            self.roi_history.append(adjusted)
             if modules:
                 for m in modules:
                     cid = self.cluster_map.get(m)
                     key = str(cid) if cid is not None else m
-                    self.module_deltas.setdefault(key, []).append(filtered)
+                    self.module_deltas.setdefault(key, []).append(adjusted)
                     if cid is not None:
-                        self.cluster_deltas.setdefault(cid, []).append(filtered)
+                        self.cluster_deltas.setdefault(cid, []).append(adjusted)
             if resources:
                 try:
                     self.resource_metrics.append(
@@ -527,6 +537,10 @@ class ROITracker:
                         else 0.0
                     )
                     self.synergy_metrics_history[name].append(last)
+            logger.info(
+                "roi update",
+                extra=log_record(delta=delta, growth_type=growth_type, adjusted=adjusted),
+            )
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
         stop = False
