@@ -78,6 +78,8 @@ class AdaptiveROIPredictor:
         model_path: str | Path = "sandbox_data/adaptive_roi.pkl",
         cv: int = 3,
         param_grid: Dict[str, Dict[str, Any]] | None = None,
+        slope_threshold: float | None = None,
+        curvature_threshold: float | None = None,
     ) -> None:
         self.model_path = Path(model_path)
         self.cv = cv
@@ -85,7 +87,13 @@ class AdaptiveROIPredictor:
         self._model = None
         self.best_params: Dict[str, Any] | None = None
         self.best_score: float | None = None
+        self.slope_threshold: float | None = slope_threshold
+        self.curvature_threshold: float | None = curvature_threshold
         self._load()
+        if slope_threshold is not None:
+            self.slope_threshold = slope_threshold
+        if curvature_threshold is not None:
+            self.curvature_threshold = curvature_threshold
         if self._model is None:
             self.train(cv=self.cv, param_grid=self.param_grid)
 
@@ -110,6 +118,10 @@ class AdaptiveROIPredictor:
                 data = json.loads(meta_path.read_text())
                 self.best_params = data.get("best_params")
                 self.best_score = data.get("best_score")
+                self.slope_threshold = data.get("slope_threshold", self.slope_threshold)
+                self.curvature_threshold = data.get(
+                    "curvature_threshold", self.curvature_threshold
+                )
             except Exception:
                 self.best_params = None
                 self.best_score = None
@@ -134,7 +146,12 @@ class AdaptiveROIPredictor:
         """Persist metadata about the trained model."""
 
         try:  # pragma: no cover - disk issues
-            meta = {"best_params": self.best_params, "best_score": self.best_score}
+            meta = {
+                "best_params": self.best_params,
+                "best_score": self.best_score,
+                "slope_threshold": self.slope_threshold,
+                "curvature_threshold": self.curvature_threshold,
+            }
             meta_path = self.model_path.with_suffix(".meta.json")
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
             meta_path.write_text(json.dumps(meta))
@@ -256,6 +273,24 @@ class AdaptiveROIPredictor:
         self.best_score = None if best_score == float("inf") else best_score
         self.best_params = best_params
         if self._model is not None:
+            if self.slope_threshold is None or self.curvature_threshold is None:
+                try:
+                    preds = self._predict_sequence(X)
+                    first_diff = np.diff(preds)
+                    if self.slope_threshold is None:
+                        self.slope_threshold = float(
+                            np.mean(np.abs(first_diff))
+                        ) if first_diff.size else 0.05
+                    second_diff = np.diff(first_diff)
+                    if self.curvature_threshold is None:
+                        self.curvature_threshold = float(
+                            np.mean(np.abs(second_diff))
+                        ) if second_diff.size else 0.01
+                except Exception:
+                    if self.slope_threshold is None:
+                        self.slope_threshold = 0.05
+                    if self.curvature_threshold is None:
+                        self.curvature_threshold = 0.01
             try:
                 self._save()
             except Exception:  # pragma: no cover - training failure
@@ -288,9 +323,14 @@ class AdaptiveROIPredictor:
         slope = float(first_diff.mean())
         curvature = float(np.diff(first_diff).mean()) if len(first_diff) > 1 else 0.0
 
-        if slope > 0.05 and curvature > 0.01:
+        slope_thr = self.slope_threshold if self.slope_threshold is not None else 0.05
+        curv_thr = (
+            self.curvature_threshold if self.curvature_threshold is not None else 0.01
+        )
+
+        if slope > slope_thr and curvature > curv_thr:
             return "exponential"
-        if abs(slope) > 0.05:
+        if abs(slope) > slope_thr:
             return "linear"
         return "marginal"
 
