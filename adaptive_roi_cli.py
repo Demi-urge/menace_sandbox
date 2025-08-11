@@ -20,6 +20,18 @@ def _train(args: argparse.Namespace) -> None:
     )
     predictor.train(dataset)
     print(f"model trained on {len(dataset[0])} samples -> {args.model}")
+    if predictor.validation_scores:
+        print("validation MAE:")
+        for name, score in predictor.validation_scores.items():
+            print(f"  {name}: {score:.4f}")
+    if predictor.best_params and predictor.best_score is not None:
+        params = {k: v for k, v in predictor.best_params.items() if k != "model"}
+        print(
+            f"best model: {predictor.best_params['model']} "
+            f"(MAE={predictor.best_score:.4f})"
+        )
+        if params:
+            print(f"best params: {params}")
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +58,18 @@ def _retrain(args: argparse.Namespace) -> None:
     )
     predictor.train(dataset)
     print(f"model retrained on {len(dataset[0])} samples -> {args.model}")
+    if predictor.validation_scores:
+        print("validation MAE:")
+        for name, score in predictor.validation_scores.items():
+            print(f"  {name}: {score:.4f}")
+    if predictor.best_params and predictor.best_score is not None:
+        params = {k: v for k, v in predictor.best_params.items() if k != "model"}
+        print(
+            f"best model: {predictor.best_params['model']} "
+            f"(MAE={predictor.best_score:.4f})"
+        )
+        if params:
+            print(f"best params: {params}")
 
 
 # ---------------------------------------------------------------------------
