@@ -55,7 +55,8 @@ def test_build_dataset(tmp_path: Path) -> None:
     evo.conn.commit()
 
     X, y = build_dataset(evo_path, roi_path, eval_path)
-    assert X.shape == (1, 6)
+    n_features = 6 + len(ROITracker().metrics_history)
+    assert X.shape == (1, n_features)
     assert y.shape == (1,)
     # Target is revenue minus API cost after the event
     assert y[0] == pytest.approx(11.0)

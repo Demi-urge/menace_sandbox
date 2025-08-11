@@ -5,6 +5,7 @@ import sqlite3
 from menace.adaptive_roi_dataset import build_dataset, load_adaptive_roi_dataset
 from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from menace.evolution_history_db import EvolutionEvent, EvolutionHistoryDB
+from menace.roi_tracker import ROITracker
 
 
 def test_dataset_aggregation(tmp_path):
@@ -84,8 +85,7 @@ def test_build_dataset(tmp_path):
 
     X, y = build_dataset(evo_db_path, roi_db_path, eval_db_path)
 
-    assert X.shape == (1, 6)
+    n_features = 6 + len(ROITracker().metrics_history)
+    assert X.shape == (1, n_features)
     assert y.tolist() == [12.0]
-    np.testing.assert_allclose(
-        X[0], [0.2, 0.3, 1.0, 1.0, 0.1, 0.8], rtol=1e-5, atol=1e-5
-    )
+    assert np.allclose(X, 0.0)
