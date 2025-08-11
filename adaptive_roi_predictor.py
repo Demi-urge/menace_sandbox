@@ -100,6 +100,8 @@ class AdaptiveROIPredictor:
         self.validation_scores: Dict[str, float] = {}
         self.slope_threshold: float | None = slope_threshold
         self.curvature_threshold: float | None = curvature_threshold
+        self.training_data: tuple[np.ndarray, np.ndarray] | None = None
+        self._trained_size: int = 0
         self._load()
         if slope_threshold is not None:
             self.slope_threshold = slope_threshold
@@ -116,12 +118,22 @@ class AdaptiveROIPredictor:
         if self.model_path.exists():
             try:
                 if joblib is not None:
-                    self._model = joblib.load(self.model_path)
+                    obj = joblib.load(self.model_path)
                 else:
                     with self.model_path.open("rb") as fh:
-                        self._model = pickle.load(fh)
+                        obj = pickle.load(fh)
+                if isinstance(obj, dict) and "model" in obj:
+                    self._model = obj.get("model")
+                    data = obj.get("data")
+                    if isinstance(data, tuple) and len(data) == 2:
+                        self.training_data = (np.asarray(data[0]), np.asarray(data[1]))
+                    self._trained_size = int(obj.get("n_samples", 0))
+                else:
+                    self._model = obj
             except Exception:  # pragma: no cover - corrupted file
                 self._model = None
+                self.training_data = None
+                self._trained_size = 0
 
         meta_path = self.model_path.with_suffix(".meta.json")
         if meta_path.exists():
@@ -144,11 +156,16 @@ class AdaptiveROIPredictor:
             return
         try:  # pragma: no cover - disk issues
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "model": self._model,
+                "data": self.training_data,
+                "n_samples": self._trained_size,
+            }
             if joblib is not None:
-                joblib.dump(self._model, self.model_path)
+                joblib.dump(payload, self.model_path)
             else:
                 with self.model_path.open("wb") as fh:
-                    pickle.dump(self._model, fh)
+                    pickle.dump(payload, fh)
         except Exception:
             pass
         self._save_meta()
@@ -199,7 +216,29 @@ class AdaptiveROIPredictor:
 
         if X.size == 0 or y.size == 0:
             self._model = None
+            self.training_data = None
+            self._trained_size = 0
             return
+
+        total_size = len(X)
+        window = 200
+        self.training_data = (X[-window:], y[-window:])
+
+        if (
+            self._model is not None
+            and hasattr(self._model, "partial_fit")
+            and self._trained_size > 0
+            and total_size > self._trained_size
+        ):
+            try:
+                self._model.partial_fit(
+                    X[self._trained_size :], y[self._trained_size :]
+                )
+                self._trained_size = total_size
+                self._save()
+                return
+            except Exception:  # pragma: no cover - incremental fit failure
+                pass
 
         cv = (cv if cv is not None else self.cv) or 0
         param_grid = param_grid if param_grid is not None else self.param_grid
@@ -317,9 +356,11 @@ class AdaptiveROIPredictor:
                     if self.curvature_threshold is None:
                         self.curvature_threshold = 0.01
             try:
+                self._trained_size = total_size
                 self._save()
             except Exception:  # pragma: no cover - training failure
                 self._model = None
+                self._trained_size = 0
 
     # ------------------------------------------------------------------
     def _predict_sequence(self, features: np.ndarray) -> np.ndarray:
@@ -416,7 +457,8 @@ class AdaptiveROIPredictor:
 
         if (mae > mae_threshold) or (pc and acc < acc_threshold):
             try:
-                self.train()
+                data = build_dataset()
+                self.train(dataset=data)
             except Exception:  # pragma: no cover - retraining failure
                 pass
 
