@@ -138,7 +138,7 @@ from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
-from .adaptive_roi_predictor import predict_growth_type
+from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -516,6 +516,7 @@ class SelfImprovementEngine:
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
         score_backend: PatchScoreBackend | None = None,
         error_predictor: ErrorClusterPredictor | None = None,
+        roi_predictor: AdaptiveROIPredictor | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -553,6 +554,7 @@ class SelfImprovementEngine:
         )
         self.pre_roi_bias = pre_roi_bias if pre_roi_bias is not None else PRE_ROI_BIAS
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
+        self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
         settings = SandboxSettings()
         self.synergy_weight_roi = (
             synergy_weight_roi
@@ -1419,6 +1421,17 @@ class SelfImprovementEngine:
             feats.append([float(val), float(val - prev)])
             prev = val
         return feats
+
+    def _candidate_features(self, module: str) -> list[list[float]]:
+        """Return ROI-based features for a patch candidate."""
+        roi_val = 0.0
+        if self.pre_roi_bot:
+            try:
+                res = self.pre_roi_bot.predict_model_roi(module, [])
+                roi_val = float(getattr(res, "roi", 0.0))
+            except Exception:
+                self.logger.exception("pre ROI forecast failed for %s", module)
+        return [[roi_val, 0.0]]
 
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
@@ -3056,7 +3069,24 @@ class SelfImprovementEngine:
             return
         queue = list(self._preventative_queue)
         self._preventative_queue.clear()
+        scored = []
         for mod in queue:
+            features = self._candidate_features(mod)
+            try:
+                roi_est, category = self.roi_predictor.predict(features)
+            except Exception:
+                roi_est, category = 0.0, "unknown"
+            scored.append((mod, roi_est, category))
+        cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
+        scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
+        scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+        for mod, roi_est, category in scored:
+            self.logger.info(
+                "patch candidate",
+                extra=log_record(
+                    module=mod, roi_category=category, roi_estimate=roi_est
+                ),
+            )
             try:
                 patch_id = generate_patch(mod, self.self_coding_engine)
                 if self.error_bot and hasattr(self.error_bot, "db"):
@@ -3098,8 +3128,28 @@ class SelfImprovementEngine:
             self.error_predictor.graph.update_error_stats(self.error_bot.db)
             if not high_risk:
                 return
-            self.logger.info("high risk modules", extra=log_record(modules=high_risk))
+            scored = []
             for mod in high_risk:
+                features = self._candidate_features(mod)
+                try:
+                    roi_est, category = self.roi_predictor.predict(features)
+                except Exception:
+                    roi_est, category = 0.0, "unknown"
+                scored.append((mod, roi_est, category))
+            cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
+            scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
+            scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+            self.logger.info(
+                "high risk modules",
+                extra=log_record(modules=[m for m, _, _ in scored]),
+            )
+            for mod, roi_est, category in scored:
+                self.logger.info(
+                    "patch candidate",
+                    extra=log_record(
+                        module=mod, roi_category=category, roi_estimate=roi_est
+                    ),
+                )
                 try:
                     patch_id = generate_patch(mod, self.self_coding_engine)
                     if self.error_bot and hasattr(self.error_bot, "db"):
@@ -3762,10 +3812,14 @@ class SelfImprovementEngine:
                     self.logger.exception("energy check failed: %s", exc)
                     current_energy = energy
             features = self._collect_action_features()
-            growth_type = predict_growth_type(features)
+            roi_estimate, growth_type = self.roi_predictor.predict(features)
             self.logger.info(
                 "growth prediction",
-                extra=log_record(growth_type=growth_type, features=features),
+                extra=log_record(
+                    growth_type=growth_type,
+                    roi_estimate=roi_estimate,
+                    features=features,
+                ),
             )
             self._last_growth_type = growth_type
             if growth_type == "exponential":

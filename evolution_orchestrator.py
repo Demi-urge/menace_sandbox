@@ -20,6 +20,7 @@ from .workflow_evolution_bot import WorkflowEvolutionBot
 from .experiment_manager import ExperimentManager
 from .evolution_analysis_bot import EvolutionAnalysisBot
 from . import mutation_logger as MutationLogger
+from .adaptive_roi_predictor import AdaptiveROIPredictor
 
 
 @dataclass
@@ -52,6 +53,7 @@ class EvolutionOrchestrator:
         predictor: EvolutionPredictor | None = None,
         multi_predictor: object | None = None,
         event_bus: UnifiedEventBus | None = None,
+        roi_predictor: AdaptiveROIPredictor | None = None,
     ) -> None:
         self.data_bot = data_bot
         self.capital_bot = capital_bot
@@ -68,6 +70,7 @@ class EvolutionOrchestrator:
         self.multi_predictor = multi_predictor
         self.trend_predictor = trend_predictor
         self.event_bus = event_bus
+        self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
         if self.capital_bot and getattr(self.capital_bot, "trend_predictor", None) is None:
             try:
                 self.capital_bot.trend_predictor = trend_predictor
@@ -452,9 +455,41 @@ class EvolutionOrchestrator:
         if not self.workflow_evolver:
             return
         try:
-            proposals = list(self.workflow_evolver.propose_rearrangements(limit))
+            suggestions = list(self.workflow_evolver.analyse(limit))
         except Exception:
-            proposals = []
+            suggestions = []
+        scored: list[tuple[str, float, str]] = []
+        workflow_id = 0
+        parent_event_id = self._workflow_event_ids.get(workflow_id)
+        for s in suggestions:
+            seq = "-".join(reversed(s.sequence.split("-")))
+            features = [[s.expected_roi, 0.0]]
+            try:
+                roi_est, category = self.roi_predictor.predict(features)
+            except Exception:
+                roi_est, category = s.expected_roi, "unknown"
+            self.logger.info(
+                "workflow candidate",
+                extra={"workflow": seq, "roi_category": category, "roi_estimate": roi_est},
+            )
+            try:
+                event_id = MutationLogger.log_mutation(
+                    change=seq,
+                    reason="rearrangement",
+                    trigger="workflow_evolution_bot",
+                    performance=0.0,
+                    workflow_id=workflow_id,
+                    parent_id=parent_event_id,
+                )
+                if hasattr(self.workflow_evolver, "_rearranged_events"):
+                    self.workflow_evolver._rearranged_events[seq] = event_id
+            except Exception:
+                pass
+            scored.append((seq, roi_est, category))
+        cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
+        scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
+        scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+        proposals = [s[0] for s in scored]
         main_wf = None
         if self.resource_optimizer and (
             time.time() - self._last_workflow_benchmark >= self._benchmark_interval
