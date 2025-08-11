@@ -1813,6 +1813,56 @@ class SelfImprovementEngine:
         except Exception:
             reuse_threshold = 0.0
 
+        scenario_results: dict[str, dict[str, dict[str, Any]]] = {}
+        tracker_wf = None
+        try:
+            from environment_generator import generate_canonical_presets
+
+            canonical = generate_canonical_presets()
+            flat_presets = [p for levels in canonical.values() for p in levels.values()]
+            env_map = {m: flat_presets for m in modules}
+            tracker_wf, wf_details = environment.run_workflow_simulations(
+                env_presets=env_map, return_details=True
+            )
+            scenario_synergy = getattr(tracker_wf, "scenario_synergy", {})
+            for runs in wf_details.values():
+                for entry in runs:
+                    module = entry.get("module")
+                    preset = entry.get("preset", {})
+                    scen = preset.get("SCENARIO_NAME")
+                    res = entry.get("result", {})
+                    if not module or module not in modules or not scen:
+                        continue
+                    metrics = {
+                        k: float(v)
+                        for k, v in res.items()
+                        if k != "exit_code" and isinstance(v, (int, float))
+                    }
+                    sy_list = scenario_synergy.get(scen, [])
+                    try:
+                        scen_roi = (
+                            float(sy_list[-1].get("synergy_roi", 0.0))
+                            if sy_list
+                            else 0.0
+                        )
+                    except Exception:
+                        scen_roi = 0.0
+                    scen_map = scenario_results.setdefault(module, {})
+                    scen_map[scen] = {
+                        "roi": scen_roi,
+                        "metrics": metrics,
+                        "failed": bool(res.get("exit_code")),
+                    }
+            for mod, scen_map in scenario_results.items():
+                trace = self.orphan_traces.setdefault(mod, {"parents": []})
+                trace.setdefault("scenarios", {}).update(scen_map)
+                rois = [v.get("roi", 0.0) for v in scen_map.values()]
+                trace["workflow_robustness"] = float(min(rois)) if rois else 0.0
+                trace["workflow_failed"] = any(v.get("failed") for v in scen_map.values())
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("workflow simulation failed: %s", exc)
+            tracker_wf = None
+
         if _STS is None:
             try:
                 from sandbox_runner import run_repo_section_simulations as _sim
@@ -1970,6 +2020,29 @@ class SelfImprovementEngine:
             passing = {p for p in passed if p not in new_redundant}
 
         passing = {p for p in passing if reuse_scores.get(p, 0.0) >= reuse_threshold}
+
+        filtered: set[str] = set()
+        tracker_res = tracker_wf
+        for p in passing:
+            info = self.orphan_traces.setdefault(p, {"parents": []})
+            worst_roi = min(
+                float(info.get("robustness", 0.0)),
+                float(info.get("workflow_robustness", 0.0)),
+            )
+            scen_failed = bool(info.get("workflow_failed")) or any(
+                v.get("failed") for v in info.get("scenarios", {}).values()
+            )
+            if scen_failed or worst_roi < 0.0:
+                continue
+            roi_total = 0.0
+            if tracker_res:
+                for key, vals in tracker_res.module_deltas.items():
+                    if key.startswith(p):
+                        roi_total += sum(float(v) for v in vals)
+            if roi_total < 0:
+                continue
+            filtered.add(p)
+        passing = filtered
 
         if new_redundant:
             for name in new_redundant:
