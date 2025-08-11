@@ -5013,6 +5013,33 @@ def run_repo_section_simulations(
         discover_metrics_plugins,
         collect_plugin_metrics,
     )
+    try:
+        from sandbox_settings import SandboxSettings
+        metric_thresholds = (
+            SandboxSettings().scenario_metric_thresholds or {}
+        )
+    except Exception:
+        metric_thresholds = {}
+
+    def _check_thresholds(scenario: str, metric_dict: Dict[str, float]) -> Dict[str, float]:
+        flags: Dict[str, float] = {}
+        for name, limit in metric_thresholds.items():
+            if name in metric_dict:
+                try:
+                    val = float(metric_dict.get(name, 0.0))
+                except Exception:
+                    val = 0.0
+                breach = val > float(limit)
+                flags[f"{name}_breach"] = 1.0 if breach else 0.0
+                if breach:
+                    logger.warning(
+                        "scenario %s metric %s=%s exceeds threshold %s",
+                        scenario,
+                        name,
+                        val,
+                        limit,
+                    )
+        return flags
 
     if input_stubs is None:
         input_stubs = generate_input_stubs()
@@ -5228,6 +5255,7 @@ def run_repo_section_simulations(
                     specific = _scenario_specific_metrics(scenario, metrics)
                     if specific:
                         metrics.update(specific)
+                    flags = _check_thresholds(scenario, metrics)
                     scenario_metrics = {
                         f"{k}:{scenario}": v for k, v in metrics.items()
                     }
@@ -5237,7 +5265,7 @@ def run_repo_section_simulations(
                         prev,
                         actual,
                         modules=[f"{module}:{sec_name}", scenario],
-                        metrics={**metrics, **scenario_metrics},
+                        metrics={**metrics, **scenario_metrics, **flags},
                     )
                 if updates:
                     _update_coverage(module, scenario)
@@ -5297,6 +5325,7 @@ def run_repo_section_simulations(
                         specific = _scenario_specific_metrics(scenario, metrics)
                         if specific:
                             metrics.update(specific)
+                        flags = _check_thresholds(scenario, metrics)
                         scenario_metrics = {
                             f"{k}:{scenario}": v for k, v in metrics.items()
                         }
@@ -5306,7 +5335,7 @@ def run_repo_section_simulations(
                             prev,
                             actual,
                             modules=all_modules + [scenario],
-                            metrics={**metrics, **scenario_metrics},
+                            metrics={**metrics, **scenario_metrics, **flags},
                         )
                     if updates:
                         roi_sum = sum(float(r) for r in synergy_data[scenario]["roi"])
