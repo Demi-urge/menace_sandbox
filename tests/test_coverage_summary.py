@@ -1,3 +1,4 @@
+import json
 import types
 import sys
 import logging
@@ -137,3 +138,29 @@ def test_coverage_summary_flags_missing(monkeypatch, tmp_path, caplog):
     assert tracker.coverage_summary[mod]["only"] is True
     assert tracker.coverage_summary[mod]["hostile_input"] is False
     assert any("missing scenarios" in r.message for r in caplog.records)
+
+
+def test_save_coverage_data_writes_summary(tmp_path, monkeypatch):
+    _stub_module(monkeypatch, "menace.environment_generator", CANONICAL_PROFILES=["one", "two"])
+
+    from sandbox_runner.environment import (
+        COVERAGE_TRACKER,
+        _update_coverage,
+        save_coverage_data,
+    )
+
+    monkeypatch.setenv("SANDBOX_COVERAGE_FILE", str(tmp_path / "coverage.json"))
+    monkeypatch.setenv(
+        "SANDBOX_COVERAGE_SUMMARY", str(tmp_path / "coverage_summary.json")
+    )
+
+    COVERAGE_TRACKER.clear()
+    _update_coverage("mod1", "one")
+
+    save_coverage_data()
+
+    cov_data = json.loads((tmp_path / "coverage.json").read_text())
+    summary_data = json.loads((tmp_path / "coverage_summary.json").read_text())
+    assert cov_data == {"mod1": {"one": 1}}
+    assert summary_data["mod1"]["counts"]["one"] == 1
+    assert "two" in summary_data["mod1"]["missing"]
