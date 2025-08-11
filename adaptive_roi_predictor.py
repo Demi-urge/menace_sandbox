@@ -6,8 +6,9 @@ This module trains a simple regression model on the aggregated ROI dataset
 returned by :func:`adaptive_roi_dataset.build_dataset`.  Given a sequence of
 improvement feature vectors it forecasts ROI over the provided horizon and
 classifies the projected curve as ``"exponential"``, ``"linear"`` or
-``"marginal"``.  Trained model parameters are stored on disk to allow
-incremental retraining when new data becomes available.
+``"marginal"`` using slope and curvature thresholds.  Trained model
+parameters are stored on disk to allow incremental retraining when new data
+becomes available.
 """
 
 from pathlib import Path
@@ -27,9 +28,14 @@ except Exception:  # pragma: no cover - sklearn missing
     GradientBoostingRegressor = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from sklearn.linear_model import LinearRegression  # type: ignore
+    from sklearn.linear_model import LinearRegression, SGDRegressor  # type: ignore
+    from sklearn.preprocessing import PolynomialFeatures  # type: ignore
+    from sklearn.pipeline import make_pipeline  # type: ignore
 except Exception:  # pragma: no cover - sklearn missing
     LinearRegression = None  # type: ignore
+    SGDRegressor = None  # type: ignore
+    PolynomialFeatures = None  # type: ignore
+    make_pipeline = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     import joblib  # type: ignore
@@ -55,11 +61,12 @@ class AdaptiveROIPredictor:
     """Train a lightweight model to forecast ROI and growth patterns.
 
     The model is trained on the dataset produced by :func:`build_dataset` and
-    persisted to ``model_path`` so that future instances can reuse the learned
-    parameters without retraining from scratch.
+    persisted to ``model_path`` (default ``sandbox_data/adaptive_roi.pkl``) so
+    that future instances can reuse the learned parameters without retraining
+    from scratch.
     """
 
-    def __init__(self, model_path: str | Path = "adaptive_roi_model.pkl") -> None:
+    def __init__(self, model_path: str | Path = "sandbox_data/adaptive_roi.pkl") -> None:
         self.model_path = Path(model_path)
         self._model = None
         self._load()
@@ -87,6 +94,7 @@ class AdaptiveROIPredictor:
         if self._model is None:
             return
         try:  # pragma: no cover - disk issues
+            self.model_path.parent.mkdir(parents=True, exist_ok=True)
             if joblib is not None:
                 joblib.dump(self._model, self.model_path)
             else:
@@ -116,6 +124,11 @@ class AdaptiveROIPredictor:
             return
         if GradientBoostingRegressor is not None:
             model = GradientBoostingRegressor(random_state=0)
+        elif SGDRegressor is not None and PolynomialFeatures is not None and make_pipeline is not None:
+            model = make_pipeline(
+                PolynomialFeatures(degree=2),
+                SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0),
+            )
         elif LinearRegression is not None:
             model = LinearRegression()
         else:  # pragma: no cover - extremely minimal environment
@@ -149,28 +162,17 @@ class AdaptiveROIPredictor:
     def _classify_growth(self, preds: np.ndarray) -> str:
         """Classify growth pattern of ``preds`` as exponential, linear or marginal."""
 
-        if preds.size == 0:
+        if preds.size < 2:
             return "marginal"
-        times = np.arange(len(preds), dtype=float)
+        first_diff = np.diff(preds)
+        slope = float(first_diff.mean())
+        curvature = float(np.diff(first_diff).mean()) if len(first_diff) > 1 else 0.0
 
-        # linear fit
-        lin_coef = np.polyfit(times, preds, 1)
-        lin_pred = np.polyval(lin_coef, times)
-        lin_err = float(np.mean((preds - lin_pred) ** 2))
-
-        # exponential fit (via log transform)
-        offset = 1 - preds.min() if np.any(preds <= 0) else 0.0
-        log_vals = np.log(preds + offset)
-        exp_coef = np.polyfit(times, log_vals, 1)
-        exp_pred = np.exp(np.polyval(exp_coef, times)) - offset
-        exp_err = float(np.mean((preds - exp_pred) ** 2))
-
-        slope = lin_coef[0]
-        if exp_err < lin_err * 0.8 and slope > 0:
+        if slope > 0.05 and curvature > 0.01:
             return "exponential"
-        if abs(slope) < 0.01:
-            return "marginal"
-        return "linear"
+        if abs(slope) > 0.05:
+            return "linear"
+        return "marginal"
 
     # ------------------------------------------------------------------
     # public API
