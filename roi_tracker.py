@@ -108,6 +108,7 @@ class ROITracker:
             "synergy_security_score": [],
             "synergy_reliability": [],
             "roi_reliability": [],
+            "long_term_roi_reliability": [],
         }
         self.synergy_metrics_history: Dict[str, List[float]] = {
             "synergy_adaptability": [],
@@ -327,10 +328,22 @@ class ROITracker:
         self.actual_roi.append(float(actual))
         try:
             from . import metrics_exporter as _me
-
+            for g in (
+                _me.prediction_error,
+                _me.prediction_mae,
+                _me.prediction_reliability,
+            ):
+                for attr in ("_metrics", "_values"):
+                    try:
+                        getattr(g, attr).clear()
+                    except Exception:
+                        continue
             err = abs(float(predicted) - float(actual))
             _me.prediction_error.labels(metric="roi").set(err)
             _me.prediction_mae.labels(metric="roi").set(self.rolling_mae())
+            _me.prediction_reliability.labels(metric="roi").set(
+                self.reliability()
+            )
         except Exception:
             pass
 
@@ -343,14 +356,40 @@ class ROITracker:
         self.actual_metrics.setdefault(name, []).append(float(actual))
         try:
             from . import metrics_exporter as _me
-
+            for g in (
+                _me.prediction_error,
+                _me.prediction_mae,
+                _me.prediction_reliability,
+            ):
+                for attr in ("_metrics", "_values"):
+                    try:
+                        getattr(g, attr).clear()
+                    except Exception:
+                        continue
             err = abs(float(predicted) - float(actual))
             _me.prediction_error.labels(metric=name).set(err)
             _me.prediction_mae.labels(metric=name).set(
                 self.rolling_mae_metric(name)
             )
+            _me.prediction_reliability.labels(metric=name).set(
+                self.reliability(metric=name)
+            )
         except Exception:
             pass
+
+    @property
+    def predicted_long_term_roi(self) -> List[float]:
+        """Recorded long-term ROI predictions."""
+        return self.predicted_metrics.get("long_term_roi", [])
+
+    @property
+    def actual_long_term_roi(self) -> List[float]:
+        """Recorded long-term ROI outcomes."""
+        return self.actual_metrics.get("long_term_roi", [])
+
+    def record_long_term_roi(self, predicted: float, actual: float) -> None:
+        """Store predicted and actual long-term ROI values."""
+        self.record_metric_prediction("long_term_roi", predicted, actual)
 
     # ------------------------------------------------------------------
     def rolling_mae(self, window: int | None = None) -> float:
@@ -391,6 +430,19 @@ class ROITracker:
         """
 
         return self.rolling_mae_metric("synergy_roi", window)
+
+    # ------------------------------------------------------------------
+    def rolling_mae_long_term_roi(
+        self, window: int | None = None
+    ) -> float:
+        """Return MAE for long-term ROI predictions."""
+        return self.rolling_mae_metric("long_term_roi", window)
+
+    def long_term_roi_reliability(
+        self, window: int | None = None, cv: int | None = None
+    ) -> float:
+        """Return reliability score for long-term ROI predictions."""
+        return self.reliability(metric="long_term_roi", window=window, cv=cv)
 
     # ------------------------------------------------------------------
     def reliability(
@@ -500,6 +552,9 @@ class ROITracker:
             "synergy_roi_reliability", self.reliability(metric="synergy_roi")
         )
         metrics.setdefault("synergy_reliability", self.synergy_reliability())
+        metrics.setdefault(
+            "long_term_roi_reliability", self.long_term_roi_reliability()
+        )
 
         delta = roi_after - roi_before
         filtered = self._filter_value(delta)
@@ -581,13 +636,13 @@ class ROITracker:
             if abs(avg) < self.tolerance:
                 stop = True
         # predicted gain-based termination when recent categories are marginal
-        predicted_gain, _ = self.forecast()
         if (
             len(self.category_history) >= self.window
             and all(c == "marginal" for c in self.category_history[-self.window:])
-            and abs(predicted_gain) < self.tolerance
         ):
-            stop = True
+            predicted_gain, _ = self.forecast()
+            if abs(predicted_gain) < self.tolerance:
+                stop = True
         return vertex, preds, stop
 
     # ------------------------------------------------------------------
@@ -863,7 +918,7 @@ class ROITracker:
         for name, history in list(self.metrics_history.items()):
             if name.startswith("synergy_"):
                 continue
-            if name in ("roi_reliability",):
+            if name in ("roi_reliability", "long_term_roi_reliability"):
                 continue
             if not history and name not in self.predicted_metrics:
                 continue
