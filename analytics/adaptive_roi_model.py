@@ -11,7 +11,7 @@ forecast and a qualitative growth label:
 """
 
 from pathlib import Path
-from typing import Tuple
+from typing import Sequence, Tuple
 
 import joblib
 import pandas as pd
@@ -54,12 +54,50 @@ def load(model_path: Path | str = MODEL_PATH) -> GradientBoostingRegressor:
     return joblib.load(model_path)
 
 
-def classify_growth(roi: float) -> str:
-    """Map a numerical ROI value to a qualitative growth label."""
+def classify_growth(pred_series: Sequence[float]) -> str:
+    """Classify growth trend for a sequence of ROI predictions.
 
-    if roi > 0.75:
+    The classification is based on the average ratio of consecutive
+    predictions.  Ratios above ``1.5`` indicate ``"exponential"`` growth
+    while ratios above ``1.05`` but below ``1.5`` correspond to
+    ``"linear"`` growth.  Any other pattern is considered ``"marginal"``.
+
+    When ``pred_series`` contains a single value a fallback classification
+    is performed using the raw ROI threshold: values above ``0.75`` are
+    treated as ``"exponential"`` and positive values as ``"linear"``.
+    """
+
+    if not pred_series:
+        return "marginal"
+
+    if len(pred_series) == 1:
+        roi = pred_series[0]
+        if roi > 0.75:
+            return "exponential"
+        if roi > 0.0:
+            return "linear"
+        return "marginal"
+
+    ratios = []
+    prev = pred_series[0]
+    for curr in pred_series[1:]:
+        if prev != 0:
+            ratios.append(curr / prev)
+        prev = curr
+
+    if not ratios:
+        # All previous values were zero; fall back to last ROI value
+        roi = pred_series[-1]
+        if roi > 0.75:
+            return "exponential"
+        if roi > 0.0:
+            return "linear"
+        return "marginal"
+
+    avg_ratio = sum(ratios) / len(ratios)
+    if avg_ratio >= 1.5:
         return "exponential"
-    if roi > 0.0:
+    if avg_ratio >= 1.05:
         return "linear"
     return "marginal"
 
@@ -76,7 +114,7 @@ def forecast(
         columns=["performance_delta", "gpt_score"],
     )
     roi = float(model.predict(df)[0])
-    return roi, classify_growth(roi)
+    return roi, classify_growth([roi])
 
 
 __all__ = [
