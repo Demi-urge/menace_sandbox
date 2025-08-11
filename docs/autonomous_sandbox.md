@@ -37,6 +37,9 @@ high_latency = presets["high_latency_api"]["high"]
 run_repo_section_simulations(repo_path, env_presets=presets)
 ```
 
+Set `SANDBOX_FAIL_ON_MISSING_SCENARIOS=1` to raise an error if any canonical
+scenario lacks coverage.
+
 Generate presets for specific scenarios and supply them to the sandbox:
 
 ```bash

@@ -119,6 +119,9 @@
   SANDBOX_TEST_REDUNDANT=0 python run_autonomous.py --discover-orphans
   ```
 
+  Set `SANDBOX_FAIL_ON_MISSING_SCENARIOS=1` to raise an error when canonical
+  scenarios are missing from coverage.
+
   ### Step-by-step: recursive inclusion run
 
   ```bash
