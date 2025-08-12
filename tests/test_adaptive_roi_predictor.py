@@ -86,6 +86,12 @@ def test_classifier_training_and_prediction(monkeypatch):
     roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
     assert roi == pytest.approx(5.0, abs=1e-3)
     assert growth == "exponential"
+    assert (
+        predictor.predict_growth_type(
+            [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+        )
+        == "exponential"
+    )
 
 
 def test_cross_validation_persistence(tmp_path, monkeypatch):
@@ -161,4 +167,37 @@ def test_tracker_integration(monkeypatch):
     assert tracker.predicted_classes == ["linear"]
     assert len(tracker.actual_classes) == 1
     assert called  # evaluate_model invoked
+
+
+def test_build_dataset_missing_database(tmp_path: Path) -> None:
+    """build_dataset raises when required tables are absent."""
+
+    evo_path = tmp_path / "evolution_history.db"
+    eval_path = tmp_path / "evaluation_history.db"
+    EvolutionHistoryDB(evo_path)
+    EvaluationHistoryDB(eval_path)
+    roi_path = tmp_path / "roi.db"  # no tables created
+
+    with pytest.raises(sqlite3.OperationalError):
+        build_dataset(evo_path, roi_path, eval_path)
+
+
+def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
+    """Corrupted model files are ignored and retraining proceeds."""
+
+    model_path = tmp_path / "adaptive_roi.pkl"
+    model_path.write_text("not a pickle")
+
+    X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    g = np.array(["marginal", "linear", "linear", "linear"], dtype=object)
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y, g)
+    )
+
+    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
+    assert predictor._model is not None
+    roi, growth = predictor.predict([[1.0], [2.0], [3.0]])
+    assert roi == pytest.approx(3.0, abs=1e-3)
+    assert growth in {"marginal", "linear", "exponential"}
 
