@@ -628,13 +628,63 @@ class ROITracker:
         return {"predicted": dict(Counter(preds)), "actual": dict(Counter(acts))}
 
     # ------------------------------------------------------------------
+    def confusion_matrix(self, window: int | None = None) -> Dict[str, Dict[str, int]]:
+        """Return confusion matrix for predicted vs actual ROI classes."""
+
+        preds = self.predicted_classes[-window:] if window else self.predicted_classes
+        acts = self.actual_classes[-len(preds) :]
+        matrix: Dict[str, Dict[str, int]] = {}
+        for a, p in zip(acts, preds):
+            matrix.setdefault(a, {}).setdefault(p, 0)
+            matrix[a][p] += 1
+        return matrix
+
+    # ------------------------------------------------------------------
+    def rolling_accuracy_trend(self, window: int | None = None) -> List[float]:
+        """Return rolling accuracy trend over history or ``window`` samples."""
+
+        preds = self.predicted_classes
+        acts = self.actual_classes
+        if not preds or not acts:
+            return []
+        w = window or len(preds)
+        trend: List[float] = []
+        for i in range(1, len(preds) + 1):
+            start = max(0, i - w)
+            pc = preds[start:i]
+            ac = acts[start:i]
+            trend.append(float((np.asarray(pc) == np.asarray(ac)).mean()) if ac else 0.0)
+        return trend[-w:]
+
+    # ------------------------------------------------------------------
+    def rolling_mae_trend(self, window: int | None = None) -> List[float]:
+        """Return rolling MAE trend for ROI predictions."""
+
+        preds = self.predicted_roi
+        acts = self.actual_roi
+        if not preds:
+            return []
+        w = window or len(preds)
+        trend: List[float] = []
+        for i in range(1, len(preds) + 1):
+            start = max(0, i - w)
+            p_slice = preds[start:i]
+            a_slice = acts[start:i]
+            arr = np.abs(np.array(p_slice) - np.array(a_slice))
+            trend.append(float(arr.mean()) if arr.size else 0.0)
+        return trend[-w:]
+
+    # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
-        """Return rolling MAE, accuracy and class distribution for ``window``."""
+        """Return rolling error metrics and class stats for ``window``."""
 
         return {
             "mae": self.rolling_mae(window),
             "accuracy": self.classification_accuracy(window),
             "class_counts": self.class_counts(window),
+            "confusion_matrix": self.confusion_matrix(window),
+            "mae_trend": self.rolling_mae_trend(window),
+            "accuracy_trend": self.rolling_accuracy_trend(window),
         }
 
     # ------------------------------------------------------------------

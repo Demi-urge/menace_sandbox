@@ -41,10 +41,10 @@ hard guarantees.
 
 ### Monitoring prediction accuracy
 
-`EvaluationDashboard` can surface the accuracy and class distribution of
+`EvaluationDashboard` can surface detailed health metrics for
 `ROITracker` predictions. After populating a tracker with predictions and
-outcomes, query the panel to obtain rolling mean absolute error and class
-counts:
+outcomes, query the panel to obtain rolling mean absolute error,
+accuracy, class counts, a confusion matrix and rolling error trends:
 
 ```python
 from menace.evaluation_dashboard import EvaluationDashboard
@@ -54,14 +54,19 @@ tracker = ROITracker()
 # ... run cycles that record predictions ...
 dashboard = EvaluationDashboard(manager)
 stats = dashboard.roi_prediction_panel(tracker)
-print("MAE", stats["mae"], "accuracy", stats["accuracy"]) 
+print(
+    "MAE", stats["mae"],
+    "accuracy", stats["accuracy"],
+    "recent MAE", stats["mae_trend"][-1],
+)
 ```
 
-The returned `class_counts` mapping is convenient for quick visualisations:
+The returned mappings are convenient for quick visualisations:
 
 ```python
 import pandas as pd
 pd.Series(stats["class_counts"]["actual"]).plot.bar()
+pd.DataFrame(stats["confusion_matrix"]).plot.bar()
 ```
 
 ## Scenario Types

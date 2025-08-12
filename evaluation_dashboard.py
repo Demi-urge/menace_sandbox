@@ -96,7 +96,7 @@ class EvaluationDashboard:
     def roi_prediction_panel(
         self, tracker: ROITracker, window: int | None = None
     ) -> Dict[str, Any]:
-        """Return ``ROITracker`` prediction stats for dashboard display."""
+        """Return ROI prediction stats including trend and confusion metrics."""
 
         return tracker.prediction_summary(window)
 

@@ -116,4 +116,9 @@ def test_roi_prediction_panel():
     assert panel["mae"] == pytest.approx(0.15)
     assert panel["accuracy"] == pytest.approx(0.5)
     assert panel["class_counts"]["predicted"]["up"] == 1
+    assert panel["confusion_matrix"]["up"]["down"] == 1
+    assert panel["mae_trend"][0] == pytest.approx(0.2)
+    assert panel["mae_trend"][1] == pytest.approx(0.15)
+    assert panel["accuracy_trend"][0] == pytest.approx(1.0)
+    assert panel["accuracy_trend"][1] == pytest.approx(0.5)
 
