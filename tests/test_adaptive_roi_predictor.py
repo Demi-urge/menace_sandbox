@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from menace_sandbox.adaptive_roi_dataset import build_dataset
-from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor
+from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from menace_sandbox.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from menace_sandbox.evolution_history_db import EvolutionHistoryDB
 from menace_sandbox.roi_tracker import ROITracker
@@ -105,12 +105,13 @@ def test_classifier_training_and_prediction(monkeypatch):
     if predictor._classifier is None:
         pytest.skip("classifier not available")
 
-    roi_seq, growth, conf = predictor.predict(
+    roi_seq, growth, conf, cls_conf = predictor.predict(
         [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], horizon=6
     )
     assert roi_seq[-1][0] == pytest.approx(5.0, abs=1e-3)
     assert roi_seq[-1][1] == pytest.approx(10.0, abs=1e-3)
     assert growth == "exponential"
+    assert isinstance(cls_conf, float) or cls_conf is None
     assert len(conf) == len(roi_seq)
     assert len(conf[0]) == len(roi_seq[0])
     assert (
@@ -199,17 +200,18 @@ def test_evaluate_model_retrains(monkeypatch, tmp_path):
             actual_roi REAL,
             predicted_class TEXT,
             actual_class TEXT,
+            confidence REAL,
             ts DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.execute(
-        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
-        (0.0, 1.0, "linear", "exponential"),
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential", 0.5),
     )
     conn.execute(
-        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
-        (0.0, 1.0, "linear", "exponential"),
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential", 0.4),
     )
     conn.commit()
     conn.close()
@@ -250,19 +252,20 @@ def test_evaluate_model_drift_retrains(monkeypatch, tmp_path):
             actual_roi REAL,
             predicted_class TEXT,
             actual_class TEXT,
+            confidence REAL,
             ts DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     for _ in range(5):
         conn.execute(
-            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
-            (0.0, 0.0, "linear", "linear"),
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+            (0.0, 0.0, "linear", "linear", 0.1),
         )
     for _ in range(5):
         conn.execute(
-            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
-            (0.0, 1.0, "linear", "linear"),
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+            (0.0, 1.0, "linear", "linear", 0.9),
         )
     conn.commit()
     conn.close()
@@ -360,8 +363,38 @@ def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
 
     predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
     assert predictor._model is not None
-    roi_seq, growth, conf = predictor.predict([[1.0], [2.0], [3.0]], horizon=3)
+    roi_seq, growth, conf, _ = predictor.predict([[1.0], [2.0], [3.0]], horizon=3)
     assert roi_seq[-1][0] == pytest.approx(3.0, abs=1e-3)
     assert growth in {"marginal", "linear", "exponential"}
     assert len(conf) == len(roi_seq)
+
+
+def test_prediction_confidence_persisted_and_loaded(tmp_path, monkeypatch):
+    tracker = ROITracker()
+    tracker.roi_history = [0.1]
+    monkeypatch.chdir(tmp_path)
+    tracker.record_prediction(
+        0.2,
+        0.3,
+        predicted_class="linear",
+        actual_class="linear",
+        confidence=0.77,
+    )
+    df = load_training_data(
+        tracker,
+        evolution_path=tmp_path / "evo.db",
+        evaluation_path=tmp_path / "eval.db",
+        roi_events_path=tmp_path / "roi_events.db",
+        output_path=tmp_path / "out.csv",
+    )
+    conn = sqlite3.connect(tmp_path / "roi_events.db")
+    row = conn.execute(
+        "SELECT predicted_roi, predicted_class, confidence FROM roi_prediction_events"
+    ).fetchone()
+    conn.close()
+    assert row[0] == pytest.approx(0.2)
+    assert row[1] == "linear"
+    assert row[2] == pytest.approx(0.77)
+    assert "prediction_confidence" in df.columns
+    assert df["prediction_confidence"].iloc[0] == pytest.approx(0.0)
 

@@ -96,7 +96,7 @@ class DummyTracker:
     def record_metric_prediction(self, name, predicted, actual):
         pass
 
-    def record_prediction(self, predicted, actual):
+    def record_prediction(self, predicted, actual, *a, **k):
         pass
 
     def predict_all_metrics(self, manager, features):

@@ -102,7 +102,7 @@ class DummyTracker:
     def diminishing(self):
         return 0.0
 
-    def record_prediction(self, predicted, actual):
+    def record_prediction(self, predicted, actual, *a, **k):
         pass
 
     def record_metric_prediction(self, metric, predicted, actual):
@@ -1762,7 +1762,7 @@ class _SynergyTracker:
         for name in names:
             self.metrics_history.setdefault(str(name), [0.0] * len(self.roi_history))
 
-    def record_prediction(self, predicted, actual):
+    def record_prediction(self, predicted, actual, *a, **k):
         pass
 
     def record_metric_prediction(self, metric, predicted, actual):

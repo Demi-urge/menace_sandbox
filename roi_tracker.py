@@ -345,23 +345,30 @@ class ROITracker:
         return delta
 
     # ------------------------------------------------------------------
-    def record_prediction(self, predicted: float, actual: float) -> None:
-        """Store ``predicted``/``actual`` ROI values and log prediction stats."""
+    def record_prediction(
+        self,
+        predicted: float,
+        actual: float,
+        predicted_class: str | None = None,
+        actual_class: str | None = None,
+        confidence: float | None = None,
+    ) -> None:
+        """Store prediction details and log prediction stats."""
 
         self.predicted_roi.append(float(predicted))
         self.actual_roi.append(float(actual))
 
-        predicted_class = self._next_category
-        actual_class: str | None = None
-        if self._adaptive_predictor is not None:
+        if predicted_class is None:
+            predicted_class = self._next_category
+        if actual_class is None and self._adaptive_predictor is not None:
             try:
                 feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
                 try:
-                    _, actual_class, _ = self._adaptive_predictor.predict(
+                    _, actual_class, _, _ = self._adaptive_predictor.predict(
                         feats, horizon=len(feats)
                     )
                 except TypeError:
-                    _, actual_class, _ = self._adaptive_predictor.predict(feats)
+                    _, actual_class, _, _ = self._adaptive_predictor.predict(feats)
             except Exception:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
@@ -375,6 +382,7 @@ class ROITracker:
                 actual=float(actual),
                 predicted_class=predicted_class,
                 actual_class=actual_class,
+                confidence=confidence,
             ),
         )
         try:
@@ -398,7 +406,9 @@ class ROITracker:
         except Exception:
             pass
 
-        self.record_roi_prediction(predicted, actual, predicted_class, actual_class)
+        self.record_roi_prediction(
+            predicted, actual, predicted_class, actual_class, confidence
+        )
 
     def record_roi_prediction(
         self,
@@ -406,6 +416,7 @@ class ROITracker:
         actual: float,
         predicted_class: str | None = None,
         actual_class: str | None = None,
+        confidence: float | None = None,
     ) -> None:
         """Persist an ROI prediction event to ``roi_events.db``."""
         try:
@@ -418,13 +429,20 @@ class ROITracker:
                         actual_roi REAL,
                         predicted_class TEXT,
                         actual_class TEXT,
+                        confidence REAL,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
-                    """
+                """
                 )
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
-                    (float(predicted), float(actual), predicted_class, actual_class),
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+                    (
+                        float(predicted),
+                        float(actual),
+                        predicted_class,
+                        actual_class,
+                        None if confidence is None else float(confidence),
+                    ),
                 )
         except Exception:
             logger.exception("failed to log roi prediction event")
@@ -748,7 +766,12 @@ class ROITracker:
         """
         predicted_class = self._next_category
         if self._next_prediction is not None:
-            self.record_prediction(self._next_prediction, roi_after)
+            self.record_prediction(
+                self._next_prediction,
+                roi_after,
+                predicted_class=predicted_class,
+                confidence=confidence,
+            )
         self._next_prediction = None
         self._next_category = None
         if metrics is None:
@@ -876,9 +899,9 @@ class ROITracker:
             try:
                 feats = [[float(x)] for x in self.roi_history] or [[0.0]]
                 try:
-                    _, cls, _ = self._adaptive_predictor.predict(feats, horizon=len(feats))
+                    _, cls, _, _ = self._adaptive_predictor.predict(feats, horizon=len(feats))
                 except TypeError:
-                    _, cls, _ = self._adaptive_predictor.predict(feats)
+                    _, cls, _, _ = self._adaptive_predictor.predict(feats)
                 self._next_category = cls
             except Exception:
                 self._next_category = None

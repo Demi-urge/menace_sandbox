@@ -464,8 +464,8 @@ class AdaptiveROIPredictor:
         self,
         improvement_features: Sequence[Sequence[float]],
         horizon: int | None = None,
-    ) -> tuple[list[list[float]], str, list[list[float]]]:
-        """Return ROI forecast sequences, growth category and confidence.
+    ) -> tuple[list[list[float]], str, list[list[float]], float | None]:
+        """Return ROI forecast sequences, growth classification and confidence.
 
         Parameters
         ----------
@@ -479,28 +479,41 @@ class AdaptiveROIPredictor:
 
         Returns
         -------
-        list, str, list
-            The predicted ROI values for each step (possibly multiple horizons
-            per step), the growth classification from the final step and
-            per-step confidence values in the range ``[0, 1]`` with the same
-            shape as the predictions.
+        list, str, list, float
+        The predicted ROI values for each step (possibly multiple horizons per
+        step), the growth classification from the final step, per-step
+        confidence values in the range ``[0, 1]`` with the same shape as the
+        predictions, and the classifier probability for the growth label when
+        available.
         """
 
         feats = np.asarray(list(improvement_features), dtype=float)
         h = len(feats) if horizon is None else int(horizon)
         if h <= 0:
-            return [], "marginal", []
+            return [], "marginal", [], None
         feats = feats[:h]
         preds, conf = self._predict_sequence(feats)
         growth: str
+        growth_conf: float | None = None
         if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:
             try:
                 growth = str(self._classifier.predict(feats)[-1])
+                if getattr(self._classifier, "predict_proba", None) is not None:
+                    try:
+                        probs = self._classifier.predict_proba(feats)[-1]
+                        labels = getattr(self._classifier, "classes_", None)
+                        if labels is not None and growth in labels:
+                            idx = list(labels).index(growth)
+                            growth_conf = float(probs[idx])
+                        else:
+                            growth_conf = float(max(probs))
+                    except Exception:  # pragma: no cover - probability failure
+                        growth_conf = None
             except Exception:  # pragma: no cover - classifier prediction failure
                 growth = "marginal"
         else:
             growth = "marginal"
-        return preds.tolist(), growth, conf.tolist()
+        return preds.tolist(), growth, conf.tolist(), growth_conf
 
     # Backwards compatible wrapper
     def predict_growth_type(
@@ -539,7 +552,7 @@ def predict_growth_type(
 
 def predict(
     action_features: Sequence[Sequence[float]], horizon: int | None = None
-) -> tuple[list[list[float]], str, list[list[float]]]:
+) -> tuple[list[list[float]], str, list[list[float]], float | None]:
     """Return ROI forecast sequences, growth category and confidence using a module-level predictor."""
 
     global _predictor
@@ -630,11 +643,11 @@ def load_training_data(
         roi_df = pd.DataFrame(columns=["roi_event_delta"])
     try:
         pred_df = pd.read_sql(
-            "SELECT predicted_roi, actual_roi, predicted_class, actual_class FROM roi_prediction_events ORDER BY ts",
+            "SELECT predicted_roi, actual_roi, predicted_class, actual_class, confidence FROM roi_prediction_events ORDER BY ts",
             roi_conn,
         )
     except Exception:  # pragma: no cover - missing table or DB
-        pred_df = pd.DataFrame(columns=["predicted_roi", "actual_roi", "predicted_class", "actual_class"])
+        pred_df = pd.DataFrame(columns=["predicted_roi", "actual_roi", "predicted_class", "actual_class", "confidence"])
     finally:
         roi_conn.close()
 
@@ -652,6 +665,7 @@ def load_training_data(
     act_classes = pd.Categorical(
         pred_df.get("actual_class", pd.Series(dtype=str))
     ).codes.tolist()
+    conf_vals = pred_df.get("confidence", pd.Series(dtype=float)).astype(float).tolist()
     if len(pred_vals) < n:
         pred_vals.extend([0.0] * (n - len(pred_vals)))
     if len(act_vals) < n:
@@ -660,10 +674,13 @@ def load_training_data(
         pred_classes.extend([0] * (n - len(pred_classes)))
     if len(act_classes) < n:
         act_classes.extend([0] * (n - len(act_classes)))
+    if len(conf_vals) < n:
+        conf_vals.extend([0.0] * (n - len(conf_vals)))
     df["predicted_roi_event"] = pred_vals[:n]
     df["actual_roi_event"] = act_vals[:n]
     df["predicted_class_event"] = pred_classes[:n]
     df["actual_class_event"] = act_classes[:n]
+    df["prediction_confidence"] = conf_vals[:n]
 
     # ROI outcome labels ----------------------------------------------------
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -691,7 +708,9 @@ def load_training_data(
         if series.empty:
             continue
         mean = float(series.mean())
-        std = float(series.std()) or 1.0
+        std = float(series.std())
+        if not np.isfinite(std) or std == 0.0:
+            std = 1.0
         df[col] = (series - mean) / std
 
     out_path = Path(output_path)

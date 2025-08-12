@@ -174,22 +174,16 @@ class ActionPlanner:
             return [], "marginal"
         feats = [list(self.feature_fn(action))]
         try:
-            result = self.roi_predictor.predict(feats, horizon=len(feats))
+            seq, category, _, _ = self.roi_predictor.predict(
+                feats, horizon=len(feats)
+            )
         except TypeError:
-            result = self.roi_predictor.predict(feats)
-        if isinstance(result, tuple):
-            if len(result) == 3:
-                seq_or_val, category, _ = result
-            elif len(result) == 2:
-                seq_or_val, category = result
-            else:
-                seq_or_val, category = result, "marginal"
+            val, category, _, _ = self.roi_predictor.predict(feats)
+            seq = [float(val)]
+        if isinstance(seq, (list, tuple)):
+            seq = [float(x) for x in seq]
         else:
-            seq_or_val, category = result, "marginal"
-        if isinstance(seq_or_val, (list, tuple)):
-            seq = [float(x) for x in seq_or_val]
-        else:
-            seq = [float(seq_or_val)]
+            seq = [float(seq)]
         return seq, category
 
     def _reward(self, action: str, rec: PathwayRecord) -> float:

@@ -148,7 +148,7 @@ class _ROITracker:
     def diminishing(self):
         return 0.0
 
-    def record_prediction(self, predicted, actual):
+    def record_prediction(self, predicted, actual, *a, **k):
         pass
 
     def record_metric_prediction(self, metric, predicted, actual):
