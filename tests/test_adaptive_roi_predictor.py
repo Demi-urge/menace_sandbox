@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+import json
 
 import numpy as np
 import pytest
@@ -112,6 +113,47 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
     assert predictor.best_score is not None
     meta_path = model_path.with_suffix(".meta.json")
     assert meta_path.exists()
+
+
+def test_selected_features_saved(tmp_path, monkeypatch):
+    X = np.array([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]], dtype=float)
+    y = np.array([0.0, 1.0], dtype=float)
+    g = np.array(["linear", "linear"], dtype=object)
+    names = ["a", "b", "c"]
+
+    def fake_build_dataset(*_args, **_kwargs):
+        return X, y, g, names
+
+    class DummyModel:
+        def fit(self, X, y):
+            self.feature_importances_ = np.array([0.1, 0.6, 0.3])
+            return self
+
+        def predict(self, X):  # pragma: no cover - trivial
+            return np.zeros(len(X))
+
+        def get_params(self):  # pragma: no cover - trivial
+            return {}
+
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build_dataset
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.GradientBoostingRegressor",
+        DummyModel,
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.SGDRegressor", None
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.LinearRegression", None
+    )
+
+    model_path = tmp_path / "model.pkl"
+    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
+    meta_path = model_path.with_suffix(".meta.json")
+    data = json.loads(meta_path.read_text())
+    assert data["selected_features"][:3] == ["b", "c", "a"]
 
 
 def test_evaluate_model_retrains(monkeypatch, tmp_path):

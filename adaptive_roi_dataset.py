@@ -238,7 +238,10 @@ def build_dataset(
     evaluation_path: str | Path = "evaluation_history.db",
     roi_events_path: str | Path = "roi_events.db",
     horizon: int = 1,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    *,
+    selected_features: Sequence[str] | None = None,
+    return_feature_names: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
     Parameters
@@ -281,7 +284,9 @@ def build_dataset(
         actual_class_event]`` and
         ``targets`` is an array of ROI outcomes ``roi_{t+1} … roi_{t+h}`` for
         each cycle and ``growth_types`` is a vector labelling the ROI curve of
-        each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
+        each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.  When
+        ``return_feature_names`` is true a fourth element containing the feature
+        names is included.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -297,6 +302,23 @@ def build_dataset(
     resource_cols = ["cpu", "memory", "disk", "time", "gpu"]
     metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
+    feature_names: list[str] = [
+        "before_metric",
+        "after_metric",
+        "api_cost_delta",
+        "cpu_seconds_delta",
+        "success_rate_delta",
+        "gpt_score",
+    ]
+    feature_names.extend(metric_names)
+    feature_names.extend(
+        [
+            "predicted_roi_event",
+            "actual_roi_event",
+            "predicted_class_event",
+            "actual_class_event",
+        ]
+    )
 
     # load persisted prediction events --------------------------------------
     try:
@@ -412,6 +434,13 @@ def build_dataset(
     if horizon == 1:
         y = y.reshape(-1)
     g = np.asarray(growth_types, dtype=object)
+    if selected_features:
+        idx = [i for i, name in enumerate(feature_names) if name in selected_features]
+        if idx:
+            X = X[:, idx]
+            feature_names = [feature_names[i] for i in idx]
+        else:
+            feature_names = []
 
     # normalise all feature columns
     if X.size:
@@ -423,4 +452,6 @@ def build_dataset(
                 std = 1.0
             X[:, i] = (col - mean) / std
 
+    if return_feature_names:
+        return X, y, g, feature_names
     return X, y, g
