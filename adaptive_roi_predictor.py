@@ -58,6 +58,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - joblib missing
     joblib = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from statsmodels.tsa.arima.model import ARIMA  # type: ignore
+except Exception:  # pragma: no cover - statsmodels missing
+    ARIMA = None  # type: ignore
+
 import pickle
 
 from .adaptive_roi_dataset import build_dataset, _label_growth
@@ -72,6 +77,40 @@ __all__ = [
     "load_training_data",
 ]
 
+
+class ARIMARegressor:
+    """Minimal wrapper around :class:`statsmodels` ARIMA for scikit API."""
+
+    def __init__(self, order: tuple[int, int, int] = (1, 0, 0)) -> None:
+        self.order = order
+        self._model = None
+        self._dim = 1
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "ARIMARegressor":  # pragma: no cover - thin wrapper
+        if ARIMA is None:
+            raise RuntimeError("statsmodels is required for ARIMARegressor")
+        arr = np.asarray(y, dtype=float)
+        if arr.ndim > 1:
+            self._dim = arr.shape[1]
+            arr = arr[:, 0]
+        else:
+            self._dim = 1
+        self._model = ARIMA(arr, order=self.order).fit()
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:  # pragma: no cover - thin wrapper
+        if self._model is None:
+            raise RuntimeError("model has not been fitted")
+        steps = len(X)
+        preds = np.asarray(self._model.forecast(steps=steps))
+        if self._dim > 1:
+            preds = np.tile(preds.reshape(-1, 1), (1, self._dim))
+        else:
+            preds = preds.reshape(-1, 1)
+        return preds
+
+    def get_params(self) -> Dict[str, Any]:  # pragma: no cover - thin wrapper
+        return {"order": self.order}
 
 class AdaptiveROIPredictor:
     """Train a lightweight model to forecast ROI and growth patterns.
@@ -92,6 +131,7 @@ class AdaptiveROIPredictor:
     ) -> None:
         self.model_path = Path(model_path)
         self.cv = cv
+        param_grid_provided = param_grid is not None
         default_grid = {
             "GradientBoostingRegressor": {
                 "n_estimators": [50, 100],
@@ -101,8 +141,12 @@ class AdaptiveROIPredictor:
                 "sgdregressor__alpha": [0.0001, 0.001],
                 "sgdregressor__penalty": ["l2", "l1"],
             },
+            "ARIMARegressor": {
+                "order": [(1, 0, 0), (2, 1, 0)]
+            },
         }
         self.param_grid: Dict[str, Dict[str, Any]] = param_grid or default_grid
+        self._param_grid_provided = param_grid_provided
         self._model = None
         self._classifier = None
         self.best_params: Dict[str, Any] | None = None
@@ -119,7 +163,7 @@ class AdaptiveROIPredictor:
             self.slope_threshold = slope_threshold
         if curvature_threshold is not None:
             self.curvature_threshold = curvature_threshold
-        if self._model is None:
+        if self._model is None or self._param_grid_provided:
             self.train(cv=self.cv, param_grid=self.param_grid)
 
     # ------------------------------------------------------------------
@@ -437,6 +481,12 @@ class AdaptiveROIPredictor:
             if multi_output and MultiOutputRegressor is not None:
                 model = MultiOutputRegressor(model)
             candidates.append(("LinearRegression", model))
+        if ARIMA is not None:
+            params = {}
+            if self.best_params and self.best_params.get("model") == "ARIMARegressor":
+                params = {k: v for k, v in self.best_params.items() if k != "model"}
+            model = ARIMARegressor(**params)
+            candidates.append(("ARIMARegressor", model))
 
         best_model = None
         best_score = float("inf")
@@ -448,7 +498,21 @@ class AdaptiveROIPredictor:
             score = float("inf")
             params: Dict[str, Any] = {"model": name}
 
-            if GridSearchCV is not None and grid and len(X) >= max(cv, 2):
+            if name == "ARIMARegressor":
+                order_grid = grid.get("order", [(1, 0, 0)]) if isinstance(grid, dict) else [(1, 0, 0)]
+                for order in order_grid:
+                    try:
+                        m = ARIMARegressor(order=order)
+                        m.fit(X, y)
+                        preds = m.predict(X)
+                        sc = float(np.mean(np.abs(preds - y)))
+                        if sc < score:
+                            score = sc
+                            model = m
+                            params.update({"order": order})
+                    except Exception:  # pragma: no cover - arima failure
+                        continue
+            elif GridSearchCV is not None and grid and len(X) >= max(cv, 2):
                 try:
                     gs = GridSearchCV(
                         model,
@@ -644,17 +708,42 @@ class AdaptiveROIPredictor:
         return self.predict(action_features, horizon=horizon)[1]
 
     # ------------------------------------------------------------------
-    def evaluate_model(self, tracker: ROITracker, **kwargs) -> tuple[float, float]:
-        """Delegate evaluation to :class:`ROITracker`.
+    def evaluate_model(
+        self,
+        tracker: ROITracker,
+        *,
+        accuracy_threshold: float = 0.6,
+        mae_threshold: float = 0.1,
+        retrain: bool = True,
+        **kwargs,
+    ) -> tuple[float, float]:
+        """Evaluate prediction accuracy and handle drift.
 
-        ``ROITracker.evaluate_model`` now records mean absolute error for each
-        forecast horizon and flags compounding errors.  This wrapper maintains
-        backwards compatibility for older code invoking the method on the
-        predictor and simply forwards the result tuple of accuracy and MAE for
-        the first horizon.
+        Parameters
+        ----------
+        tracker:
+            ROITracker instance providing evaluation history.
+        accuracy_threshold, mae_threshold:
+            Bounds outside of which drift is assumed and the model retrained.
+        retrain:
+            When ``True`` retraining is triggered automatically if thresholds
+            are exceeded.
+        kwargs:
+            Additional parameters forwarded to :meth:`ROITracker.evaluate_model`.
         """
 
-        return tracker.evaluate_model(**kwargs)
+        acc, mae = tracker.evaluate_model(
+            mae_threshold=mae_threshold,
+            acc_threshold=accuracy_threshold,
+            **kwargs,
+        )
+        self.record_drift(acc, mae)
+        if retrain and (acc < accuracy_threshold or mae > mae_threshold):
+            try:
+                self.train()
+            except Exception:  # pragma: no cover - retrain failure
+                pass
+        return acc, mae
 
 
 # Module‑level convenience instance -----------------------------------------
