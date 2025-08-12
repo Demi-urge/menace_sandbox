@@ -428,6 +428,7 @@ class ROITracker:
         self.record_roi_prediction(
             pred_seq, act_seq, predicted_class, actual_class, confidence
         )
+        self.check_prediction_drift()
 
     def record_roi_prediction(
         self,
@@ -593,6 +594,27 @@ class ROITracker:
                 logger.exception("failed to trigger adaptive ROI retrain")
 
         return acc, mae
+
+    # ------------------------------------------------------------------
+    def check_prediction_drift(self) -> bool:
+        """Flag prediction drift based on rolling MAE and retrain when needed."""
+
+        if len(self.predicted_roi) < self.evaluation_window:
+            return False
+        mae = self.rolling_mae(self.evaluation_window)
+        drift = mae > float(self.mae_threshold)
+        self.drift_scores.append(mae)
+        self.drift_flags.append(drift)
+        if drift:
+            try:
+                if self._adaptive_predictor is None:
+                    from .adaptive_roi_predictor import AdaptiveROIPredictor
+
+                    self._adaptive_predictor = AdaptiveROIPredictor()
+                self._adaptive_predictor.train()
+            except Exception:
+                logger.exception("failed to trigger adaptive ROI retrain")
+        return drift
 
     def record_metric_prediction(
         self, metric: str, predicted: float, actual: float
