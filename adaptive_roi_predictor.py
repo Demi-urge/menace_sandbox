@@ -164,6 +164,10 @@ class AdaptiveROIPredictor:
         """Persist the current model to disk."""
 
         if self._model is None and self._classifier is None:
+            # Even when no model was produced we persist metadata so that
+            # cross‑validation results from failed runs can be inspected or
+            # reused on the next attempt.
+            self._save_meta()
             return
         try:  # pragma: no cover - disk issues
             self.model_path.parent.mkdir(parents=True, exist_ok=True)

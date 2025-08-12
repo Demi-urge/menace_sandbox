@@ -25,7 +25,7 @@ def _train(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    predictor.train(dataset)
+    predictor.train(dataset, cv=args.cv, param_grid=param_grid)
     print(f"model trained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -68,7 +68,7 @@ def _retrain(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    predictor.train(dataset)
+    predictor.train(dataset, cv=args.cv, param_grid=param_grid)
     print(f"model retrained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -115,7 +115,7 @@ def _schedule(args: argparse.Namespace) -> None:
                 slope_threshold=args.slope_threshold,
                 curvature_threshold=args.curvature_threshold,
             )
-            predictor.train(dataset)
+            predictor.train(dataset, cv=args.cv, param_grid=param_grid)
             print(
                 f"model retrained on {len(dataset[0])} samples -> {args.model}"
             )
@@ -130,7 +130,11 @@ def _schedule(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", default="adaptive_roi_model.pkl", help="Model path")
+    parser.add_argument(
+        "--model",
+        default="sandbox_data/adaptive_roi.pkl",
+        help="Model path",
+    )
     parser.add_argument("--slope-threshold", type=float, default=None, help="Slope threshold")
     parser.add_argument(
         "--curvature-threshold", type=float, default=None, help="Curvature threshold"
