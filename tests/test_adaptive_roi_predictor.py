@@ -8,6 +8,8 @@ import json
 
 import numpy as np
 import pytest
+import sys
+import types
 
 from menace_sandbox.adaptive_roi_dataset import build_dataset
 from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
@@ -16,7 +18,7 @@ from menace_sandbox.evolution_history_db import EvolutionHistoryDB
 from menace_sandbox.roi_tracker import ROITracker
 
 
-def test_build_dataset(tmp_path: Path) -> None:
+def test_build_dataset(tmp_path: Path, monkeypatch) -> None:
     """Dataset generation combines evolution, ROI and evaluation data."""
 
     evo_path = tmp_path / "evolution_history.db"
@@ -28,6 +30,22 @@ def test_build_dataset(tmp_path: Path) -> None:
     conn = sqlite3.connect(roi_path)
     conn.execute(
         "CREATE TABLE action_roi(action TEXT, revenue REAL, api_cost REAL, cpu_seconds REAL, success_rate REAL, ts TEXT)"
+    )
+
+    class DummyEmb:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def embed_query(self, text):
+            return [0.1, 0.2, 0.3]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        types.SimpleNamespace(OpenAIEmbeddings=DummyEmb),
+    )
+    eval_db.conn.execute(
+        "ALTER TABLE evaluation_history ADD COLUMN gpt_feedback TEXT"
     )
 
     # ROI records before and after the evolution event
@@ -49,27 +67,24 @@ def test_build_dataset(tmp_path: Path) -> None:
         )
     conn.commit()
 
-    # Evaluation score after the evolution event
-    eval_db.add(
-        EvaluationRecord(
-            engine="test", cv_score=0.5, passed=True, ts="2023-01-01T01:00:00"
-        )
+    eval_db.conn.execute(
+        "INSERT INTO evaluation_history(engine, cv_score, passed, error, ts, gpt_feedback) VALUES (?,?,?,?,?,?)",
+        ("test", 0.5, 1, "", "2023-01-01T01:00:00", "ok"),
     )
+    eval_db.conn.commit()
 
-    # Evolution event
     evo.conn.execute(
         "INSERT INTO evolution_history(action, before_metric, after_metric, roi, ts) VALUES (?,?,?,?,?)",
         ("test", 1.0, 2.0, 0.0, "2023-01-01T00:00:00"),
     )
     evo.conn.commit()
 
-    X, y, g = build_dataset(evo_path, roi_path, eval_path)
-    tracker = ROITracker()
-    base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
-    n_features = 9 + len(base_metrics) + 5 + 7
-    assert X.shape == (1, n_features)
+    X, y, g, names = build_dataset(
+        evo_path, roi_path, eval_path, return_feature_names=True
+    )
+    assert X.shape == (1, len(names))
+    assert any(n.startswith("gpt_feedback_emb_") for n in names)
     assert y.shape == (1, 4)
-    # Target is revenue minus API cost after the event (and further horizons)
     assert y.tolist()[0][:3] == [11.0, 15.0, 19.0]
     assert g.tolist() == ["linear"]
 
