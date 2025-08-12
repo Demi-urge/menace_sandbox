@@ -36,6 +36,10 @@ class ROITracker:
         weights: Optional[List[float]] = None,
         resource_db: "ROIHistoryDB" | None = None,
         cluster_map: Optional[Dict[str, int]] = None,
+        evaluation_window: int = 20,
+        mae_threshold: float = 0.1,
+        acc_threshold: float = 0.6,
+        evaluate_every: int = 1,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -155,6 +159,10 @@ class ROITracker:
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
         self.actual_classes: List[str] = []
+        self.evaluation_window = evaluation_window
+        self.mae_threshold = mae_threshold
+        self.acc_threshold = acc_threshold
+        self.evaluate_every = max(1, int(evaluate_every))
         self._next_prediction: float | None = None
         self._next_category: str | None = None
         self._adaptive_predictor = None
@@ -346,7 +354,6 @@ class ROITracker:
             try:
                 feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
                 _, actual_class = self._adaptive_predictor.predict(feats)
-                self.evaluate_model()
             except Exception:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
@@ -383,7 +390,16 @@ class ROITracker:
         except Exception:
             pass
 
-        # Persist prediction and outcome for offline analysis
+        self.record_roi_prediction(predicted, actual, predicted_class, actual_class)
+
+    def record_roi_prediction(
+        self,
+        predicted: float,
+        actual: float,
+        predicted_class: str | None = None,
+        actual_class: str | None = None,
+    ) -> None:
+        """Persist an ROI prediction event to ``roi_events.db``."""
         try:
             conn = sqlite3.connect("roi_events.db")
             with conn:
@@ -452,8 +468,6 @@ class ROITracker:
                 "-m",
                 "menace_sandbox.adaptive_roi_cli",
                 "schedule",
-                "--history",
-                history_path,
                 "--once",
             ]
             try:
@@ -800,6 +814,15 @@ class ROITracker:
             predicted_gain, _ = self.forecast()
             if abs(predicted_gain) < self.tolerance:
                 stop = True
+        if len(self.roi_history) % self.evaluate_every == 0:
+            try:
+                self.evaluate_model(
+                    window=self.evaluation_window,
+                    mae_threshold=self.mae_threshold,
+                    acc_threshold=self.acc_threshold,
+                )
+            except Exception:
+                logger.exception("model evaluation failed")
         return vertex, preds, stop
 
     # ------------------------------------------------------------------
