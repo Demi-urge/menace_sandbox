@@ -41,6 +41,7 @@ except Exception:  # pragma: no cover - optional dependency
 logger = get_logger(__name__)
 
 from analytics import adaptive_roi_model
+from adaptive_roi_predictor import load_training_data
 
 ADAPTIVE_ROI_RETRAIN_INTERVAL = int(
     os.getenv("ADAPTIVE_ROI_RETRAIN_INTERVAL", "20")
@@ -1258,6 +1259,18 @@ def _sandbox_cycle_runner(
                 )
             except Exception:
                 logger.exception("adaptive roi model retrain failed")
+
+    # Persist merged ROI training data for the adaptive predictor
+    try:
+        load_training_data(
+            tracker,
+            evolution_path=ctx.repo / "evolution_history.db",
+            evaluation_path=ctx.repo / "evaluation_history.db",
+            roi_events_path=ctx.repo / "roi_events.db",
+            output_path=ctx.repo / "sandbox_data/adaptive_roi.csv",
+        )
+    except Exception:
+        logger.exception("adaptive roi data aggregation failed")
 
     flagged = []
     if ctx.adapt_presets:
