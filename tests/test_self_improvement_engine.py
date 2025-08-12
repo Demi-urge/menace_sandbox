@@ -148,11 +148,16 @@ lm_mod.__path__ = []  # type: ignore
 lm_mod.LinearRegression = object
 sk_mod.cluster = cluster_mod
 sk_mod.linear_model = lm_mod
+pre_mod = types.ModuleType("sklearn.preprocessing")
+pre_mod.__path__ = []  # type: ignore
+pre_mod.PolynomialFeatures = object
+sk_mod.preprocessing = pre_mod
 sys.modules["sklearn"] = sk_mod
 sys.modules["sklearn.feature_extraction"] = fe_mod
 sys.modules["sklearn.feature_extraction.text"] = text_mod
 sys.modules["sklearn.cluster"] = cluster_mod
 sys.modules["sklearn.linear_model"] = lm_mod
+sys.modules["sklearn.preprocessing"] = pre_mod
 
 spec.loader.exec_module(menace)
 
@@ -971,3 +976,28 @@ def test_update_orphan_modules_nested_dependencies(tmp_path, monkeypatch):
     assert eng.orphan_traces.get("c.py", {}).get("redundant") is True
     assert eng.orphan_traces["b.py"]["parents"] == ["a.py"]
     assert eng.orphan_traces["c.py"]["parents"] == ["b.py"]
+
+class DummyPredictor:
+    def __init__(self, mapping):
+        self.mapping = mapping
+
+    def predict(self, feats, horizon=None):
+        key = feats[0][0]
+        seq, category = self.mapping[key]
+        conf = [1.0] * len(seq)
+        return seq, category, conf, None
+
+
+def test_rank_candidates_prefers_higher_roi_totals() -> None:
+    mapping = {1.0: ([0.8, 1.0], "linear"), 0.0: ([0.2, 1.0], "linear")}
+    predictor = DummyPredictor(mapping)
+    eng = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
+    eng.roi_predictor = predictor
+    eng.use_adaptive_roi = True
+    eng.roi_compounding_weight = 1.0
+    eng.roi_delta_ema = 0.0
+    eng._candidate_features = lambda name: [[1.0]] if name == "high" else [[0.0]]
+    ranked = eng._rank_candidates(["low", "high"])
+    assert [r[0] for r in ranked] == ["high", "low"]
+    assert ranked[0][1] == ranked[1][1] == 1.0
+    assert ranked[0][3] > ranked[1][3]
