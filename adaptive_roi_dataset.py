@@ -99,10 +99,12 @@ def _collect_eval_history(
     ``(timestamp, cv_score, gpt_feedback_score, gpt_feedback_tokens,
     long_term_perf_delta, long_term_eval_outcome, gpt_feedback_text)``.
     ``long_term_eval_outcome`` falls back to ``0.0`` when the corresponding
-    column is absent from :mod:`evaluation_history_db`.
+    column is absent from :mod:`evaluation_history_db`. When available,
+    ``gpt_feedback_embedding`` values are parsed from JSON and returned as a
+    list of floats.
     """
 
-    history: dict[str, list[tuple[datetime, float, float, float, float, float, str]]] = {}
+    history: dict[str, list[tuple[datetime, float, float, float, float, float, str, list[float]]]] = {}
     cols = {
         row[1]
         for row in db.conn.execute("PRAGMA table_info(evaluation_history)").fetchall()
@@ -112,6 +114,7 @@ def _collect_eval_history(
     has_long = "long_term_delta" in cols
     has_long_outcome = "long_term_outcome" in cols
     has_fb_text = "gpt_feedback" in cols
+    has_fb_emb = "gpt_feedback_embedding" in cols
     select_cols = ["cv_score", "ts"]
     if has_fb_score:
         select_cols.append("gpt_feedback_score")
@@ -123,12 +126,14 @@ def _collect_eval_history(
         select_cols.append("long_term_outcome")
     if has_fb_text:
         select_cols.append("gpt_feedback")
+    if has_fb_emb:
+        select_cols.append("gpt_feedback_embedding")
     query = (
         "SELECT " + ",".join(select_cols) + " FROM evaluation_history WHERE engine=? ORDER BY ts"
     )
     for eng in db.engines():
         cur = db.conn.execute(query, (eng,))
-        records: list[tuple[datetime, float, float, float, float, float, str]] = []
+        records: list[tuple[datetime, float, float, float, float, float, str, list[float]]] = []
         for row in cur.fetchall():
             score = float(row[0])
             ts = row[1]
@@ -142,6 +147,19 @@ def _collect_eval_history(
             long_outcome = float(row[idx]) if has_long_outcome else 0.0
             idx += 1 if has_long_outcome else 0
             fb_text = row[idx] if has_fb_text else ""
+            idx += 1 if has_fb_text else 0
+            if has_fb_emb:
+                try:
+                    emb_val = row[idx]
+                    fb_emb = (
+                        [float(v) for v in json.loads(emb_val)]
+                        if emb_val not in (None, "")
+                        else []
+                    )
+                except Exception:
+                    fb_emb = []
+            else:
+                fb_emb = []
             records.append(
                 (
                     _parse_ts(ts),
@@ -151,6 +169,7 @@ def _collect_eval_history(
                     long_term,
                     long_outcome,
                     str(fb_text),
+                    fb_emb,
                 )
             )
         records.sort(key=lambda r: r[0])
@@ -232,6 +251,44 @@ def _collect_error_history(path: str | Path) -> list[tuple[datetime, int, int]]:
         except Exception:
             pass
     return records
+
+
+# ---------------------------------------------------------------------------
+def _collect_roi_event_extras(path: str | Path) -> dict[str, list[float]]:
+    """Return additional per-cycle metrics stored in ``roi_events.db``.
+
+    Any columns on the ``roi_events`` table beyond ``action``, ``roi_before``,
+    ``roi_after`` and ``ts`` are treated as numeric features and returned as a
+    mapping of column name to a list of values ordered by timestamp. Missing or
+    non-numeric entries are coerced to ``0.0``.  When the table or connection is
+    unavailable an empty mapping is returned.
+    """
+
+    extras: dict[str, list[float]] = {}
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            cols_cur = conn.execute("PRAGMA table_info(roi_events)")
+            cols = [row[1] for row in cols_cur.fetchall()]
+            base = {"action", "roi_before", "roi_after", "ts"}
+            extra_cols = [c for c in cols if c not in base]
+            if extra_cols:
+                query = "SELECT " + ",".join(extra_cols) + " FROM roi_events ORDER BY ts"
+                cur = conn.execute(query)
+                rows = cur.fetchall()
+                for idx, name in enumerate(extra_cols):
+                    extras[name] = []
+                    for r in rows:
+                        try:
+                            val = float(r[idx]) if r[idx] is not None else 0.0
+                        except Exception:
+                            val = 0.0
+                        extras[name].append(val)
+        finally:
+            conn.close()
+    except Exception:
+        return {}
+    return extras
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +429,7 @@ def build_dataset(
     ema_span: int | None = 3,
     selected_features: Sequence[str] | None = None,
     return_feature_names: bool = False,
+    export_path: str | Path | None = "sandbox_data/adaptive_roi.csv",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
@@ -398,6 +456,9 @@ def build_dataset(
         current cycle.  When provided an additional target column ``roi_ema`` is
         appended representing the smoothed ROI sequence.  Use ``None`` to skip
         this column.
+    export_path:
+        Optional path for exporting the assembled feature matrix and targets as
+        CSV.  When ``None`` the dataset is not written to disk.
 
     Returns
     -------
@@ -443,6 +504,12 @@ def build_dataset(
         for rec in records
         if len(rec) >= 7
     )
+    any_fb_emb = any(
+        rec[7]
+        for records in eval_hist.values()
+        for rec in records
+        if len(rec) >= 8 and rec[7]
+    )
     tracker_template = ROITracker()
     metric_names = sorted(
         set(tracker_template.metrics_history) | set(tracker_template.synergy_metrics_history)
@@ -452,6 +519,13 @@ def build_dataset(
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
     resource_hist = _collect_resource_metrics(tracker_template)
     error_hist = _collect_error_history(errors_path)
+    event_extras = _collect_roi_event_extras(roi_events_path)
+    event_errs = event_extras.pop("error_count", [])
+    event_reps = event_extras.pop("repair_count", [])
+    event_api_deltas = event_extras.pop("api_cost_delta", [])
+    event_cpu_deltas = event_extras.pop("cpu_seconds_delta", [])
+    event_sr_deltas = event_extras.pop("success_rate_delta", [])
+    extra_feature_names = sorted(event_extras.keys())
     res_costs = resource_hist.get("resource_cost", [])
     res_cpus = resource_hist.get("resource_cpu", [])
     res_gpus = resource_hist.get("resource_gpu", [])
@@ -463,7 +537,18 @@ def build_dataset(
     embed_cache: dict[str, list[float]] = {}
     embedder = None
     embedding_dim = 0
-    if any_fb_text:
+    if any_fb_emb:
+        try:
+            sample_emb = next(
+                rec[7]
+                for records in eval_hist.values()
+                for rec in records
+                if len(rec) >= 8 and rec[7]
+            )
+            embedding_dim = len(sample_emb)
+        except StopIteration:
+            embedding_dim = 0
+    elif any_fb_text:
         try:
             from langchain_openai import OpenAIEmbeddings  # type: ignore
 
@@ -500,6 +585,7 @@ def build_dataset(
             "repair_count",
         ]
     )
+    feature_names.extend(extra_feature_names)
     feature_names.extend(metric_names)
     feature_names.extend(
         [
@@ -583,7 +669,8 @@ def build_dataset(
         long_term = 0.0
         long_outcome = 0.0
         feedback_text = ""
-        for e_ts, score, fb, tokens, lt, lo, fb_txt in eval_list:
+        feedback_emb: list[float] = []
+        for e_ts, score, fb, tokens, lt, lo, fb_txt, fb_emb in eval_list:
             if e_ts >= ts_dt:
                 eval_score = score
                 fb_score = fb
@@ -591,6 +678,7 @@ def build_dataset(
                 long_term = lt
                 long_outcome = lo
                 feedback_text = fb_txt
+                feedback_emb = fb_emb
                 break
         if eval_score is None:
             continue
@@ -618,9 +706,23 @@ def build_dataset(
         ):
             continue
 
-        api_delta = next_roi[2] - prev_roi[2]
-        cpu_delta = next_roi[3] - prev_roi[3]
-        sr_delta = next_roi[4] - prev_roi[4]
+        if prev_idx is not None:
+            cycle_idx = prev_idx
+        api_delta = (
+            event_api_deltas[cycle_idx]
+            if cycle_idx < len(event_api_deltas)
+            else next_roi[2] - prev_roi[2]
+        )
+        cpu_delta = (
+            event_cpu_deltas[cycle_idx]
+            if cycle_idx < len(event_cpu_deltas)
+            else next_roi[3] - prev_roi[3]
+        )
+        sr_delta = (
+            event_sr_deltas[cycle_idx]
+            if cycle_idx < len(event_sr_deltas)
+            else next_roi[4] - prev_roi[4]
+        )
         try:
             roi_outcomes = [
                 roi_list[next_idx + h - 1][1] - roi_list[next_idx + h - 1][2]
@@ -646,7 +748,9 @@ def build_dataset(
         ]
         if embedding_dim:
             emb_vec = [0.0] * embedding_dim
-            if embedder and feedback_text:
+            if feedback_emb:
+                emb_vec = feedback_emb[:embedding_dim]
+            elif embedder and feedback_text:
                 cached = embed_cache.get(feedback_text)
                 if cached is None:
                     try:
@@ -659,11 +763,21 @@ def build_dataset(
         res_cost = res_costs[cycle_idx] if cycle_idx < len(res_costs) else 0.0
         res_cpu = res_cpus[cycle_idx] if cycle_idx < len(res_cpus) else 0.0
         res_gpu = res_gpus[cycle_idx] if cycle_idx < len(res_gpus) else 0.0
-        while error_hist and err_idx < len(error_hist) and error_hist[err_idx][0] <= ts_dt:
-            err_cnt = float(error_hist[err_idx][1])
-            rep_cnt = float(error_hist[err_idx][2])
-            err_idx += 1
-        row.extend([float(res_cost), float(res_cpu), float(res_gpu), err_cnt, rep_cnt])
+        if event_errs:
+            err_val = event_errs[cycle_idx] if cycle_idx < len(event_errs) else 0.0
+            rep_val = event_reps[cycle_idx] if cycle_idx < len(event_reps) else 0.0
+        else:
+            while error_hist and err_idx < len(error_hist) and error_hist[err_idx][0] <= ts_dt:
+                err_cnt = float(error_hist[err_idx][1])
+                rep_cnt = float(error_hist[err_idx][2])
+                err_idx += 1
+            err_val = err_cnt
+            rep_val = rep_cnt
+        row.extend([float(res_cost), float(res_cpu), float(res_gpu), err_val, rep_val])
+        for name in extra_feature_names:
+            seq = event_extras.get(name, [])
+            val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
+            row.append(float(val))
         for name in metric_names:
             seq = metrics_hist.get(name, [])
             val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
@@ -718,6 +832,24 @@ def build_dataset(
             if std == 0:
                 std = 1.0
             X[:, i] = (col - mean) / std
+
+    if export_path:
+        try:
+            import pandas as pd
+
+            tgt_names = [f"roi_t+{h}" for h in horizons]
+            if ema_span is not None:
+                tgt_names.append("roi_ema")
+            df = pd.DataFrame(X, columns=feature_names)
+            y_cols = len(tgt_names)
+            y_arr = y.reshape(-1, y_cols) if y_cols > 1 else y.reshape(-1, 1)
+            for i, name in enumerate(tgt_names):
+                df[name] = y_arr[:, i]
+            df["growth_type"] = g
+            Path(export_path).parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(export_path, index=False)
+        except Exception:
+            pass
 
     if return_feature_names:
         return X, y, g, feature_names
