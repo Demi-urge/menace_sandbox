@@ -39,6 +39,31 @@ receives an ROI estimate alongside a growth classification such as
 baseline is used, so predictions should be viewed as guidance rather than
 hard guarantees.
 
+### Monitoring prediction accuracy
+
+`EvaluationDashboard` can surface the accuracy and class distribution of
+`ROITracker` predictions. After populating a tracker with predictions and
+outcomes, query the panel to obtain rolling mean absolute error and class
+counts:
+
+```python
+from menace.evaluation_dashboard import EvaluationDashboard
+from menace.roi_tracker import ROITracker
+
+tracker = ROITracker()
+# ... run cycles that record predictions ...
+dashboard = EvaluationDashboard(manager)
+stats = dashboard.roi_prediction_panel(tracker)
+print("MAE", stats["mae"], "accuracy", stats["accuracy"]) 
+```
+
+The returned `class_counts` mapping is convenient for quick visualisations:
+
+```python
+import pandas as pd
+pd.Series(stats["class_counts"]["actual"]).plot.bar()
+```
+
 ## Scenario Types
 
 Improvement cycles inherit the sandbox scenario presets. Use profiles such as

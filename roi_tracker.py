@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Track ROI deltas across self-improvement iterations."""
 
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
 
 import json
 import os
@@ -532,6 +532,43 @@ class ROITracker:
         """Return counts of predicted ROI categories."""
 
         return dict(Counter(self.category_history))
+
+    # ------------------------------------------------------------------
+    def classification_accuracy(self, window: int | None = None) -> float:
+        """Return accuracy of ROI class predictions.
+
+        Parameters
+        ----------
+        window:
+            Optional number of recent samples to evaluate. When omitted the
+            entire history is used.
+        """
+
+        if not self.predicted_classes:
+            return 0.0
+        pc = self.predicted_classes[-window:] if window else self.predicted_classes
+        ac = self.actual_classes[-len(pc) :]
+        if not ac:
+            return 0.0
+        return float((np.asarray(pc) == np.asarray(ac)).mean())
+
+    # ------------------------------------------------------------------
+    def class_counts(self, window: int | None = None) -> Dict[str, Dict[str, int]]:
+        """Return distribution of predicted and actual ROI classes."""
+
+        preds = self.predicted_classes[-window:] if window else self.predicted_classes
+        acts = self.actual_classes[-window:] if window else self.actual_classes
+        return {"predicted": dict(Counter(preds)), "actual": dict(Counter(acts))}
+
+    # ------------------------------------------------------------------
+    def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
+        """Return rolling MAE, accuracy and class distribution for ``window``."""
+
+        return {
+            "mae": self.rolling_mae(window),
+            "accuracy": self.classification_accuracy(window),
+            "class_counts": self.class_counts(window),
+        }
 
     # ------------------------------------------------------------------
     def synergy_reliability(self, window: int | None = None) -> float:

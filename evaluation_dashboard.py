@@ -39,6 +39,7 @@ except Exception:  # pragma: no cover - optional
     pd = types.SimpleNamespace(DataFrame=_SimpleDataFrame)
 
 from .evaluation_manager import EvaluationManager
+from .roi_tracker import ROITracker
 
 
 def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
@@ -90,6 +91,14 @@ class EvaluationDashboard:
             return {}
         max_avg = max(totals[n] / counts[n] for n in totals)
         return {n: (totals[n] / counts[n]) / max_avg for n in totals}
+
+    # ------------------------------------------------------------------
+    def roi_prediction_panel(
+        self, tracker: ROITracker, window: int | None = None
+    ) -> Dict[str, Any]:
+        """Return ``ROITracker`` prediction stats for dashboard display."""
+
+        return tracker.prediction_summary(window)
 
     # ------------------------------------------------------------------
     def lineage_tree(self, workflow_id: int) -> List[Dict[str, Any]]:
