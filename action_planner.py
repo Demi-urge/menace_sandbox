@@ -9,6 +9,15 @@ import os
 import random
 import logging
 
+try:
+    from .logging_utils import log_record
+except Exception:  # pragma: no cover - fallback for optional dependency
+    try:
+        from logging_utils import log_record  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        def log_record(**fields: object) -> dict[str, object]:  # type: ignore
+            return fields
+
 from .neuroplasticity import PathwayDB, PathwayRecord
 try:
     from .resource_allocation_optimizer import ROIDB
@@ -276,8 +285,22 @@ class ActionPlanner:
                 reward *= conf
                 if self.roi_tracker:
                     try:
-                        self.roi_tracker._next_category = category
-                        self.roi_tracker.record_prediction(roi_est, rec.roi)
+                        self.roi_tracker.record_prediction(
+                            [roi_est],
+                            [rec.roi],
+                            predicted_class=category,
+                            actual_class=None,
+                            confidence=growth_conf,
+                        )
+                        logger.info(
+                            "roi prediction",
+                            extra=log_record(
+                                action=action,
+                                predicted_roi=roi_est,
+                                actual_roi=rec.roi,
+                                growth=category,
+                            ),
+                        )
                     except Exception:
                         logger.exception("roi tracker record failed")
             except Exception:
@@ -398,10 +421,12 @@ class ActionPlanner:
         state_steps = steps[-self.state_length :] if steps else []
         state = self._state_key(state_steps)
         values = self.model.q.get(state, {})
-        scored: list[tuple[str, float]] = []
+        scored: list[tuple[str, float, float, str]] = []
         for action in candidates:
             base = float(values.get(action, 0.0))
             score = base
+            roi_est = 0.0
+            category = "marginal"
             if (
                 self.roi_predictor
                 and self.use_adaptive_roi
@@ -410,13 +435,33 @@ class ActionPlanner:
                 try:
                     seq, category, _ = self._predict_growth(action)
                     roi_est = float(seq[-1]) if seq else 0.0
-                    score += roi_est
                 except Exception:
-                    pass
+                    roi_est = 0.0
+                    category = "marginal"
+            mult = self.growth_multipliers.get(category, 1.0)
+            score += roi_est * mult
             score *= self.priority_weights.get(action, 1.0)
-            scored.append((action, score))
+            scored.append((action, score, roi_est, category))
         scored.sort(key=lambda x: x[1], reverse=True)
-        return [a for a, _ in scored]
+        if scored and self.roi_tracker:
+            top_action, _, pred_roi, cat = scored[0]
+            try:
+                actual_roi = self._roi(top_action)
+                self.roi_tracker.record_roi_prediction(
+                    [pred_roi], [actual_roi], predicted_class=cat
+                )
+                logger.info(
+                    "action prediction",
+                    extra=log_record(
+                        action=top_action,
+                        predicted_roi=pred_roi,
+                        actual_roi=actual_roi,
+                        growth=cat,
+                    ),
+                )
+            except Exception:
+                logger.exception("roi tracker record failed")
+        return [a for a, _, _, _ in scored]
 
     # ------------------------------------------------------------------
     def _on_new_pathway(self, topic: str, payload: object) -> None:

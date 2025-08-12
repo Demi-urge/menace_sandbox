@@ -3807,6 +3807,17 @@ class SelfImprovementEngine:
                     self.logger.exception("post-cycle profit lookup failed: %s", exc)
                     after_roi = before_roi
             roi_value = result.roi.roi if result.roi else 0.0
+            if self.roi_tracker and predicted is not None:
+                try:
+                    self.roi_tracker.record_roi_prediction(
+                        [float(predicted)], [float(roi_value)],
+                        predicted_class=self._last_growth_type,
+                    )
+                except Exception:
+                    self.logger.exception("roi tracker record failed")
+                self.logger.info(
+                    "cycle roi", extra=log_record(predicted=predicted, actual=roi_value)
+                )
             if self.evolution_history:
                 try:
                     from .evolution_history_db import EvolutionEvent
@@ -4055,7 +4066,10 @@ class SelfImprovementEngine:
                 mutation["performance"] = delta
                 mutation["roi"] = roi_value
             self._last_mutation_id = int(mutation["event_id"])
-            self.logger.info("cycle complete", extra=log_record(roi=roi_value))
+            self.logger.info(
+                "cycle complete",
+                extra=log_record(roi=roi_value, predicted_roi=predicted),
+            )
             return result
         finally:
             self._cycle_running = False
