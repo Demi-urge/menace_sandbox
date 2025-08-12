@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 from collections import Counter
 
 import numpy as np
@@ -344,7 +346,7 @@ class ROITracker:
             try:
                 feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
                 _, actual_class = self._adaptive_predictor.predict(feats)
-                self._adaptive_predictor.evaluate_model(self)
+                self.evaluate_model()
             except Exception:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
@@ -407,6 +409,59 @@ class ROITracker:
         """Store predicted and actual ROI classes."""
         self.predicted_classes.append(str(predicted))
         self.actual_classes.append(str(actual))
+
+    # ------------------------------------------------------------------
+    def evaluate_model(
+        self,
+        window: int = 20,
+        mae_threshold: float = 0.1,
+        acc_threshold: float = 0.6,
+        history_path: str = "sandbox_data/roi_history.json",
+    ) -> tuple[float, float]:
+        """Evaluate prediction accuracy and trigger scheduled retraining.
+
+        When recent mean absolute error or classification accuracy fall
+        outside the provided thresholds the ``adaptive_roi_cli schedule``
+        command is launched to retrain the model. The current history is
+        saved to ``history_path`` so ``load_training_data`` has access to the
+        latest data.
+        """
+
+        preds = self.predicted_roi[-window:]
+        acts = self.actual_roi[-len(preds):]
+        mae = (
+            float(np.mean(np.abs(np.asarray(preds) - np.asarray(acts))))
+            if preds
+            else 0.0
+        )
+
+        pc = self.predicted_classes[-window:]
+        ac = self.actual_classes[-len(pc):]
+        if pc and ac:
+            acc = float((np.asarray(pc) == np.asarray(ac)).mean())
+        else:
+            acc = 0.0
+
+        if (mae > mae_threshold) or (pc and acc < acc_threshold):
+            try:
+                self.save_history(history_path)
+            except Exception:
+                logger.exception("failed to persist history for retrain")
+            cmd = [
+                sys.executable,
+                "-m",
+                "menace_sandbox.adaptive_roi_cli",
+                "schedule",
+                "--history",
+                history_path,
+                "--once",
+            ]
+            try:
+                subprocess.Popen(cmd)
+            except Exception:
+                logger.exception("failed to trigger adaptive ROI retrain")
+
+        return acc, mae
 
     def record_metric_prediction(
         self, metric: str, predicted: float, actual: float

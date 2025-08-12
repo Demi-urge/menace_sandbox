@@ -34,14 +34,28 @@ simple subcommands and can be executed via ``python -m menace_sandbox.adaptive_r
 python -m menace_sandbox.adaptive_roi_cli train
 python -m menace_sandbox.adaptive_roi_cli predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]"
 python -m menace_sandbox.adaptive_roi_cli retrain
+python -m menace_sandbox.adaptive_roi_cli schedule --once
 ```
 
 `train` fits a new model on available history, `predict` returns the
 forecasted ROI and growth type for a JSON encoded feature matrix and
-`retrain` updates an existing model with the latest data. The predictor
-uses `scikit-learn` when installed and falls back to a naive baseline if
-no regression backend or dataset is available, so results should be
-treated as coarse guidance rather than exact forecasts.
+`retrain` updates an existing model with the latest data. The `schedule`
+command calls `load_training_data()` to assemble the latest dataset and
+retrains the model at a fixed interval (default one hour). Pass
+`--interval` to adjust the cadence or `--once` to run a single cycle,
+which is useful for cron jobs:
+
+```cron
+0 * * * * python -m menace_sandbox.adaptive_roi_cli schedule --history sandbox_data/roi_history.json
+```
+
+The predictor uses `scikit-learn` when installed and falls back to a naive
+baseline if no regression backend or dataset is available, so results
+should be treated as coarse guidance rather than exact forecasts.
+
+`ROITracker.evaluate_model()` monitors recent prediction accuracy and,
+when error exceeds thresholds, automatically spawns the `schedule` command
+to refresh the model in the background.
 
 
 ## Usage Example
