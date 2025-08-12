@@ -1704,6 +1704,10 @@ class SelfImprovementEngine:
                 mae_threshold=mae_threshold,
                 acc_threshold=acc_threshold,
             )
+            try:
+                self.roi_predictor.record_drift(acc, mae)
+            except Exception:
+                pass
             self.logger.info(
                 "adaptive roi evaluation",
                 extra=log_record(accuracy=float(acc), mae=float(mae)),
@@ -1715,13 +1719,17 @@ class SelfImprovementEngine:
                 pass
             if mae > mae_threshold or acc < acc_threshold:
                 self.logger.info(
-                    "adaptive roi retraining triggered",
+                    "adaptive roi model drift detected",
                     extra=log_record(accuracy=float(acc), mae=float(mae)),
                 )
                 try:
-                    self.roi_predictor.train()
+                    self.roi_predictor.partial_fit()
                 except Exception:
-                    self.logger.exception("adaptive roi training failed")
+                    self.logger.exception("adaptive roi partial_fit failed")
+                    try:
+                        self.roi_predictor.train()
+                    except Exception:
+                        self.logger.exception("adaptive roi training failed")
         except Exception as exc:  # pragma: no cover - evaluation failure
             self.logger.exception("adaptive roi evaluation failed: %s", exc)
 
