@@ -120,6 +120,20 @@ def _collect_metrics_history(
 
 
 # ---------------------------------------------------------------------------
+def _ema(values: Sequence[float], span: int = 3) -> float:
+    """Return exponential moving average of ``values``."""
+
+    arr = list(values)
+    if not arr:
+        return 0.0
+    alpha = 2.0 / float(span + 1)
+    ema = float(arr[0])
+    for v in arr[1:]:
+        ema = alpha * float(v) + (1.0 - alpha) * ema
+    return float(ema)
+
+
+# ---------------------------------------------------------------------------
 def _label_growth(values: Sequence[float]) -> str:
     """Label ``values`` as ``exponential``, ``linear`` or ``marginal``.
 
@@ -237,8 +251,9 @@ def build_dataset(
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
     roi_events_path: str | Path = "roi_events.db",
-    horizon: int = 1,
+    horizons: Sequence[int] = (1, 3, 5),
     *,
+    ema_span: int | None = 3,
     selected_features: Sequence[str] | None = None,
     return_feature_names: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
@@ -255,11 +270,16 @@ def build_dataset(
     roi_events_path:
         Path to the ROI prediction events database used to augment the
         training features.
-    horizon:
-        Number of future ROI outcomes to include as target columns. ``1`` (the
-        default) records only ``roi_{t+1}`` while larger values add additional
-        columns ``roi_{t+2}``, ``roi_{t+3}`` and so on. Rows lacking sufficient
-        future ROI records are skipped.
+    horizons:
+        Sequence of future ROI steps to include as target columns.  The
+        default ``(1, 3, 5)`` yields targets ``roi_{t+1}``, ``roi_{t+3}`` and
+        ``roi_{t+5}``.  All listed horizons must be available for a row to be
+        included.
+    ema_span:
+        Optional span for an exponential moving average of ROI values up to the
+        current cycle.  When provided an additional target column ``roi_ema`` is
+        appended representing the smoothed ROI sequence.  Use ``None`` to skip
+        this column.
 
     Returns
     -------
@@ -281,12 +301,12 @@ def build_dataset(
         synergy_reliability, synergy_roi_reliability, roi_reliability,
         long_term_roi_reliability, cpu, memory, disk, time, gpu,
         predicted_roi_event, actual_roi_event, predicted_class_event,
-        actual_class_event]`` and
-        ``targets`` is an array of ROI outcomes ``roi_{t+1} … roi_{t+h}`` for
-        each cycle and ``growth_types`` is a vector labelling the ROI curve of
+        actual_class_event]`` and ``targets`` contains multiple ROI columns as
+        specified by ``horizons`` followed by an optional exponential moving
+        average column ``roi_ema``.  ``growth_types`` labels the ROI curve of
         each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.  When
-        ``return_feature_names`` is true a fourth element containing the feature
-        names is included.
+        ``return_feature_names`` is true a fourth element containing the
+        feature names is included.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -302,6 +322,8 @@ def build_dataset(
     resource_cols = ["cpu", "memory", "disk", "time", "gpu"]
     metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
+    horizons = sorted({int(h) for h in horizons if int(h) > 0}) or [1]
+    max_h = max(horizons)
     feature_names: list[str] = [
         "before_metric",
         "after_metric",
@@ -387,17 +409,23 @@ def build_dataset(
             prev_roi is None
             or next_roi is None
             or next_idx is None
-            or next_idx + horizon - 1 >= len(roi_list)
+            or next_idx + max_h - 1 >= len(roi_list)
         ):
             continue
 
         api_delta = next_roi[2] - prev_roi[2]
         cpu_delta = next_roi[3] - prev_roi[3]
         sr_delta = next_roi[4] - prev_roi[4]
-        roi_outcomes = [
-            roi_list[next_idx + k][1] - roi_list[next_idx + k][2]
-            for k in range(horizon)
-        ]
+        try:
+            roi_outcomes = [
+                roi_list[next_idx + h - 1][1] - roi_list[next_idx + h - 1][2]
+                for h in horizons
+            ]
+        except IndexError:
+            continue
+        if ema_span is not None:
+            past_vals = [r[1] - r[2] for r in roi_list[: next_idx + 1]]
+            roi_outcomes.append(_ema(past_vals, span=ema_span))
 
         row = [
             float(before),
@@ -425,13 +453,13 @@ def build_dataset(
         )
         features.append(row)
         targets.append([float(v) for v in roi_outcomes])
-        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + horizon]]
+        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + max_h]]
         growth_types.append(_label_growth(roi_values))
         cycle_idx += 1
 
     X = np.asarray(features, dtype=float)
     y = np.asarray(targets, dtype=float)
-    if horizon == 1:
+    if y.ndim == 2 and y.shape[1] == 1:
         y = y.reshape(-1)
     g = np.asarray(growth_types, dtype=object)
     if selected_features:

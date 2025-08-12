@@ -78,19 +78,28 @@ def test_build_dataset(tmp_path):
         "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
         ("engine", 10.0, 2.0, 1.0, 0.5, "2023-12-31T23:59:00"),
     )
-    conn.execute(
-        "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
-        ("engine", 15.0, 3.0, 2.0, 0.6, "2024-01-01T00:01:00"),
-    )
+    for i, rev in enumerate([15.0, 20.0, 25.0, 30.0, 35.0], start=1):
+        api = 2.0 + i
+        conn.execute(
+            "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
+            (
+                "engine",
+                rev,
+                api,
+                float(i + 1),
+                0.5 + 0.1 * i,
+                f"2024-01-01T00:0{i}:00",
+            ),
+        )
     conn.commit()
 
     X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path)
 
     tracker = ROITracker()
     base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
-    n_features = 6 + len(base_metrics) + 5
+    n_features = 6 + len(base_metrics) + 5 + 4
     assert X.shape == (1, n_features)
-    assert y.tolist() == [12.0]
+    assert y.tolist() == [[12.0, 20.0, 28.0, 10.0]]
     assert g.tolist() == ["linear"]
     assert np.allclose(X, 0.0)
 
@@ -143,15 +152,15 @@ def test_build_dataset_horizon(tmp_path):
     )
     conn.execute(
         "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
-        ("engine", 18.0, 4.0, 3.0, 0.7, "2024-01-01T00:02:00"),
+        ("engine", 20.0, 4.0, 3.0, 0.7, "2024-01-01T00:02:00"),
     )
     conn.commit()
 
     X, y, g = build_dataset(
-        evo_db_path, roi_db_path, eval_db_path, horizon=2
+        evo_db_path, roi_db_path, eval_db_path, horizons=[1, 2]
     )
-    assert y.shape == (1, 2)
-    assert y.tolist() == [[12.0, 14.0]]
+    assert y.shape == (1, 3)
+    assert y.tolist() == [[12.0, 16.0, 10.0]]
 
 
 def test_build_dataset_selected_features(tmp_path):
@@ -206,6 +215,7 @@ def test_build_dataset_selected_features(tmp_path):
         evo_db_path,
         roi_db_path,
         eval_db_path,
+        horizons=[1],
         selected_features=["before_metric", "after_metric"],
         return_feature_names=True,
     )

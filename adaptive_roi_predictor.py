@@ -43,6 +43,11 @@ except Exception:  # pragma: no cover - sklearn missing
     make_pipeline = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
+    from sklearn.multioutput import MultiOutputRegressor  # type: ignore
+except Exception:  # pragma: no cover - sklearn missing
+    MultiOutputRegressor = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from sklearn.model_selection import GridSearchCV, KFold  # type: ignore
 except Exception:  # pragma: no cover - sklearn missing
     GridSearchCV = None  # type: ignore
@@ -223,7 +228,8 @@ class AdaptiveROIPredictor:
         Parameters
         ----------
         dataset:
-            Optional tuple ``(features, targets, growth_types)``.  When omitted the data is
+            Optional tuple ``(features, targets, growth_types)`` where ``targets``
+            may contain multiple horizon columns.  When omitted the data is
             loaded using :func:`build_dataset`.
         cv:
             Number of cross-validation folds.  When ``None`` the instance's
@@ -249,6 +255,7 @@ class AdaptiveROIPredictor:
         total_size = len(X)
         window = 200
         self.training_data = (X[-window:], y[-window:], g[-window:])
+        multi_output = y.ndim == 2 and y.shape[1] > 1
 
         if (
             self._model is not None
@@ -282,12 +289,10 @@ class AdaptiveROIPredictor:
             params: Dict[str, Any] = {}
             if self.best_params and self.best_params.get("model") == "GradientBoostingRegressor":
                 params = {k: v for k, v in self.best_params.items() if k != "model"}
-            candidates.append(
-                (
-                    "GradientBoostingRegressor",
-                    GradientBoostingRegressor(random_state=0, **params),
-                )
-            )
+            model: Any = GradientBoostingRegressor(random_state=0, **params)
+            if multi_output and MultiOutputRegressor is not None:
+                model = MultiOutputRegressor(model)
+            candidates.append(("GradientBoostingRegressor", model))
         if (
             SGDRegressor is not None
             and PolynomialFeatures is not None
@@ -296,20 +301,22 @@ class AdaptiveROIPredictor:
             params = {}
             if self.best_params and self.best_params.get("model") == "SGDRegressor":
                 params = {k: v for k, v in self.best_params.items() if k != "model"}
-            candidates.append(
-                (
-                    "SGDRegressor",
-                    make_pipeline(
-                        PolynomialFeatures(degree=2),
-                        SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0, **params),
-                    ),
-                )
+            base = make_pipeline(
+                PolynomialFeatures(degree=2),
+                SGDRegressor(max_iter=1_000, tol=1e-3, random_state=0, **params),
             )
+            model = base
+            if multi_output and MultiOutputRegressor is not None:
+                model = MultiOutputRegressor(base)
+            candidates.append(("SGDRegressor", model))
         if LinearRegression is not None:
             params = {}
             if self.best_params and self.best_params.get("model") == "LinearRegression":
                 params = {k: v for k, v in self.best_params.items() if k != "model"}
-            candidates.append(("LinearRegression", LinearRegression(**params)))
+            model = LinearRegression(**params)
+            if multi_output and MultiOutputRegressor is not None:
+                model = MultiOutputRegressor(model)
+            candidates.append(("LinearRegression", model))
 
         best_model = None
         best_score = float("inf")
@@ -434,12 +441,21 @@ class AdaptiveROIPredictor:
         if getattr(self._model, "predict", None) is not None:
             try:
                 pred = np.asarray(self._model.predict(features), dtype=float)
-                conf = np.ones_like(pred)
+                if pred.ndim == 1:
+                    pred = pred.reshape(-1, 1)
+                conf = np.ones_like(pred, dtype=float)
                 return pred, conf
             except Exception:  # pragma: no cover - prediction failure
                 pass
 
         baseline = features[:, 0].astype(float)
+        if baseline.ndim == 1:
+            baseline = baseline.reshape(-1, 1)
+        n_targets = 1
+        if self.training_data is not None and self.training_data[1].ndim == 2:
+            n_targets = self.training_data[1].shape[1]
+        if baseline.shape[1] < n_targets:
+            baseline = np.repeat(baseline, n_targets, axis=1)
         return baseline, np.zeros_like(baseline)
 
     # ------------------------------------------------------------------
@@ -448,8 +464,8 @@ class AdaptiveROIPredictor:
         self,
         improvement_features: Sequence[Sequence[float]],
         horizon: int | None = None,
-    ) -> tuple[list[float], str, list[float]]:
-        """Return ROI forecast sequence, growth category and confidence.
+    ) -> tuple[list[list[float]], str, list[list[float]]]:
+        """Return ROI forecast sequences, growth category and confidence.
 
         Parameters
         ----------
@@ -464,9 +480,10 @@ class AdaptiveROIPredictor:
         Returns
         -------
         list, str, list
-            The sequence of predicted ROI values up to ``horizon``, the growth
-            classification from the final step and per-step confidence values
-            in the range ``[0, 1]``.
+            The predicted ROI values for each step (possibly multiple horizons
+            per step), the growth classification from the final step and
+            per-step confidence values in the range ``[0, 1]`` with the same
+            shape as the predictions.
         """
 
         feats = np.asarray(list(improvement_features), dtype=float)
@@ -522,8 +539,8 @@ def predict_growth_type(
 
 def predict(
     action_features: Sequence[Sequence[float]], horizon: int | None = None
-) -> tuple[list[float], str, list[float]]:
-    """Return ROI forecast sequence, growth category and confidence using a module-level predictor."""
+) -> tuple[list[list[float]], str, list[list[float]]]:
+    """Return ROI forecast sequences, growth category and confidence using a module-level predictor."""
 
     global _predictor
     if _predictor is None:
