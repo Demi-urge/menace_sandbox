@@ -207,6 +207,61 @@ def test_evaluate_model_retrains(monkeypatch, tmp_path):
     assert called  # retraining triggered
 
 
+def test_evaluate_model_drift_retrains(monkeypatch, tmp_path):
+    """Drift detection triggers retraining even when error thresholds pass."""
+
+    tracker = ROITracker()
+
+    db_path = tmp_path / "roi_events.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE roi_prediction_events (
+            predicted_roi REAL,
+            actual_roi REAL,
+            predicted_class TEXT,
+            actual_class TEXT,
+            ts DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    for _ in range(5):
+        conn.execute(
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
+            (0.0, 0.0, "linear", "linear"),
+        )
+    for _ in range(5):
+        conn.execute(
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
+            (0.0, 1.0, "linear", "linear"),
+        )
+    conn.commit()
+    conn.close()
+
+    called: list[int] = []
+
+    class DummyPredictor:
+        def train(self):
+            called.append(1)
+
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.AdaptiveROIPredictor",
+        DummyPredictor,
+    )
+
+    acc, mae = tracker.evaluate_model(
+        window=10,
+        mae_threshold=1.0,
+        acc_threshold=0.5,
+        roi_events_path=str(db_path),
+        drift_threshold=0.3,
+    )
+    assert mae < 1.0  # overall MAE within threshold
+    assert acc >= 0.5  # accuracy within threshold
+    assert tracker.drift_flags[-1] is True
+    assert called  # retraining triggered due to drift
+
+
 def test_tracker_integration(monkeypatch):
     """ROITracker uses predictor to log class predictions and evaluate."""
 

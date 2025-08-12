@@ -158,6 +158,9 @@ class ROITracker:
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
         self.actual_classes: List[str] = []
+        # track drift statistics for adaptive retraining
+        self.drift_scores: List[float] = []
+        self.drift_flags: List[bool] = []
         self.evaluation_window = evaluation_window
         self.mae_threshold = mae_threshold
         self.acc_threshold = acc_threshold
@@ -439,6 +442,7 @@ class ROITracker:
         acc_threshold: float = 0.6,
         history_path: str = "sandbox_data/roi_history.json",
         roi_events_path: str = "roi_events.db",
+        drift_threshold: float = 0.3,
     ) -> tuple[float, float]:
         """Evaluate prediction accuracy and trigger retraining when needed.
 
@@ -466,11 +470,22 @@ class ROITracker:
 
         preds = [float(r[0]) for r in rows]
         acts = [float(r[1]) for r in rows[: len(preds)]]
-        mae = (
-            float(np.mean(np.abs(np.asarray(preds) - np.asarray(acts))))
-            if preds
-            else 0.0
-        )
+        errors = [abs(p - a) for p, a in zip(preds, acts)]
+        mae = float(np.mean(errors)) if errors else 0.0
+
+        def detect_drift(errs: list[float]) -> float:
+            """Return magnitude of error drift between recent and older windows."""
+            if len(errs) < 4:
+                return 0.0
+            split = max(1, len(errs) // 2)
+            recent = np.mean(errs[:split])
+            history = np.mean(errs[split:]) if errs[split:] else 0.0
+            return float(abs(recent - history))
+
+        drift_score = detect_drift(errors)
+        drift_detected = drift_score > float(drift_threshold)
+        self.drift_scores.append(drift_score)
+        self.drift_flags.append(drift_detected)
 
         cls_pairs = [
             (r[2], r[3])
@@ -483,7 +498,7 @@ class ROITracker:
         else:
             acc = 0.0
 
-        if (mae > mae_threshold) or (cls_pairs and acc < acc_threshold):
+        if (mae > mae_threshold) or (cls_pairs and acc < acc_threshold) or drift_detected:
             try:
                 self.save_history(history_path)
             except Exception:
@@ -1488,6 +1503,8 @@ class ROITracker:
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
                 "category_history": self.category_history,
+                "drift_scores": self.drift_scores,
+                "drift_flags": self.drift_flags,
                 "metrics_history": self.metrics_history,
                 "synergy_metrics_history": self.synergy_metrics_history,
                 "synergy_history": self.synergy_history,
@@ -1605,6 +1622,18 @@ class ROITracker:
                     "INSERT INTO scenario_synergy (scenario, data) VALUES (?, ?)",
                     scenario_rows,
                 )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS drift_metrics (score REAL, flag INTEGER)"
+            )
+            conn.execute("DELETE FROM drift_metrics")
+            if self.drift_scores:
+                conn.executemany(
+                    "INSERT INTO drift_metrics (score, flag) VALUES (?, ?)",
+                    [
+                        (float(s), int(f))
+                        for s, f in zip(self.drift_scores, self.drift_flags)
+                    ],
+                )
 
     # ------------------------------------------------------------------
     def load_history(self, path: str) -> None:
@@ -1622,6 +1651,8 @@ class ROITracker:
                     self.predicted_roi = []
                     self.actual_roi = []
                     self.category_history = []
+                    self.drift_scores = []
+                    self.drift_flags = []
                     self.metrics_history = {}
                     self.predicted_metrics = {}
                     self.actual_metrics = {}
@@ -1648,6 +1679,12 @@ class ROITracker:
                     self.actual_roi = [float(x) for x in data.get("actual_roi", [])]
                     self.category_history = [
                         str(x) for x in data.get("category_history", [])
+                    ]
+                    self.drift_scores = [
+                        float(x) for x in data.get("drift_scores", [])
+                    ]
+                    self.drift_flags = [
+                        bool(x) for x in data.get("drift_flags", [])
                     ]
                     self.metrics_history = {
                         str(m): [float(v) for v in vals]
@@ -1777,6 +1814,12 @@ class ROITracker:
                     ).fetchall()
                 except Exception:
                     cat_rows = []
+                try:
+                    drift_rows = conn.execute(
+                        "SELECT score, flag FROM drift_metrics ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    drift_rows = []
         except Exception:
             self.roi_history = []
             self.module_deltas = {}
@@ -1787,6 +1830,8 @@ class ROITracker:
             self.actual_metrics = {}
             self.scenario_synergy = {}
             self.category_history = []
+            self.drift_scores = []
+            self.drift_flags = []
             return
         self.roi_history = [float(r[0]) for r in rows]
         self.confidence_history = [
@@ -1798,6 +1843,8 @@ class ROITracker:
         self.predicted_roi = [float(r[0]) for r in pred_rows]
         self.actual_roi = [float(r[1]) for r in pred_rows]
         self.category_history = [str(r[0]) for r in cat_rows]
+        self.drift_scores = [float(r[0]) for r in drift_rows]
+        self.drift_flags = [bool(r[1]) for r in drift_rows]
         self.metrics_history = {}
         self.synergy_metrics_history = {}
         for name, val in metric_rows:
