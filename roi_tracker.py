@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence
 
+import argparse
+
 import json
 import os
 import sqlite3
@@ -161,6 +163,7 @@ class ROITracker:
         # track drift statistics for adaptive retraining
         self.drift_scores: List[float] = []
         self.drift_flags: List[bool] = []
+        self.drift_metrics: Dict[str, float] = {}
         # track horizon-wise errors and whether they compound over time
         self.horizon_mae_history: List[Dict[int, float]] = []
         self.compounding_flags: List[bool] = []
@@ -429,6 +432,8 @@ class ROITracker:
             pred_seq, act_seq, predicted_class, actual_class, confidence
         )
         self.check_prediction_drift()
+        self.drift_metrics["mae"] = self.rolling_mae()
+        self.drift_metrics["accuracy"] = self.classification_accuracy()
 
     def record_roi_prediction(
         self,
@@ -581,15 +586,46 @@ class ROITracker:
         else:
             acc = 0.0
 
+        self.drift_metrics["mae"] = mae
+        self.drift_metrics["accuracy"] = acc
+
         if (mae > mae_threshold) or (cls_pairs and acc < acc_threshold) or drift_detected:
+            try:
+                from .alert_dispatcher import dispatch_alert
+
+                dispatch_alert(
+                    "adaptive_roi_drift",
+                    5,
+                    "ROI prediction quality degraded",
+                    {"mae": mae, "accuracy": acc},
+                )
+            except Exception:
+                logger.exception("failed to dispatch drift alert")
             try:
                 self.save_history(history_path)
             except Exception:
                 logger.exception("failed to persist history for retrain")
             try:
-                from .adaptive_roi_predictor import AdaptiveROIPredictor
+                from .adaptive_roi_cli import _schedule as schedule
+                import contextlib, io
 
-                AdaptiveROIPredictor().train()
+                args = argparse.Namespace(
+                    evolution_db="evolution_history.db",
+                    roi_db="roi.db",
+                    evaluation_db="evaluation_history.db",
+                    roi_events_db=roi_events_path,
+                    history=history_path,
+                    output_csv="sandbox_data/adaptive_roi.csv",
+                    interval=0,
+                    once=True,
+                    cv=3,
+                    param_grid=None,
+                    selected_features=False,
+                    log_path="sandbox_data/adaptive_roi_schedule.log",
+                    model="sandbox_data/adaptive_roi.pkl",
+                )
+                with contextlib.redirect_stdout(io.StringIO()):
+                    schedule(args)
             except Exception:
                 logger.exception("failed to trigger adaptive ROI retrain")
 
@@ -1671,6 +1707,7 @@ class ROITracker:
                 "predicted_metrics": self.predicted_metrics,
                 "actual_metrics": self.actual_metrics,
                 "metric_predictions": metric_preds,
+                "drift_metrics": self.drift_metrics,
             }
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
@@ -1791,6 +1828,18 @@ class ROITracker:
                     [
                         (float(s), int(f))
                         for s, f in zip(self.drift_scores, self.drift_flags)
+                    ],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS drift_summary (metric TEXT, value REAL)"
+            )
+            conn.execute("DELETE FROM drift_summary")
+            if self.drift_metrics:
+                conn.executemany(
+                    "INSERT INTO drift_summary (metric, value) VALUES (?, ?)",
+                    [
+                        (str(k), float(v))
+                        for k, v in self.drift_metrics.items()
                     ],
                 )
 
@@ -1920,6 +1969,10 @@ class ROITracker:
                         "synergy_long_term_lucrativity",
                     ):
                         self.synergy_metrics_history.setdefault(key, [])
+                    self.drift_metrics = {
+                        str(k): float(v)
+                        for k, v in data.get("drift_metrics", {}).items()
+                    }
             except Exception:
                 self.roi_history = []
                 self.module_deltas = {}
@@ -1979,6 +2032,12 @@ class ROITracker:
                     ).fetchall()
                 except Exception:
                     drift_rows = []
+                try:
+                    drift_sum_rows = conn.execute(
+                        "SELECT metric, value FROM drift_summary ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    drift_sum_rows = []
         except Exception:
             self.roi_history = []
             self.module_deltas = {}
@@ -1991,6 +2050,7 @@ class ROITracker:
             self.category_history = []
             self.drift_scores = []
             self.drift_flags = []
+            self.drift_metrics = {}
             return
         self.roi_history = [float(r[0]) for r in rows]
         self.confidence_history = [
@@ -2004,6 +2064,7 @@ class ROITracker:
         self.category_history = [str(r[0]) for r in cat_rows]
         self.drift_scores = [float(r[0]) for r in drift_rows]
         self.drift_flags = [bool(r[1]) for r in drift_rows]
+        self.drift_metrics = {str(m): float(v) for m, v in drift_sum_rows}
         self.metrics_history = {}
         self.synergy_metrics_history = {}
         for name, val in metric_rows:
