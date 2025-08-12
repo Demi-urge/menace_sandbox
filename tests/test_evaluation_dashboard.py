@@ -122,3 +122,20 @@ def test_roi_prediction_panel():
     assert panel["accuracy_trend"][0] == pytest.approx(1.0)
     assert panel["accuracy_trend"][1] == pytest.approx(0.5)
 
+
+def test_roi_prediction_events_panel():
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tracker = rt.ROITracker()
+    tracker.horizon_mae_history.append({1: 0.1, 2: 0.2})
+    tracker.record_class_prediction("up", "up")
+    tracker.record_class_prediction("down", "up")
+    tracker.drift_flags.extend([False, True])
+    panel = dash.roi_prediction_events_panel(tracker)
+    assert panel["mae_by_horizon"][1] == pytest.approx(0.1)
+    assert panel["growth_class_accuracy"] == pytest.approx(0.5)
+    assert panel["drift_flags"] == [False, True]
+    panel_w = dash.roi_prediction_events_panel(tracker, window=1)
+    assert panel_w["growth_class_accuracy"] == pytest.approx(0.0)
+    assert panel_w["drift_flags"] == [True]
+
