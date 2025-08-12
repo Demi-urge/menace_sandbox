@@ -73,6 +73,66 @@ when error exceeds thresholds, automatically spawns the `schedule` command
 to refresh the model in the background.
 
 
+### CLI workflow
+
+The CLI is designed for quick experimentation and can be driven directly
+from the project root. Common flows look like:
+
+```bash
+# train a fresh model
+python -m menace_sandbox.adaptive_roi_cli train
+
+# run a one-off forecast for a feature matrix
+python -m menace_sandbox.adaptive_roi_cli predict "[[0.2,0.4,0.0,0.1]]" --horizon 2
+
+# refresh the existing model with new data
+python -m menace_sandbox.adaptive_roi_cli retrain
+
+# periodically rebuild the dataset and retrain
+python -m menace_sandbox.adaptive_roi_cli schedule --interval 3600
+```
+
+`train` fits an initial predictor, `retrain` performs an incremental
+update and `predict` returns both the ROI sequence and growth category
+for the supplied features. The `schedule` subcommand is useful for cron
+jobs; pass `--once` for a single run or adjust `--interval` to control
+the cadence.
+
+### Action planning integration
+
+Predictions can steer the sandbox's decision making. `ActionPlanner`
+scales priority weights by the forecasted ROI and a multiplier derived
+from the growth classification:
+
+```python
+from menace_sandbox.action_planner import ActionPlanner
+from menace_sandbox.neuroplasticity import PathwayDB
+from menace_sandbox.resource_allocation_optimizer import ROIDB
+
+planner = ActionPlanner(PathwayDB(), ROIDB(),
+                        feature_fn=lambda action: [0.1, 0.2])
+planner.update_priorities({"launch_campaign": 1.0, "cleanup": 0.8})
+print(planner.get_priority_queue())  # highest ROI and growth first
+```
+
+`update_priorities` queries `AdaptiveROIPredictor` for each action and
+multiplies the base weight by the predicted ROI and a growth multiplier.
+Actions forecast to deliver exponential growth therefore rise to the top
+of the queue.
+
+### Growth classification and threshold tuning
+
+The predictor labels horizons as ``exponential``, ``linear`` or
+``marginal`` based on slope and curvature thresholds. Treat these classes
+as broad guidance rather than exact guarantees. Start with the defaults
+estimated by `calibrate_thresholds()` and adjust using the
+`--slope-threshold` and `--curvature-threshold` flags when calling the
+CLI. Raising the thresholds yields more conservative classifications
+while lowering them makes the model more sensitive to small changes.
+Monitor `ROITracker.evaluate_model()` to ensure the thresholds produce
+accurate forecasts for your dataset.
+
+
 ## Usage Example
 ```python
 from menace.roi_tracker import ROITracker
