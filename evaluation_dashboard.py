@@ -101,6 +101,39 @@ class EvaluationDashboard:
         return tracker.prediction_summary(window)
 
     # ------------------------------------------------------------------
+    def roi_prediction_events_panel(
+        self, tracker: ROITracker, window: int | None = None
+    ) -> Dict[str, Any]:
+        """Summarise ``roi_prediction_events`` persisted by ``ROITracker``.
+
+        Parameters
+        ----------
+        tracker:
+            The :class:`ROITracker` instance holding event history.
+        window:
+            Optional number of recent events to consider when computing the
+            growth class accuracy and drift flags. When omitted the entire
+            history is used.
+
+        Returns
+        -------
+        dict
+            Dictionary containing ``mae_by_horizon`` for the most recent
+            evaluation window, ``growth_class_accuracy`` over ``window`` samples
+            and the list of recent ``drift_flags``.
+        """
+
+        mae_by_horizon = (
+            tracker.horizon_mae_history[-1] if tracker.horizon_mae_history else {}
+        )
+        drift_flags = tracker.drift_flags[-window:] if window else tracker.drift_flags
+        return {
+            "mae_by_horizon": mae_by_horizon,
+            "growth_class_accuracy": tracker.classification_accuracy(window),
+            "drift_flags": drift_flags,
+        }
+
+    # ------------------------------------------------------------------
     def lineage_tree(self, workflow_id: int) -> List[Dict[str, Any]]:
         """Return the mutation lineage for ``workflow_id``.
 
