@@ -116,7 +116,7 @@ class ActionPlanner:
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
         use_adaptive_roi: bool | None = None,
-        growth_weighting: bool = True,
+        growth_weighting: bool | None = None,
         growth_multipliers: Dict[str, float] | None = None,
     ) -> None:
         self.pathway_db = pathway_db
@@ -140,11 +140,27 @@ class ActionPlanner:
         else:
             self.roi_predictor = None
             self.roi_tracker = None
+        if growth_weighting is None:
+            try:
+                growth_weighting = SandboxSettings().roi_growth_weighting
+            except Exception:
+                growth_weighting = True
         self.growth_weighting = bool(growth_weighting)
-        self.growth_multipliers = growth_multipliers or {
-            cat: 1.0 + growth_score(cat)
-            for cat in ("exponential", "linear", "marginal")
-        }
+        if growth_multipliers is None:
+            try:
+                s = SandboxSettings()
+                growth_multipliers = {
+                    "exponential": s.growth_multiplier_exponential,
+                    "linear": s.growth_multiplier_linear,
+                    "marginal": s.growth_multiplier_marginal,
+                }
+            except Exception:
+                growth_multipliers = {
+                    cat: 1.0 + growth_score(cat)
+                    for cat in ("exponential", "linear", "marginal")
+                }
+        self.growth_multipliers = growth_multipliers
+        self.priority_weights: Dict[str, float] = {}
         if self.event_bus:
             try:
                 self.event_bus.subscribe("pathway:new", self._on_new_pathway)
@@ -152,6 +168,23 @@ class ActionPlanner:
                 logger.exception("Event bus subscription failed")
                 raise
         self._load_history()
+
+    # ------------------------------------------------------------------
+    def update_priorities(self, weights: Dict[str, float]) -> None:
+        """Update internal priority weights for actions."""
+        try:
+            self.priority_weights.update({k: float(v) for k, v in weights.items()})
+        except Exception:
+            logger.exception("priority weight update failed")
+
+    def get_priority_queue(self) -> list[str]:
+        """Return actions ordered by priority weight."""
+        return [
+            a
+            for a, _ in sorted(
+                self.priority_weights.items(), key=lambda x: x[1], reverse=True
+            )
+        ]
 
     # ------------------------------------------------------------------
     def _roi(self, action: str) -> float:
@@ -238,6 +271,11 @@ class ActionPlanner:
                         logger.exception("roi tracker record failed")
             except Exception:
                 logger.exception("growth weighting failed")
+        if action in self.priority_weights:
+            try:
+                reward *= float(self.priority_weights[action])
+            except Exception:
+                logger.exception("priority weight application failed")
         if not success:
             reward = -abs(reward)
         return reward
@@ -308,6 +346,7 @@ class ActionPlanner:
                 except Exception:
                     category = "marginal"
                     roi_est = 0.0
+                val *= self.priority_weights.get(action, 1.0)
                 scored.append((action, val, category, float(roi_est)))
                 roi_vals.append(float(roi_est))
             if roi_vals:
@@ -363,6 +402,7 @@ class ActionPlanner:
                     score += roi_est * self.growth_multipliers.get(category, 1.0)
                 except Exception:
                     pass
+            score *= self.priority_weights.get(action, 1.0)
             scored.append((action, score))
         scored.sort(key=lambda x: x[1], reverse=True)
         return [a for a, _ in scored]
