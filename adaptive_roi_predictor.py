@@ -563,9 +563,11 @@ class AdaptiveROIPredictor:
     def evaluate_model(self, tracker: ROITracker, **kwargs) -> tuple[float, float]:
         """Delegate evaluation to :class:`ROITracker`.
 
-        ``ROITracker.evaluate_model`` handles triggering retraining via the CLI
-        when prediction quality deteriorates. This wrapper maintains backwards
-        compatibility for older code invoking the method on the predictor.
+        ``ROITracker.evaluate_model`` now records mean absolute error for each
+        forecast horizon and flags compounding errors.  This wrapper maintains
+        backwards compatibility for older code invoking the method on the
+        predictor and simply forwards the result tuple of accuracy and MAE for
+        the first horizon.
         """
 
         return tracker.evaluate_model(**kwargs)

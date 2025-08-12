@@ -460,3 +460,29 @@ def test_prediction_confidence_persisted_and_loaded(tmp_path, monkeypatch):
     assert "prediction_confidence" in df.columns
     assert df["prediction_confidence"].iloc[0] == pytest.approx(0.0)
 
+
+def test_horizon_specific_prediction_logging(tmp_path, monkeypatch):
+    tracker = ROITracker()
+    monkeypatch.chdir(tmp_path)
+    predicted = [1.0, 2.0, 3.0]
+    actual = [0.9, 1.8, 2.7]
+    tracker.record_prediction(
+        predicted,
+        actual,
+        predicted_class="linear",
+        actual_class="linear",
+    )
+    conn = sqlite3.connect(tmp_path / "roi_events.db")
+    row = conn.execute(
+        "SELECT predicted_horizons, actual_horizons FROM roi_prediction_events"
+    ).fetchone()
+    conn.close()
+    assert json.loads(row[0]) == predicted
+    assert json.loads(row[1]) == actual
+    tracker.evaluate_model(window=1, roi_events_path=str(tmp_path / "roi_events.db"))
+    mae_hist = tracker.horizon_mae_history[-1]
+    assert mae_hist[1] == pytest.approx(0.1)
+    assert mae_hist[2] == pytest.approx(0.2)
+    assert mae_hist[3] == pytest.approx(0.3)
+    assert tracker.compounding_flags[-1] is True
+

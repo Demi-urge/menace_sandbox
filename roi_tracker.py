@@ -2,12 +2,12 @@ from __future__ import annotations
 
 """Track ROI deltas across self-improvement iterations."""
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence
 
 import json
 import os
 import sqlite3
-from collections import Counter
+from collections import Counter, defaultdict
 
 import numpy as np
 from sklearn.linear_model import LinearRegression
@@ -161,6 +161,9 @@ class ROITracker:
         # track drift statistics for adaptive retraining
         self.drift_scores: List[float] = []
         self.drift_flags: List[bool] = []
+        # track horizon-wise errors and whether they compound over time
+        self.horizon_mae_history: List[Dict[int, float]] = []
+        self.compounding_flags: List[bool] = []
         self.evaluation_window = evaluation_window
         self.mae_threshold = mae_threshold
         self.acc_threshold = acc_threshold
@@ -347,22 +350,38 @@ class ROITracker:
     # ------------------------------------------------------------------
     def record_prediction(
         self,
-        predicted: float,
-        actual: float,
+        predicted: float | Sequence[float],
+        actual: float | Sequence[float],
         predicted_class: str | None = None,
         actual_class: str | None = None,
         confidence: float | None = None,
     ) -> None:
-        """Store prediction details and log prediction stats."""
+        """Store prediction details and log prediction stats.
 
-        self.predicted_roi.append(float(predicted))
-        self.actual_roi.append(float(actual))
+        ``predicted`` and ``actual`` may contain multiple horizon values.  The
+        first element is used for the standard scalar history while the full
+        sequences are persisted for horizon-specific evaluation.
+        """
+
+        pred_seq = (
+            [float(x) for x in predicted]
+            if isinstance(predicted, (list, tuple, np.ndarray))
+            else [float(predicted)]
+        )
+        act_seq = (
+            [float(x) for x in actual]
+            if isinstance(actual, (list, tuple, np.ndarray))
+            else [float(actual)]
+        )
+
+        self.predicted_roi.append(float(pred_seq[0]))
+        self.actual_roi.append(float(act_seq[0]))
 
         if predicted_class is None:
             predicted_class = self._next_category
         if actual_class is None and self._adaptive_predictor is not None:
             try:
-                feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
+                feats = [[float(x)] for x in (self.roi_history + [act_seq[0]])] or [[0.0]]
                 try:
                     _, actual_class, _, _ = self._adaptive_predictor.predict(
                         feats, horizon=len(feats)
@@ -378,8 +397,8 @@ class ROITracker:
             "roi prediction",
             extra=log_record(
                 iteration=len(self.predicted_roi),
-                predicted=float(predicted),
-                actual=float(actual),
+                predicted=float(pred_seq[0]),
+                actual=float(act_seq[0]),
                 predicted_class=predicted_class,
                 actual_class=actual_class,
                 confidence=confidence,
@@ -397,7 +416,7 @@ class ROITracker:
                         getattr(g, attr).clear()
                     except Exception:
                         continue
-            err = abs(float(predicted) - float(actual))
+            err = abs(float(pred_seq[0]) - float(act_seq[0]))
             _me.prediction_error.labels(metric="roi").set(err)
             _me.prediction_mae.labels(metric="roi").set(self.rolling_mae())
             _me.prediction_reliability.labels(metric="roi").set(
@@ -407,13 +426,13 @@ class ROITracker:
             pass
 
         self.record_roi_prediction(
-            predicted, actual, predicted_class, actual_class, confidence
+            pred_seq, act_seq, predicted_class, actual_class, confidence
         )
 
     def record_roi_prediction(
         self,
-        predicted: float,
-        actual: float,
+        predicted: Sequence[float],
+        actual: Sequence[float],
         predicted_class: str | None = None,
         actual_class: str | None = None,
         confidence: float | None = None,
@@ -430,18 +449,22 @@ class ROITracker:
                         predicted_class TEXT,
                         actual_class TEXT,
                         confidence REAL,
+                        predicted_horizons TEXT,
+                        actual_horizons TEXT,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """
                 )
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons) VALUES (?,?,?,?,?,?,?)",
                     (
-                        float(predicted),
-                        float(actual),
+                        float(predicted[0]) if predicted else None,
+                        float(actual[0]) if actual else None,
                         predicted_class,
                         actual_class,
                         None if confidence is None else float(confidence),
+                        json.dumps([float(x) for x in predicted]),
+                        json.dumps([float(x) for x in actual]),
                     ),
                 )
         except Exception:
@@ -472,11 +495,18 @@ class ROITracker:
 
         try:
             conn = sqlite3.connect(roi_events_path)
-            cur = conn.execute(
-                "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
-                "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
-                (int(window),),
-            )
+            try:
+                cur = conn.execute(
+                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons "
+                    "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
+                    (int(window),),
+                )
+            except sqlite3.OperationalError:
+                cur = conn.execute(
+                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
+                    "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
+                    (int(window),),
+                )
             rows = cur.fetchall()
         except Exception:
             rows = []
@@ -490,6 +520,29 @@ class ROITracker:
         acts = [float(r[1]) for r in rows[: len(preds)]]
         errors = [abs(p - a) for p, a in zip(preds, acts)]
         mae = float(np.mean(errors)) if errors else 0.0
+
+        horizon_errs: dict[int, list[float]] = defaultdict(list)
+        for r in rows:
+            if len(r) >= 6:
+                try:
+                    ph = json.loads(r[4] or "[]")
+                    ah = json.loads(r[5] or "[]")
+                except Exception:
+                    ph, ah = [], []
+                for i, (p, a) in enumerate(zip(ph, ah), start=1):
+                    horizon_errs[i].append(abs(float(p) - float(a)))
+        mae_by_horizon = {
+            h: float(np.mean(v)) for h, v in horizon_errs.items() if v
+        }
+        self.horizon_mae_history.append(mae_by_horizon)
+        compounding = False
+        if mae_by_horizon:
+            ordered = [mae_by_horizon[h] for h in sorted(mae_by_horizon)]
+            for prev, curr in zip(ordered, ordered[1:]):
+                if curr > prev:
+                    compounding = True
+                    break
+        self.compounding_flags.append(compounding)
 
         def detect_drift(errs: list[float]) -> float:
             """Return magnitude of error drift between recent and older windows."""
