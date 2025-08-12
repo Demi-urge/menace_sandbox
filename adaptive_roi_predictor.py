@@ -648,6 +648,10 @@ class AdaptiveROIPredictor:
         self,
         improvement_features: Sequence[Sequence[float]],
         horizon: int | None = None,
+        *,
+        tracker: ROITracker | None = None,
+        actual_roi: Sequence[float] | float | None = None,
+        actual_class: str | None = None,
     ) -> tuple[list[list[float]], str, list[list[float]], float | None]:
         """Return ROI forecast sequences, growth classification and confidence.
 
@@ -660,6 +664,12 @@ class AdaptiveROIPredictor:
             Number of steps to forecast. Defaults to the length of
             ``improvement_features``. Only the first ``horizon`` rows of
             ``improvement_features`` are used.
+        tracker:
+            Optional :class:`ROITracker` used to record prediction events.
+        actual_roi, actual_class:
+            When provided, the prediction along with the actual outcome and
+            class label are logged through ``tracker`` and drift metrics are
+            updated.
 
         Returns
         -------
@@ -697,7 +707,22 @@ class AdaptiveROIPredictor:
                 growth = "marginal"
         else:
             growth = "marginal"
-        return preds.tolist(), growth, conf.tolist(), growth_conf
+        result = (preds.tolist(), growth, conf.tolist(), growth_conf)
+        if tracker is not None and actual_roi is not None:
+            try:
+                tracker.record_prediction(
+                    preds[-1].tolist() if preds.size else [],
+                    actual_roi,
+                    predicted_class=growth,
+                    actual_class=actual_class,
+                    confidence=growth_conf,
+                )
+                mae = tracker.rolling_mae()
+                acc = tracker.classification_accuracy()
+                self.record_drift(acc, mae)
+            except Exception:
+                pass
+        return result
 
     # Backwards compatible wrapper
     def predict_growth_type(
@@ -762,14 +787,25 @@ def predict_growth_type(
 
 
 def predict(
-    action_features: Sequence[Sequence[float]], horizon: int | None = None
+    action_features: Sequence[Sequence[float]],
+    horizon: int | None = None,
+    *,
+    tracker: ROITracker | None = None,
+    actual_roi: Sequence[float] | float | None = None,
+    actual_class: str | None = None,
 ) -> tuple[list[list[float]], str, list[list[float]], float | None]:
     """Return ROI forecast sequences, growth category and confidence using a module-level predictor."""
 
     global _predictor
     if _predictor is None:
         _predictor = AdaptiveROIPredictor()
-    return _predictor.predict(action_features, horizon=horizon)
+    return _predictor.predict(
+        action_features,
+        horizon=horizon,
+        tracker=tracker,
+        actual_roi=actual_roi,
+        actual_class=actual_class,
+    )
 
 
 def load_training_data(
