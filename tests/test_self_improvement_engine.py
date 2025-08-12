@@ -988,16 +988,16 @@ class DummyPredictor:
         return seq, category, conf, None
 
 
-def test_rank_candidates_prefers_higher_roi_totals() -> None:
-    mapping = {1.0: ([0.8, 1.0], "linear"), 0.0: ([0.2, 1.0], "linear")}
+def test_score_modifications_prefers_higher_roi() -> None:
+    mapping = {1.0: ([1.5], "linear"), 0.0: ([0.5], "linear")}
     predictor = DummyPredictor(mapping)
     eng = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
     eng.roi_predictor = predictor
     eng.use_adaptive_roi = True
-    eng.roi_compounding_weight = 1.0
-    eng.roi_delta_ema = 0.0
+    eng.growth_weighting = True
+    eng.growth_multipliers = {"linear": 1.0}
     eng._candidate_features = lambda name: [[1.0]] if name == "high" else [[0.0]]
-    ranked = eng._rank_candidates(["low", "high"])
+    ranked = eng._score_modifications(["low", "high"])
     assert [r[0] for r in ranked] == ["high", "low"]
-    assert ranked[0][1] == ranked[1][1] == 1.0
+    assert ranked[0][1] > ranked[1][1]
     assert ranked[0][3] > ranked[1][3]

@@ -1514,17 +1514,19 @@ class SelfImprovementEngine:
 
         return [[hist_roi, perf_delta, gpt_score]]
 
-    def _rank_candidates(self, modules: Iterable[str]) -> list[tuple[str, float, str, float]]:
+    def _score_modifications(self, modules: Iterable[str]) -> list[tuple[str, float, str, float]]:
         """Score and rank candidate modules for patching.
 
-        The weight uses the predicted ROI and optionally a compounding factor
-        based on multi-step ROI predictions or the EMA of recent ROI deltas.
+        Each candidate is weighted by its predicted ROI and an optional
+        growth-type multiplier from :class:`AdaptiveROIPredictor`.  If the
+        predictor is unavailable or fails, the candidate receives zero weight.
         """
 
         scored: list[tuple[str, float, str, float]] = []
         for mod in modules:
             features = self._candidate_features(mod)
-            roi_est, category, total = 0.0, "unknown", 0.0
+            roi_est = 0.0
+            category = "unknown"
             if self.roi_predictor:
                 try:
                     try:
@@ -1534,14 +1536,16 @@ class SelfImprovementEngine:
                     except TypeError:
                         val, category, _, _ = self.roi_predictor.predict(features)
                         seq = [float(val)]
-                    roi_est = float(seq[-1]) if seq else 0.0
-                    total = float(sum(seq)) if seq else 0.0
+                    if isinstance(seq, (list, tuple)) and seq:
+                        roi_est = float(seq[-1])
                 except Exception:
-                    roi_est, category, total = 0.0, "unknown", 0.0
-            comp = getattr(self, "roi_compounding_weight", 0.0)
-            extra = total if total > 0 else self.roi_delta_ema
-            mult = self.growth_multipliers.get(category, 1.0) if self.growth_weighting else 1.0
-            weight = roi_est * mult + comp * extra
+                    roi_est, category = 0.0, "unknown"
+            mult = (
+                self.growth_multipliers.get(category, 1.0)
+                if self.growth_weighting
+                else 1.0
+            )
+            weight = roi_est * mult
             scored.append((mod, roi_est, category, weight))
         if self.use_adaptive_roi:
             scored = [s for s in scored if s[3] > 0]
@@ -1549,11 +1553,10 @@ class SelfImprovementEngine:
         else:
             scored = [s for s in scored if s[1] > 0]
             scored.sort(key=lambda x: -x[1])
-        if self.action_planner:
+        planner = getattr(self, "action_planner", None)
+        if planner:
             try:
-                self.action_planner.update_priorities(
-                    {m: w for m, _, _, w in scored}
-                )
+                planner.update_priorities({m: w for m, _, _, w in scored})
             except Exception:
                 self.logger.exception("priority queue update failed")
         return scored
@@ -3342,7 +3345,7 @@ class SelfImprovementEngine:
             return
         queue = list(self._preventative_queue)
         self._preventative_queue.clear()
-        scored = self._rank_candidates(queue)
+        scored = self._score_modifications(queue)
         for mod, roi_est, category, weight in scored:
             self.logger.info(
                 "patch candidate",
@@ -3396,7 +3399,7 @@ class SelfImprovementEngine:
             self.error_predictor.graph.update_error_stats(self.error_bot.db)
             if not high_risk:
                 return
-            scored = self._rank_candidates(high_risk)
+            scored = self._score_modifications(high_risk)
             self.logger.info(
                 "high risk modules",
                 extra=log_record(modules=[m for m, _, _, _ in scored]),
