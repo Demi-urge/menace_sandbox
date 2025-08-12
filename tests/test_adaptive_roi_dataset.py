@@ -6,6 +6,8 @@ from menace.adaptive_roi_dataset import build_dataset, load_adaptive_roi_dataset
 from menace.evaluation_history_db import EvaluationHistoryDB, EvaluationRecord
 from menace.evolution_history_db import EvolutionEvent, EvolutionHistoryDB
 from menace.roi_tracker import ROITracker
+import types
+import sys
 
 
 def test_dataset_aggregation(tmp_path):
@@ -32,7 +34,7 @@ def test_dataset_aggregation(tmp_path):
     assert np.allclose(y.mean(), 0.0)
 
 
-def test_build_dataset(tmp_path):
+def test_build_dataset(tmp_path, monkeypatch):
     evo_db_path = tmp_path / "evo.db"
     eval_db_path = tmp_path / "eval.db"
     roi_db_path = tmp_path / "roi.db"
@@ -40,8 +42,22 @@ def test_build_dataset(tmp_path):
     evo = EvolutionHistoryDB(evo_db_path)
     eva = EvaluationHistoryDB(eval_db_path)
 
+    class DummyEmb:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def embed_query(self, text):
+            return [1.0, 2.0]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        types.SimpleNamespace(OpenAIEmbeddings=DummyEmb),
+    )
+
+    eva.conn.execute("ALTER TABLE evaluation_history ADD COLUMN gpt_feedback TEXT")
+
     ts0 = "2024-01-01T00:00:00"
-    # evolution event
     evo.add(
         EvolutionEvent(
             action="engine",
@@ -52,14 +68,12 @@ def test_build_dataset(tmp_path):
         )
     )
 
-    # evaluation score after event
-    eva.add(
-        EvaluationRecord(
-            engine="engine", cv_score=0.8, passed=True, ts="2024-01-01T00:02:00"
-        )
+    eva.conn.execute(
+        "INSERT INTO evaluation_history(engine, cv_score, passed, error, ts, gpt_feedback) VALUES (?,?,?,?,?,?)",
+        ("engine", 0.8, 1, "", "2024-01-01T00:02:00", "good"),
     )
+    eva.conn.commit()
 
-    # create roi.db with one record before and one after event
     conn = sqlite3.connect(roi_db_path)
     conn.execute(
         """
@@ -93,12 +107,12 @@ def test_build_dataset(tmp_path):
         )
     conn.commit()
 
-    X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path)
+    X, y, g, names = build_dataset(
+        evo_db_path, roi_db_path, eval_db_path, return_feature_names=True
+    )
 
-    tracker = ROITracker()
-    base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
-    n_features = 6 + len(base_metrics) + 5 + 4
-    assert X.shape == (1, n_features)
+    assert X.shape == (1, len(names))
+    assert any(name.startswith("gpt_feedback_emb_") for name in names)
     assert y.tolist() == [[12.0, 20.0, 28.0, 10.0]]
     assert g.tolist() == ["linear"]
     assert np.allclose(X, 0.0)
