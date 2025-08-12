@@ -451,12 +451,14 @@ class ROITracker:
                         confidence REAL,
                         predicted_horizons TEXT,
                         actual_horizons TEXT,
+                        predicted_categories TEXT,
+                        actual_categories TEXT,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """
                 )
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons) VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons, predicted_categories, actual_categories) VALUES (?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
@@ -465,6 +467,8 @@ class ROITracker:
                         None if confidence is None else float(confidence),
                         json.dumps([float(x) for x in predicted]),
                         json.dumps([float(x) for x in actual]),
+                        json.dumps([predicted_class] if predicted_class is not None else []),
+                        json.dumps([actual_class] if actual_class is not None else []),
                     ),
                 )
         except Exception:
@@ -497,16 +501,23 @@ class ROITracker:
             conn = sqlite3.connect(roi_events_path)
             try:
                 cur = conn.execute(
-                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons "
+                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories "
                     "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
                     (int(window),),
                 )
             except sqlite3.OperationalError:
-                cur = conn.execute(
-                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
-                    "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
-                    (int(window),),
-                )
+                try:
+                    cur = conn.execute(
+                        "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons "
+                        "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
+                        (int(window),),
+                    )
+                except sqlite3.OperationalError:
+                    cur = conn.execute(
+                        "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
+                        "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
+                        (int(window),),
+                    )
             rows = cur.fetchall()
         except Exception:
             rows = []

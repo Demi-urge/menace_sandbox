@@ -41,6 +41,11 @@ class MetricsDashboard:
             "plot_roi_improvement",
             self.plot_roi_improvement,
         )
+        self.app.add_url_rule(
+            "/plots/prediction_stats.png",
+            "plot_prediction_stats",
+            self.plot_prediction_stats,
+        )
 
     # ------------------------------------------------------------------
     def index(self) -> tuple[str, int]:
@@ -328,6 +333,40 @@ class MetricsDashboard:
         ax.set_xlabel("Iteration")
         ax.set_ylabel("ROI")
         ax.legend()
+        from io import BytesIO
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue(), 200, {"Content-Type": "image/png"}
+
+    def plot_prediction_stats(self) -> tuple[bytes, int, dict[str, str]]:
+        """Return a PNG plot of MAE and classification accuracy trends."""
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        tracker = self._load_tracker()
+        mae_trend = tracker.rolling_mae_trend()  # use full history
+        acc_trend = tracker.rolling_accuracy_trend()
+        if not mae_trend and not acc_trend:
+            return b"", 200, {"Content-Type": "image/png"}
+
+        fig, ax1 = plt.subplots()
+        ax1.plot(mae_trend, label="MAE", color="tab:blue")
+        ax1.set_xlabel("Iteration")
+        ax1.set_ylabel("MAE", color="tab:blue")
+        ax1.tick_params(axis="y", labelcolor="tab:blue")
+        ax2 = ax1.twinx()
+        ax2.plot(acc_trend, label="Accuracy", color="tab:green")
+        ax2.set_ylabel("Accuracy", color="tab:green")
+        ax2.tick_params(axis="y", labelcolor="tab:green")
+        lines, labels = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines + lines2, labels + labels2, loc="best")
+        fig.tight_layout()
         from io import BytesIO
 
         buf = BytesIO()
