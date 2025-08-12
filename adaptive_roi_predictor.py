@@ -261,6 +261,43 @@ class AdaptiveROIPredictor:
             self.train((X, y, g))
 
     # ------------------------------------------------------------------
+    def update(
+        self,
+        X_new: np.ndarray | Sequence[Sequence[float]],
+        y_new: np.ndarray | Sequence[Sequence[float]] | Sequence[float],
+        g_new: np.ndarray | Sequence[str],
+    ) -> None:
+        """Append ``*_new`` samples and update the model online.
+
+        Parameters
+        ----------
+        X_new, y_new, g_new:
+            New feature rows, ROI targets and growth labels.  The arrays must
+            have matching lengths.  When the underlying model implements
+            :meth:`partial_fit` the new samples are used to incrementally
+            refine the existing model.  Otherwise a full retraining on all
+            accumulated samples is triggered.
+        """
+
+        X_arr = np.asarray(X_new, dtype=float)
+        y_arr = np.asarray(y_new, dtype=float)
+        if y_arr.ndim == 1:
+            y_arr = y_arr.reshape(len(y_arr), -1)
+        g_arr = np.asarray(g_new, dtype=object)
+
+        if self.training_data is not None:
+            X, y, g = self.training_data
+            X = np.vstack([X, X_arr])
+            y = np.vstack([y, y_arr])
+            g = np.concatenate([g, g_arr])
+        else:
+            X, y, g = X_arr, y_arr, g_arr
+
+        # ``partial_fit`` handles detection of incremental capability and
+        # falls back to full retraining when unsupported.
+        self.partial_fit((X, y, g), batch_size=len(X_arr))
+
+    # ------------------------------------------------------------------
     def calibrate_thresholds(
         self, dataset: Tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
     ) -> Tuple[float, float]:

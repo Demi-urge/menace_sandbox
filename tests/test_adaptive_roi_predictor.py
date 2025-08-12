@@ -538,3 +538,66 @@ def test_prediction_logging_and_accuracy(tmp_path, monkeypatch):
     assert acc == pytest.approx(0.5)
     assert mae == pytest.approx(0.0)
 
+
+def test_online_update(monkeypatch):
+    """``update`` performs incremental fitting when supported."""
+
+    X = np.array([[0.0], [1.0]], dtype=float)
+    y = np.array([[0.0], [1.0]], dtype=float)
+    g = np.array(["linear", "linear"], dtype=object)
+
+    def fake_build(*_args, **kwargs):
+        if kwargs.get("return_feature_names"):
+            return X, y, g, []
+        return X, y, g
+
+    class DummyModel:
+        def __init__(self, **_kwargs):
+            self.partial_calls = 0
+            self.dim = 1
+
+        def fit(self, X, y):  # pragma: no cover - called during init
+            self.dim = y.shape[1] if y.ndim > 1 else 1
+            return self
+
+        def partial_fit(self, X, y):
+            self.partial_calls += 1
+            return self.fit(X, y)
+
+        def predict(self, X):  # pragma: no cover - simple stub
+            return np.zeros((len(X), self.dim))
+
+        def get_params(self):  # pragma: no cover - not used
+            return {}
+
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build
+    )
+
+    def stub_train(self, dataset=None, **_kwargs):  # pragma: no cover - setup
+        if dataset is None:
+            dataset = fake_build()
+        Xd, yd, gd = dataset
+        self._model = DummyModel()
+        self._model.fit(Xd, yd)
+        self.training_data = (Xd, yd, gd)
+        self._trained_size = len(Xd)
+
+    monkeypatch.setattr(AdaptiveROIPredictor, "train", stub_train)
+
+    predictor = AdaptiveROIPredictor(cv=0, param_grid={})
+    assert isinstance(predictor._model, DummyModel)
+    base_size = predictor._trained_size
+
+    def fail_train(*_args, **_kwargs):  # pragma: no cover - should not run
+        raise AssertionError("retrain should not be called")
+
+    monkeypatch.setattr(AdaptiveROIPredictor, "train", fail_train)
+
+    predictor.update([[2.0]], [[2.0]], ["linear"])
+
+    assert predictor._trained_size == base_size + 1
+    assert predictor.training_data is not None
+    assert predictor.training_data[0].shape[0] == base_size + 1
+    assert predictor._model.partial_calls == 1
+
