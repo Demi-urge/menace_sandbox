@@ -137,6 +137,11 @@ class AdaptiveROIPredictor:
                 "n_estimators": [50, 100],
                 "learning_rate": [0.01, 0.1],
             },
+            "GradientBoostingClassifier": {
+                "n_estimators": [50, 100],
+                "learning_rate": [0.01, 0.1],
+                "max_depth": [3, 5],
+            },
             "SGDRegressor": {
                 "sgdregressor__alpha": [0.0001, 0.001],
                 "sgdregressor__penalty": ["l2", "l1"],
@@ -562,13 +567,55 @@ class AdaptiveROIPredictor:
         self.best_score = None if best_score == float("inf") else best_score
         self.best_params = best_params
         self._classifier = None
+        clf_best_params: Dict[str, Any] | None = None
         if g.size and GradientBoostingClassifier is not None:
             try:
-                clf = GradientBoostingClassifier(random_state=0)
-                clf.fit(X, g)
+                clf_params: Dict[str, Any] = {}
+                if (
+                    self.best_params
+                    and isinstance(self.best_params.get("classifier"), dict)
+                ):
+                    clf_params = {
+                        k: v
+                        for k, v in self.best_params["classifier"].items()
+                        if k != "model"
+                    }
+                clf = GradientBoostingClassifier(random_state=0, **clf_params)
+                clf_grid = (
+                    param_grid.get("GradientBoostingClassifier", {})
+                    if isinstance(param_grid, dict)
+                    else {}
+                )
+                if (
+                    GridSearchCV is not None
+                    and clf_grid
+                    and len(g) >= max(cv, 2)
+                    and len(np.unique(g)) > 1
+                ):
+                    gs_clf = GridSearchCV(
+                        clf,
+                        clf_grid,
+                        cv=cv,
+                        scoring="accuracy",
+                    )
+                    gs_clf.fit(X, g)
+                    clf = gs_clf.best_estimator_
+                    clf_best_params = {"model": "GradientBoostingClassifier"}
+                    clf_best_params.update(gs_clf.best_params_)
+                else:
+                    clf.fit(X, g)
+                    clf_best_params = {"model": "GradientBoostingClassifier"}
+                    clf_best_params.update(
+                        getattr(clf, "get_params", lambda: {})()
+                    )
                 self._classifier = clf
             except Exception:  # pragma: no cover - classifier failure
                 self._classifier = None
+                clf_best_params = None
+        if clf_best_params is not None:
+            if self.best_params is None:
+                self.best_params = {}
+            self.best_params["classifier"] = clf_best_params
         if (
             self._model is not None
             and feature_names is not None
