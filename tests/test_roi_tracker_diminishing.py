@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-import roi_tracker as rt
+import menace.roi_tracker as rt
 
 
 def test_diminishing_stable_history():

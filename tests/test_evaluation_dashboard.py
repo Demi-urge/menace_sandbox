@@ -1,6 +1,7 @@
 import sys
 import types
 import json
+import pytest
 
 # Stub heavy dependencies and engine modules before importing EvaluationManager
 sys.modules.setdefault("networkx", types.ModuleType("networkx"))
@@ -33,6 +34,7 @@ sys.modules.setdefault("menace.action_learning_engine", ae_mod)
 
 import menace.evaluation_manager as em
 import menace.evaluation_dashboard as ed
+import menace.roi_tracker as rt
 
 # Clear stubs for optional libs after import
 for mod in [
@@ -100,3 +102,18 @@ def test_to_json_roundtrip(tmp_path):
     data = json.loads(path.read_text())
     assert data["learning_engine"][0]["cv_score"] == 0.2
     assert data["unified_engine"][1]["cv_score"] == 0.6
+
+
+def test_roi_prediction_panel():
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tracker = rt.ROITracker()
+    tracker.record_prediction(0.5, 0.7)
+    tracker.record_prediction(1.0, 0.9)
+    tracker.record_class_prediction("up", "up")
+    tracker.record_class_prediction("down", "up")
+    panel = dash.roi_prediction_panel(tracker)
+    assert panel["mae"] == pytest.approx(0.15)
+    assert panel["accuracy"] == pytest.approx(0.5)
+    assert panel["class_counts"]["predicted"]["up"] == 1
+
