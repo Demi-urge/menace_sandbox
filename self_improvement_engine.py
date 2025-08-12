@@ -141,6 +141,7 @@ from .evolution_history_db import EvolutionHistoryDB
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
 from .adaptive_roi_predictor import AdaptiveROIPredictor
+from .roi_tracker import ROITracker
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -519,6 +520,7 @@ class SelfImprovementEngine:
         score_backend: PatchScoreBackend | None = None,
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
+        roi_tracker: ROITracker | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -558,12 +560,12 @@ class SelfImprovementEngine:
         self.pre_roi_cap = pre_roi_cap if pre_roi_cap is not None else PRE_ROI_CAP
         settings = SandboxSettings()
         self.use_adaptive_roi = getattr(settings, "adaptive_roi_prioritization", True)
-        if roi_predictor is not None and self.use_adaptive_roi:
-            self.roi_predictor = roi_predictor
-        elif self.use_adaptive_roi:
-            self.roi_predictor = AdaptiveROIPredictor()
+        if self.use_adaptive_roi:
+            self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+            self.roi_tracker = roi_tracker or ROITracker()
         else:
             self.roi_predictor = None
+            self.roi_tracker = None
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
@@ -1651,13 +1653,23 @@ class SelfImprovementEngine:
             roi_est = 0.0
             growth = "unknown"
             weight = 0.0
-            if self.roi_predictor and self.use_adaptive_roi:
-                features = self._candidate_features(self.bot_name)
+            predictor = getattr(self, "roi_predictor", None)
+            use_adaptive = getattr(self, "use_adaptive_roi", False)
+            tracker = getattr(self, "roi_tracker", None)
+            bot_name = getattr(self, "bot_name", "")
+            if predictor and use_adaptive:
                 try:
-                    roi_est, growth = self.roi_predictor.predict(features)
+                    features = self._candidate_features(bot_name)
+                except Exception:
+                    features = [[0.0, 0.0, 0.0]]
+                try:
+                    roi_est, growth = predictor.predict(features)
                 except Exception:
                     roi_est, growth = 0.0, "unknown"
                 weight = roi_est * (1 + self._improvement_score(growth))
+                if tracker:
+                    tracker._next_prediction = roi_est
+                    tracker._next_category = growth
                 if weight <= 0:
                     self.logger.info(
                         "self optimisation skipped",
@@ -1703,8 +1715,13 @@ class SelfImprovementEngine:
                 mutation["roi"] = after_metric
             self._last_mutation_id = int(mutation["event_id"])
             self._last_patch_id = patch_id
-            if self.roi_predictor and self.use_adaptive_roi:
-                self._log_action("self_optimize", self.bot_name, roi_est, growth)
+            if tracker:
+                try:
+                    tracker.update(before_metric, after_metric, category=growth)
+                except Exception:
+                    self.logger.exception("roi tracker update failed")
+            if predictor and use_adaptive:
+                self._log_action("self_optimize", bot_name, roi_est, growth)
             return patch_id, reverted, delta
         except Exception as exc:
             self.logger.exception("self optimization failed: %s", exc)

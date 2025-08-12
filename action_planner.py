@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
             return pd.DataFrame()
 from .unified_event_bus import UnifiedEventBus
 from .adaptive_roi_predictor import AdaptiveROIPredictor
+from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class ActionPlanner:
         model_path: Optional[str] = None,
         event_bus: Optional[UnifiedEventBus] = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
+        roi_tracker: ROITracker | None = None,
         use_adaptive_roi: bool | None = None,
         growth_weighting: bool = True,
         growth_multipliers: Dict[str, float] | None = None,
@@ -133,8 +135,10 @@ class ActionPlanner:
         self.use_adaptive_roi = bool(use_adaptive_roi)
         if self.use_adaptive_roi:
             self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
+            self.roi_tracker = roi_tracker or ROITracker()
         else:
             self.roi_predictor = None
+            self.roi_tracker = None
         self.growth_weighting = bool(growth_weighting)
         self.growth_multipliers = growth_multipliers or {
             "exponential": 1.5,
@@ -174,11 +178,22 @@ class ActionPlanner:
         else:
             reward = self._roi(action) or rec.roi
         success = str(rec.outcome).upper().startswith("SUCCESS")
-        if success and self.growth_weighting and self.use_adaptive_roi and self.roi_predictor and self.feature_fn:
+        if (
+            self.growth_weighting
+            and self.use_adaptive_roi
+            and self.roi_predictor
+            and self.feature_fn
+        ):
             try:
                 feats = [list(self.feature_fn(action))]
-                _, category = self.roi_predictor.predict(feats)
+                roi_est, category = self.roi_predictor.predict(feats)
                 reward *= self.growth_multipliers.get(category, 1.0)
+                if self.roi_tracker:
+                    try:
+                        self.roi_tracker._next_category = category
+                        self.roi_tracker.record_prediction(roi_est, rec.roi)
+                    except Exception:
+                        logger.exception("roi tracker record failed")
             except Exception:
                 logger.exception("growth weighting failed")
         if not success:
