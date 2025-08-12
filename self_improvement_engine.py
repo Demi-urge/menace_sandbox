@@ -1424,13 +1424,47 @@ class SelfImprovementEngine:
 
     # ------------------------------------------------------------------
     def _collect_action_features(self) -> list[list[float]]:
-        """Return recent ROI deltas and their changes for growth prediction."""
+        """Return recent ROI deltas and their changes for growth prediction.
+
+        Each history entry is evaluated with ``roi_predictor`` when available.
+        Entries classified as ``"marginal"`` are skipped unless the optional
+        ``allow_marginal_candidates`` flag is set on the engine.  Skipped
+        entries are recorded via :meth:`_log_action` for auditability.
+        """
+
         feats: list[list[float]] = []
         history = self.roi_history[-5:]
         prev = 0.0
-        for val in history:
-            feats.append([float(val), float(val - prev)])
+        allow_marginal = getattr(self, "allow_marginal_candidates", False)
+
+        for idx, val in enumerate(history):
+            feat = [float(val), float(val - prev)]
+            roi_est = float(val)
+            category = "unknown"
+            if getattr(self, "roi_predictor", None):
+                try:
+                    try:
+                        seq, category, _, _ = self.roi_predictor.predict(
+                            [feat], horizon=1
+                        )
+                        roi_est = float(seq[-1]) if seq else 0.0
+                    except TypeError:
+                        roi_est, category, _, _ = self.roi_predictor.predict([feat])
+                        roi_est = float(roi_est)
+                except Exception:
+                    roi_est, category = 0.0, "unknown"
+
+            if category == "marginal" and not allow_marginal:
+                try:  # pragma: no cover - best effort
+                    self._log_action(
+                        "skip_candidate", f"roi_history_{idx}", roi_est, category
+                    )
+                except Exception:
+                    pass
+            else:
+                feats.append(feat)
             prev = val
+
         return feats
 
     def _candidate_features(self, module: str) -> list[list[float]]:
