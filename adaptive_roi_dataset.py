@@ -11,7 +11,9 @@ contains:
 
 * pre and post performance metrics
 * changes in resource usage (API cost, CPU seconds, success rate)
-* the GPT evaluation score and feedback for the cycle
+* resource costs and CPU/GPU usage gathered from :mod:`roi_tracker`
+* counts of errors and repairs recorded by :mod:`error_bot`
+* the GPT evaluation score, feedback and long-term outcomes for the cycle
 * long-term ROI deltas derived from prediction events
 
 The target vector contains the realised ROI outcome for the cycle calculated
@@ -90,10 +92,17 @@ def _collect_roi_history(conn: sqlite3.Connection) -> dict[
 # ---------------------------------------------------------------------------
 def _collect_eval_history(
     db: EvaluationHistoryDB,
-) -> dict[str, list[tuple[datetime, float, float, float, float]]]:
-    """Return evaluation scores and feedback grouped by engine."""
+) -> dict[str, list[tuple[datetime, float, float, float, float, float, str]]]:
+    """Return evaluation scores and feedback grouped by engine.
 
-    history: dict[str, list[tuple[datetime, float, float, float, float, str]]] = {}
+    The returned mapping contains entries of the form
+    ``(timestamp, cv_score, gpt_feedback_score, gpt_feedback_tokens,
+    long_term_perf_delta, long_term_eval_outcome, gpt_feedback_text)``.
+    ``long_term_eval_outcome`` falls back to ``0.0`` when the corresponding
+    column is absent from :mod:`evaluation_history_db`.
+    """
+
+    history: dict[str, list[tuple[datetime, float, float, float, float, float, str]]] = {}
     cols = {
         row[1]
         for row in db.conn.execute("PRAGMA table_info(evaluation_history)").fetchall()
@@ -101,6 +110,7 @@ def _collect_eval_history(
     has_fb_score = "gpt_feedback_score" in cols
     has_fb_tokens = "gpt_feedback_tokens" in cols
     has_long = "long_term_delta" in cols
+    has_long_outcome = "long_term_outcome" in cols
     has_fb_text = "gpt_feedback" in cols
     select_cols = ["cv_score", "ts"]
     if has_fb_score:
@@ -109,6 +119,8 @@ def _collect_eval_history(
         select_cols.append("gpt_feedback_tokens")
     if has_long:
         select_cols.append("long_term_delta")
+    if has_long_outcome:
+        select_cols.append("long_term_outcome")
     if has_fb_text:
         select_cols.append("gpt_feedback")
     query = (
@@ -116,7 +128,7 @@ def _collect_eval_history(
     )
     for eng in db.engines():
         cur = db.conn.execute(query, (eng,))
-        records: list[tuple[datetime, float, float, float, float, str]] = []
+        records: list[tuple[datetime, float, float, float, float, float, str]] = []
         for row in cur.fetchall():
             score = float(row[0])
             ts = row[1]
@@ -127,9 +139,19 @@ def _collect_eval_history(
             idx += 1 if has_fb_tokens else 0
             long_term = float(row[idx]) if has_long else 0.0
             idx += 1 if has_long else 0
+            long_outcome = float(row[idx]) if has_long_outcome else 0.0
+            idx += 1 if has_long_outcome else 0
             fb_text = row[idx] if has_fb_text else ""
             records.append(
-                (_parse_ts(ts), score, fb_score, tokens, long_term, str(fb_text))
+                (
+                    _parse_ts(ts),
+                    score,
+                    fb_score,
+                    tokens,
+                    long_term,
+                    long_outcome,
+                    str(fb_text),
+                )
             )
         records.sort(key=lambda r: r[0])
         history[eng] = records
@@ -153,6 +175,63 @@ def _collect_metrics_history(
         if name in metrics:
             metrics[name].append(0.0 if value is None else float(value))
     return metrics
+
+
+# ---------------------------------------------------------------------------
+def _collect_resource_metrics(tracker: ROITracker) -> dict[str, list[float]]:
+    """Return tracked resource cost, CPU and GPU usage.
+
+    ``ROITracker.resource_metrics`` may store tuples of either
+    ``(cost, cpu, gpu)`` or ``(cpu, memory, disk, time, gpu)``.  This helper
+    normalises the structure and returns a mapping with keys
+    ``"resource_cost"``, ``"resource_cpu"`` and ``"resource_gpu"``.  Missing
+    entries are padded with zeros.
+    """
+
+    metrics = {"resource_cost": [], "resource_cpu": [], "resource_gpu": []}
+    for row in getattr(tracker, "resource_metrics", []) or []:
+        try:
+            if len(row) >= 5:
+                cpu, _mem, _disk, cost, gpu = row[:5]
+            elif len(row) == 3:
+                cost, cpu, gpu = row
+            else:
+                cost, cpu, gpu = 0.0, 0.0, 0.0
+            metrics["resource_cost"].append(float(cost))
+            metrics["resource_cpu"].append(float(cpu))
+            metrics["resource_gpu"].append(float(gpu))
+        except Exception:
+            metrics["resource_cost"].append(0.0)
+            metrics["resource_cpu"].append(0.0)
+            metrics["resource_gpu"].append(0.0)
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+def _collect_error_history(path: str | Path) -> list[tuple[datetime, int, int]]:
+    """Return cumulative error and repair counts ordered by timestamp."""
+
+    records: list[tuple[datetime, int, int]] = []
+    try:
+        conn = sqlite3.connect(path)
+        cur = conn.execute(
+            "SELECT ts, resolution_status FROM telemetry ORDER BY ts"
+        )
+        err_cnt = 0
+        rep_cnt = 0
+        for ts, status in cur.fetchall():
+            err_cnt += 1
+            if status and str(status).lower() not in ("", "unresolved", "0"):
+                rep_cnt += 1
+            records.append((_parse_ts(ts), err_cnt, rep_cnt))
+    except Exception:
+        return []
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +366,7 @@ def build_dataset(
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
     roi_events_path: str | Path = "roi_events.db",
+    errors_path: str | Path = "errors.db",
     horizons: Sequence[int] = (1, 3, 5),
     *,
     ema_span: int | None = 3,
@@ -306,6 +386,8 @@ def build_dataset(
     roi_events_path:
         Path to the ROI prediction events database used to augment the
         training features.
+    errors_path:
+        Path to the ``error_bot`` telemetry database for error/repair counts.
     horizons:
         Sequence of future ROI steps to include as target columns.  The
         default ``(1, 3, 5)`` yields targets ``roi_{t+1}``, ``roi_{t+3}`` and
@@ -323,7 +405,9 @@ def build_dataset(
         ``(features, targets, growth_types)`` where ``features`` is a matrix with columns
         ``[before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
         success_rate_delta, gpt_score, gpt_feedback_score, gpt_feedback_tokens,
-        long_term_perf_delta, gpt_feedback_emb_*, recovery_time, latency_error_rate,
+        long_term_perf_delta, long_term_eval_outcome, gpt_feedback_emb_*,
+        resource_cost, resource_cpu_usage, resource_gpu_usage, error_count,
+        repair_count, recovery_time, latency_error_rate,
         hostile_failures, misuse_failures, concurrency_throughput,
         synergy_adaptability, synergy_recovery_time, synergy_discrepancy_count,
         synergy_gpu_usage, synergy_cpu_usage, synergy_memory_usage,
@@ -354,10 +438,10 @@ def build_dataset(
     roi_hist = _collect_roi_history(roi_conn)
     eval_hist = _collect_eval_history(eval_db)
     any_fb_text = any(
-        rec[5]
+        rec[6]
         for records in eval_hist.values()
         for rec in records
-        if len(rec) >= 6
+        if len(rec) >= 7
     )
     tracker_template = ROITracker()
     metric_names = sorted(
@@ -366,6 +450,14 @@ def build_dataset(
     resource_cols = ["cpu", "memory", "disk", "time", "gpu"]
     metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
+    resource_hist = _collect_resource_metrics(tracker_template)
+    error_hist = _collect_error_history(errors_path)
+    res_costs = resource_hist.get("resource_cost", [])
+    res_cpus = resource_hist.get("resource_cpu", [])
+    res_gpus = resource_hist.get("resource_gpu", [])
+    err_idx = 0
+    err_cnt = 0.0
+    rep_cnt = 0.0
     horizons = sorted({int(h) for h in horizons if int(h) > 0}) or [1]
     max_h = max(horizons)
     embed_cache: dict[str, list[float]] = {}
@@ -395,9 +487,19 @@ def build_dataset(
         "gpt_feedback_score",
         "gpt_feedback_tokens",
         "long_term_perf_delta",
+        "long_term_eval_outcome",
     ]
     if embedding_dim:
         feature_names.extend([f"gpt_feedback_emb_{i}" for i in range(embedding_dim)])
+    feature_names.extend(
+        [
+            "resource_cost",
+            "resource_cpu_usage",
+            "resource_gpu_usage",
+            "error_count",
+            "repair_count",
+        ]
+    )
     feature_names.extend(metric_names)
     feature_names.extend(
         [
@@ -479,13 +581,15 @@ def build_dataset(
         fb_score = 0.0
         fb_tokens = 0.0
         long_term = 0.0
+        long_outcome = 0.0
         feedback_text = ""
-        for e_ts, score, fb, tokens, lt, fb_txt in eval_list:
+        for e_ts, score, fb, tokens, lt, lo, fb_txt in eval_list:
             if e_ts >= ts_dt:
                 eval_score = score
                 fb_score = fb
                 fb_tokens = tokens
                 long_term = lt
+                long_outcome = lo
                 feedback_text = fb_txt
                 break
         if eval_score is None:
@@ -538,6 +642,7 @@ def build_dataset(
             float(fb_score),
             float(fb_tokens),
             float(long_term),
+            float(long_outcome),
         ]
         if embedding_dim:
             emb_vec = [0.0] * embedding_dim
@@ -551,6 +656,14 @@ def build_dataset(
                     embed_cache[feedback_text] = cached
                 emb_vec = cached[:embedding_dim]
             row.extend(float(v) for v in emb_vec)
+        res_cost = res_costs[cycle_idx] if cycle_idx < len(res_costs) else 0.0
+        res_cpu = res_cpus[cycle_idx] if cycle_idx < len(res_cpus) else 0.0
+        res_gpu = res_gpus[cycle_idx] if cycle_idx < len(res_gpus) else 0.0
+        while error_hist and err_idx < len(error_hist) and error_hist[err_idx][0] <= ts_dt:
+            err_cnt = float(error_hist[err_idx][1])
+            rep_cnt = float(error_hist[err_idx][2])
+            err_idx += 1
+        row.extend([float(res_cost), float(res_cpu), float(res_gpu), err_cnt, rep_cnt])
         for name in metric_names:
             seq = metrics_hist.get(name, [])
             val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
