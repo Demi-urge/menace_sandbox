@@ -1663,7 +1663,14 @@ class SelfImprovementEngine:
                 except Exception:
                     features = [[0.0, 0.0, 0.0]]
                 try:
-                    roi_est, growth = predictor.predict(features)
+                    try:
+                        seq, growth = predictor.predict(
+                            features, horizon=len(features)
+                        )
+                    except TypeError:
+                        val, growth = predictor.predict(features)
+                        seq = [float(val)]
+                    roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     roi_est, growth = 0.0, "unknown"
                 weight = roi_est * (1 + self._improvement_score(growth))
@@ -3225,7 +3232,14 @@ class SelfImprovementEngine:
             features = self._candidate_features(mod)
             if self.roi_predictor:
                 try:
-                    roi_est, category = self.roi_predictor.predict(features)
+                    try:
+                        seq, category = self.roi_predictor.predict(
+                            features, horizon=len(features)
+                        )
+                    except TypeError:
+                        val, category = self.roi_predictor.predict(features)
+                        seq = [float(val)]
+                    roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     roi_est, category = 0.0, "unknown"
             else:
@@ -3296,7 +3310,14 @@ class SelfImprovementEngine:
                 features = self._candidate_features(mod)
                 if self.roi_predictor:
                     try:
-                        roi_est, category = self.roi_predictor.predict(features)
+                        try:
+                            seq, category = self.roi_predictor.predict(
+                                features, horizon=len(features)
+                            )
+                        except TypeError:
+                            val, category = self.roi_predictor.predict(features)
+                            seq = [float(val)]
+                        roi_est = float(seq[-1]) if seq else 0.0
                     except Exception:
                         roi_est, category = 0.0, "unknown"
                 else:
@@ -3989,7 +4010,17 @@ class SelfImprovementEngine:
                     current_energy = energy
             if self.roi_predictor and self.use_adaptive_roi:
                 features = self._collect_action_features()
-                roi_estimate, growth_type = self.roi_predictor.predict(features)
+                try:
+                    try:
+                        seq, growth_type = self.roi_predictor.predict(
+                            features, horizon=len(features)
+                        )
+                    except TypeError:
+                        val, growth_type = self.roi_predictor.predict(features)
+                        seq = [float(val)]
+                    roi_estimate = float(seq[-1]) if seq else 0.0
+                except Exception:
+                    roi_estimate, growth_type = 0.0, "unknown"
                 self.logger.info(
                     "growth prediction",
                     extra=log_record(

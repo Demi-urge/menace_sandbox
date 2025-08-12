@@ -198,7 +198,13 @@ class EvolutionOrchestrator:
         delta_roi = before_roi - self.prev_roi
         self.prev_roi = before_roi
         error_rate = self._error_rate()
-        model_pred, _ = self.roi_predictor.predict([[before_roi, error_rate]])
+        try:
+            seq, _ = self.roi_predictor.predict(
+                [[before_roi, error_rate]], horizon=1
+            )
+            model_pred = float(seq[-1]) if seq else 0.0
+        except TypeError:
+            model_pred, _ = self.roi_predictor.predict([[before_roi, error_rate]])
         pred_roi = before_roi
         pred_err = error_rate
         if self.trend_predictor:
@@ -544,7 +550,14 @@ class EvolutionOrchestrator:
             seq = "-".join(reversed(s.sequence.split("-")))
             features = [[s.expected_roi, 0.0]]
             try:
-                roi_est, category = self.roi_predictor.predict(features)
+                try:
+                    seq_preds, category = self.roi_predictor.predict(
+                        features, horizon=len(features)
+                    )
+                except TypeError:
+                    val, category = self.roi_predictor.predict(features)
+                    seq_preds = [float(val)]
+                roi_est = float(seq_preds[-1]) if seq_preds else s.expected_roi
             except Exception:
                 roi_est, category = s.expected_roi, "unknown"
             self.logger.info(

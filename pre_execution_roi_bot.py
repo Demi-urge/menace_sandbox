@@ -381,7 +381,12 @@ class PreExecutionROIBot:
                     [t.complexity, t.frequency, t.expected_income]
                     for t in data
                 ] or [[0.0, 0.0, 0.0]]
-                _, predicted_class = self.predictor.predict(feats)
+                try:
+                    _, predicted_class = self.predictor.predict(
+                        feats, horizon=len(feats)
+                    )
+                except TypeError:
+                    _, predicted_class = self.predictor.predict(feats)
             except Exception:
                 predicted_class = ""
         logger.info(

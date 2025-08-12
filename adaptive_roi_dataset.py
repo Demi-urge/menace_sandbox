@@ -236,6 +236,7 @@ def build_dataset(
     evolution_path: str | Path = "evolution_history.db",
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
+    horizon: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
@@ -247,6 +248,11 @@ def build_dataset(
         Path to the ROI history database (``action_roi`` table).
     evaluation_path:
         Path to the evaluation history database containing GPT scores.
+    horizon:
+        Number of future ROI outcomes to include as target columns. ``1`` (the
+        default) records only ``roi_{t+1}`` while larger values add additional
+        columns ``roi_{t+2}``, ``roi_{t+3}`` and so on. Rows lacking sufficient
+        future ROI records are skipped.
 
     Returns
     -------
@@ -267,9 +273,9 @@ def build_dataset(
         synergy_antifragility, synergy_resilience, synergy_security_score,
         synergy_reliability, synergy_roi_reliability, roi_reliability,
         long_term_roi_reliability, cpu, memory, disk, time, gpu]`` and
-        ``targets`` is the vector of ROI outcomes ``(revenue - api_cost)`` for
-        each cycle and ``growth_types`` is a vector labelling the ROI curve of each
-        cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
+        ``targets`` is an array of ROI outcomes ``roi_{t+1} … roi_{t+h}`` for
+        each cycle and ``growth_types`` is a vector labelling the ROI curve of
+        each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -287,7 +293,7 @@ def build_dataset(
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
 
     features: list[list[float]] = []
-    targets: list[float] = []
+    targets: list[list[float]] = []
     growth_types: list[str] = []
     cycle_idx = 0
 
@@ -324,13 +330,21 @@ def build_dataset(
                 next_roi = rec
                 next_idx = idx
                 break
-        if prev_roi is None or next_roi is None or next_idx is None:
+        if (
+            prev_roi is None
+            or next_roi is None
+            or next_idx is None
+            or next_idx + horizon - 1 >= len(roi_list)
+        ):
             continue
 
         api_delta = next_roi[2] - prev_roi[2]
         cpu_delta = next_roi[3] - prev_roi[3]
         sr_delta = next_roi[4] - prev_roi[4]
-        roi_outcome = next_roi[1] - next_roi[2]
+        roi_outcomes = [
+            roi_list[next_idx + k][1] - roi_list[next_idx + k][2]
+            for k in range(horizon)
+        ]
 
         row = [
             float(before),
@@ -345,13 +359,15 @@ def build_dataset(
             val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
             row.append(float(val))
         features.append(row)
-        targets.append(float(roi_outcome))
-        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + 1]]
+        targets.append([float(v) for v in roi_outcomes])
+        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + horizon]]
         growth_types.append(_label_growth(roi_values))
         cycle_idx += 1
 
     X = np.asarray(features, dtype=float)
     y = np.asarray(targets, dtype=float)
+    if horizon == 1:
+        y = y.reshape(-1)
     g = np.asarray(growth_types, dtype=object)
 
     # normalise all feature columns

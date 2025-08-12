@@ -353,7 +353,12 @@ class ROITracker:
         if self._adaptive_predictor is not None:
             try:
                 feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
-                _, actual_class = self._adaptive_predictor.predict(feats)
+                try:
+                    _, actual_class = self._adaptive_predictor.predict(
+                        feats, horizon=len(feats)
+                    )
+                except TypeError:
+                    _, actual_class = self._adaptive_predictor.predict(feats)
             except Exception:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
@@ -837,7 +842,10 @@ class ROITracker:
         if self._adaptive_predictor is not None:
             try:
                 feats = [[float(x)] for x in self.roi_history] or [[0.0]]
-                _, cls = self._adaptive_predictor.predict(feats)
+                try:
+                    _, cls = self._adaptive_predictor.predict(feats, horizon=len(feats))
+                except TypeError:
+                    _, cls = self._adaptive_predictor.predict(feats)
                 self._next_category = cls
             except Exception:
                 self._next_category = None

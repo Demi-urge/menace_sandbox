@@ -186,7 +186,14 @@ class ActionPlanner:
         ):
             try:
                 feats = [list(self.feature_fn(action))]
-                roi_est, category = self.roi_predictor.predict(feats)
+                try:
+                    seq, category = self.roi_predictor.predict(
+                        feats, horizon=len(feats)
+                    )
+                except TypeError:
+                    val, category = self.roi_predictor.predict(feats)
+                    seq = [float(val)]
+                roi_est = float(seq[-1]) if seq else 0.0
                 reward *= self.growth_multipliers.get(category, 1.0)
                 if self.roi_tracker:
                     try:
@@ -262,7 +269,14 @@ class ActionPlanner:
             for action, val in values.items():
                 try:
                     feats = [list(self.feature_fn(action))]
-                    roi_est, category = self.roi_predictor.predict(feats)
+                    try:
+                        seq, category = self.roi_predictor.predict(
+                            feats, horizon=len(feats)
+                        )
+                    except TypeError:
+                        val, category = self.roi_predictor.predict(feats)
+                        seq = [float(val)]
+                    roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     category = "marginal"
                     roi_est = 0.0
