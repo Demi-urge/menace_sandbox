@@ -187,11 +187,11 @@ class ActionPlanner:
             try:
                 feats = [list(self.feature_fn(action))]
                 try:
-                    seq, category = self.roi_predictor.predict(
+                    seq, category, _ = self.roi_predictor.predict(
                         feats, horizon=len(feats)
                     )
                 except TypeError:
-                    val, category = self.roi_predictor.predict(feats)
+                    val, category, _ = self.roi_predictor.predict(feats)
                     seq = [float(val)]
                 roi_est = float(seq[-1]) if seq else 0.0
                 reward *= self.growth_multipliers.get(category, 1.0)
@@ -270,11 +270,11 @@ class ActionPlanner:
                 try:
                     feats = [list(self.feature_fn(action))]
                     try:
-                        seq, category = self.roi_predictor.predict(
+                        seq, category, _ = self.roi_predictor.predict(
                             feats, horizon=len(feats)
                         )
                     except TypeError:
-                        val, category = self.roi_predictor.predict(feats)
+                        val, category, _ = self.roi_predictor.predict(feats)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:

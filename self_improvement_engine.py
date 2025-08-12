@@ -1477,7 +1477,14 @@ class SelfImprovementEngine:
 
         return {"exponential": 2, "linear": 1, "marginal": 0}.get(category, 0)
 
-    def _log_action(self, action: str, target: str, roi: float, growth: str) -> None:
+    def _log_action(
+        self,
+        action: str,
+        target: str,
+        roi: float,
+        growth: str,
+        confidence: float | None = None,
+    ) -> None:
         """Persist chosen actions and ROI predictions for auditing."""
         try:
             conn = sqlite3.connect("evaluation_history.db")
@@ -1489,12 +1496,13 @@ class SelfImprovementEngine:
                     action TEXT,
                     target TEXT,
                     roi REAL,
-                    growth TEXT
+                    growth TEXT,
+                    confidence REAL
                 )
                 """
             )
             conn.execute(
-                "INSERT INTO action_audit(ts, engine, action, target, roi, growth) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO action_audit(ts, engine, action, target, roi, growth, confidence) VALUES(?,?,?,?,?,?,?)",
                 (
                     datetime.utcnow().isoformat(),
                     self.bot_name,
@@ -1502,6 +1510,7 @@ class SelfImprovementEngine:
                     target,
                     float(roi),
                     growth,
+                    float(confidence or 0.0),
                 ),
             )
             conn.commit()
@@ -1652,6 +1661,7 @@ class SelfImprovementEngine:
         try:
             roi_est = 0.0
             growth = "unknown"
+            confidence = 0.0
             weight = 0.0
             predictor = getattr(self, "roi_predictor", None)
             use_adaptive = getattr(self, "use_adaptive_roi", False)
@@ -1664,16 +1674,17 @@ class SelfImprovementEngine:
                     features = [[0.0, 0.0, 0.0]]
                 try:
                     try:
-                        seq, growth = predictor.predict(
+                        seq, growth, conf = predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, growth = predictor.predict(features)
+                        val, growth, conf = predictor.predict(features)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
+                    confidence = float(conf[-1]) if conf else 0.0
                 except Exception:
-                    roi_est, growth = 0.0, "unknown"
-                weight = roi_est * (1 + self._improvement_score(growth))
+                    roi_est, growth, confidence = 0.0, "unknown", 0.0
+                weight = roi_est * confidence * (1 + self._improvement_score(growth))
                 if tracker:
                     tracker._next_prediction = roi_est
                     tracker._next_category = growth
@@ -1681,7 +1692,10 @@ class SelfImprovementEngine:
                     self.logger.info(
                         "self optimisation skipped",
                         extra=log_record(
-                            growth_type=growth, roi_estimate=roi_est, weight=weight
+                            growth_type=growth,
+                            roi_estimate=roi_est,
+                            weight=weight,
+                            confidence=confidence,
                         ),
                     )
                     return None, False, 0.0
@@ -1724,11 +1738,18 @@ class SelfImprovementEngine:
             self._last_patch_id = patch_id
             if tracker:
                 try:
-                    tracker.update(before_metric, after_metric, category=growth)
+                    tracker.update(
+                        before_metric,
+                        after_metric,
+                        category=growth,
+                        confidence=confidence,
+                    )
                 except Exception:
                     self.logger.exception("roi tracker update failed")
             if predictor and use_adaptive:
-                self._log_action("self_optimize", bot_name, roi_est, growth)
+                self._log_action(
+                    "self_optimize", bot_name, roi_est, growth, confidence
+                )
             return patch_id, reverted, delta
         except Exception as exc:
             self.logger.exception("self optimization failed: %s", exc)
@@ -3233,11 +3254,11 @@ class SelfImprovementEngine:
             if self.roi_predictor:
                 try:
                     try:
-                        seq, category = self.roi_predictor.predict(
+                        seq, category, _ = self.roi_predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, category = self.roi_predictor.predict(features)
+                        val, category, _ = self.roi_predictor.predict(features)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
@@ -3311,11 +3332,11 @@ class SelfImprovementEngine:
                 if self.roi_predictor:
                     try:
                         try:
-                            seq, category = self.roi_predictor.predict(
+                            seq, category, _ = self.roi_predictor.predict(
                                 features, horizon=len(features)
                             )
                         except TypeError:
-                            val, category = self.roi_predictor.predict(features)
+                            val, category, _ = self.roi_predictor.predict(features)
                             seq = [float(val)]
                         roi_est = float(seq[-1]) if seq else 0.0
                     except Exception:
@@ -4012,11 +4033,11 @@ class SelfImprovementEngine:
                 features = self._collect_action_features()
                 try:
                     try:
-                        seq, growth_type = self.roi_predictor.predict(
+                        seq, growth_type, _ = self.roi_predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, growth_type = self.roi_predictor.predict(features)
+                        val, growth_type, _ = self.roi_predictor.predict(features)
                         seq = [float(val)]
                     roi_estimate = float(seq[-1]) if seq else 0.0
                 except Exception:

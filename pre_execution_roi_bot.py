@@ -382,11 +382,11 @@ class PreExecutionROIBot:
                     for t in data
                 ] or [[0.0, 0.0, 0.0]]
                 try:
-                    _, predicted_class = self.predictor.predict(
+                    _, predicted_class, _ = self.predictor.predict(
                         feats, horizon=len(feats)
                     )
                 except TypeError:
-                    _, predicted_class = self.predictor.predict(feats)
+                    _, predicted_class, _ = self.predictor.predict(feats)
             except Exception:
                 predicted_class = ""
         logger.info(
