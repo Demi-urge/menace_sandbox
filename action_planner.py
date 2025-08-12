@@ -167,24 +167,45 @@ class ActionPlanner:
         except Exception:
             return 0.0
 
-    def _predict_growth(self, action: str) -> tuple[list[float], str]:
-        """Return predicted ROI sequence and growth category for *action*."""
+    def _predict_growth(
+        self, action: str
+    ) -> tuple[list[float], str, float | None]:
+        """Return predicted ROI sequence, growth category and confidence."""
 
         if not self.roi_predictor or not self.feature_fn:
-            return [], "marginal"
+            return [], "marginal", None
         feats = [list(self.feature_fn(action))]
         try:
-            seq, category, _, _ = self.roi_predictor.predict(
-                feats, horizon=len(feats)
-            )
+            result = self.roi_predictor.predict(feats, horizon=len(feats))
         except TypeError:
-            val, category, _, _ = self.roi_predictor.predict(feats)
-            seq = [float(val)]
+            result = self.roi_predictor.predict(feats)
+
+        seq: list[float] | float
+        category: str
+        growth_conf: float | None
+
+        if isinstance(result, tuple):
+            if len(result) == 4:
+                seq, category, _, growth_conf = result
+            elif len(result) == 3:
+                seq, category, growth_conf = result
+            elif len(result) == 2:
+                seq, category = result
+                growth_conf = None
+            else:
+                seq = result[0]
+                category = "marginal"
+                growth_conf = None
+        else:
+            seq = result
+            category = "marginal"
+            growth_conf = None
+
         if isinstance(seq, (list, tuple)):
             seq = [float(x) for x in seq]
         else:
             seq = [float(seq)]
-        return seq, category
+        return seq, category, growth_conf
 
     def _reward(self, action: str, rec: PathwayRecord) -> float:
         """Return reward for taking *action* in *rec*."""
@@ -204,9 +225,11 @@ class ActionPlanner:
             and self.feature_fn
         ):
             try:
-                seq, category = self._predict_growth(action)
+                seq, category, growth_conf = self._predict_growth(action)
                 roi_est = float(seq[-1]) if seq else 0.0
-                reward *= self.growth_multipliers.get(category, 1.0)
+                mult = self.growth_multipliers.get(category, 1.0)
+                conf = 1.0 if growth_conf is None else float(growth_conf)
+                reward *= mult * conf
                 if self.roi_tracker:
                     try:
                         self.roi_tracker._next_category = category
@@ -280,7 +303,7 @@ class ActionPlanner:
             roi_vals: list[float] = []
             for action, val in values.items():
                 try:
-                    seq, category = self._predict_growth(action)
+                    seq, category, _ = self._predict_growth(action)
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     category = "marginal"
@@ -335,7 +358,7 @@ class ActionPlanner:
                 and self.feature_fn
             ):
                 try:
-                    seq, category = self._predict_growth(action)
+                    seq, category, _ = self._predict_growth(action)
                     roi_est = float(seq[-1]) if seq else 0.0
                     score += roi_est * self.growth_multipliers.get(category, 1.0)
                 except Exception:
