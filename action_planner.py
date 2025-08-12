@@ -180,11 +180,48 @@ class ActionPlanner:
 
     # ------------------------------------------------------------------
     def update_priorities(self, weights: Dict[str, float]) -> None:
-        """Update internal priority weights for actions."""
-        try:
-            self.priority_weights.update({k: float(v) for k, v in weights.items()})
-        except Exception:
-            logger.exception("priority weight update failed")
+        """Update internal priority weights for actions.
+
+        Each provided base weight is scaled by the predicted ROI and a
+        growth-type multiplier derived from :class:`AdaptiveROIPredictor`.
+        Missing predictors or prediction errors fall back to the supplied
+        weight without scaling.
+        """
+
+        for action, base in weights.items():
+            try:
+                weight = float(base)
+            except Exception:
+                logger.exception("priority weight casting failed")
+                continue
+            if (
+                self.use_adaptive_roi
+                and self.roi_predictor
+                and self.feature_fn
+            ):
+                try:
+                    feats = [list(self.feature_fn(action))]
+                    try:
+                        seq, growth, _, _ = self.roi_predictor.predict(
+                            feats, horizon=len(feats)
+                        )
+                    except TypeError:
+                        val, growth, _, _ = self.roi_predictor.predict(feats)
+                        seq = [[float(val)]]
+                    if seq and isinstance(seq[0], (list, tuple)):
+                        roi_seq = [float(x[0]) if isinstance(x, (list, tuple)) else float(x) for x in seq]
+                    else:
+                        roi_seq = [float(x) for x in seq]
+                    roi_est = roi_seq[-1] if roi_seq else 1.0
+                    mult = (
+                        self.growth_multipliers.get(growth, 1.0)
+                        if self.growth_weighting
+                        else 1.0
+                    )
+                    weight *= roi_est * mult
+                except Exception:
+                    logger.exception("roi prediction failed for %s", action)
+            self.priority_weights[action] = weight
 
     def get_priority_queue(self) -> list[str]:
         """Return actions ordered by priority weight."""
