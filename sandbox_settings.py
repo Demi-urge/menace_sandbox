@@ -89,6 +89,7 @@ class SandboxSettings(BaseSettings):
     synergy_weight_maintainability: float = Field(1.0, env="SYNERGY_WEIGHT_MAINTAINABILITY")
     synergy_weight_throughput: float = Field(1.0, env="SYNERGY_WEIGHT_THROUGHPUT")
     roi_ema_alpha: float = Field(0.1, env="ROI_EMA_ALPHA")
+    roi_compounding_weight: float = Field(1.0, env="ROI_COMPOUNDING_WEIGHT")
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
     scenario_metric_thresholds: dict[str, float] = Field(

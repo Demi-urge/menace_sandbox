@@ -515,6 +515,7 @@ class SelfImprovementEngine:
         synergy_weight_throughput: float | None = None,
         state_path: Path | str | None = None,
         roi_ema_alpha: float | None = None,
+        roi_compounding_weight: float | None = None,
         synergy_weights_path: Path | str | None = None,
         synergy_weights_lr: float | None = None,
         synergy_learner_cls: Type[SynergyWeightLearner] = SynergyWeightLearner,
@@ -604,6 +605,11 @@ class SelfImprovementEngine:
         )
         self.roi_ema_alpha = (
             roi_ema_alpha if roi_ema_alpha is not None else settings.roi_ema_alpha
+        )
+        self.roi_compounding_weight = (
+            roi_compounding_weight
+            if roi_compounding_weight is not None
+            else getattr(settings, "roi_compounding_weight", 0.0)
         )
         default_path = Path(settings.sandbox_data_dir) / "synergy_weights.json"
         self.synergy_weights_path = (
@@ -1506,6 +1512,42 @@ class SelfImprovementEngine:
         """Return numeric score for ROI growth categories."""
 
         return growth_score(category)
+
+    def _rank_candidates(self, modules: Iterable[str]) -> list[tuple[str, float, str, float]]:
+        """Score and rank candidate modules for patching.
+
+        The weight uses the predicted ROI and optionally a compounding factor
+        based on multi-step ROI predictions or the EMA of recent ROI deltas.
+        """
+
+        scored: list[tuple[str, float, str, float]] = []
+        for mod in modules:
+            features = self._candidate_features(mod)
+            roi_est, category, total = 0.0, "unknown", 0.0
+            if self.roi_predictor:
+                try:
+                    try:
+                        seq, category, _, _ = self.roi_predictor.predict(
+                            features, horizon=len(features)
+                        )
+                    except TypeError:
+                        val, category, _, _ = self.roi_predictor.predict(features)
+                        seq = [float(val)]
+                    roi_est = float(seq[-1]) if seq else 0.0
+                    total = float(sum(seq)) if seq else 0.0
+                except Exception:
+                    roi_est, category, total = 0.0, "unknown", 0.0
+            comp = getattr(self, "roi_compounding_weight", 0.0)
+            extra = total if total > 0 else self.roi_delta_ema
+            weight = roi_est * (1 + self._improvement_score(category)) + comp * extra
+            scored.append((mod, roi_est, category, weight))
+        if self.use_adaptive_roi:
+            scored = [s for s in scored if s[3] > 0]
+            scored.sort(key=lambda x: -x[3])
+        else:
+            scored = [s for s in scored if s[1] > 0]
+            scored.sort(key=lambda x: -x[1])
+        return scored
 
     def _log_action(
         self,
@@ -3278,31 +3320,7 @@ class SelfImprovementEngine:
             return
         queue = list(self._preventative_queue)
         self._preventative_queue.clear()
-        scored = []
-        for mod in queue:
-            features = self._candidate_features(mod)
-            if self.roi_predictor:
-                try:
-                    try:
-                        seq, category, _, _ = self.roi_predictor.predict(
-                            features, horizon=len(features)
-                        )
-                    except TypeError:
-                        val, category, _, _ = self.roi_predictor.predict(features)
-                        seq = [float(val)]
-                    roi_est = float(seq[-1]) if seq else 0.0
-                except Exception:
-                    roi_est, category = 0.0, "unknown"
-            else:
-                roi_est, category = 0.0, "unknown"
-            weight = roi_est * (1 + self._improvement_score(category))
-            scored.append((mod, roi_est, category, weight))
-        if self.use_adaptive_roi:
-            scored = [s for s in scored if s[3] > 0]
-            scored.sort(key=lambda x: -x[3])
-        else:
-            scored = [s for s in scored if s[1] > 0]
-            scored.sort(key=lambda x: -x[1])
+        scored = self._rank_candidates(queue)
         for mod, roi_est, category, weight in scored:
             self.logger.info(
                 "patch candidate",
@@ -3356,31 +3374,7 @@ class SelfImprovementEngine:
             self.error_predictor.graph.update_error_stats(self.error_bot.db)
             if not high_risk:
                 return
-            scored = []
-            for mod in high_risk:
-                features = self._candidate_features(mod)
-                if self.roi_predictor:
-                    try:
-                        try:
-                            seq, category, _, _ = self.roi_predictor.predict(
-                                features, horizon=len(features)
-                            )
-                        except TypeError:
-                            val, category, _, _ = self.roi_predictor.predict(features)
-                            seq = [float(val)]
-                        roi_est = float(seq[-1]) if seq else 0.0
-                    except Exception:
-                        roi_est, category = 0.0, "unknown"
-                else:
-                    roi_est, category = 0.0, "unknown"
-                weight = roi_est * (1 + self._improvement_score(category))
-                scored.append((mod, roi_est, category, weight))
-            if self.use_adaptive_roi:
-                scored = [s for s in scored if s[3] > 0]
-                scored.sort(key=lambda x: -x[3])
-            else:
-                scored = [s for s in scored if s[1] > 0]
-                scored.sort(key=lambda x: -x[1])
+            scored = self._rank_candidates(high_risk)
             self.logger.info(
                 "high risk modules",
                 extra=log_record(modules=[m for m, _, _, _ in scored]),
