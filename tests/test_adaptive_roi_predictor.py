@@ -54,27 +54,40 @@ def test_build_dataset(tmp_path: Path) -> None:
     )
     evo.conn.commit()
 
-    X, y = build_dataset(evo_path, roi_path, eval_path)
+    X, y, g = build_dataset(evo_path, roi_path, eval_path)
     n_features = 6 + len(ROITracker().metrics_history)
     assert X.shape == (1, n_features)
     assert y.shape == (1,)
     # Target is revenue minus API cost after the event
     assert y[0] == pytest.approx(11.0)
+    assert g.tolist() == ["linear"]
 
 
-def test_training_and_prediction(monkeypatch):
-    """Model trains on provided dataset and forecasts growth."""
+def test_classifier_training_and_prediction(monkeypatch):
+    """Model trains classifier and uses it for growth prediction."""
 
-    X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
-    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
+    g = np.array(
+        ["marginal", "marginal", "linear", "linear", "exponential", "exponential"],
+        dtype=object,
+    )
+
     monkeypatch.setattr(
-        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y)
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y, g)
     )
     predictor = AdaptiveROIPredictor()
     assert predictor._model is not None
-    roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0]])
-    assert roi == pytest.approx(3.0, abs=1e-3)
-    assert growth == "linear"
+    if predictor._classifier is None:
+        pytest.skip("classifier not available")
+
+    monkeypatch.setattr(
+        AdaptiveROIPredictor, "_classify_growth", lambda self, preds: "threshold"
+    )
+
+    roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
+    assert roi == pytest.approx(5.0, abs=1e-3)
+    assert growth == "exponential"
 
 
 def test_cross_validation_persistence(tmp_path, monkeypatch):
@@ -82,8 +95,9 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
 
     X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
     y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    g = np.array(["marginal", "linear", "linear", "linear"], dtype=object)
     monkeypatch.setattr(
-        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y)
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y, g)
     )
     model_path = tmp_path / "adaptive_roi.pkl"
     predictor = AdaptiveROIPredictor(model_path=model_path, cv=2)
@@ -98,7 +112,7 @@ def test_evaluate_model_retrains(monkeypatch):
 
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset",
-        lambda: (np.array([[0.0]]), np.array([0.0])),
+        lambda: (np.array([[0.0]]), np.array([0.0]), np.array(["linear"], dtype=object)),
     )
     predictor = AdaptiveROIPredictor()
     calls: list[int] = []
@@ -126,7 +140,7 @@ def test_tracker_integration(monkeypatch):
 
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset",
-        lambda: (np.array([[0.0]]), np.array([0.0])),
+        lambda: (np.array([[0.0]]), np.array([0.0]), np.array(["linear"], dtype=object)),
     )
     predictor = AdaptiveROIPredictor()
     tracker = ROITracker()

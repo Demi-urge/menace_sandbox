@@ -83,9 +83,10 @@ def test_build_dataset(tmp_path):
     )
     conn.commit()
 
-    X, y = build_dataset(evo_db_path, roi_db_path, eval_db_path)
+    X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path)
 
     n_features = 6 + len(ROITracker().metrics_history)
     assert X.shape == (1, n_features)
     assert y.tolist() == [12.0]
+    assert g.tolist() == ["linear"]
     assert np.allclose(X, 0.0)

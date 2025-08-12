@@ -21,7 +21,7 @@ tests continue to operate.
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Sequence
 
 import sqlite3
 import numpy as np
@@ -120,6 +120,29 @@ def _collect_metrics_history(
 
 
 # ---------------------------------------------------------------------------
+def _classify_growth(values: Sequence[float]) -> str:
+    """Classify ``values`` into ``exponential``, ``linear`` or ``marginal``."""
+
+    if len(values) < 2:
+        return "marginal"
+    arr = np.asarray(list(values), dtype=float)
+    first_diff = np.diff(arr)
+    slope = float(first_diff.mean()) if first_diff.size else 0.0
+    curvature = float(np.diff(first_diff).mean()) if first_diff.size > 1 else 0.0
+    slope_thr = float(np.mean(np.abs(first_diff)) * 0.5) if first_diff.size else 0.05
+    curv_thr = (
+        float(np.mean(np.abs(np.diff(first_diff))) * 0.5)
+        if first_diff.size > 1
+        else 0.01
+    )
+    if slope > slope_thr and curvature > curv_thr:
+        return "exponential"
+    if abs(slope) > slope_thr:
+        return "linear"
+    return "marginal"
+
+
+# ---------------------------------------------------------------------------
 def load_adaptive_roi_dataset(
     evolution_path: str | Path = "evolution_history.db",
     evaluation_path: str | Path = "evaluation_history.db",
@@ -199,7 +222,7 @@ def build_dataset(
     evolution_path: str | Path = "evolution_history.db",
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
     Parameters
@@ -214,7 +237,7 @@ def build_dataset(
     Returns
     -------
     tuple
-        ``(features, targets)`` where ``features`` is a matrix with columns
+        ``(features, targets, growth_types)`` where ``features`` is a matrix with columns
         ``[before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
         success_rate_delta, gpt_score, recovery_time, latency_error_rate,
         hostile_failures, misuse_failures, concurrency_throughput,
@@ -230,7 +253,8 @@ def build_dataset(
         synergy_antifragility, synergy_resilience, synergy_security_score,
         synergy_reliability, roi_reliability, long_term_roi_reliability]`` and
         ``targets`` is the vector of ROI outcomes ``(revenue - api_cost)`` for
-        each cycle.
+        each cycle and ``growth_types`` is a vector labelling the ROI curve of each
+        cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -244,6 +268,7 @@ def build_dataset(
 
     features: list[list[float]] = []
     targets: list[float] = []
+    growth_types: list[str] = []
     cycle_idx = 0
 
     cur = evo_db.conn.execute(
@@ -269,13 +294,17 @@ def build_dataset(
             continue
         prev_roi = None
         next_roi = None
-        for rec in roi_list:
+        prev_idx: int | None = None
+        next_idx: int | None = None
+        for idx, rec in enumerate(roi_list):
             if rec[0] <= ts_dt:
                 prev_roi = rec
+                prev_idx = idx
             elif rec[0] > ts_dt and next_roi is None:
                 next_roi = rec
+                next_idx = idx
                 break
-        if prev_roi is None or next_roi is None:
+        if prev_roi is None or next_roi is None or next_idx is None:
             continue
 
         api_delta = next_roi[2] - prev_roi[2]
@@ -297,10 +326,13 @@ def build_dataset(
             row.append(float(val))
         features.append(row)
         targets.append(float(roi_outcome))
+        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + 1]]
+        growth_types.append(_classify_growth(roi_values))
         cycle_idx += 1
 
     X = np.asarray(features, dtype=float)
     y = np.asarray(targets, dtype=float)
+    g = np.asarray(growth_types, dtype=object)
 
     # normalise all feature columns
     if X.size:
@@ -312,4 +344,4 @@ def build_dataset(
                 std = 1.0
             X[:, i] = (col - mean) / std
 
-    return X, y
+    return X, y, g
