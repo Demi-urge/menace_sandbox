@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from pathlib import Path
 from typing import Sequence, Dict, Any
 
 from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
@@ -14,7 +15,24 @@ from .roi_tracker import ROITracker
 # ---------------------------------------------------------------------------
 def _train(args: argparse.Namespace) -> None:
     """Train a new predictor and persist it."""
-    dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
+    selected = None
+    if args.selected_features:
+        meta_path = Path(args.model).with_suffix(".meta.json")
+        try:
+            data = json.loads(meta_path.read_text())
+            sel = data.get("selected_features")
+            if isinstance(sel, list) and sel:
+                selected = [str(s) for s in sel]
+        except Exception:
+            selected = None
+    X, y, g, names = build_dataset(
+        args.evolution_db,
+        args.roi_db,
+        args.evaluation_db,
+        selected_features=selected,
+        return_feature_names=True,
+    )
+    dataset = (X, y, g)
     param_grid: Dict[str, Dict[str, Any]] | None = None
     if args.param_grid:
         param_grid = json.loads(args.param_grid)
@@ -25,7 +43,7 @@ def _train(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    predictor.train(dataset, cv=args.cv, param_grid=param_grid)
+    predictor.train(dataset, cv=args.cv, param_grid=param_grid, feature_names=names)
     print(f"model trained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -57,7 +75,24 @@ def _predict(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 def _retrain(args: argparse.Namespace) -> None:
     """Retrain an existing model with updated data."""
-    dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
+    selected = None
+    if args.selected_features:
+        meta_path = Path(args.model).with_suffix(".meta.json")
+        try:
+            data = json.loads(meta_path.read_text())
+            sel = data.get("selected_features")
+            if isinstance(sel, list) and sel:
+                selected = [str(s) for s in sel]
+        except Exception:
+            selected = None
+    X, y, g, names = build_dataset(
+        args.evolution_db,
+        args.roi_db,
+        args.evaluation_db,
+        selected_features=selected,
+        return_feature_names=True,
+    )
+    dataset = (X, y, g)
     param_grid: Dict[str, Dict[str, Any]] | None = None
     if args.param_grid:
         param_grid = json.loads(args.param_grid)
@@ -68,7 +103,7 @@ def _retrain(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    predictor.train(dataset, cv=args.cv, param_grid=param_grid)
+    predictor.train(dataset, cv=args.cv, param_grid=param_grid, feature_names=names)
     print(f"model retrained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -98,6 +133,16 @@ def _schedule(args: argparse.Namespace) -> None:
 
     while True:
         try:
+            selected = None
+            if args.selected_features:
+                meta_path = Path(args.model).with_suffix(".meta.json")
+                try:
+                    data = json.loads(meta_path.read_text())
+                    sel = data.get("selected_features")
+                    if isinstance(sel, list) and sel:
+                        selected = [str(s) for s in sel]
+                except Exception:
+                    selected = None
             load_training_data(
                 tracker,
                 evolution_path=args.evolution_db,
@@ -105,9 +150,15 @@ def _schedule(args: argparse.Namespace) -> None:
                 roi_events_path=args.roi_events_db,
                 output_path=args.output_csv,
             )
-            dataset = build_dataset(
-                args.evolution_db, args.roi_db, args.evaluation_db
+            X, y, g, names = build_dataset(
+                args.evolution_db,
+                args.roi_db,
+                args.evaluation_db,
+                roi_events_path=args.roi_events_db,
+                selected_features=selected,
+                return_feature_names=True,
             )
+            dataset = (X, y, g)
             predictor = AdaptiveROIPredictor(
                 model_path=args.model,
                 cv=args.cv,
@@ -115,7 +166,9 @@ def _schedule(args: argparse.Namespace) -> None:
                 slope_threshold=args.slope_threshold,
                 curvature_threshold=args.curvature_threshold,
             )
-            predictor.train(dataset, cv=args.cv, param_grid=param_grid)
+            predictor.train(
+                dataset, cv=args.cv, param_grid=param_grid, feature_names=names
+            )
             print(
                 f"model retrained on {len(dataset[0])} samples -> {args.model}"
             )
@@ -151,6 +204,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="JSON encoded parameter grid for hyperparameter tuning",
     )
+    p_train.add_argument(
+        "--selected-features",
+        action="store_true",
+        help="Restrict training to features listed in the model's meta file",
+    )
     p_train.set_defaults(func=_train)
 
     p_predict = sub.add_parser("predict", help="predict ROI for a feature sequence")
@@ -169,6 +227,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--param-grid",
         default=None,
         help="JSON encoded parameter grid for hyperparameter tuning",
+    )
+    p_retrain.add_argument(
+        "--selected-features",
+        action="store_true",
+        help="Restrict training to features listed in the model's meta file",
     )
     p_retrain.set_defaults(func=_retrain)
 
@@ -194,6 +257,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--param-grid",
         default=None,
         help="JSON encoded parameter grid for hyperparameter tuning",
+    )
+    p_sched.add_argument(
+        "--selected-features",
+        action="store_true",
+        help="Restrict training to features listed in the model's meta file",
     )
     p_sched.set_defaults(func=_schedule)
 

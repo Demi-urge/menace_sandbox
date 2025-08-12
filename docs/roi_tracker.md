@@ -50,6 +50,13 @@ which is useful for cron jobs:
 0 * * * * python -m menace_sandbox.adaptive_roi_cli schedule --history sandbox_data/roi_history.json
 ```
 
+Training stores the most influential input metrics in a companion
+``.meta.json`` file under ``selected_features`` whenever the model exposes
+``feature_importances_``. Running `adaptive_roi_cli` with the
+``--selected-features`` flag restricts `build_dataset()` to these columns so you
+can periodically retrain on a pruned feature set and drop low-importance
+metrics from future runs.
+
 The predictor uses `scikit-learn` when installed and falls back to a naive
 baseline if no regression backend or dataset is available, so results
 should be treated as coarse guidance rather than exact forecasts.

@@ -107,6 +107,7 @@ class AdaptiveROIPredictor:
         self.curvature_threshold: float | None = curvature_threshold
         self.training_data: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._trained_size: int = 0
+        self.selected_features: list[str] | None = None
         self._load()
         if slope_threshold is not None:
             self.slope_threshold = slope_threshold
@@ -155,6 +156,9 @@ class AdaptiveROIPredictor:
                 self.curvature_threshold = data.get(
                     "curvature_threshold", self.curvature_threshold
                 )
+                sel = data.get("selected_features")
+                if isinstance(sel, list):
+                    self.selected_features = [str(s) for s in sel]
             except Exception:
                 self.best_params = None
                 self.best_score = None
@@ -196,6 +200,7 @@ class AdaptiveROIPredictor:
                 "validation_scores": self.validation_scores,
                 "slope_threshold": self.slope_threshold,
                 "curvature_threshold": self.curvature_threshold,
+                "selected_features": self.selected_features,
             }
             meta_path = self.model_path.with_suffix(".meta.json")
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +215,8 @@ class AdaptiveROIPredictor:
         dataset: Tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
         cv: int | None = None,
         param_grid: Dict[str, Dict[str, Any]] | None = None,
+        *,
+        feature_names: Sequence[str] | None = None,
     ) -> None:
         """Fit the underlying model on ``dataset``.
 
@@ -227,7 +234,8 @@ class AdaptiveROIPredictor:
         """
 
         if dataset is None:
-            X, y, g = build_dataset()
+            X, y, g, names = build_dataset(return_feature_names=True)
+            feature_names = names
         else:
             X, y, g = dataset
 
@@ -370,6 +378,18 @@ class AdaptiveROIPredictor:
                 self._classifier = clf
             except Exception:  # pragma: no cover - classifier failure
                 self._classifier = None
+        if (
+            self._model is not None
+            and feature_names is not None
+            and hasattr(self._model, "feature_importances_")
+        ):
+            try:
+                importances = np.asarray(getattr(self._model, "feature_importances_"))
+                order = np.argsort(importances)[::-1]
+                top = [feature_names[i] for i in order[: min(len(order), 20)]]
+                self.selected_features = top
+            except Exception:
+                self.selected_features = None
         if self._model is not None:
             try:
                 self._trained_size = total_size
