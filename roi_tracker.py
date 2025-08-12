@@ -381,6 +381,28 @@ class ROITracker:
         except Exception:
             pass
 
+        # Persist prediction and outcome for offline analysis
+        try:
+            conn = sqlite3.connect("roi_events.db")
+            with conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS roi_prediction_events (
+                        predicted_roi REAL,
+                        actual_roi REAL,
+                        predicted_class TEXT,
+                        actual_class TEXT,
+                        ts DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
+                    (float(predicted), float(actual), predicted_class, actual_class),
+                )
+        except Exception:
+            logger.exception("failed to log roi prediction event")
+
     def record_class_prediction(self, predicted: str, actual: str) -> None:
         """Store predicted and actual ROI classes."""
         self.predicted_classes.append(str(predicted))

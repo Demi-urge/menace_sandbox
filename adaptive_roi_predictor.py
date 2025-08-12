@@ -551,12 +551,42 @@ def load_training_data(
         )
     except Exception:  # pragma: no cover - missing table or DB
         roi_df = pd.DataFrame(columns=["roi_event_delta"])
+    try:
+        pred_df = pd.read_sql(
+            "SELECT predicted_roi, actual_roi, predicted_class, actual_class FROM roi_prediction_events ORDER BY ts",
+            roi_conn,
+        )
+    except Exception:  # pragma: no cover - missing table or DB
+        pred_df = pd.DataFrame(columns=["predicted_roi", "actual_roi", "predicted_class", "actual_class"])
     finally:
         roi_conn.close()
+
     event_deltas = roi_df.get("roi_event_delta", pd.Series(dtype=float)).astype(float).tolist()
     if len(event_deltas) < n:
         event_deltas.extend([0.0] * (n - len(event_deltas)))
     df["roi_event_delta"] = event_deltas[:n]
+
+    # Persisted prediction history -----------------------------------------
+    pred_vals = pred_df.get("predicted_roi", pd.Series(dtype=float)).astype(float).tolist()
+    act_vals = pred_df.get("actual_roi", pd.Series(dtype=float)).astype(float).tolist()
+    pred_classes = pd.Categorical(
+        pred_df.get("predicted_class", pd.Series(dtype=str))
+    ).codes.tolist()
+    act_classes = pd.Categorical(
+        pred_df.get("actual_class", pd.Series(dtype=str))
+    ).codes.tolist()
+    if len(pred_vals) < n:
+        pred_vals.extend([0.0] * (n - len(pred_vals)))
+    if len(act_vals) < n:
+        act_vals.extend([0.0] * (n - len(act_vals)))
+    if len(pred_classes) < n:
+        pred_classes.extend([0] * (n - len(pred_classes)))
+    if len(act_classes) < n:
+        act_classes.extend([0] * (n - len(act_classes)))
+    df["predicted_roi_event"] = pred_vals[:n]
+    df["actual_roi_event"] = act_vals[:n]
+    df["predicted_class_event"] = pred_classes[:n]
+    df["actual_class_event"] = act_classes[:n]
 
     # ROI outcome labels ----------------------------------------------------
     evo_db = EvolutionHistoryDB(evolution_path)
