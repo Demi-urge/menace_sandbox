@@ -179,6 +179,43 @@ def test_reward_scaled_by_growth(tmp_path):
     assert reward_marg == pytest.approx(0.5)
 
 
+def test_reward_scaled_by_growth_confidence(tmp_path):
+    class StubPredictor:
+        def __init__(self) -> None:
+            self.conf = 0.5
+
+        def predict(self, feats, horizon=None):
+            return [0.0], "exponential", [], self.conf
+
+    pdb = PathwayDB(tmp_path / "p.db")
+    roi = DummyROIDB()
+    predictor = StubPredictor()
+    planner = ap.ActionPlanner(
+        pdb,
+        roi,
+        reward_fn=lambda a, r: 1.0,
+        feature_fn=lambda a: [0.0],
+        roi_predictor=predictor,
+        use_adaptive_roi=True,
+        growth_weighting=True,
+        growth_multipliers={"exponential": 2.0, "linear": 1.0, "marginal": 0.5},
+    )
+    rec = PathwayRecord(
+        actions="A->B",
+        inputs="",
+        outputs="",
+        exec_time=1.0,
+        resources="",
+        outcome=Outcome.SUCCESS,
+        roi=1.0,
+    )
+    reward_conf = planner._reward("B", rec)
+    predictor.conf = None
+    reward_none = planner._reward("B", rec)
+    assert reward_conf == pytest.approx(1.0)
+    assert reward_none == pytest.approx(2.0)
+
+
 def test_plan_actions_uses_roi_growth(tmp_path):
     class Predictor:
         def predict(self, feats, horizon=None):
