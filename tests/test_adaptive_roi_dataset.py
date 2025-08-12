@@ -21,11 +21,12 @@ def test_dataset_aggregation(tmp_path):
     # one evaluation record tied to the engine
     eva.add(EvaluationRecord(engine="engine", cv_score=0.8, passed=True))
 
-    X, y, passed = load_adaptive_roi_dataset(evo_db_path, eval_db_path)
+    X, y, passed, g = load_adaptive_roi_dataset(evo_db_path, eval_db_path)
 
     assert X.shape == (1, 2)
     assert y.shape == (1,)
     assert passed.tolist() == [1]
+    assert g.tolist() == ["linear"]
     # features should be normalised (mean approximately 0)
     assert np.allclose(X.mean(axis=0), 0.0)
     assert np.allclose(y.mean(), 0.0)
