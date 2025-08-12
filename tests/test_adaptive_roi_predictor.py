@@ -486,3 +486,40 @@ def test_horizon_specific_prediction_logging(tmp_path, monkeypatch):
     assert mae_hist[3] == pytest.approx(0.3)
     assert tracker.compounding_flags[-1] is True
 
+
+def test_prediction_logging_and_accuracy(tmp_path, monkeypatch):
+    """Predictions store sequences and categories and report accuracy."""
+
+    tracker = ROITracker()
+    monkeypatch.chdir(tmp_path)
+
+    tracker.record_prediction(
+        [1.0, 2.0],
+        [1.0, 2.0],
+        predicted_class="linear",
+        actual_class="linear",
+    )
+    tracker.record_prediction(
+        [2.0, 3.0],
+        [2.0, 3.0],
+        predicted_class="linear",
+        actual_class="exponential",
+    )
+
+    conn = sqlite3.connect(tmp_path / "roi_events.db")
+    rows = conn.execute(
+        "SELECT predicted_horizons, predicted_categories, actual_categories FROM roi_prediction_events ORDER BY ts"
+    ).fetchall()
+    conn.close()
+    assert json.loads(rows[0][0]) == [1.0, 2.0]
+    assert json.loads(rows[0][1]) == ["linear"]
+    assert json.loads(rows[1][1]) == ["linear"]
+    assert json.loads(rows[1][2]) == ["exponential"]
+
+    assert tracker.classification_accuracy() == pytest.approx(0.5)
+    acc, mae = tracker.evaluate_model(
+        window=2, roi_events_path=str(tmp_path / "roi_events.db")
+    )
+    assert acc == pytest.approx(0.5)
+    assert mae == pytest.approx(0.0)
+
