@@ -113,6 +113,8 @@ class ActionPlanner:
         event_bus: Optional[UnifiedEventBus] = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         use_adaptive_roi: bool | None = None,
+        growth_weighting: bool = True,
+        growth_multipliers: Dict[str, float] | None = None,
     ) -> None:
         self.pathway_db = pathway_db
         self.roi_db = roi_db
@@ -133,6 +135,12 @@ class ActionPlanner:
             self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
         else:
             self.roi_predictor = None
+        self.growth_weighting = bool(growth_weighting)
+        self.growth_multipliers = growth_multipliers or {
+            "exponential": 1.5,
+            "linear": 1.0,
+            "marginal": 0.5,
+        }
         if self.event_bus:
             try:
                 self.event_bus.subscribe("pathway:new", self._on_new_pathway)
@@ -165,7 +173,15 @@ class ActionPlanner:
                 reward = 0.0
         else:
             reward = self._roi(action) or rec.roi
-        if not str(rec.outcome).upper().startswith("SUCCESS"):
+        success = str(rec.outcome).upper().startswith("SUCCESS")
+        if success and self.growth_weighting and self.use_adaptive_roi and self.roi_predictor and self.feature_fn:
+            try:
+                feats = [list(self.feature_fn(action))]
+                _, category = self.roi_predictor.predict(feats)
+                reward *= self.growth_multipliers.get(category, 1.0)
+            except Exception:
+                logger.exception("growth weighting failed")
+        if not success:
             reward = -abs(reward)
         return reward
 
