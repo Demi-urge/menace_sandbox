@@ -144,6 +144,68 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
     assert meta_path.exists()
 
 
+def test_threshold_auto_calibration(tmp_path, monkeypatch):
+    """Training derives slope/curvature thresholds when not provided."""
+
+    X = np.zeros((5, 1), dtype=float)
+    y = np.array(
+        [
+            [0.0, 1.0, 2.0, 3.0],
+            [0.0, 1.0, 3.0, 6.0],
+            [0.0, 2.0, 3.0, 3.5],
+            [0.0, 0.5, 1.5, 3.0],
+            [0.0, 1.5, 1.75, 1.875],
+        ],
+        dtype=float,
+    )
+    g = np.array(["linear"] * 5, dtype=object)
+
+    def fake_build(*_args, **kwargs):
+        if kwargs.get("return_feature_names"):
+            return X, y, g, []
+        return X, y, g
+
+    class DummyModel:
+        def __init__(self, **_kwargs):
+            self._dim = 1
+
+        def fit(self, X, y):
+            self._dim = y.shape[1] if y.ndim > 1 else 1
+            return self
+
+        def predict(self, X):  # pragma: no cover - trivial
+            return np.zeros((len(X), self._dim))
+
+        def get_params(self):  # pragma: no cover - trivial
+            return {}
+
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.GradientBoostingRegressor",
+        None,
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.SGDRegressor", None
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.MultiOutputRegressor", None
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.LinearRegression", DummyModel
+    )
+
+    model_path = tmp_path / "model.pkl"
+    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
+
+    assert predictor.slope_threshold == pytest.approx(1.5)
+    assert predictor.curvature_threshold == pytest.approx(1.0)
+    meta = json.loads(model_path.with_suffix(".meta.json").read_text())
+    assert meta["slope_threshold"] == pytest.approx(1.5)
+    assert meta["curvature_threshold"] == pytest.approx(1.0)
+
+
 def test_selected_features_saved(tmp_path, monkeypatch):
     X = np.array([[0.0, 1.0, 2.0], [1.0, 2.0, 3.0]], dtype=float)
     y = np.array([0.0, 1.0], dtype=float)

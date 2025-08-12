@@ -214,6 +214,39 @@ class AdaptiveROIPredictor:
             pass
 
     # ------------------------------------------------------------------
+    def calibrate_thresholds(
+        self, dataset: Tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
+    ) -> Tuple[float, float]:
+        """Estimate slope and curvature cutoffs from ``dataset``.
+
+        The thresholds are derived from the distribution of first and second
+        derivatives of the ROI targets.  When ``dataset`` is ``None`` the most
+        recently stored ``self.training_data`` is used.  The resulting
+        thresholds are stored on the instance and returned.
+        """
+
+        if dataset is None:
+            dataset = self.training_data
+        if dataset is None:
+            self.slope_threshold = self.slope_threshold or 0.05
+            self.curvature_threshold = self.curvature_threshold or 0.01
+            return float(self.slope_threshold), float(self.curvature_threshold)
+
+        _X, y, _g = dataset
+        arr = np.asarray(y, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        first = np.diff(arr, axis=1)
+        slope_vals = np.abs(first).ravel()
+        slope_thr = float(np.percentile(slope_vals, 75)) if slope_vals.size else 0.05
+        second = np.diff(first, axis=1)
+        curv_vals = np.abs(second).ravel()
+        curv_thr = float(np.percentile(curv_vals, 75)) if curv_vals.size else 0.01
+        self.slope_threshold = slope_thr
+        self.curvature_threshold = curv_thr
+        return slope_thr, curv_thr
+
+    # ------------------------------------------------------------------
     # training
     def train(
         self,
@@ -244,6 +277,9 @@ class AdaptiveROIPredictor:
             feature_names = names
         else:
             X, y, g = dataset
+
+        if self.slope_threshold is None or self.curvature_threshold is None:
+            self.calibrate_thresholds((X, y, g))
 
         if X.size == 0 or y.size == 0:
             self._model = None
