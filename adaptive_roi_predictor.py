@@ -54,6 +54,12 @@ except Exception:  # pragma: no cover - sklearn missing
     KFold = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
+    from sklearn.feature_selection import SelectKBest, f_regression  # type: ignore
+except Exception:  # pragma: no cover - sklearn missing
+    SelectKBest = None  # type: ignore
+    f_regression = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     import joblib  # type: ignore
 except Exception:  # pragma: no cover - joblib missing
     joblib = None  # type: ignore
@@ -616,18 +622,26 @@ class AdaptiveROIPredictor:
             if self.best_params is None:
                 self.best_params = {}
             self.best_params["classifier"] = clf_best_params
-        if (
-            self._model is not None
-            and feature_names is not None
-            and hasattr(self._model, "feature_importances_")
-        ):
-            try:
-                importances = np.asarray(getattr(self._model, "feature_importances_"))
-                order = np.argsort(importances)[::-1]
-                top = [feature_names[i] for i in order[: min(len(order), 20)]]
-                self.selected_features = top
-            except Exception:
-                self.selected_features = None
+        if self._model is not None and feature_names is not None:
+            selected: list[str] | None = None
+            if SelectKBest is not None and f_regression is not None:
+                try:
+                    y_sel = y[:, 0] if y.ndim > 1 else y
+                    k = min(len(feature_names), 20)
+                    selector = SelectKBest(score_func=f_regression, k=k)
+                    selector.fit(X, y_sel)
+                    idx = selector.get_support(indices=True)
+                    selected = [feature_names[i] for i in idx]
+                except Exception:
+                    selected = None
+            if selected is None and hasattr(self._model, "feature_importances_"):
+                try:
+                    importances = np.asarray(getattr(self._model, "feature_importances_"))
+                    order = np.argsort(importances)[::-1][: min(len(importances), 20)]
+                    selected = [feature_names[i] for i in order]
+                except Exception:
+                    selected = None
+            self.selected_features = selected
         if self._model is not None:
             try:
                 self._trained_size = total_size

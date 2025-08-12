@@ -456,6 +456,11 @@ def build_dataset(
         current cycle.  When provided an additional target column ``roi_ema`` is
         appended representing the smoothed ROI sequence.  Use ``None`` to skip
         this column.
+    selected_features:
+        Optional sequence of feature names to retain.  When ``None`` and a
+        predictor metadata file (``sandbox_data/adaptive_roi.meta.json``)
+        containing ``selected_features`` is present, those columns are selected
+        automatically.
     export_path:
         Optional path for exporting the assembled feature matrix and targets as
         CSV.  When ``None`` the dataset is not written to disk.
@@ -489,8 +494,19 @@ def build_dataset(
         average column ``roi_ema``.  ``growth_types`` labels the ROI curve of
         each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.  When
         ``return_feature_names`` is true a fourth element containing the
-        feature names is included.
+    feature names is included.
     """
+
+    if selected_features is None:
+        try:
+            meta_path = Path("sandbox_data/adaptive_roi.meta.json")
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text())
+                sel = meta.get("selected_features")
+                if isinstance(sel, list) and sel:
+                    selected_features = [str(s) for s in sel]
+        except Exception:
+            selected_features = None
 
     evo_db = EvolutionHistoryDB(evolution_path)
     eval_db = EvaluationHistoryDB(evaluation_path)

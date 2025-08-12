@@ -234,17 +234,34 @@ def test_selected_features_saved(tmp_path, monkeypatch):
         def __init__(self, **_kwargs):
             pass
         def fit(self, X, y):
-            self.feature_importances_ = np.array([0.1, 0.6, 0.3])
             return self
-
         def predict(self, X):  # pragma: no cover - trivial
             return np.zeros(len(X))
-
         def get_params(self):  # pragma: no cover - trivial
             return {}
 
+    class DummySelector:
+        def __init__(self, score_func=None, k=10):
+            self.k = k
+        def fit(self, X, y):
+            self.scores_ = np.array([0.1, 0.6, 0.3])
+            return self
+        def get_support(self, indices=False):
+            order = np.argsort(self.scores_)[::-1][: self.k]
+            if indices:
+                return order
+            mask = np.zeros_like(self.scores_, dtype=bool)
+            mask[order] = True
+            return mask
+
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset", fake_build_dataset
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.SelectKBest", DummySelector
+    )
+    monkeypatch.setattr(
+        "menace_sandbox.adaptive_roi_predictor.f_regression", lambda X, y: None
     )
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.GradientBoostingRegressor",
@@ -258,9 +275,12 @@ def test_selected_features_saved(tmp_path, monkeypatch):
     )
 
     model_path = tmp_path / "model.pkl"
-    predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
-    if predictor.selected_features:
-        assert predictor.selected_features[:3] == ["b", "c", "a"]
+    predictor = AdaptiveROIPredictor(
+        model_path=model_path,
+        cv=0,
+        param_grid={"GradientBoostingRegressor": {}},
+    )
+    assert predictor.selected_features == ["b", "c", "a"]
 
 
 def test_evaluate_model_retrains(monkeypatch, tmp_path):
