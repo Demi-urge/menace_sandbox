@@ -996,7 +996,9 @@ def test_score_modifications_prefers_higher_roi() -> None:
     eng.use_adaptive_roi = True
     eng.growth_weighting = True
     eng.growth_multipliers = {"linear": 1.0}
-    eng._candidate_features = lambda name: [[1.0]] if name == "high" else [[0.0]]
+    eng._candidate_features = (
+        lambda name: [[1.0] + [0.0] * 14] if name == "high" else [[0.0] * 15]
+    )
     ranked = eng._score_modifications(["low", "high"])
     assert [r[0] for r in ranked] == ["high", "low"]
     assert ranked[0][1] > ranked[1][1]

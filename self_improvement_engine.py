@@ -144,6 +144,7 @@ from . import synergy_history_db as shd
 from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
+from .evaluation_history_db import EvaluationHistoryDB
 from .self_improvement_policy import (
     SelfImprovementPolicy,
     ConfigurableSelfImprovementPolicy,
@@ -1488,14 +1489,18 @@ class SelfImprovementEngine:
         return feats
 
     def _candidate_features(self, module: str) -> list[list[float]]:
-        """Return features ``[historical_roi, performance_delta, gpt_score]``.
+        """Return feature vector aligned with ``adaptive_roi_dataset.build_dataset``.
 
-        The predictor expects a sequence of feature vectors.  Historical ROI is
-        obtained from the :class:`PreExecutionROIBot` when available.  The
-        performance delta is derived from recent synergy ROI trends while the
-        GPT score is taken from the most recent entry in the patch score backend
-        if configured.  Missing values default to ``0.0`` so the predictor can
-        still operate in reduced environments.
+        The returned sequence follows the column layout used by
+        :func:`adaptive_roi_dataset.build_dataset` so the predictor can operate
+        on live data. Missing values default to ``0.0`` allowing the engine to
+        work even when telemetry is incomplete.  Columns gathered here are::
+
+            [before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
+             success_rate_delta, gpt_score, gpt_feedback_score,
+             gpt_feedback_tokens, long_term_perf_delta,
+             long_term_eval_outcome, resource_cost, resource_cpu_usage,
+             resource_gpu_usage, error_count, repair_count]
         """
 
         # Historical ROI forecast for the module
@@ -1507,8 +1512,11 @@ class SelfImprovementEngine:
             except Exception:
                 self.logger.exception("pre ROI forecast failed for %s", module)
 
-        # Recent performance delta from tracker metrics
+        # Recent deltas for core metrics
         perf_delta = self._metric_delta("synergy_roi")
+        api_cost_delta = self._metric_delta("api_cost")
+        cpu_seconds_delta = self._metric_delta("cpu_seconds")
+        success_rate_delta = self._metric_delta("success_rate")
 
         # GPT score from patch scoring backend (if available)
         gpt_score = 0.0
@@ -1520,7 +1528,90 @@ class SelfImprovementEngine:
             except Exception:
                 pass
 
-        return [[hist_roi, perf_delta, gpt_score]]
+        # GPT feedback metrics from evaluation history
+        gpt_fb_score = 0.0
+        gpt_fb_tokens = 0.0
+        try:
+            eval_db = EvaluationHistoryDB()
+            rows = eval_db.history(module, limit=1)
+            if rows:
+                gpt_fb_score = float(rows[0][0])
+            try:
+                cur = eval_db.conn.execute(
+                    "SELECT gpt_feedback_tokens FROM evaluation_history "
+                    "WHERE engine=? ORDER BY ts DESC LIMIT 1",
+                    (module,),
+                )
+                token_row = cur.fetchone()
+                if token_row and token_row[0] is not None:
+                    gpt_fb_tokens = float(token_row[0])
+            except Exception:
+                pass
+            try:
+                eval_db.conn.close()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Resource usage deltas from ROITracker
+        res_cost = res_cpu = res_gpu = 0.0
+        tracker = getattr(self, "roi_tracker", None)
+        if tracker and getattr(tracker, "resource_metrics", None):
+            metrics = tracker.resource_metrics
+            if len(metrics) >= 2:
+                prev = metrics[-2]
+                curr = metrics[-1]
+
+                def _extract(row: Sequence[float]) -> tuple[float, float, float]:
+                    if len(row) >= 5:
+                        cpu, _mem, _disk, cost, gpu = row[:5]
+                    elif len(row) == 3:
+                        cost, cpu, gpu = row
+                    else:
+                        cost = cpu = gpu = 0.0
+                    return float(cost), float(cpu), float(gpu)
+
+                p_cost, p_cpu, p_gpu = _extract(prev)
+                c_cost, c_cpu, c_gpu = _extract(curr)
+                res_cost = c_cost - p_cost
+                res_cpu = c_cpu - p_cpu
+                res_gpu = c_gpu - p_gpu
+
+        # Error counts from tracker metrics
+        err_count = rep_count = 0.0
+        if tracker:
+            try:
+                errs = tracker.metrics_history.get("error_count", [])
+                reps = tracker.metrics_history.get("repair_count", [])
+                if errs:
+                    err_count = float(errs[-1])
+                if reps:
+                    rep_count = float(reps[-1])
+            except Exception:
+                pass
+
+        before = hist_roi
+        after = hist_roi + perf_delta
+
+        feats = [
+            before,
+            after,
+            api_cost_delta,
+            cpu_seconds_delta,
+            success_rate_delta,
+            gpt_score,
+            gpt_fb_score,
+            gpt_fb_tokens,
+            0.0,  # long_term_perf_delta
+            0.0,  # long_term_eval_outcome
+            res_cost,
+            res_cpu,
+            res_gpu,
+            err_count,
+            rep_count,
+        ]
+        return [feats]
 
     def _score_modifications(self, modules: Iterable[str]) -> list[tuple[str, float, str, float]]:
         """Score and rank candidate modules for patching.
@@ -4237,7 +4328,7 @@ class SelfImprovementEngine:
                 self._schedule_task = None
 
 
-from typing import Any, Callable, Optional, Type, Iterable
+from typing import Any, Callable, Optional, Type, Iterable, Sequence
 
 
 class ImprovementEngineRegistry:
