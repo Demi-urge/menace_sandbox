@@ -14,6 +14,7 @@ import numpy as np
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
 from .self_improvement_engine import SelfImprovementEngine
+from .growth_utils import growth_score
 from .system_evolution_manager import SystemEvolutionManager, EvolutionCycleResult
 from .evolution_history_db import EvolutionHistoryDB, EvolutionEvent
 from .evaluation_history_db import EvaluationHistoryDB
@@ -578,9 +579,8 @@ class EvolutionOrchestrator:
             except Exception:
                 pass
             scored.append((seq, roi_est, category))
-        cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
         scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-        scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+        scored.sort(key=lambda x: (-growth_score(x[2]), -x[1]))
         proposals = [s[0] for s in scored]
         main_wf = None
         if self.resource_optimizer and (
