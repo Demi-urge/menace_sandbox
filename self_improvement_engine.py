@@ -43,6 +43,8 @@ from .metrics_exporter import (
     orphan_modules_reclassified_total,
     orphan_modules_redundant_total,
     orphan_modules_legacy_total,
+    prediction_mae,
+    prediction_reliability,
 )
 from alert_dispatcher import dispatch_alert
 import json
@@ -1603,6 +1605,42 @@ class SelfImprovementEngine:
             self.info_db.add(item)
         except Exception as exc:
             self.logger.exception("failed to record learning eval: %s", exc)
+
+    def _evaluate_roi_predictor(self) -> None:
+        """Evaluate and optionally retrain the adaptive ROI predictor."""
+        if not self.roi_predictor:
+            return
+        tracker = getattr(self, "tracker", None)
+        if tracker is None:
+            return
+        mae_threshold = 0.1
+        acc_threshold = 0.6
+        try:
+            acc, mae = self.roi_predictor.evaluate_model(
+                tracker,
+                mae_threshold=mae_threshold,
+                acc_threshold=acc_threshold,
+            )
+            self.logger.info(
+                "adaptive roi evaluation",
+                extra=log_record(accuracy=float(acc), mae=float(mae)),
+            )
+            try:  # pragma: no cover - best effort telemetry
+                prediction_mae.labels(metric="adaptive_roi").set(float(mae))
+                prediction_reliability.labels(metric="adaptive_roi").set(float(acc))
+            except Exception:
+                pass
+            if mae > mae_threshold or acc < acc_threshold:
+                self.logger.info(
+                    "adaptive roi retraining triggered",
+                    extra=log_record(accuracy=float(acc), mae=float(mae)),
+                )
+                try:
+                    self.roi_predictor.train()
+                except Exception:
+                    self.logger.exception("adaptive roi training failed")
+        except Exception as exc:  # pragma: no cover - evaluation failure
+            self.logger.exception("adaptive roi evaluation failed: %s", exc)
 
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
@@ -3855,6 +3893,7 @@ class SelfImprovementEngine:
                     growth_type=self._last_growth_type,
                 ),
             )
+            self._evaluate_roi_predictor()
             if self._score_backend:
                 try:
                     self._score_backend.store(
