@@ -182,12 +182,30 @@ python -m menace.roi_tracker reliability history.json --window 10
 python -m menace.roi_tracker reliability history.json --metric profit
 ```
 
+### ROI prediction chart
+
+``EvaluationDashboard.roi_prediction_chart()`` provides sequences suitable for
+plotting predicted versus actual ROI values. The returned ``labels`` correspond
+to the index of each prediction in the tracker history so windowed slices retain
+their original offsets:
+
+```python
+from menace.evaluation_dashboard import EvaluationDashboard
+from menace.roi_tracker import ROITracker
+
+dash = EvaluationDashboard(manager)
+tracker = ROITracker()
+chart = dash.roi_prediction_chart(tracker)
+print(chart["labels"], chart["predicted"], chart["actual"])
+```
+
 ### ROI prediction events panel
 
 The evaluation dashboard exposes a helper for inspecting persisted
 ``roi_prediction_events``. ``EvaluationDashboard.roi_prediction_events_panel()``
 returns the latest mean absolute error for each forecast horizon, accuracy of
-growth class predictions and recent drift detection flags:
+growth class predictions, growth type accuracy and drift metrics recorded by the
+adaptive predictor, and recent drift detection flags:
 
 ```python
 from menace.evaluation_dashboard import EvaluationDashboard
@@ -196,7 +214,13 @@ from menace.roi_tracker import ROITracker
 dash = EvaluationDashboard(manager)
 tracker = ROITracker()
 panel = dash.roi_prediction_events_panel(tracker)
-print(panel["mae_by_horizon"], panel["growth_class_accuracy"], panel["drift_flags"])
+print(
+    panel["mae_by_horizon"],
+    panel["growth_class_accuracy"],
+    panel["growth_type_accuracy"],
+    panel["drift_metrics"],
+    panel["drift_flags"],
+)
 ```
 
 `predict_metric_with_manager(manager, name, features, actual=None)` queries

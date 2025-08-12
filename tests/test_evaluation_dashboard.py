@@ -123,6 +123,22 @@ def test_roi_prediction_panel():
     assert panel["accuracy_trend"][1] == pytest.approx(0.5)
 
 
+def test_roi_prediction_chart():
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    tracker = rt.ROITracker()
+    tracker.record_prediction(0.5, 0.7)
+    tracker.record_prediction(1.0, 0.9)
+    chart = dash.roi_prediction_chart(tracker)
+    assert chart["predicted"] == [pytest.approx(0.5), pytest.approx(1.0)]
+    assert chart["actual"] == [pytest.approx(0.7), pytest.approx(0.9)]
+    assert chart["labels"] == [0, 1]
+    chart_w = dash.roi_prediction_chart(tracker, window=1)
+    assert chart_w["predicted"] == [pytest.approx(1.0)]
+    assert chart_w["actual"] == [pytest.approx(0.9)]
+    assert chart_w["labels"] == [1]
+
+
 def test_roi_prediction_events_panel():
     mgr = _make_manager()
     dash = ed.EvaluationDashboard(mgr)
@@ -131,10 +147,15 @@ def test_roi_prediction_events_panel():
     tracker.record_class_prediction("up", "up")
     tracker.record_class_prediction("down", "up")
     tracker.drift_flags.extend([False, True])
+    tracker._adaptive_predictor = types.SimpleNamespace(
+        drift_metrics={"accuracy": 0.8, "mae": 0.05}
+    )
     panel = dash.roi_prediction_events_panel(tracker)
     assert panel["mae_by_horizon"][1] == pytest.approx(0.1)
     assert panel["growth_class_accuracy"] == pytest.approx(0.5)
     assert panel["drift_flags"] == [False, True]
+    assert panel["growth_type_accuracy"] == pytest.approx(0.8)
+    assert panel["drift_metrics"]["mae"] == pytest.approx(0.05)
     panel_w = dash.roi_prediction_events_panel(tracker, window=1)
     assert panel_w["growth_class_accuracy"] == pytest.approx(0.0)
     assert panel_w["drift_flags"] == [True]
