@@ -24,9 +24,13 @@ except Exception:  # pragma: no cover - pandas missing
     pd = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from sklearn.ensemble import GradientBoostingRegressor  # type: ignore
+    from sklearn.ensemble import (
+        GradientBoostingRegressor,
+        GradientBoostingClassifier,
+    )  # type: ignore
 except Exception:  # pragma: no cover - sklearn missing
     GradientBoostingRegressor = None  # type: ignore
+    GradientBoostingClassifier = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from sklearn.linear_model import LinearRegression, SGDRegressor  # type: ignore
@@ -95,12 +99,13 @@ class AdaptiveROIPredictor:
         }
         self.param_grid: Dict[str, Dict[str, Any]] = param_grid or default_grid
         self._model = None
+        self._classifier = None
         self.best_params: Dict[str, Any] | None = None
         self.best_score: float | None = None
         self.validation_scores: Dict[str, float] = {}
         self.slope_threshold: float | None = slope_threshold
         self.curvature_threshold: float | None = curvature_threshold
-        self.training_data: tuple[np.ndarray, np.ndarray] | None = None
+        self.training_data: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._trained_size: int = 0
         self._load()
         if slope_threshold is not None:
@@ -124,14 +129,16 @@ class AdaptiveROIPredictor:
                         obj = pickle.load(fh)
                 if isinstance(obj, dict) and "model" in obj:
                     self._model = obj.get("model")
+                    self._classifier = obj.get("classifier")
                     data = obj.get("data")
-                    if isinstance(data, tuple) and len(data) == 2:
-                        self.training_data = (np.asarray(data[0]), np.asarray(data[1]))
+                    if isinstance(data, tuple) and len(data) in (2, 3):
+                        self.training_data = tuple(np.asarray(d) for d in data)  # type: ignore
                     self._trained_size = int(obj.get("n_samples", 0))
                 else:
                     self._model = obj
             except Exception:  # pragma: no cover - corrupted file
                 self._model = None
+                self._classifier = None
                 self.training_data = None
                 self._trained_size = 0
 
@@ -152,12 +159,13 @@ class AdaptiveROIPredictor:
     def _save(self) -> None:
         """Persist the current model to disk."""
 
-        if self._model is None:
+        if self._model is None and self._classifier is None:
             return
         try:  # pragma: no cover - disk issues
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "model": self._model,
+                "classifier": self._classifier,
                 "data": self.training_data,
                 "n_samples": self._trained_size,
             }
@@ -190,7 +198,7 @@ class AdaptiveROIPredictor:
     # training
     def train(
         self,
-        dataset: Tuple[np.ndarray, np.ndarray] | None = None,
+        dataset: Tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
         cv: int | None = None,
         param_grid: Dict[str, Dict[str, Any]] | None = None,
     ) -> None:
@@ -199,7 +207,7 @@ class AdaptiveROIPredictor:
         Parameters
         ----------
         dataset:
-            Optional tuple ``(features, targets)``.  When omitted the data is
+            Optional tuple ``(features, targets, growth_types)``.  When omitted the data is
             loaded using :func:`build_dataset`.
         cv:
             Number of cross-validation folds.  When ``None`` the instance's
@@ -210,19 +218,20 @@ class AdaptiveROIPredictor:
         """
 
         if dataset is None:
-            X, y = build_dataset()
+            X, y, g = build_dataset()
         else:
-            X, y = dataset
+            X, y, g = dataset
 
         if X.size == 0 or y.size == 0:
             self._model = None
+            self._classifier = None
             self.training_data = None
             self._trained_size = 0
             return
 
         total_size = len(X)
         window = 200
-        self.training_data = (X[-window:], y[-window:])
+        self.training_data = (X[-window:], y[-window:], g[-window:])
 
         if (
             self._model is not None
@@ -234,7 +243,15 @@ class AdaptiveROIPredictor:
                 self._model.partial_fit(
                     X[self._trained_size :], y[self._trained_size :]
                 )
+                if self._classifier is not None and hasattr(self._classifier, "partial_fit"):
+                    self._classifier.partial_fit(
+                        X[self._trained_size :], g[self._trained_size :]
+                    )
+                elif GradientBoostingClassifier is not None:
+                    self._classifier = GradientBoostingClassifier(random_state=0)
+                    self._classifier.fit(X, g)
                 self._trained_size = total_size
+                self.training_data = (X[-window:], y[-window:], g[-window:])
                 self._save()
                 return
             except Exception:  # pragma: no cover - incremental fit failure
@@ -336,6 +353,14 @@ class AdaptiveROIPredictor:
         self._model = best_model
         self.best_score = None if best_score == float("inf") else best_score
         self.best_params = best_params
+        self._classifier = None
+        if g.size and GradientBoostingClassifier is not None:
+            try:
+                clf = GradientBoostingClassifier(random_state=0)
+                clf.fit(X, g)
+                self._classifier = clf
+            except Exception:  # pragma: no cover - classifier failure
+                self._classifier = None
         if self._model is not None:
             if self.slope_threshold is None or self.curvature_threshold is None:
                 try:
@@ -408,7 +433,14 @@ class AdaptiveROIPredictor:
         feats = np.asarray(list(improvement_features), dtype=float)
         preds = self._predict_sequence(feats)
         roi_estimate = float(preds[-1]) if preds.size else 0.0
-        growth = self._classify_growth(preds)
+        growth: str
+        if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:
+            try:
+                growth = str(self._classifier.predict(feats)[-1])
+            except Exception:  # pragma: no cover - classifier prediction failure
+                growth = self._classify_growth(preds)
+        else:
+            growth = self._classify_growth(preds)
         return roi_estimate, growth
 
     # Backwards compatible wrapper
