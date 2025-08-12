@@ -120,6 +120,32 @@ def _retrain(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+def _refresh(args: argparse.Namespace) -> None:
+    """Periodically rebuild the dataset without retraining."""
+
+    tracker = ROITracker()
+    if args.history:
+        tracker.load_history(args.history)
+
+    while True:
+        try:
+            load_training_data(
+                tracker,
+                evolution_path=args.evolution_db,
+                evaluation_path=args.evaluation_db,
+                roi_events_path=args.roi_events_db,
+                output_path=args.output_csv,
+            )
+            print(f"dataset refreshed -> {args.output_csv}")
+        except Exception as exc:  # pragma: no cover
+            print(f"refresh failed: {exc}")
+
+        if args.once:
+            break
+        time.sleep(args.interval)
+
+
+# ---------------------------------------------------------------------------
 def _schedule(args: argparse.Namespace) -> None:
     """Periodically load training data and retrain the model."""
 
@@ -234,6 +260,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Restrict training to features listed in the model's meta file",
     )
     p_retrain.set_defaults(func=_retrain)
+
+    p_refresh = sub.add_parser(
+        "refresh", help="periodically rebuild the dataset"
+    )
+    p_refresh.add_argument("--evolution-db", default="evolution_history.db")
+    p_refresh.add_argument("--evaluation-db", default="evaluation_history.db")
+    p_refresh.add_argument("--roi-events-db", default="roi_events.db")
+    p_refresh.add_argument(
+        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+    )
+    p_refresh.add_argument(
+        "--output-csv", default="sandbox_data/adaptive_roi.csv", help="CSV dump path"
+    )
+    p_refresh.add_argument(
+        "--interval", type=int, default=3600, help="Seconds between refresh"
+    )
+    p_refresh.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    p_refresh.set_defaults(func=_refresh)
 
     p_sched = sub.add_parser(
         "schedule", help="periodically load data and retrain the model"

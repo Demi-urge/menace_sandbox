@@ -66,7 +66,7 @@ def test_build_dataset(tmp_path: Path) -> None:
     X, y, g = build_dataset(evo_path, roi_path, eval_path)
     tracker = ROITracker()
     base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
-    n_features = 6 + len(base_metrics) + 5 + 4
+    n_features = 9 + len(base_metrics) + 5 + 7
     assert X.shape == (1, n_features)
     assert y.shape == (1, 4)
     # Target is revenue minus API cost after the event (and further horizons)
