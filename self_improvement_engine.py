@@ -1670,11 +1670,11 @@ class SelfImprovementEngine:
                     features = [[0.0, 0.0, 0.0]]
                 try:
                     try:
-                        seq, growth, conf = predictor.predict(
+                        seq, growth, conf, _ = predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, growth, conf = predictor.predict(features)
+                        val, growth, conf, _ = predictor.predict(features)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
                     confidence = float(conf[-1]) if conf else 0.0
@@ -3250,11 +3250,11 @@ class SelfImprovementEngine:
             if self.roi_predictor:
                 try:
                     try:
-                        seq, category, _ = self.roi_predictor.predict(
+                        seq, category, _, _ = self.roi_predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, category, _ = self.roi_predictor.predict(features)
+                        val, category, _, _ = self.roi_predictor.predict(features)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
@@ -3328,11 +3328,11 @@ class SelfImprovementEngine:
                 if self.roi_predictor:
                     try:
                         try:
-                            seq, category, _ = self.roi_predictor.predict(
+                            seq, category, _, _ = self.roi_predictor.predict(
                                 features, horizon=len(features)
                             )
                         except TypeError:
-                            val, category, _ = self.roi_predictor.predict(features)
+                            val, category, _, _ = self.roi_predictor.predict(features)
                             seq = [float(val)]
                         roi_est = float(seq[-1]) if seq else 0.0
                     except Exception:
@@ -4029,11 +4029,11 @@ class SelfImprovementEngine:
                 features = self._collect_action_features()
                 try:
                     try:
-                        seq, growth_type, _ = self.roi_predictor.predict(
+                        seq, growth_type, _, _ = self.roi_predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, growth_type, _ = self.roi_predictor.predict(features)
+                        val, growth_type, _, _ = self.roi_predictor.predict(features)
                         seq = [float(val)]
                     roi_estimate = float(seq[-1]) if seq else 0.0
                 except Exception:
