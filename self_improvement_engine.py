@@ -1473,6 +1473,40 @@ class SelfImprovementEngine:
 
         return {"exponential": 2, "linear": 1, "marginal": 0}.get(category, 0)
 
+    def _log_action(self, action: str, target: str, roi: float, growth: str) -> None:
+        """Persist chosen actions and ROI predictions for auditing."""
+        try:
+            conn = sqlite3.connect("evaluation_history.db")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_audit(
+                    ts TEXT,
+                    engine TEXT,
+                    action TEXT,
+                    target TEXT,
+                    roi REAL,
+                    growth TEXT
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO action_audit(ts, engine, action, target, roi, growth) VALUES(?,?,?,?,?,?)",
+                (
+                    datetime.utcnow().isoformat(),
+                    self.bot_name,
+                    action,
+                    target,
+                    float(roi),
+                    growth,
+                ),
+            )
+            conn.commit()
+        except Exception as exc:  # pragma: no cover - best effort
+            self.logger.exception("failed to log action audit: %s", exc)
+        finally:
+            with contextlib.suppress(Exception):
+                conn.close()
+
     # ------------------------------------------------------------------
     def _should_trigger(self) -> bool:
         if getattr(self, "_force_rerun", False):
@@ -1574,18 +1608,24 @@ class SelfImprovementEngine:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
         if not self.self_coding_engine:
             return None, False, 0.0
-        # Consult ROI predictor before applying a self optimisation patch.  Skip
-        # the patch when growth is not expected to be exponential.
+        # Consult ROI predictor before applying a self optimisation patch.
         try:
+            roi_est = 0.0
+            growth = "unknown"
+            weight = 0.0
             if self.roi_predictor and self.use_adaptive_roi:
                 features = self._candidate_features(self.bot_name)
                 try:
-                    _, growth = self.roi_predictor.predict(features)
+                    roi_est, growth = self.roi_predictor.predict(features)
                 except Exception:
-                    growth = "unknown"
-                if growth != "exponential":
+                    roi_est, growth = 0.0, "unknown"
+                weight = roi_est * (1 + self._improvement_score(growth))
+                if weight <= 0:
                     self.logger.info(
-                        "self optimisation skipped", extra=log_record(growth_type=growth)
+                        "self optimisation skipped",
+                        extra=log_record(
+                            growth_type=growth, roi_estimate=roi_est, weight=weight
+                        ),
                     )
                     return None, False, 0.0
 
@@ -1625,6 +1665,8 @@ class SelfImprovementEngine:
                 mutation["roi"] = after_metric
             self._last_mutation_id = int(mutation["event_id"])
             self._last_patch_id = patch_id
+            if self.roi_predictor and self.use_adaptive_roi:
+                self._log_action("self_optimize", self.bot_name, roi_est, growth)
             return patch_id, reverted, delta
         except Exception as exc:
             self.logger.exception("self optimization failed: %s", exc)
@@ -3133,17 +3175,22 @@ class SelfImprovementEngine:
                     roi_est, category = 0.0, "unknown"
             else:
                 roi_est, category = 0.0, "unknown"
-            scored.append((mod, roi_est, category))
+            weight = roi_est * (1 + self._improvement_score(category))
+            scored.append((mod, roi_est, category, weight))
         if self.use_adaptive_roi:
-            scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-            scored.sort(key=lambda x: (-self._improvement_score(x[2]), -x[1]))
+            scored = [s for s in scored if s[3] > 0]
+            scored.sort(key=lambda x: -x[3])
         else:
+            scored = [s for s in scored if s[1] > 0]
             scored.sort(key=lambda x: -x[1])
-        for mod, roi_est, category in scored:
+        for mod, roi_est, category, weight in scored:
             self.logger.info(
                 "patch candidate",
                 extra=log_record(
-                    module=mod, roi_category=category, roi_estimate=roi_est
+                    module=mod,
+                    roi_category=category,
+                    roi_estimate=roi_est,
+                    weight=weight,
                 ),
             )
             try:
@@ -3170,13 +3217,15 @@ class SelfImprovementEngine:
                             patch_id=patch_id,
                         )
                     except Exception:
-                        self.logger.exception(
-                            "graph patch record failed", extra=log_record(module=mod)
-                        )
+                            self.logger.exception(
+                                "graph patch record failed", extra=log_record(module=mod)
+                            )
             except Exception:
                 self.logger.exception(
                     "preemptive fix failed", extra=log_record(module=mod)
                 )
+            if self.use_adaptive_roi:
+                self._log_action("preventative_patch", mod, roi_est, category)
 
     def _apply_high_risk_patches(self) -> None:
         """Predict high-risk modules and attempt preemptive fixes."""
@@ -3197,21 +3246,26 @@ class SelfImprovementEngine:
                         roi_est, category = 0.0, "unknown"
                 else:
                     roi_est, category = 0.0, "unknown"
-                scored.append((mod, roi_est, category))
+                weight = roi_est * (1 + self._improvement_score(category))
+                scored.append((mod, roi_est, category, weight))
             if self.use_adaptive_roi:
-                scored = [s for s in scored if s[2] == "exponential" or s[1] > 0]
-                scored.sort(key=lambda x: (-self._improvement_score(x[2]), -x[1]))
+                scored = [s for s in scored if s[3] > 0]
+                scored.sort(key=lambda x: -x[3])
             else:
+                scored = [s for s in scored if s[1] > 0]
                 scored.sort(key=lambda x: -x[1])
             self.logger.info(
                 "high risk modules",
-                extra=log_record(modules=[m for m, _, _ in scored]),
+                extra=log_record(modules=[m for m, _, _, _ in scored]),
             )
-            for mod, roi_est, category in scored:
+            for mod, roi_est, category, weight in scored:
                 self.logger.info(
                     "patch candidate",
                     extra=log_record(
-                        module=mod, roi_category=category, roi_estimate=roi_est
+                        module=mod,
+                        roi_category=category,
+                        roi_estimate=roi_est,
+                        weight=weight,
                     ),
                 )
                 try:
@@ -3245,6 +3299,8 @@ class SelfImprovementEngine:
                     self.logger.exception(
                         "preemptive fix failed", extra=log_record(module=mod)
                     )
+                if self.use_adaptive_roi:
+                    self._log_action("high_risk_patch", mod, roi_est, category)
         except Exception as exc:
             self.logger.exception(
                 "high risk module prediction failed: %s", exc
