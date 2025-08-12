@@ -50,7 +50,7 @@ def _predict(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    roi, growth = predictor.predict(features)
+    roi, growth = predictor.predict(features, horizon=args.horizon)
     print(json.dumps({"roi": roi, "growth": growth}))
 
 
@@ -155,6 +155,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     p_predict = sub.add_parser("predict", help="predict ROI for a feature sequence")
     p_predict.add_argument("features", help="JSON encoded feature matrix")
+    p_predict.add_argument(
+        "--horizon",
+        type=int,
+        default=None,
+        help="Number of steps to forecast",
+    )
     p_predict.set_defaults(func=_predict)
 
     p_retrain = sub.add_parser("retrain", help="retrain the model with latest data")

@@ -236,6 +236,7 @@ def build_dataset(
     evolution_path: str | Path = "evolution_history.db",
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
+    horizon: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
 
@@ -247,6 +248,9 @@ def build_dataset(
         Path to the ROI history database (``action_roi`` table).
     evaluation_path:
         Path to the evaluation history database containing GPT scores.
+    horizon:
+        Number of future ROI outcomes ``roi_{t+1} .. roi_{t+h}`` to include as
+        target columns.
 
     Returns
     -------
@@ -287,7 +291,7 @@ def build_dataset(
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
 
     features: list[list[float]] = []
-    targets: list[float] = []
+    targets: list[list[float]] = []
     growth_types: list[str] = []
     cycle_idx = 0
 
@@ -330,8 +334,6 @@ def build_dataset(
         api_delta = next_roi[2] - prev_roi[2]
         cpu_delta = next_roi[3] - prev_roi[3]
         sr_delta = next_roi[4] - prev_roi[4]
-        roi_outcome = next_roi[1] - next_roi[2]
-
         row = [
             float(before),
             float(after),
@@ -344,9 +346,20 @@ def build_dataset(
             seq = metrics_hist.get(name, [])
             val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
             row.append(float(val))
+        # collect ROI outcomes for the requested horizon
+        seq: list[float] = []
+        for i in range(horizon):
+            idx = next_idx + i
+            if idx >= len(roi_list):
+                seq = []
+                break
+            roi_rec = roi_list[idx]
+            seq.append(float(roi_rec[1] - roi_rec[2]))
+        if not seq:
+            continue
         features.append(row)
-        targets.append(float(roi_outcome))
-        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + 1]]
+        targets.append(seq)
+        roi_values = [r[1] - r[2] for r in roi_list[: next_idx + horizon]]
         growth_types.append(_label_growth(roi_values))
         cycle_idx += 1
 

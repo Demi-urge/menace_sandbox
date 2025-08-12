@@ -54,14 +54,14 @@ def test_build_dataset(tmp_path: Path) -> None:
     )
     evo.conn.commit()
 
-    X, y, g = build_dataset(evo_path, roi_path, eval_path)
+    X, y, g = build_dataset(evo_path, roi_path, eval_path, horizon=1)
     tracker = ROITracker()
     base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
     n_features = 6 + len(base_metrics) + 5
     assert X.shape == (1, n_features)
-    assert y.shape == (1,)
+    assert y.shape == (1, 1)
     # Target is revenue minus API cost after the event
-    assert y[0] == pytest.approx(11.0)
+    assert y[0, 0] == pytest.approx(11.0)
     assert g.tolist() == ["linear"]
 
 
@@ -69,7 +69,7 @@ def test_classifier_training_and_prediction(monkeypatch):
     """Model trains classifier and uses it for growth prediction."""
 
     X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], dtype=float)
-    y = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0], dtype=float).reshape(-1, 1)
     g = np.array(
         ["marginal", "marginal", "linear", "linear", "exponential", "exponential"],
         dtype=object,
@@ -83,8 +83,10 @@ def test_classifier_training_and_prediction(monkeypatch):
     if predictor._classifier is None:
         pytest.skip("classifier not available")
 
-    roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
-    assert roi == pytest.approx(5.0, abs=1e-3)
+    roi, growth = predictor.predict(
+        [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], horizon=6
+    )
+    assert roi[-1] == pytest.approx(5.0, abs=1e-3)
     assert growth == "exponential"
     assert (
         predictor.predict_growth_type(
@@ -98,7 +100,7 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
     """Cross-validation stores metadata about the best model."""
 
     X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
-    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float).reshape(-1, 1)
     g = np.array(["marginal", "linear", "linear", "linear"], dtype=object)
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y, g)
@@ -145,7 +147,11 @@ def test_tracker_integration(monkeypatch):
 
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset",
-        lambda: (np.array([[0.0]]), np.array([0.0]), np.array(["linear"], dtype=object)),
+        lambda: (
+            np.array([[0.0]]),
+            np.array([0.0]).reshape(-1, 1),
+            np.array(["linear"], dtype=object),
+        ),
     )
     predictor = AdaptiveROIPredictor()
     tracker = ROITracker()
@@ -189,7 +195,7 @@ def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
     model_path.write_text("not a pickle")
 
     X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
-    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float)
+    y = np.array([0.0, 1.0, 2.0, 3.0], dtype=float).reshape(-1, 1)
     g = np.array(["marginal", "linear", "linear", "linear"], dtype=object)
     monkeypatch.setattr(
         "menace_sandbox.adaptive_roi_predictor.build_dataset", lambda: (X, y, g)

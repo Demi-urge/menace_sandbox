@@ -32,14 +32,16 @@ simple subcommands and can be executed via ``python -m menace_sandbox.adaptive_r
 
 ```bash
 python -m menace_sandbox.adaptive_roi_cli train
-python -m menace_sandbox.adaptive_roi_cli predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]"
+python -m menace_sandbox.adaptive_roi_cli predict --horizon 3 "[[0.1,0.2,0.0,0.0,0.0,0.5],[0.1,0.2,0.0,0.0,0.0,0.5],[0.1,0.2,0.0,0.0,0.0,0.5]]"
 python -m menace_sandbox.adaptive_roi_cli retrain
 python -m menace_sandbox.adaptive_roi_cli schedule --once
 ```
 
-`train` fits a new model on available history, `predict` returns the
-forecasted ROI and growth type for a JSON encoded feature matrix and
-`retrain` updates an existing model with the latest data. The `schedule`
+`train` fits a new model on available history, `predict` returns ROI
+forecasts and a growth type for a JSON encoded feature matrix. Passing
+`--horizon` yields a list of ``h`` ROI values while omitting it returns
+only the final step. `retrain` updates an existing model with the latest
+data. The `schedule`
 command calls `load_training_data()` to assemble the latest dataset and
 retrains the model at a fixed interval (default one hour). Pass
 `--interval` to adjust the cadence or `--once` to run a single cycle,

@@ -59,7 +59,7 @@ def test_build_dataset(tmp_path):
         )
     )
 
-    # create roi.db with one record before and one after event
+    # create roi.db with one record before and two after the event
     conn = sqlite3.connect(roi_db_path)
     conn.execute(
         """
@@ -82,14 +82,18 @@ def test_build_dataset(tmp_path):
         "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
         ("engine", 15.0, 3.0, 2.0, 0.6, "2024-01-01T00:01:00"),
     )
+    conn.execute(
+        "INSERT INTO action_roi(action, revenue, api_cost, cpu_seconds, success_rate, ts) VALUES (?,?,?,?,?,?)",
+        ("engine", 20.0, 4.0, 3.0, 0.7, "2024-01-01T00:02:00"),
+    )
     conn.commit()
 
-    X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path)
+    X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path, horizon=2)
 
     tracker = ROITracker()
     base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
     n_features = 6 + len(base_metrics) + 5
     assert X.shape == (1, n_features)
-    assert y.tolist() == [12.0]
+    assert y.tolist() == [[12.0, 16.0]]
     assert g.tolist() == ["linear"]
     assert np.allclose(X, 0.0)

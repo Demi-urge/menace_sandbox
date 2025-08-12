@@ -231,6 +231,9 @@ class AdaptiveROIPredictor:
         else:
             X, y, g = dataset
 
+        if y.ndim > 1 and y.shape[1] == 1:
+            y = y[:, 0]
+
         if X.size == 0 or y.size == 0:
             self._model = None
             self._classifier = None
@@ -398,21 +401,41 @@ class AdaptiveROIPredictor:
 
     # ------------------------------------------------------------------
     # public API
-    def predict(self, improvement_features: Sequence[Sequence[float]]) -> tuple[float, str]:
-        """Return ``(roi_estimate, growth_category)`` for the provided features."""
+    def predict(
+        self,
+        improvement_features: Sequence[Sequence[float]],
+        horizon: int | None = None,
+    ) -> tuple[float | list[float], str]:
+        """Return ROI forecast(s) and growth category for ``improvement_features``.
+
+        When ``horizon`` is provided a list of ROI predictions of length
+        ``horizon`` (capped by available feature rows) is returned.  Otherwise
+        only the final ROI estimate is produced for backwards compatibility.
+        The growth category always corresponds to the final step considered.
+        """
 
         feats = np.asarray(list(improvement_features), dtype=float)
         preds = self._predict_sequence(feats)
-        roi_estimate = float(preds[-1]) if preds.size else 0.0
+
+        if horizon is None or horizon <= 0:
+            idx = len(preds) - 1
+            roi_result: float | list[float] = float(preds[idx]) if preds.size else 0.0
+        else:
+            horizon = min(int(horizon), len(preds))
+            roi_result = preds[:horizon].tolist()
+            idx = horizon - 1
+
         growth: str
         if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:
             try:
-                growth = str(self._classifier.predict(feats)[-1])
+                cls_preds = self._classifier.predict(feats)
+                idx = min(idx, len(cls_preds) - 1)
+                growth = str(cls_preds[idx])
             except Exception:  # pragma: no cover - classifier prediction failure
                 growth = "marginal"
         else:
             growth = "marginal"
-        return roi_estimate, growth
+        return roi_result, growth
 
     # Backwards compatible wrapper
     def predict_growth_type(self, action_features: Sequence[Sequence[float]]) -> str:
@@ -445,13 +468,16 @@ def predict_growth_type(action_features: Sequence[Sequence[float]]) -> str:
     return _predictor.predict_growth_type(action_features)
 
 
-def predict(action_features: Sequence[Sequence[float]]) -> tuple[float, str]:
-    """Return ``(roi_estimate, growth_category)`` using a module-level predictor."""
+def predict(
+    action_features: Sequence[Sequence[float]],
+    horizon: int | None = None,
+) -> tuple[float | list[float], str]:
+    """Return ROI forecast(s) using a module-level predictor."""
 
     global _predictor
     if _predictor is None:
         _predictor = AdaptiveROIPredictor()
-    return _predictor.predict(action_features)
+    return _predictor.predict(action_features, horizon=horizon)
 
 
 def load_training_data(
