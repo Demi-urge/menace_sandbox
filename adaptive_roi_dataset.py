@@ -11,7 +11,8 @@ contains:
 
 * pre and post performance metrics
 * changes in resource usage (API cost, CPU seconds, success rate)
-* the GPT evaluation score for the cycle
+* the GPT evaluation score and feedback for the cycle
+* long-term ROI deltas derived from prediction events
 
 The target vector contains the realised ROI outcome for the cycle calculated
 from the ROI history.  Both functions remain available so existing code and
@@ -23,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Tuple, Sequence
 
+import json
 import sqlite3
 import numpy as np
 
@@ -86,15 +88,42 @@ def _collect_roi_history(conn: sqlite3.Connection) -> dict[
 
 
 # ---------------------------------------------------------------------------
-def _collect_eval_history(db: EvaluationHistoryDB) -> dict[str, list[tuple[datetime, float]]]:
-    """Return evaluation scores grouped by engine."""
+def _collect_eval_history(
+    db: EvaluationHistoryDB,
+) -> dict[str, list[tuple[datetime, float, float, float, float]]]:
+    """Return evaluation scores and feedback grouped by engine."""
 
-    history: dict[str, list[tuple[datetime, float]]] = {}
+    history: dict[str, list[tuple[datetime, float, float, float, float]]] = {}
+    cols = {
+        row[1]
+        for row in db.conn.execute("PRAGMA table_info(evaluation_history)").fetchall()
+    }
+    has_fb = "gpt_feedback" in cols
+    has_tokens = "gpt_feedback_tokens" in cols
+    has_long = "long_term_delta" in cols
+    select_cols = ["cv_score", "ts"]
+    if has_fb:
+        select_cols.append("gpt_feedback")
+    if has_tokens:
+        select_cols.append("gpt_feedback_tokens")
+    if has_long:
+        select_cols.append("long_term_delta")
+    query = (
+        "SELECT " + ",".join(select_cols) + " FROM evaluation_history WHERE engine=? ORDER BY ts"
+    )
     for eng in db.engines():
-        records = [
-            (_parse_ts(ts), float(score))
-            for score, ts, _passed, _err in db.history(eng, limit=1000000)
-        ]
+        cur = db.conn.execute(query, (eng,))
+        records: list[tuple[datetime, float, float, float, float]] = []
+        for row in cur.fetchall():
+            score = float(row[0])
+            ts = row[1]
+            idx = 2
+            fb = float(row[idx]) if has_fb else 0.0
+            idx += 1 if has_fb else 0
+            tokens = float(row[idx]) if has_tokens else 0.0
+            idx += 1 if has_tokens else 0
+            long_term = float(row[idx]) if has_long else 0.0
+            records.append((_parse_ts(ts), score, fb, tokens, long_term))
         records.sort(key=lambda r: r[0])
         history[eng] = records
     return history
@@ -286,7 +315,8 @@ def build_dataset(
     tuple
         ``(features, targets, growth_types)`` where ``features`` is a matrix with columns
         ``[before_metric, after_metric, api_cost_delta, cpu_seconds_delta,
-        success_rate_delta, gpt_score, recovery_time, latency_error_rate,
+        success_rate_delta, gpt_score, gpt_feedback_score, gpt_feedback_tokens,
+        long_term_perf_delta, recovery_time, latency_error_rate,
         hostile_failures, misuse_failures, concurrency_throughput,
         synergy_adaptability, synergy_recovery_time, synergy_discrepancy_count,
         synergy_gpu_usage, synergy_cpu_usage, synergy_memory_usage,
@@ -301,7 +331,8 @@ def build_dataset(
         synergy_reliability, synergy_roi_reliability, roi_reliability,
         long_term_roi_reliability, cpu, memory, disk, time, gpu,
         predicted_roi_event, actual_roi_event, predicted_class_event,
-        actual_class_event]`` and ``targets`` contains multiple ROI columns as
+        actual_class_event, prediction_confidence, predicted_horizon_delta,
+        actual_horizon_delta]`` and ``targets`` contains multiple ROI columns as
         specified by ``horizons`` followed by an optional exponential moving
         average column ``roi_ema``.  ``growth_types`` labels the ROI curve of
         each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.  When
@@ -331,6 +362,9 @@ def build_dataset(
         "cpu_seconds_delta",
         "success_rate_delta",
         "gpt_score",
+        "gpt_feedback_score",
+        "gpt_feedback_tokens",
+        "long_term_perf_delta",
     ]
     feature_names.extend(metric_names)
     feature_names.extend(
@@ -339,17 +373,26 @@ def build_dataset(
             "actual_roi_event",
             "predicted_class_event",
             "actual_class_event",
+            "prediction_confidence",
+            "predicted_horizon_delta",
+            "actual_horizon_delta",
         ]
     )
 
     # load persisted prediction events --------------------------------------
     try:
         pred_conn = sqlite3.connect(roi_events_path)
-        cur = pred_conn.execute(
-            "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
-            "FROM roi_prediction_events ORDER BY ts"
-        )
-        pred_rows = cur.fetchall()
+        try:
+            cur = pred_conn.execute(
+                "SELECT predicted_roi, actual_roi, predicted_class, actual_class, "
+                "confidence, predicted_horizons, actual_horizons FROM roi_prediction_events ORDER BY ts"
+            )
+            pred_rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            cur = pred_conn.execute(
+                "SELECT predicted_roi, actual_roi, predicted_class, actual_class FROM roi_prediction_events ORDER BY ts"
+            )
+            pred_rows = [row + (None, None, None) for row in cur.fetchall()]
     except Exception:
         pred_rows = []
     finally:
@@ -366,6 +409,24 @@ def build_dataset(
     class_map = {c: i for i, c in enumerate(sorted(class_set))}
     pred_codes = [class_map.get(str(r[2]), 0) for r in pred_rows]
     act_codes = [class_map.get(str(r[3]), 0) for r in pred_rows]
+    conf_vals = [0.0 if r[4] is None else float(r[4]) for r in pred_rows]
+    pred_h_deltas: list[float] = []
+    act_h_deltas: list[float] = []
+    for r in pred_rows:
+        try:
+            pred_h = json.loads(r[5]) if r[5] else []
+        except Exception:
+            pred_h = []
+        try:
+            act_h = json.loads(r[6]) if r[6] else []
+        except Exception:
+            act_h = []
+        pred_h_deltas.append(
+            float(pred_h[-1]) - float(pred_h[0]) if len(pred_h) >= 2 else 0.0
+        )
+        act_h_deltas.append(
+            float(act_h[-1]) - float(act_h[0]) if len(act_h) >= 2 else 0.0
+        )
 
     features: list[list[float]] = []
     targets: list[list[float]] = []
@@ -383,9 +444,15 @@ def build_dataset(
         if not eval_list:
             continue
         eval_score = None
-        for e_ts, score in eval_list:
+        fb_score = 0.0
+        fb_tokens = 0.0
+        long_term = 0.0
+        for e_ts, score, fb, tokens, lt in eval_list:
             if e_ts >= ts_dt:
                 eval_score = score
+                fb_score = fb
+                fb_tokens = tokens
+                long_term = lt
                 break
         if eval_score is None:
             continue
@@ -434,6 +501,9 @@ def build_dataset(
             float(cpu_delta),
             float(sr_delta),
             float(eval_score),
+            float(fb_score),
+            float(fb_tokens),
+            float(long_term),
         ]
         for name in metric_names:
             seq = metrics_hist.get(name, [])
@@ -443,12 +513,22 @@ def build_dataset(
         act_val = act_vals[cycle_idx] if cycle_idx < len(act_vals) else 0.0
         pred_code = pred_codes[cycle_idx] if cycle_idx < len(pred_codes) else 0
         act_code = act_codes[cycle_idx] if cycle_idx < len(act_codes) else 0
+        conf_val = conf_vals[cycle_idx] if cycle_idx < len(conf_vals) else 0.0
+        pred_h_delta = (
+            pred_h_deltas[cycle_idx] if cycle_idx < len(pred_h_deltas) else 0.0
+        )
+        act_h_delta = (
+            act_h_deltas[cycle_idx] if cycle_idx < len(act_h_deltas) else 0.0
+        )
         row.extend(
             [
                 float(pred_val),
                 float(act_val),
                 float(pred_code),
                 float(act_code),
+                float(conf_val),
+                float(pred_h_delta),
+                float(act_h_delta),
             ]
         )
         features.append(row)

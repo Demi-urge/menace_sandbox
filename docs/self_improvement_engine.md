@@ -32,6 +32,14 @@ python -m menace_sandbox.adaptive_roi_cli train
 python -m menace_sandbox.adaptive_roi_cli retrain
 ```
 
+The accompanying databases record additional context for these forecasts.
+`evaluation_history.db` includes optional `gpt_feedback` scores,
+`gpt_feedback_tokens` and `long_term_delta` columns, while
+`roi_events.db` stores prediction `confidence` together with full
+`predicted_horizons` and `actual_horizons` arrays. These fields feed new
+dataset features like long-term performance deltas and GPT feedback
+metrics.
+
 During a cycle the engine feeds feature sequences to the predictor and
 receives an ROI estimate alongside a growth classification such as
 "exponential" or "marginal". Meaningful forecasts require the optional

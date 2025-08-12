@@ -35,6 +35,7 @@ python -m menace_sandbox.adaptive_roi_cli train
 python -m menace_sandbox.adaptive_roi_cli predict "[[0.1,0.2,0.0,0.0,0.0,0.5]]" --horizon 3
 python -m menace_sandbox.adaptive_roi_cli retrain
 python -m menace_sandbox.adaptive_roi_cli schedule --once
+python -m menace_sandbox.adaptive_roi_cli refresh --once
 ```
 
 `train` fits a new model on available history, `predict` returns an ROI
@@ -44,7 +45,8 @@ model with the latest data. The `schedule`
 command calls `load_training_data()` to assemble the latest dataset and
 retrains the model at a fixed interval (default one hour). Pass
 `--interval` to adjust the cadence or `--once` to run a single cycle,
-which is useful for cron jobs:
+which is useful for cron jobs. `refresh` performs the dataset rebuild step
+on a timer without retraining the model:
 
 ```cron
 0 * * * * python -m menace_sandbox.adaptive_roi_cli schedule --history sandbox_data/roi_history.json
@@ -56,6 +58,11 @@ Training stores the most influential input metrics in a companion
 ``--selected-features`` flag restricts `build_dataset()` to these columns so you
 can periodically retrain on a pruned feature set and drop low-importance
 metrics from future runs.
+
+The feature matrix produced by `build_dataset()` now also includes
+`gpt_feedback_score`, `gpt_feedback_tokens`, `long_term_perf_delta`,
+`prediction_confidence`, `predicted_horizon_delta` and
+`actual_horizon_delta` columns for richer training signals.
 
 The predictor uses `scikit-learn` when installed and falls back to a naive
 baseline if no regression backend or dataset is available, so results
