@@ -199,12 +199,12 @@ class EvolutionOrchestrator:
         self.prev_roi = before_roi
         error_rate = self._error_rate()
         try:
-            seq, _ = self.roi_predictor.predict(
+            seq, _, _ = self.roi_predictor.predict(
                 [[before_roi, error_rate]], horizon=1
             )
             model_pred = float(seq[-1]) if seq else 0.0
         except TypeError:
-            model_pred, _ = self.roi_predictor.predict([[before_roi, error_rate]])
+            model_pred, _, _ = self.roi_predictor.predict([[before_roi, error_rate]])
         pred_roi = before_roi
         pred_err = error_rate
         if self.trend_predictor:
@@ -551,11 +551,11 @@ class EvolutionOrchestrator:
             features = [[s.expected_roi, 0.0]]
             try:
                 try:
-                    seq_preds, category = self.roi_predictor.predict(
+                    seq_preds, category, _ = self.roi_predictor.predict(
                         features, horizon=len(features)
                     )
                 except TypeError:
-                    val, category = self.roi_predictor.predict(features)
+                    val, category, _ = self.roi_predictor.predict(features)
                     seq_preds = [float(val)]
                 roi_est = float(seq_preds[-1]) if seq_preds else s.expected_roi
             except Exception:

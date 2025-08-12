@@ -59,6 +59,7 @@ class ROITracker:
             forecasts.
         """
         self.roi_history: List[float] = []
+        self.confidence_history: List[float] = []
         self.category_history: List[str] = []
         self.window = window
         self.tolerance = tolerance
@@ -258,6 +259,7 @@ class ROITracker:
 
         pre_len = len(self.roi_history)
         self.roi_history.extend(other.roi_history)
+        self.confidence_history.extend(other.confidence_history)
         delta = len(other.roi_history)
 
         for name, hist in self.metrics_history.items():
@@ -352,11 +354,11 @@ class ROITracker:
             try:
                 feats = [[float(x)] for x in (self.roi_history + [actual])] or [[0.0]]
                 try:
-                    _, actual_class = self._adaptive_predictor.predict(
+                    _, actual_class, _ = self._adaptive_predictor.predict(
                         feats, horizon=len(feats)
                     )
                 except TypeError:
-                    _, actual_class = self._adaptive_predictor.predict(feats)
+                    _, actual_class, _ = self._adaptive_predictor.predict(feats)
             except Exception:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
@@ -718,6 +720,7 @@ class ROITracker:
         resources: Optional[Dict[str, float]] = None,
         metrics: Optional[Dict[str, float]] = None,
         category: str | None = None,
+        confidence: float | None = None,
     ) -> Tuple[Optional[int], List[float], bool]:
         """Record ROI delta and evaluate stopping criteria.
 
@@ -725,7 +728,8 @@ class ROITracker:
         ``resources`` is given, CPU, memory, disk, time and GPU metrics are stored for
         use in forecasting. ``metrics`` allows arbitrary named metrics to be
         recorded for later forecasting with :meth:`forecast_metric`. ``category``
-        captures the predicted ROI growth classification for this iteration.
+        captures the predicted ROI growth classification for this iteration and
+        ``confidence`` records the model's confidence in the prediction.
         """
         predicted_class = self._next_category
         if self._next_prediction is not None:
@@ -757,6 +761,7 @@ class ROITracker:
         if filtered is not None:
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
+            self.confidence_history.append(float(confidence or 0.0))
             if modules:
                 for m in modules:
                     cid = self.cluster_map.get(m)
@@ -856,9 +861,9 @@ class ROITracker:
             try:
                 feats = [[float(x)] for x in self.roi_history] or [[0.0]]
                 try:
-                    _, cls = self._adaptive_predictor.predict(feats, horizon=len(feats))
+                    _, cls, _ = self._adaptive_predictor.predict(feats, horizon=len(feats))
                 except TypeError:
-                    _, cls = self._adaptive_predictor.predict(feats)
+                    _, cls, _ = self._adaptive_predictor.predict(feats)
                 self._next_category = cls
             except Exception:
                 self._next_category = None
@@ -1478,6 +1483,7 @@ class ROITracker:
             }
             data = {
                 "roi_history": self.roi_history,
+                "confidence_history": self.confidence_history,
                 "module_deltas": self.module_deltas,
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
@@ -1494,11 +1500,23 @@ class ROITracker:
                 json.dump(data, fh)
             return
         with sqlite3.connect(path) as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS roi_history (delta REAL)")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL)"
+            )
             conn.execute("DELETE FROM roi_history")
             conn.executemany(
-                "INSERT INTO roi_history (delta) VALUES (?)",
-                [(float(d),) for d in self.roi_history],
+                "INSERT INTO roi_history (delta, confidence) VALUES (?, ?)",
+                [
+                    (
+                        float(d),
+                        float(
+                            self.confidence_history[i]
+                            if i < len(self.confidence_history)
+                            else 0.0
+                        ),
+                    )
+                    for i, d in enumerate(self.roi_history)
+                ],
             )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS module_deltas (module TEXT, delta REAL)"
@@ -1599,6 +1617,7 @@ class ROITracker:
                     data = json.load(fh)
                 if isinstance(data, list):
                     self.roi_history = [float(x) for x in data]
+                    self.confidence_history = [0.0] * len(self.roi_history)
                     self.module_deltas = {}
                     self.predicted_roi = []
                     self.actual_roi = []
@@ -1610,6 +1629,15 @@ class ROITracker:
                     self.scenario_synergy = {}
                 else:
                     self.roi_history = [float(x) for x in data.get("roi_history", [])]
+                    self.confidence_history = [
+                        float(x) for x in data.get("confidence_history", [])
+                    ]
+                    if len(self.confidence_history) < len(self.roi_history):
+                        self.confidence_history.extend(
+                            [0.0] * (len(self.roi_history) - len(self.confidence_history))
+                        )
+                    elif len(self.confidence_history) > len(self.roi_history):
+                        self.confidence_history = self.confidence_history[: len(self.roi_history)]
                     self.module_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("module_deltas", {}).items()
@@ -1704,9 +1732,15 @@ class ROITracker:
             return
         try:
             with sqlite3.connect(path) as conn:
-                rows = conn.execute(
-                    "SELECT delta FROM roi_history ORDER BY rowid"
-                ).fetchall()
+                try:
+                    rows = conn.execute(
+                        "SELECT delta, confidence FROM roi_history ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    rows = conn.execute(
+                        "SELECT delta FROM roi_history ORDER BY rowid"
+                    ).fetchall()
+                    rows = [(r[0], 0.0) for r in rows]
                 mod_rows = conn.execute(
                     "SELECT module, delta FROM module_deltas ORDER BY rowid"
                 ).fetchall()
@@ -1755,6 +1789,9 @@ class ROITracker:
             self.category_history = []
             return
         self.roi_history = [float(r[0]) for r in rows]
+        self.confidence_history = [
+            float(r[1]) if len(r) > 1 else 0.0 for r in rows
+        ]
         self.module_deltas = {}
         for mod, delta in mod_rows:
             self.module_deltas.setdefault(str(mod), []).append(float(delta))

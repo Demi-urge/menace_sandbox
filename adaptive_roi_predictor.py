@@ -379,22 +379,48 @@ class AdaptiveROIPredictor:
                 self._trained_size = 0
 
     # ------------------------------------------------------------------
-    def _predict_sequence(self, features: np.ndarray) -> np.ndarray:
-        """Return model predictions for ``features``.
+    def _predict_sequence(self, features: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return model predictions and confidence for ``features``.
 
-        ``features`` must be a ``(n_samples, n_features)`` array.  When the
-        model is unavailable the first column is returned unchanged as a naive
-        baseline.
+        ``features`` must be a ``(n_samples, n_features)`` array.  When an
+        ensemble of models is present, the mean prediction across the ensemble
+        is returned and the variance is used to derive a confidence score for
+        each forecast.  Confidence is mapped to ``[0, 1]`` using ``1/(1+var)``
+        so that agreement between models yields a value near ``1`` while high
+        disagreement trends towards ``0``.  When the model is unavailable the
+        first feature column is used as a naive baseline with zero confidence.
         """
 
         if features.ndim != 2:
             raise ValueError("features must be 2D")
+
+        # Support ensembles of models (e.g. bootstrap aggregations)
+        if isinstance(self._model, (list, tuple)) and self._model:
+            preds: list[np.ndarray] = []
+            for model in self._model:
+                if getattr(model, "predict", None) is None:
+                    continue
+                try:  # pragma: no cover - best effort prediction
+                    preds.append(np.asarray(model.predict(features), dtype=float))
+                except Exception:
+                    continue
+            if preds:
+                stacked = np.stack(preds, axis=0)
+                mean = stacked.mean(axis=0)
+                var = stacked.var(axis=0)
+                confidence = 1.0 / (1.0 + var)
+                return mean, confidence
+
         if getattr(self._model, "predict", None) is not None:
             try:
-                return np.asarray(self._model.predict(features), dtype=float)
+                pred = np.asarray(self._model.predict(features), dtype=float)
+                conf = np.ones_like(pred)
+                return pred, conf
             except Exception:  # pragma: no cover - prediction failure
                 pass
-        return features[:, 0].astype(float)
+
+        baseline = features[:, 0].astype(float)
+        return baseline, np.zeros_like(baseline)
 
     # ------------------------------------------------------------------
     # public API
@@ -402,8 +428,8 @@ class AdaptiveROIPredictor:
         self,
         improvement_features: Sequence[Sequence[float]],
         horizon: int | None = None,
-    ) -> tuple[list[float], str]:
-        """Return ROI forecast sequence and growth category.
+    ) -> tuple[list[float], str, list[float]]:
+        """Return ROI forecast sequence, growth category and confidence.
 
         Parameters
         ----------
@@ -417,17 +443,18 @@ class AdaptiveROIPredictor:
 
         Returns
         -------
-        list, str
-            The sequence of predicted ROI values up to ``horizon`` and the
-            growth classification from the final step.
+        list, str, list
+            The sequence of predicted ROI values up to ``horizon``, the growth
+            classification from the final step and per-step confidence values
+            in the range ``[0, 1]``.
         """
 
         feats = np.asarray(list(improvement_features), dtype=float)
         h = len(feats) if horizon is None else int(horizon)
         if h <= 0:
-            return [], "marginal"
+            return [], "marginal", []
         feats = feats[:h]
-        preds = self._predict_sequence(feats)
+        preds, conf = self._predict_sequence(feats)
         growth: str
         if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:
             try:
@@ -436,7 +463,7 @@ class AdaptiveROIPredictor:
                 growth = "marginal"
         else:
             growth = "marginal"
-        return preds.tolist(), growth
+        return preds.tolist(), growth, conf.tolist()
 
     # Backwards compatible wrapper
     def predict_growth_type(
@@ -475,8 +502,8 @@ def predict_growth_type(
 
 def predict(
     action_features: Sequence[Sequence[float]], horizon: int | None = None
-) -> tuple[list[float], str]:
-    """Return ROI forecast sequence and growth category using a module-level predictor."""
+) -> tuple[list[float], str, list[float]]:
+    """Return ROI forecast sequence, growth category and confidence using a module-level predictor."""
 
     global _predictor
     if _predictor is None:

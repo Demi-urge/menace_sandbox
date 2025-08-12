@@ -50,8 +50,8 @@ def _predict(args: argparse.Namespace) -> None:
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
-    roi_seq, growth = predictor.predict(features, horizon=args.horizon)
-    print(json.dumps({"roi": roi_seq, "growth": growth}))
+    roi_seq, growth, conf = predictor.predict(features, horizon=args.horizon)
+    print(json.dumps({"roi": roi_seq, "growth": growth, "confidence": conf}))
 
 
 # ---------------------------------------------------------------------------
