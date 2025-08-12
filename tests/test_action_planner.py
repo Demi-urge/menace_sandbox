@@ -221,7 +221,7 @@ def test_plan_actions_uses_roi_growth(tmp_path):
         def predict(self, feats, horizon=None):
             val = feats[0][0]
             if val == 1.0:
-                return [1.0], "marginal", 1.0
+                return [0.5], "marginal", 1.0
             return [0.5], "exponential", 1.0
 
     feature_map = {"B": 1.0, "C": 2.0}
@@ -240,3 +240,42 @@ def test_plan_actions_uses_roi_growth(tmp_path):
     )
     ranked = planner.plan_actions("A", ["B", "C"])
     assert ranked[0] == "C"
+
+
+def test_priority_queue_reflects_growth(tmp_path):
+    class Predictor:
+        def __init__(self):
+            self.mapping = {"B": "exponential", "C": "marginal"}
+
+        def predict(self, feats, horizon=None):
+            val = feats[0][0]
+            action = "B" if val == 1.0 else "C"
+            return [0.0], self.mapping[action], 1.0
+
+    feature_map = {"B": 1.0, "C": 2.0}
+
+    def feature_fn(action: str):
+        return [feature_map[action]]
+
+    pdb = PathwayDB(tmp_path / "p.db")
+    roi = DummyROIDB()
+    predictor = Predictor()
+    planner = ap.ActionPlanner(
+        pdb,
+        roi,
+        feature_fn=feature_fn,
+        roi_predictor=predictor,
+        use_adaptive_roi=True,
+        growth_multipliers={"exponential": 3.0, "linear": 2.0, "marginal": 1.0},
+    )
+
+    # Initial prediction gives B exponential growth and higher priority
+    planner.plan_actions("A", ["B", "C"])
+    assert planner.get_priority_queue() == ["B", "C"]
+
+    # Downgrade B and upgrade C; weights should update accordingly
+    predictor.mapping = {"B": "marginal", "C": "exponential"}
+    planner.plan_actions("A", ["B", "C"])
+    queue = planner.get_priority_queue()
+    assert queue[0] == "C"
+    assert planner.priority_weights["B"] == pytest.approx(1.0)

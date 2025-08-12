@@ -238,6 +238,16 @@ class ActionPlanner:
             seq = [float(x) for x in seq]
         else:
             seq = [float(seq)]
+
+        # Update priority weights based on predicted growth category.
+        # This ensures actions with exponential forecasts receive higher
+        # priority while downgraded predictions decay their influence.
+        try:
+            mult = self.growth_multipliers.get(category, 1.0)
+            self.priority_weights[action] = mult
+        except Exception:
+            logger.exception("priority weight update from growth failed")
+
         return seq, category, growth_conf
 
     def _reward(self, action: str, rec: PathwayRecord) -> float:
@@ -260,9 +270,10 @@ class ActionPlanner:
             try:
                 seq, category, growth_conf = self._predict_growth(action)
                 roi_est = float(seq[-1]) if seq else 0.0
-                mult = self.growth_multipliers.get(category, 1.0)
                 conf = 1.0 if growth_conf is None else float(growth_conf)
-                reward *= mult * conf
+                # Growth multiplier already applied via priority weights;
+                # only scale by confidence here.
+                reward *= conf
                 if self.roi_tracker:
                     try:
                         self.roi_tracker._next_category = category
@@ -399,7 +410,7 @@ class ActionPlanner:
                 try:
                     seq, category, _ = self._predict_growth(action)
                     roi_est = float(seq[-1]) if seq else 0.0
-                    score += roi_est * self.growth_multipliers.get(category, 1.0)
+                    score += roi_est
                 except Exception:
                     pass
             score *= self.priority_weights.get(action, 1.0)
