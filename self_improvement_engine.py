@@ -152,7 +152,6 @@ from .self_improvement_policy import (
 )
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
-from .growth_utils import growth_score
 
 POLICY_STATE_LEN = 21
 
@@ -531,6 +530,7 @@ class SelfImprovementEngine:
         self.pipeline = pipeline or ModelAutomationPipeline(
             aggregator=self.aggregator, action_planner=action_planner
         )
+        self.action_planner = action_planner
         err_bot = ErrorBot(ErrorDB(), MetricsDB())
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(MetricsDB(), err_bot)
@@ -611,6 +611,12 @@ class SelfImprovementEngine:
             if roi_compounding_weight is not None
             else getattr(settings, "roi_compounding_weight", 0.0)
         )
+        self.growth_weighting = getattr(settings, "roi_growth_weighting", True)
+        self.growth_multipliers = {
+            "exponential": getattr(settings, "growth_multiplier_exponential", 3.0),
+            "linear": getattr(settings, "growth_multiplier_linear", 2.0),
+            "marginal": getattr(settings, "growth_multiplier_marginal", 1.0),
+        }
         default_path = Path(settings.sandbox_data_dir) / "synergy_weights.json"
         self.synergy_weights_path = (
             Path(synergy_weights_path)
@@ -1508,11 +1514,6 @@ class SelfImprovementEngine:
 
         return [[hist_roi, perf_delta, gpt_score]]
 
-    def _improvement_score(self, category: str) -> int:
-        """Return numeric score for ROI growth categories."""
-
-        return growth_score(category)
-
     def _rank_candidates(self, modules: Iterable[str]) -> list[tuple[str, float, str, float]]:
         """Score and rank candidate modules for patching.
 
@@ -1539,7 +1540,8 @@ class SelfImprovementEngine:
                     roi_est, category, total = 0.0, "unknown", 0.0
             comp = getattr(self, "roi_compounding_weight", 0.0)
             extra = total if total > 0 else self.roi_delta_ema
-            weight = roi_est * (1 + self._improvement_score(category)) + comp * extra
+            mult = self.growth_multipliers.get(category, 1.0) if self.growth_weighting else 1.0
+            weight = roi_est * mult + comp * extra
             scored.append((mod, roi_est, category, weight))
         if self.use_adaptive_roi:
             scored = [s for s in scored if s[3] > 0]
@@ -1547,6 +1549,13 @@ class SelfImprovementEngine:
         else:
             scored = [s for s in scored if s[1] > 0]
             scored.sort(key=lambda x: -x[1])
+        if self.action_planner:
+            try:
+                self.action_planner.update_priorities(
+                    {m: w for m, _, _, w in scored}
+                )
+            except Exception:
+                self.logger.exception("priority queue update failed")
         return scored
 
     def _log_action(
@@ -1764,7 +1773,12 @@ class SelfImprovementEngine:
                     confidence = float(conf[-1]) if conf else 0.0
                 except Exception:
                     roi_est, growth, confidence = 0.0, "unknown", 0.0
-                weight = roi_est * confidence * (1 + self._improvement_score(growth))
+                mult = (
+                    self.growth_multipliers.get(growth, 1.0)
+                    if self.growth_weighting
+                    else 1.0
+                )
+                weight = roi_est * confidence * mult
                 if tracker:
                     tracker._next_prediction = roi_est
                     tracker._next_category = growth

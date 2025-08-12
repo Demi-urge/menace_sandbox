@@ -62,6 +62,26 @@ class SandboxSettings(BaseSettings):
         env="ADAPTIVE_ROI_PRIORITIZATION",
         description="Prioritize improvements using AdaptiveROI classifications.",
     )
+    roi_growth_weighting: bool = Field(
+        True,
+        env="ROI_GROWTH_WEIGHTING",
+        description="Weight rewards by predicted ROI growth categories.",
+    )
+    growth_multiplier_exponential: float = Field(
+        3.0,
+        env="GROWTH_MULTIPLIER_EXPONENTIAL",
+        description="Multiplier applied to exponential growth predictions.",
+    )
+    growth_multiplier_linear: float = Field(
+        2.0,
+        env="GROWTH_MULTIPLIER_LINEAR",
+        description="Multiplier applied to linear growth predictions.",
+    )
+    growth_multiplier_marginal: float = Field(
+        1.0,
+        env="GROWTH_MULTIPLIER_MARGINAL",
+        description="Multiplier applied to marginal growth predictions.",
+    )
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")
