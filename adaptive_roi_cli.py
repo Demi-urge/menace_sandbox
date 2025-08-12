@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import logging
 from pathlib import Path
 from typing import Sequence, Dict, Any
 
@@ -154,6 +155,16 @@ def _refresh(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 def _schedule(args: argparse.Namespace) -> None:
     """Periodically load training data and retrain the model."""
+    log_path = Path(args.log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = logging.getLogger("adaptive_roi_schedule")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        handler = logging.FileHandler(log_path)
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+        )
+        logger.addHandler(handler)
 
     tracker = ROITracker()
     if args.history:
@@ -182,6 +193,7 @@ def _schedule(args: argparse.Namespace) -> None:
                 roi_events_path=args.roi_events_db,
                 output_path=args.output_csv,
             )
+            logger.info("training data loaded")
             X, y, g, names = build_dataset(
                 args.evolution_db,
                 args.roi_db,
@@ -201,10 +213,25 @@ def _schedule(args: argparse.Namespace) -> None:
             predictor.train(
                 dataset, cv=args.cv, param_grid=param_grid, feature_names=names
             )
-            print(
-                f"model retrained on {len(dataset[0])} samples -> {args.model}"
-            )
+            msg = f"model retrained on {len(dataset[0])} samples -> {args.model}"
+            print(msg)
+            logger.info(msg)
+            if predictor.validation_scores:
+                for name, score in predictor.validation_scores.items():
+                    logger.info("validation MAE %s: %.4f", name, score)
+            if predictor.best_params and predictor.best_score is not None:
+                params = {
+                    k: v for k, v in predictor.best_params.items() if k != "model"
+                }
+                logger.info(
+                    "best model %s (MAE=%.4f)",
+                    predictor.best_params["model"],
+                    predictor.best_score,
+                )
+                if params:
+                    logger.info("best params: %s", params)
         except Exception as exc:  # pragma: no cover
+            logger.exception("retraining failed: %s", exc)
             print(f"retraining failed: {exc}")
 
         if args.once:
@@ -312,6 +339,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--selected-features",
         action="store_true",
         help="Restrict training to features listed in the model's meta file",
+    )
+    p_sched.add_argument(
+        "--log-path",
+        default="sandbox_data/adaptive_roi_schedule.log",
+        help="Log file path",
     )
     p_sched.set_defaults(func=_schedule)
 
