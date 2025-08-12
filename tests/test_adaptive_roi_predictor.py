@@ -81,10 +81,6 @@ def test_classifier_training_and_prediction(monkeypatch):
     if predictor._classifier is None:
         pytest.skip("classifier not available")
 
-    monkeypatch.setattr(
-        AdaptiveROIPredictor, "_classify_growth", lambda self, preds: "threshold"
-    )
-
     roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
     assert roi == pytest.approx(5.0, abs=1e-3)
     assert growth == "exponential"

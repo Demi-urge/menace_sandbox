@@ -120,8 +120,14 @@ def _collect_metrics_history(
 
 
 # ---------------------------------------------------------------------------
-def _classify_growth(values: Sequence[float]) -> str:
-    """Classify ``values`` into ``exponential``, ``linear`` or ``marginal``."""
+def _label_growth(values: Sequence[float]) -> str:
+    """Label ``values`` as ``exponential``, ``linear`` or ``marginal``.
+
+    This heuristic is used to generate training labels for the supervised
+    classifier.  It examines the first and second differences of the ROI
+    sequence to determine the overall trend.  The predictor itself no longer
+    relies on these thresholds for inference.
+    """
 
     if len(values) < 2:
         return "marginal"
@@ -146,8 +152,8 @@ def _classify_growth(values: Sequence[float]) -> str:
 def load_adaptive_roi_dataset(
     evolution_path: str | Path = "evolution_history.db",
     evaluation_path: str | Path = "evaluation_history.db",
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load and normalise ROI training data.
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load and normalise ROI training data including growth labels.
 
     Parameters
     ----------
@@ -159,10 +165,12 @@ def load_adaptive_roi_dataset(
     Returns
     -------
     tuple
-        ``(features, labels, passed_flags)`` where ``features`` is a normalised
-        matrix of shape ``(n_samples, 2)`` containing ROI and performance
-        deltas, ``labels`` is the normalised vector of evaluation CV scores and
-        ``passed_flags`` is a binary vector indicating evaluation success.
+        ``(features, labels, passed_flags, growth_labels)`` where ``features`` is
+        a normalised matrix of shape ``(n_samples, 2)`` containing ROI and
+        performance deltas, ``labels`` is the normalised vector of evaluation CV
+        scores, ``passed_flags`` is a binary vector indicating evaluation
+        success and ``growth_labels`` provides the heuristic growth class for
+        each sample.
     """
 
     evo_db = EvolutionHistoryDB(evolution_path)
@@ -173,6 +181,7 @@ def load_adaptive_roi_dataset(
     features: list[list[float]] = []
     labels: list[float] = []
     passed: list[int] = []
+    growth: list[str] = []
 
     for engine in eval_db.engines():
         history = eval_db.history(engine, limit=1000000)
@@ -182,9 +191,11 @@ def load_adaptive_roi_dataset(
         for cv_score, ts, pflag, _ in history:
             ts_dt = _parse_ts(ts)
             latest: tuple[datetime, float, float] | None = None
+            roi_seq: list[float] = []
             for ev in ev_list:
                 if ev[0] <= ts_dt:
                     latest = ev
+                    roi_seq.append(ev[1])
                 else:
                     break
             if latest is None:
@@ -192,17 +203,20 @@ def load_adaptive_roi_dataset(
             features.append([latest[1], latest[2]])
             labels.append(float(cv_score))
             passed.append(int(pflag))
+            growth.append(_label_growth(roi_seq))
 
     if not features:
         return (
             np.empty((0, 2), dtype=float),
             np.empty((0,), dtype=float),
             np.empty((0,), dtype=int),
+            np.empty((0,), dtype=object),
         )
 
     X = np.asarray(features, dtype=float)
     y = np.asarray(labels, dtype=float)
     p = np.asarray(passed, dtype=int)
+    g = np.asarray(growth, dtype=object)
 
     # normalise features and labels
     X_mean = X.mean(axis=0)
@@ -214,7 +228,7 @@ def load_adaptive_roi_dataset(
     y_std = y.std() or 1.0
     y = (y - y_mean) / y_std
 
-    return X, y, p
+    return X, y, p, g
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +341,7 @@ def build_dataset(
         features.append(row)
         targets.append(float(roi_outcome))
         roi_values = [r[1] - r[2] for r in roi_list[: next_idx + 1]]
-        growth_types.append(_classify_growth(roi_values))
+        growth_types.append(_label_growth(roi_values))
         cycle_idx += 1
 
     X = np.asarray(features, dtype=float)

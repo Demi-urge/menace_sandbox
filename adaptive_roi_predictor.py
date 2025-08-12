@@ -55,7 +55,7 @@ except Exception:  # pragma: no cover - joblib missing
 
 import pickle
 
-from .adaptive_roi_dataset import build_dataset
+from .adaptive_roi_dataset import build_dataset, _label_growth
 from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
 from .evolution_history_db import EvolutionHistoryDB
@@ -362,24 +362,6 @@ class AdaptiveROIPredictor:
             except Exception:  # pragma: no cover - classifier failure
                 self._classifier = None
         if self._model is not None:
-            if self.slope_threshold is None or self.curvature_threshold is None:
-                try:
-                    preds = self._predict_sequence(X)
-                    first_diff = np.diff(preds)
-                    if self.slope_threshold is None:
-                        self.slope_threshold = float(
-                            np.mean(np.abs(first_diff)) * 0.5
-                        ) if first_diff.size else 0.05
-                    second_diff = np.diff(first_diff)
-                    if self.curvature_threshold is None:
-                        self.curvature_threshold = float(
-                            np.mean(np.abs(second_diff)) * 0.5
-                        ) if second_diff.size else 0.01
-                except Exception:
-                    if self.slope_threshold is None:
-                        self.slope_threshold = 0.05
-                    if self.curvature_threshold is None:
-                        self.curvature_threshold = 0.01
             try:
                 self._trained_size = total_size
                 self._save()
@@ -405,26 +387,6 @@ class AdaptiveROIPredictor:
                 pass
         return features[:, 0].astype(float)
 
-    def _classify_growth(self, preds: np.ndarray) -> str:
-        """Classify growth pattern of ``preds`` as exponential, linear or marginal."""
-
-        if preds.size < 2:
-            return "marginal"
-        first_diff = np.diff(preds)
-        slope = float(first_diff.mean())
-        curvature = float(np.diff(first_diff).mean()) if len(first_diff) > 1 else 0.0
-
-        slope_thr = self.slope_threshold if self.slope_threshold is not None else 0.05
-        curv_thr = (
-            self.curvature_threshold if self.curvature_threshold is not None else 0.01
-        )
-
-        if slope > slope_thr and curvature > curv_thr:
-            return "exponential"
-        if abs(slope) > slope_thr:
-            return "linear"
-        return "marginal"
-
     # ------------------------------------------------------------------
     # public API
     def predict(self, improvement_features: Sequence[Sequence[float]]) -> tuple[float, str]:
@@ -438,9 +400,9 @@ class AdaptiveROIPredictor:
             try:
                 growth = str(self._classifier.predict(feats)[-1])
             except Exception:  # pragma: no cover - classifier prediction failure
-                growth = self._classify_growth(preds)
+                growth = "marginal"
         else:
-            growth = self._classify_growth(preds)
+            growth = "marginal"
         return roi_estimate, growth
 
     # Backwards compatible wrapper
@@ -591,6 +553,16 @@ def load_training_data(
     if len(outcomes) < n:
         outcomes.extend([0.0] * (n - len(outcomes)))
     df["roi_outcome"] = outcomes
+
+    # Growth labels ---------------------------------------------------------
+    growth_seq: list[str] = []
+    roi_vals: list[float] = []
+    for val in tracker.roi_history[:n]:
+        roi_vals.append(float(val))
+        growth_seq.append(_label_growth(roi_vals))
+    if len(growth_seq) < n:
+        growth_seq.extend(["marginal"] * (n - len(growth_seq)))
+    df["growth_label"] = pd.Categorical(growth_seq[:n]).codes
 
     # Normalise feature columns --------------------------------------------
     for col in df.columns:
