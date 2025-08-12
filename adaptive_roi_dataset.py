@@ -265,7 +265,8 @@ def build_dataset(
         synergy_misuse_failures, synergy_concurrency_throughput,
         synergy_risk_index, synergy_safety_rating, synergy_efficiency,
         synergy_antifragility, synergy_resilience, synergy_security_score,
-        synergy_reliability, roi_reliability, long_term_roi_reliability]`` and
+        synergy_reliability, synergy_roi_reliability, roi_reliability,
+        long_term_roi_reliability, cpu, memory, disk, time, gpu]`` and
         ``targets`` is the vector of ROI outcomes ``(revenue - api_cost)`` for
         each cycle and ``growth_types`` is a vector labelling the ROI curve of each
         cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
@@ -277,7 +278,12 @@ def build_dataset(
 
     roi_hist = _collect_roi_history(roi_conn)
     eval_hist = _collect_eval_history(eval_db)
-    metric_names = list(ROITracker().metrics_history.keys())
+    tracker_template = ROITracker()
+    metric_names = sorted(
+        set(tracker_template.metrics_history) | set(tracker_template.synergy_metrics_history)
+    )
+    resource_cols = ["cpu", "memory", "disk", "time", "gpu"]
+    metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
 
     features: list[list[float]] = []
