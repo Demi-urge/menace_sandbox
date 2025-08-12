@@ -113,6 +113,7 @@ class AdaptiveROIPredictor:
         self.training_data: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None
         self._trained_size: int = 0
         self.selected_features: list[str] | None = None
+        self.drift_metrics: Dict[str, float] = {}
         self._load()
         if slope_threshold is not None:
             self.slope_threshold = slope_threshold
@@ -164,6 +165,7 @@ class AdaptiveROIPredictor:
                 sel = data.get("selected_features")
                 if isinstance(sel, list):
                     self.selected_features = [str(s) for s in sel]
+                self.drift_metrics = data.get("drift_metrics", {}) or {}
             except Exception:
                 self.best_params = None
                 self.best_score = None
@@ -206,12 +208,57 @@ class AdaptiveROIPredictor:
                 "slope_threshold": self.slope_threshold,
                 "curvature_threshold": self.curvature_threshold,
                 "selected_features": self.selected_features,
+                "drift_metrics": self.drift_metrics,
             }
             meta_path = self.model_path.with_suffix(".meta.json")
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
             meta_path.write_text(json.dumps(meta))
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    def record_drift(self, accuracy: float, mae: float) -> None:
+        """Store the most recent drift metrics and persist them."""
+
+        self.drift_metrics = {"accuracy": float(accuracy), "mae": float(mae)}
+        try:  # pragma: no cover - disk issues
+            self._save_meta()
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def partial_fit(
+        self,
+        dataset: Tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+        *,
+        batch_size: int = 32,
+    ) -> None:
+        """Incrementally update the model with a mini-batch of new data."""
+
+        if dataset is None:
+            X, y, g = build_dataset()
+        else:
+            X, y, g = dataset
+
+        if self._model is None or not hasattr(self._model, "partial_fit"):
+            # Fallback to full retraining when incremental updates are unsupported
+            self.train((X, y, g))
+            return
+
+        start = max(self._trained_size, len(X) - batch_size)
+        try:
+            self._model.partial_fit(X[start:], y[start:])
+            if self._classifier is not None and hasattr(self._classifier, "partial_fit"):
+                classes = np.unique(g[start:]) if self._trained_size == 0 else None
+                kwargs: Dict[str, Any] = {"classes": classes} if classes is not None else {}
+                self._classifier.partial_fit(X[start:], g[start:], **kwargs)
+            self._trained_size = len(X)
+            window = 200
+            self.training_data = (X[-window:], y[-window:], g[-window:])
+            self._save()
+        except Exception:
+            # If incremental update fails perform a full retrain
+            self.train((X, y, g))
 
     # ------------------------------------------------------------------
     def calibrate_thresholds(
