@@ -18,6 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
             import pandas as pd
             return pd.DataFrame()
 from .unified_event_bus import UnifiedEventBus
+from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
@@ -141,9 +142,8 @@ class ActionPlanner:
             self.roi_tracker = None
         self.growth_weighting = bool(growth_weighting)
         self.growth_multipliers = growth_multipliers or {
-            "exponential": 1.5,
-            "linear": 1.0,
-            "marginal": 0.5,
+            cat: 1.0 + growth_score(cat)
+            for cat in ("exponential", "linear", "marginal")
         }
         if self.event_bus:
             try:
@@ -167,6 +167,31 @@ class ActionPlanner:
         except Exception:
             return 0.0
 
+    def _predict_growth(self, action: str) -> tuple[list[float], str]:
+        """Return predicted ROI sequence and growth category for *action*."""
+
+        if not self.roi_predictor or not self.feature_fn:
+            return [], "marginal"
+        feats = [list(self.feature_fn(action))]
+        try:
+            result = self.roi_predictor.predict(feats, horizon=len(feats))
+        except TypeError:
+            result = self.roi_predictor.predict(feats)
+        if isinstance(result, tuple):
+            if len(result) == 3:
+                seq_or_val, category, _ = result
+            elif len(result) == 2:
+                seq_or_val, category = result
+            else:
+                seq_or_val, category = result, "marginal"
+        else:
+            seq_or_val, category = result, "marginal"
+        if isinstance(seq_or_val, (list, tuple)):
+            seq = [float(x) for x in seq_or_val]
+        else:
+            seq = [float(seq_or_val)]
+        return seq, category
+
     def _reward(self, action: str, rec: PathwayRecord) -> float:
         """Return reward for taking *action* in *rec*."""
         if self.reward_fn:
@@ -185,14 +210,7 @@ class ActionPlanner:
             and self.feature_fn
         ):
             try:
-                feats = [list(self.feature_fn(action))]
-                try:
-                    seq, category, _ = self.roi_predictor.predict(
-                        feats, horizon=len(feats)
-                    )
-                except TypeError:
-                    val, category, _ = self.roi_predictor.predict(feats)
-                    seq = [float(val)]
+                seq, category = self._predict_growth(action)
                 roi_est = float(seq[-1]) if seq else 0.0
                 reward *= self.growth_multipliers.get(category, 1.0)
                 if self.roi_tracker:
@@ -268,21 +286,13 @@ class ActionPlanner:
             roi_vals: list[float] = []
             for action, val in values.items():
                 try:
-                    feats = [list(self.feature_fn(action))]
-                    try:
-                        seq, category, _ = self.roi_predictor.predict(
-                            feats, horizon=len(feats)
-                        )
-                    except TypeError:
-                        val, category, _ = self.roi_predictor.predict(feats)
-                        seq = [float(val)]
+                    seq, category = self._predict_growth(action)
                     roi_est = float(seq[-1]) if seq else 0.0
                 except Exception:
                     category = "marginal"
                     roi_est = 0.0
                 scored.append((action, val, category, float(roi_est)))
                 roi_vals.append(float(roi_est))
-            cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
             if roi_vals:
                 max_roi = max(roi_vals)
                 min_roi = min(roi_vals)
@@ -297,7 +307,7 @@ class ActionPlanner:
             scored.sort(
                 key=lambda x: (
                     -(
-                        cat_rank.get(x[2], 0)
+                        growth_score(x[2])
                         + _norm(x[3])
                     ),
                     -x[1],
@@ -305,6 +315,40 @@ class ActionPlanner:
             )
             return scored[0][0]
         return max(values, key=values.get)
+
+    # ------------------------------------------------------------------
+    def plan_actions(
+        self, current: str, candidates: Iterable[str]
+    ) -> list[str]:
+        """Rank *candidates* for the next action from *current* state.
+
+        Adaptive ROI predictions are used to adjust an improvement score
+        for each candidate based on expected growth category.  The
+        resulting list is ordered from highest to lowest score.
+        """
+
+        steps = [s.strip() for s in current.split("->") if s.strip()]
+        state_steps = steps[-self.state_length :] if steps else []
+        state = self._state_key(state_steps)
+        values = self.model.q.get(state, {})
+        scored: list[tuple[str, float]] = []
+        for action in candidates:
+            base = float(values.get(action, 0.0))
+            score = base
+            if (
+                self.roi_predictor
+                and self.use_adaptive_roi
+                and self.feature_fn
+            ):
+                try:
+                    seq, category = self._predict_growth(action)
+                    roi_est = float(seq[-1]) if seq else 0.0
+                    score += roi_est * self.growth_multipliers.get(category, 1.0)
+                except Exception:
+                    pass
+            scored.append((action, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [a for a, _ in scored]
 
     # ------------------------------------------------------------------
     def _on_new_pathway(self, topic: str, payload: object) -> None:

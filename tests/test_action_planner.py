@@ -177,3 +177,29 @@ def test_reward_scaled_by_growth(tmp_path):
     reward_marg = planner._reward("B", rec)
     assert reward_exp == pytest.approx(2.0)
     assert reward_marg == pytest.approx(0.5)
+
+
+def test_plan_actions_uses_roi_growth(tmp_path):
+    class Predictor:
+        def predict(self, feats, horizon=None):
+            val = feats[0][0]
+            if val == 1.0:
+                return [1.0], "marginal", 1.0
+            return [0.5], "exponential", 1.0
+
+    feature_map = {"B": 1.0, "C": 2.0}
+
+    def feature_fn(action: str):
+        return [feature_map[action]]
+
+    pdb = PathwayDB(tmp_path / "p.db")
+    roi = DummyROIDB()
+    planner = ap.ActionPlanner(
+        pdb,
+        roi,
+        feature_fn=feature_fn,
+        roi_predictor=Predictor(),
+        use_adaptive_roi=True,
+    )
+    ranked = planner.plan_actions("A", ["B", "C"])
+    assert ranked[0] == "C"

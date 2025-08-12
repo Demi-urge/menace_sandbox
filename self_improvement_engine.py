@@ -152,6 +152,7 @@ from .self_improvement_policy import (
 )
 from .pre_execution_roi_bot import PreExecutionROIBot, BuildTask, ROIResult
 from .env_config import PRE_ROI_SCALE, PRE_ROI_BIAS, PRE_ROI_CAP
+from .growth_utils import growth_score
 
 POLICY_STATE_LEN = 21
 
@@ -1468,14 +1469,9 @@ class SelfImprovementEngine:
         return [[hist_roi, perf_delta, gpt_score]]
 
     def _improvement_score(self, category: str) -> int:
-        """Return numeric score for ROI growth categories.
+        """Return numeric score for ROI growth categories."""
 
-        Higher scores indicate improvements with greater compounding
-        potential.  ``"exponential"`` growth ranks highest, followed by
-        ``"linear"`` and then ``"marginal"``.
-        """
-
-        return {"exponential": 2, "linear": 1, "marginal": 0}.get(category, 0)
+        return growth_score(category)
 
     def _log_action(
         self,
