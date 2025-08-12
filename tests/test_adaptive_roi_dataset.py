@@ -86,7 +86,9 @@ def test_build_dataset(tmp_path):
 
     X, y, g = build_dataset(evo_db_path, roi_db_path, eval_db_path)
 
-    n_features = 6 + len(ROITracker().metrics_history)
+    tracker = ROITracker()
+    base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
+    n_features = 6 + len(base_metrics) + 5
     assert X.shape == (1, n_features)
     assert y.tolist() == [12.0]
     assert g.tolist() == ["linear"]

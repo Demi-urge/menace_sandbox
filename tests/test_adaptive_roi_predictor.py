@@ -55,7 +55,9 @@ def test_build_dataset(tmp_path: Path) -> None:
     evo.conn.commit()
 
     X, y, g = build_dataset(evo_path, roi_path, eval_path)
-    n_features = 6 + len(ROITracker().metrics_history)
+    tracker = ROITracker()
+    base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
+    n_features = 6 + len(base_metrics) + 5
     assert X.shape == (1, n_features)
     assert y.shape == (1,)
     # Target is revenue minus API cost after the event

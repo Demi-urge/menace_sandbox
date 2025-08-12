@@ -491,6 +491,22 @@ def load_training_data(
         if len(seq) < n:
             seq.extend([0.0] * (n - len(seq)))
         data[name] = seq[:n]
+    # include synergy metrics ------------------------------------------------
+    for name, vals in tracker.synergy_metrics_history.items():
+        seq = [float(v) for v in vals]
+        if len(seq) < n:
+            seq.extend([0.0] * (n - len(seq)))
+        data[name] = seq[:n]
+    # resource usage metrics -------------------------------------------------
+    res_cols = ["cpu", "memory", "disk", "time", "gpu"]
+    res_data = {c: [] for c in res_cols}
+    for row in tracker.resource_metrics[:n]:
+        for c, val in zip(res_cols, row):
+            res_data[c].append(float(val))
+    for c in res_cols:
+        if len(res_data[c]) < n:
+            res_data[c].extend([0.0] * (n - len(res_data[c])))
+        data[c] = res_data[c][:n]
     df = pd.DataFrame(data)
 
     # GPT evaluation scores -------------------------------------------------
