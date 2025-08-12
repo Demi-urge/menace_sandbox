@@ -57,7 +57,7 @@ def test_build_dataset(tmp_path: Path) -> None:
     X, y, g = build_dataset(evo_path, roi_path, eval_path)
     tracker = ROITracker()
     base_metrics = set(tracker.metrics_history) | set(tracker.synergy_metrics_history)
-    n_features = 6 + len(base_metrics) + 5
+    n_features = 6 + len(base_metrics) + 5 + 4
     assert X.shape == (1, n_features)
     assert y.shape == (1,)
     # Target is revenue minus API cost after the event
@@ -113,33 +113,55 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
     assert meta_path.exists()
 
 
-def test_evaluate_model_retrains(monkeypatch):
-    """evaluate_model triggers CLI retraining when error is high."""
+def test_evaluate_model_retrains(monkeypatch, tmp_path):
+    """evaluate_model triggers retraining when error is high."""
 
     tracker = ROITracker()
-    tracker.predicted_roi = [0.0, 0.0]
-    tracker.actual_roi = [1.0, 1.0]
-    tracker.predicted_classes = ["linear", "linear"]
-    tracker.actual_classes = ["exponential", "exponential"]
 
-    calls: list[list[str]] = []
+    db_path = tmp_path / "roi_events.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE roi_prediction_events (
+            predicted_roi REAL,
+            actual_roi REAL,
+            predicted_class TEXT,
+            actual_class TEXT,
+            ts DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential"),
+    )
+    conn.execute(
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class) VALUES (?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential"),
+    )
+    conn.commit()
+    conn.close()
 
-    def fake_popen(cmd, **_kwargs):
-        calls.append(cmd)  # type: ignore[arg-type]
-        class Dummy:
-            pass
-        return Dummy()
+    called: list[int] = []
+
+    class DummyPredictor:
+        def train(self):
+            called.append(1)
 
     monkeypatch.setattr(
-        "menace_sandbox.roi_tracker.subprocess.Popen", fake_popen
+        "menace_sandbox.adaptive_roi_predictor.AdaptiveROIPredictor",
+        DummyPredictor,
     )
 
     acc, mae = tracker.evaluate_model(
-        window=2, mae_threshold=0.1, acc_threshold=0.9
+        window=2,
+        mae_threshold=0.1,
+        acc_threshold=0.9,
+        roi_events_path=str(db_path),
     )
     assert mae > 0.1
     assert acc < 0.9
-    assert calls  # retraining triggered
+    assert called  # retraining triggered
 
 
 def test_tracker_integration(monkeypatch):

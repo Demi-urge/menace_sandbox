@@ -7,8 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable
 import json
 import os
 import sqlite3
-import subprocess
-import sys
 from collections import Counter
 
 import numpy as np
@@ -438,45 +436,60 @@ class ROITracker:
         mae_threshold: float = 0.1,
         acc_threshold: float = 0.6,
         history_path: str = "sandbox_data/roi_history.json",
+        roi_events_path: str = "roi_events.db",
     ) -> tuple[float, float]:
-        """Evaluate prediction accuracy and trigger scheduled retraining.
+        """Evaluate prediction accuracy and trigger retraining when needed.
 
-        When recent mean absolute error or classification accuracy fall
-        outside the provided thresholds the ``adaptive_roi_cli schedule``
-        command is launched to retrain the model. The current history is
-        saved to ``history_path`` so ``load_training_data`` has access to the
-        latest data.
+        Prediction performance is calculated from persisted events stored in
+        ``roi_events.db``. When recent mean absolute error or classification
+        accuracy fall outside the provided thresholds the adaptive ROI model is
+        retrained using :class:`AdaptiveROIPredictor`.
         """
 
-        preds = self.predicted_roi[-window:]
-        acts = self.actual_roi[-len(preds):]
+        try:
+            conn = sqlite3.connect(roi_events_path)
+            cur = conn.execute(
+                "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
+                "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
+                (int(window),),
+            )
+            rows = cur.fetchall()
+        except Exception:
+            rows = []
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        preds = [float(r[0]) for r in rows]
+        acts = [float(r[1]) for r in rows[: len(preds)]]
         mae = (
             float(np.mean(np.abs(np.asarray(preds) - np.asarray(acts))))
             if preds
             else 0.0
         )
 
-        pc = self.predicted_classes[-window:]
-        ac = self.actual_classes[-len(pc):]
-        if pc and ac:
+        cls_pairs = [
+            (r[2], r[3])
+            for r in rows
+            if r[2] is not None and r[3] is not None
+        ]
+        if cls_pairs:
+            pc, ac = zip(*cls_pairs)
             acc = float((np.asarray(pc) == np.asarray(ac)).mean())
         else:
             acc = 0.0
 
-        if (mae > mae_threshold) or (pc and acc < acc_threshold):
+        if (mae > mae_threshold) or (cls_pairs and acc < acc_threshold):
             try:
                 self.save_history(history_path)
             except Exception:
                 logger.exception("failed to persist history for retrain")
-            cmd = [
-                sys.executable,
-                "-m",
-                "menace_sandbox.adaptive_roi_cli",
-                "schedule",
-                "--once",
-            ]
             try:
-                subprocess.Popen(cmd)
+                from .adaptive_roi_predictor import AdaptiveROIPredictor
+
+                AdaptiveROIPredictor().train()
             except Exception:
                 logger.exception("failed to trigger adaptive ROI retrain")
 

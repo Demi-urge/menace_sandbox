@@ -236,6 +236,7 @@ def build_dataset(
     evolution_path: str | Path = "evolution_history.db",
     roi_path: str | Path = "roi.db",
     evaluation_path: str | Path = "evaluation_history.db",
+    roi_events_path: str | Path = "roi_events.db",
     horizon: int = 1,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Assemble a training dataset combining evolution, ROI and evaluation data.
@@ -248,6 +249,9 @@ def build_dataset(
         Path to the ROI history database (``action_roi`` table).
     evaluation_path:
         Path to the evaluation history database containing GPT scores.
+    roi_events_path:
+        Path to the ROI prediction events database used to augment the
+        training features.
     horizon:
         Number of future ROI outcomes to include as target columns. ``1`` (the
         default) records only ``roi_{t+1}`` while larger values add additional
@@ -272,7 +276,9 @@ def build_dataset(
         synergy_risk_index, synergy_safety_rating, synergy_efficiency,
         synergy_antifragility, synergy_resilience, synergy_security_score,
         synergy_reliability, synergy_roi_reliability, roi_reliability,
-        long_term_roi_reliability, cpu, memory, disk, time, gpu]`` and
+        long_term_roi_reliability, cpu, memory, disk, time, gpu,
+        predicted_roi_event, actual_roi_event, predicted_class_event,
+        actual_class_event]`` and
         ``targets`` is an array of ROI outcomes ``roi_{t+1} … roi_{t+h}`` for
         each cycle and ``growth_types`` is a vector labelling the ROI curve of
         each cycle as ``"exponential"``, ``"linear"`` or ``"marginal"``.
@@ -291,6 +297,31 @@ def build_dataset(
     resource_cols = ["cpu", "memory", "disk", "time", "gpu"]
     metric_names.extend(resource_cols)
     metrics_hist = _collect_metrics_history(roi_conn, metric_names)
+
+    # load persisted prediction events --------------------------------------
+    try:
+        pred_conn = sqlite3.connect(roi_events_path)
+        cur = pred_conn.execute(
+            "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
+            "FROM roi_prediction_events ORDER BY ts"
+        )
+        pred_rows = cur.fetchall()
+    except Exception:
+        pred_rows = []
+    finally:
+        try:
+            pred_conn.close()
+        except Exception:
+            pass
+
+    pred_vals = [float(r[0]) for r in pred_rows]
+    act_vals = [float(r[1]) for r in pred_rows]
+    class_set = {
+        str(r[2]) for r in pred_rows if r[2] is not None
+    } | {str(r[3]) for r in pred_rows if r[3] is not None}
+    class_map = {c: i for i, c in enumerate(sorted(class_set))}
+    pred_codes = [class_map.get(str(r[2]), 0) for r in pred_rows]
+    act_codes = [class_map.get(str(r[3]), 0) for r in pred_rows]
 
     features: list[list[float]] = []
     targets: list[list[float]] = []
@@ -358,6 +389,18 @@ def build_dataset(
             seq = metrics_hist.get(name, [])
             val = seq[cycle_idx] if cycle_idx < len(seq) else 0.0
             row.append(float(val))
+        pred_val = pred_vals[cycle_idx] if cycle_idx < len(pred_vals) else 0.0
+        act_val = act_vals[cycle_idx] if cycle_idx < len(act_vals) else 0.0
+        pred_code = pred_codes[cycle_idx] if cycle_idx < len(pred_codes) else 0
+        act_code = act_codes[cycle_idx] if cycle_idx < len(act_codes) else 0
+        row.extend(
+            [
+                float(pred_val),
+                float(act_val),
+                float(pred_code),
+                float(act_code),
+            ]
+        )
         features.append(row)
         targets.append([float(v) for v in roi_outcomes])
         roi_values = [r[1] - r[2] for r in roi_list[: next_idx + horizon]]
