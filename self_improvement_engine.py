@@ -72,6 +72,7 @@ from . import mutation_logger as MutationLogger
 logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
+ADAPTIVE_ROI_TRAIN_INTERVAL = 3600  # seconds between scheduled retraining
 
 
 # Default synergy weight values used when no valid file is available
@@ -140,7 +141,8 @@ from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
-from .adaptive_roi_predictor import AdaptiveROIPredictor
+from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
 from .self_improvement_policy import (
     SelfImprovementPolicy,
@@ -565,9 +567,15 @@ class SelfImprovementEngine:
         if self.use_adaptive_roi:
             self.roi_predictor = roi_predictor or AdaptiveROIPredictor()
             self.roi_tracker = roi_tracker or ROITracker()
+            self._adaptive_roi_last_train = time.time()
+            self.adaptive_roi_train_interval = getattr(
+                settings, "adaptive_roi_train_interval", ADAPTIVE_ROI_TRAIN_INTERVAL
+            )
         else:
             self.roi_predictor = None
             self.roi_tracker = None
+            self._adaptive_roi_last_train = 0.0
+            self.adaptive_roi_train_interval = ADAPTIVE_ROI_TRAIN_INTERVAL
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
@@ -984,7 +992,7 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _metric_delta(self, name: str, window: int = 3) -> float:
         """Return rolling average delta for *name* metric."""
-        tracker = getattr(self, "tracker", None)
+        tracker = getattr(self, "tracker", None) or getattr(self, "roi_tracker", None)
         if tracker is None:
             return 0.0
         try:
@@ -1702,7 +1710,7 @@ class SelfImprovementEngine:
             self.logger.exception("failed to record learning eval: %s", exc)
 
     def _evaluate_roi_predictor(self) -> None:
-        """Evaluate and optionally retrain the adaptive ROI predictor."""
+        """Evaluate and periodically retrain the adaptive ROI predictor."""
         if not self.roi_predictor:
             return
         tracker = getattr(self, "tracker", None)
@@ -1724,6 +1732,17 @@ class SelfImprovementEngine:
                 "adaptive roi evaluation",
                 extra=log_record(accuracy=float(acc), mae=float(mae)),
             )
+            drift_metrics = getattr(self.roi_predictor, "drift_metrics", None)
+            if drift_metrics:
+                try:
+                    self.logger.info(
+                        "adaptive roi drift",
+                        extra=log_record(
+                            **{k: float(v) for k, v in drift_metrics.items()}
+                        ),
+                    )
+                except Exception:
+                    pass
             try:  # pragma: no cover - best effort telemetry
                 prediction_mae.labels(metric="adaptive_roi").set(float(mae))
                 prediction_reliability.labels(metric="adaptive_roi").set(float(acc))
@@ -1744,6 +1763,54 @@ class SelfImprovementEngine:
                         self.logger.exception("adaptive roi training failed")
         except Exception as exc:  # pragma: no cover - evaluation failure
             self.logger.exception("adaptive roi evaluation failed: %s", exc)
+            acc = mae = 0.0
+
+        now = time.time()
+        if (
+            len(tracker.roi_history)
+            > getattr(self.roi_predictor, "_trained_size", 0)
+            and now - self._adaptive_roi_last_train
+            >= self.adaptive_roi_train_interval
+        ):
+            try:
+                load_training_data(tracker)
+                self.logger.info("adaptive roi training data loaded")
+                selected = getattr(self.roi_predictor, "selected_features", None)
+                X, y, g, names = build_dataset(
+                    evolution_path="evolution_history.db",
+                    roi_path="roi.db",
+                    evaluation_path="evaluation_history.db",
+                    selected_features=selected,
+                    return_feature_names=True,
+                )
+                dataset = (X, y, g)
+                self.roi_predictor.train(
+                    dataset,
+                    cv=self.roi_predictor.cv,
+                    param_grid=self.roi_predictor.param_grid,
+                    feature_names=names,
+                )
+                self._adaptive_roi_last_train = now
+                msg = f"adaptive roi model retrained on {len(dataset[0])} samples"
+                self.logger.info(msg)
+                val_scores = getattr(self.roi_predictor, "validation_scores", {}) or {}
+                for name, score in val_scores.items():
+                    self.logger.info("validation MAE %s: %.4f", name, score)
+                best_params = getattr(self.roi_predictor, "best_params", None)
+                best_score = getattr(self.roi_predictor, "best_score", None)
+                if best_params and best_score is not None:
+                    params = {k: v for k, v in best_params.items() if k != "model"}
+                    self.logger.info(
+                        "best model %s (MAE=%.4f)",
+                        best_params.get("model"),
+                        best_score,
+                    )
+                    if params:
+                        self.logger.info("best params: %s", params)
+            except Exception as exc:  # pragma: no cover - retrain failure
+                self.logger.exception(
+                    "adaptive roi scheduled retrain failed: %s", exc
+                )
 
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
