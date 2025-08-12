@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from typing import Sequence
 
-from .adaptive_roi_predictor import AdaptiveROIPredictor
+from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
+from .roi_tracker import ROITracker
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +75,43 @@ def _retrain(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+def _schedule(args: argparse.Namespace) -> None:
+    """Periodically load training data and retrain the model."""
+
+    tracker = ROITracker()
+    if args.history:
+        tracker.load_history(args.history)
+
+    while True:
+        try:
+            load_training_data(
+                tracker,
+                evolution_path=args.evolution_db,
+                evaluation_path=args.evaluation_db,
+                roi_events_path=args.roi_events_db,
+                output_path=args.output_csv,
+            )
+            dataset = build_dataset(
+                args.evolution_db, args.roi_db, args.evaluation_db
+            )
+            predictor = AdaptiveROIPredictor(
+                model_path=args.model,
+                slope_threshold=args.slope_threshold,
+                curvature_threshold=args.curvature_threshold,
+            )
+            predictor.train(dataset)
+            print(
+                f"model retrained on {len(dataset[0])} samples -> {args.model}"
+            )
+        except Exception as exc:  # pragma: no cover
+            print(f"retraining failed: {exc}")
+
+        if args.once:
+            break
+        time.sleep(args.interval)
+
+
+# ---------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default="adaptive_roi_model.pkl", help="Model path")
@@ -97,6 +136,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_retrain.add_argument("--roi-db", default="roi.db")
     p_retrain.add_argument("--evaluation-db", default="evaluation_history.db")
     p_retrain.set_defaults(func=_retrain)
+
+    p_sched = sub.add_parser(
+        "schedule", help="periodically load data and retrain the model"
+    )
+    p_sched.add_argument("--evolution-db", default="evolution_history.db")
+    p_sched.add_argument("--roi-db", default="roi.db")
+    p_sched.add_argument("--evaluation-db", default="evaluation_history.db")
+    p_sched.add_argument("--roi-events-db", default="roi_events.db")
+    p_sched.add_argument(
+        "--history", default="sandbox_data/roi_history.json", help="Tracker history path"
+    )
+    p_sched.add_argument(
+        "--output-csv", default="sandbox_data/adaptive_roi.csv", help="CSV dump path"
+    )
+    p_sched.add_argument(
+        "--interval", type=int, default=3600, help="Seconds between retraining"
+    )
+    p_sched.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    p_sched.set_defaults(func=_schedule)
 
     args = parser.parse_args(argv)
     args.func(args)

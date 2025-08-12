@@ -450,51 +450,15 @@ class AdaptiveROIPredictor:
         return self.predict(action_features)[1]
 
     # ------------------------------------------------------------------
-    def evaluate_model(
-        self,
-        tracker: ROITracker,
-        window: int = 20,
-        mae_threshold: float = 0.1,
-        acc_threshold: float = 0.6,
-    ) -> tuple[float, float]:
-        """Evaluate recent prediction performance and retrain if needed.
+    def evaluate_model(self, tracker: ROITracker, **kwargs) -> tuple[float, float]:
+        """Delegate evaluation to :class:`ROITracker`.
 
-        Parameters
-        ----------
-        tracker:
-            :class:`ROITracker` providing prediction histories.
-        window:
-            Number of recent samples to evaluate.
-        mae_threshold:
-            Retrain when mean absolute error exceeds this value.
-        acc_threshold:
-            Retrain when classification accuracy falls below this value.
-
-        Returns
-        -------
-        tuple
-            ``(accuracy, mae)`` over the evaluated window.
+        ``ROITracker.evaluate_model`` handles triggering retraining via the CLI
+        when prediction quality deteriorates. This wrapper maintains backwards
+        compatibility for older code invoking the method on the predictor.
         """
 
-        preds = tracker.predicted_roi[-window:]
-        acts = tracker.actual_roi[-len(preds):]
-        mae = float(np.mean(np.abs(np.asarray(preds) - np.asarray(acts)))) if preds else 0.0
-
-        pc = tracker.predicted_classes[-window:]
-        ac = tracker.actual_classes[-len(pc):]
-        if pc and ac:
-            acc = float((np.asarray(pc) == np.asarray(ac)).mean())
-        else:
-            acc = 0.0
-
-        if (mae > mae_threshold) or (pc and acc < acc_threshold):
-            try:
-                data = build_dataset()
-                self.train(dataset=data)
-            except Exception:  # pragma: no cover - retraining failure
-                pass
-
-        return acc, mae
+        return tracker.evaluate_model(**kwargs)
 
 
 # Module‑level convenience instance -----------------------------------------

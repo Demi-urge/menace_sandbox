@@ -108,27 +108,28 @@ def test_cross_validation_persistence(tmp_path, monkeypatch):
 
 
 def test_evaluate_model_retrains(monkeypatch):
-    """evaluate_model triggers retraining when error is high."""
+    """evaluate_model triggers CLI retraining when error is high."""
 
-    monkeypatch.setattr(
-        "menace_sandbox.adaptive_roi_predictor.build_dataset",
-        lambda: (np.array([[0.0]]), np.array([0.0]), np.array(["linear"], dtype=object)),
-    )
-    predictor = AdaptiveROIPredictor()
-    calls: list[int] = []
-
-    def fake_train(dataset=None):
-        calls.append(1)
-
-    predictor.train = fake_train  # type: ignore
     tracker = ROITracker()
     tracker.predicted_roi = [0.0, 0.0]
     tracker.actual_roi = [1.0, 1.0]
     tracker.predicted_classes = ["linear", "linear"]
     tracker.actual_classes = ["exponential", "exponential"]
 
-    acc, mae = predictor.evaluate_model(
-        tracker, window=2, mae_threshold=0.1, acc_threshold=0.9
+    calls: list[list[str]] = []
+
+    def fake_popen(cmd, **_kwargs):
+        calls.append(cmd)  # type: ignore[arg-type]
+        class Dummy:
+            pass
+        return Dummy()
+
+    monkeypatch.setattr(
+        "menace_sandbox.roi_tracker.subprocess.Popen", fake_popen
+    )
+
+    acc, mae = tracker.evaluate_model(
+        window=2, mae_threshold=0.1, acc_threshold=0.9
     )
     assert mae > 0.1
     assert acc < 0.9
@@ -148,11 +149,11 @@ def test_tracker_integration(monkeypatch):
 
     called: list[int] = []
 
-    def fake_eval(t: ROITracker, **_kwargs):
+    def fake_eval(self, **_kwargs):
         called.append(1)
         return (1.0, 0.0)
 
-    predictor.evaluate_model = fake_eval  # type: ignore
+    monkeypatch.setattr(ROITracker, "evaluate_model", fake_eval)
 
     tracker.roi_history = [0.1, 0.2]
     tracker._next_prediction = 0.25
