@@ -101,6 +101,34 @@ class EvaluationDashboard:
         return tracker.prediction_summary(window)
 
     # ------------------------------------------------------------------
+    def roi_prediction_chart(
+        self, tracker: ROITracker, window: int | None = None
+    ) -> Dict[str, Any]:
+        """Return sequences for charting predicted vs actual ROI.
+
+        Parameters
+        ----------
+        tracker:
+            The :class:`ROITracker` instance holding prediction history.
+        window:
+            Optional number of recent samples to include. When omitted the
+            entire history is returned.
+
+        Returns
+        -------
+        dict
+            Dictionary containing ``labels`` for the x-axis along with
+            ``predicted`` and ``actual`` ROI sequences.
+        """
+
+        total = len(tracker.predicted_roi)
+        preds = tracker.predicted_roi[-window:] if window else tracker.predicted_roi
+        acts = tracker.actual_roi[-len(preds) :]
+        start = total - len(preds)
+        labels = list(range(start, start + len(preds)))
+        return {"labels": labels, "predicted": preds, "actual": acts}
+
+    # ------------------------------------------------------------------
     def roi_prediction_events_panel(
         self, tracker: ROITracker, window: int | None = None
     ) -> Dict[str, Any]:
@@ -127,10 +155,16 @@ class EvaluationDashboard:
             tracker.horizon_mae_history[-1] if tracker.horizon_mae_history else {}
         )
         drift_flags = tracker.drift_flags[-window:] if window else tracker.drift_flags
+        predictor = getattr(tracker, "_adaptive_predictor", None)
+        drift_metrics = getattr(predictor, "drift_metrics", {}) if predictor else {}
+        if not drift_metrics:
+            drift_metrics = getattr(tracker, "drift_metrics", {})
         return {
             "mae_by_horizon": mae_by_horizon,
             "growth_class_accuracy": tracker.classification_accuracy(window),
             "drift_flags": drift_flags,
+            "growth_type_accuracy": drift_metrics.get("accuracy", 0.0),
+            "drift_metrics": drift_metrics,
         }
 
     # ------------------------------------------------------------------
