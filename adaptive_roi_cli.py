@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from typing import Sequence
+from typing import Sequence, Dict, Any
 
 from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
@@ -15,8 +15,13 @@ from .roi_tracker import ROITracker
 def _train(args: argparse.Namespace) -> None:
     """Train a new predictor and persist it."""
     dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
+    param_grid: Dict[str, Dict[str, Any]] | None = None
+    if args.param_grid:
+        param_grid = json.loads(args.param_grid)
     predictor = AdaptiveROIPredictor(
         model_path=args.model,
+        cv=args.cv,
+        param_grid=param_grid,
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
@@ -53,8 +58,13 @@ def _predict(args: argparse.Namespace) -> None:
 def _retrain(args: argparse.Namespace) -> None:
     """Retrain an existing model with updated data."""
     dataset = build_dataset(args.evolution_db, args.roi_db, args.evaluation_db)
+    param_grid: Dict[str, Dict[str, Any]] | None = None
+    if args.param_grid:
+        param_grid = json.loads(args.param_grid)
     predictor = AdaptiveROIPredictor(
         model_path=args.model,
+        cv=args.cv,
+        param_grid=param_grid,
         slope_threshold=args.slope_threshold,
         curvature_threshold=args.curvature_threshold,
     )
@@ -82,6 +92,10 @@ def _schedule(args: argparse.Namespace) -> None:
     if args.history:
         tracker.load_history(args.history)
 
+    param_grid: Dict[str, Dict[str, Any]] | None = None
+    if args.param_grid:
+        param_grid = json.loads(args.param_grid)
+
     while True:
         try:
             load_training_data(
@@ -96,6 +110,8 @@ def _schedule(args: argparse.Namespace) -> None:
             )
             predictor = AdaptiveROIPredictor(
                 model_path=args.model,
+                cv=args.cv,
+                param_grid=param_grid,
                 slope_threshold=args.slope_threshold,
                 curvature_threshold=args.curvature_threshold,
             )
@@ -125,6 +141,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_train.add_argument("--evolution-db", default="evolution_history.db")
     p_train.add_argument("--roi-db", default="roi.db")
     p_train.add_argument("--evaluation-db", default="evaluation_history.db")
+    p_train.add_argument("--cv", type=int, default=3, help="Cross-validation folds")
+    p_train.add_argument(
+        "--param-grid",
+        default=None,
+        help="JSON encoded parameter grid for hyperparameter tuning",
+    )
     p_train.set_defaults(func=_train)
 
     p_predict = sub.add_parser("predict", help="predict ROI for a feature sequence")
@@ -135,6 +157,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_retrain.add_argument("--evolution-db", default="evolution_history.db")
     p_retrain.add_argument("--roi-db", default="roi.db")
     p_retrain.add_argument("--evaluation-db", default="evaluation_history.db")
+    p_retrain.add_argument("--cv", type=int, default=3, help="Cross-validation folds")
+    p_retrain.add_argument(
+        "--param-grid",
+        default=None,
+        help="JSON encoded parameter grid for hyperparameter tuning",
+    )
     p_retrain.set_defaults(func=_retrain)
 
     p_sched = sub.add_parser(
@@ -154,6 +182,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--interval", type=int, default=3600, help="Seconds between retraining"
     )
     p_sched.add_argument("--once", action="store_true", help="Run one cycle and exit")
+    p_sched.add_argument("--cv", type=int, default=3, help="Cross-validation folds")
+    p_sched.add_argument(
+        "--param-grid",
+        default=None,
+        help="JSON encoded parameter grid for hyperparameter tuning",
+    )
     p_sched.set_defaults(func=_schedule)
 
     args = parser.parse_args(argv)

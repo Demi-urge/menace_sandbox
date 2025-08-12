@@ -148,13 +148,17 @@ class AdaptiveROIPredictor:
                 data = json.loads(meta_path.read_text())
                 self.best_params = data.get("best_params")
                 self.best_score = data.get("best_score")
-                self.slope_threshold = data.get("slope_threshold", self.slope_threshold)
+                self.validation_scores = data.get("validation_scores", {}) or {}
+                self.slope_threshold = data.get(
+                    "slope_threshold", self.slope_threshold
+                )
                 self.curvature_threshold = data.get(
                     "curvature_threshold", self.curvature_threshold
                 )
             except Exception:
                 self.best_params = None
                 self.best_score = None
+                self.validation_scores = {}
 
     def _save(self) -> None:
         """Persist the current model to disk."""
@@ -185,6 +189,7 @@ class AdaptiveROIPredictor:
             meta = {
                 "best_params": self.best_params,
                 "best_score": self.best_score,
+                "validation_scores": self.validation_scores,
                 "slope_threshold": self.slope_threshold,
                 "curvature_threshold": self.curvature_threshold,
             }
