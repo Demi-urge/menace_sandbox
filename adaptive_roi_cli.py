@@ -1,4 +1,10 @@
-"""Train and use the adaptive ROI predictor."""
+"""Train and use the adaptive ROI predictor.
+
+The underlying :class:`~menace_sandbox.adaptive_roi_predictor.AdaptiveROIPredictor`
+supports online learning.  New samples can be appended without retraining
+from scratch by calling ``predictor.update(X, y, g)`` which performs a
+``partial_fit`` when supported by the model.
+"""
 from __future__ import annotations
 
 import argparse
