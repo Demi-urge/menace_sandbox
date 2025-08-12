@@ -83,12 +83,14 @@ def test_classifier_training_and_prediction(monkeypatch):
     if predictor._classifier is None:
         pytest.skip("classifier not available")
 
-    roi, growth = predictor.predict([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
-    assert roi == pytest.approx(5.0, abs=1e-3)
+    roi_seq, growth = predictor.predict(
+        [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], horizon=6
+    )
+    assert roi_seq[-1] == pytest.approx(5.0, abs=1e-3)
     assert growth == "exponential"
     assert (
         predictor.predict_growth_type(
-            [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]]
+            [[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]], horizon=6
         )
         == "exponential"
     )
@@ -197,7 +199,7 @@ def test_corrupted_model_file(tmp_path: Path, monkeypatch) -> None:
 
     predictor = AdaptiveROIPredictor(model_path=model_path, cv=0, param_grid={})
     assert predictor._model is not None
-    roi, growth = predictor.predict([[1.0], [2.0], [3.0]])
-    assert roi == pytest.approx(3.0, abs=1e-3)
+    roi_seq, growth = predictor.predict([[1.0], [2.0], [3.0]], horizon=3)
+    assert roi_seq[-1] == pytest.approx(3.0, abs=1e-3)
     assert growth in {"marginal", "linear", "exponential"}
 

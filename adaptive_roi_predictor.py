@@ -398,12 +398,36 @@ class AdaptiveROIPredictor:
 
     # ------------------------------------------------------------------
     # public API
-    def predict(self, improvement_features: Sequence[Sequence[float]]) -> tuple[float, str]:
-        """Return ``(roi_estimate, growth_category)`` for the provided features."""
+    def predict(
+        self,
+        improvement_features: Sequence[Sequence[float]],
+        horizon: int | None = None,
+    ) -> tuple[list[float], str]:
+        """Return ROI forecast sequence and growth category.
+
+        Parameters
+        ----------
+        improvement_features:
+            Sequence of feature vectors describing consecutive improvement
+            cycles.
+        horizon:
+            Number of steps to forecast. Defaults to the length of
+            ``improvement_features``. Only the first ``horizon`` rows of
+            ``improvement_features`` are used.
+
+        Returns
+        -------
+        list, str
+            The sequence of predicted ROI values up to ``horizon`` and the
+            growth classification from the final step.
+        """
 
         feats = np.asarray(list(improvement_features), dtype=float)
+        h = len(feats) if horizon is None else int(horizon)
+        if h <= 0:
+            return [], "marginal"
+        feats = feats[:h]
         preds = self._predict_sequence(feats)
-        roi_estimate = float(preds[-1]) if preds.size else 0.0
         growth: str
         if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:
             try:
@@ -412,13 +436,15 @@ class AdaptiveROIPredictor:
                 growth = "marginal"
         else:
             growth = "marginal"
-        return roi_estimate, growth
+        return preds.tolist(), growth
 
     # Backwards compatible wrapper
-    def predict_growth_type(self, action_features: Sequence[Sequence[float]]) -> str:
+    def predict_growth_type(
+        self, action_features: Sequence[Sequence[float]], horizon: int | None = None
+    ) -> str:
         """Return only the growth classification for ``action_features``."""
 
-        return self.predict(action_features)[1]
+        return self.predict(action_features, horizon=horizon)[1]
 
     # ------------------------------------------------------------------
     def evaluate_model(self, tracker: ROITracker, **kwargs) -> tuple[float, float]:
@@ -436,22 +462,26 @@ class AdaptiveROIPredictor:
 _predictor: AdaptiveROIPredictor | None = None
 
 
-def predict_growth_type(action_features: Sequence[Sequence[float]]) -> str:
+def predict_growth_type(
+    action_features: Sequence[Sequence[float]], horizon: int | None = None
+) -> str:
     """Return growth classification for ``action_features`` using a singleton."""
 
     global _predictor
     if _predictor is None:
         _predictor = AdaptiveROIPredictor()
-    return _predictor.predict_growth_type(action_features)
+    return _predictor.predict_growth_type(action_features, horizon=horizon)
 
 
-def predict(action_features: Sequence[Sequence[float]]) -> tuple[float, str]:
-    """Return ``(roi_estimate, growth_category)`` using a module-level predictor."""
+def predict(
+    action_features: Sequence[Sequence[float]], horizon: int | None = None
+) -> tuple[list[float], str]:
+    """Return ROI forecast sequence and growth category using a module-level predictor."""
 
     global _predictor
     if _predictor is None:
         _predictor = AdaptiveROIPredictor()
-    return _predictor.predict(action_features)
+    return _predictor.predict(action_features, horizon=horizon)
 
 
 def load_training_data(
