@@ -242,16 +242,38 @@ class ActionPlanner:
         if not values:
             return None
         if self.roi_predictor and self.use_adaptive_roi and self.feature_fn:
-            scored = []
+            scored: list[tuple[str, float, str, float]] = []
+            roi_vals: list[float] = []
             for action, val in values.items():
                 try:
                     feats = [list(self.feature_fn(action))]
-                    _, category = self.roi_predictor.predict(feats)
+                    roi_est, category = self.roi_predictor.predict(feats)
                 except Exception:
                     category = "marginal"
-                scored.append((action, val, category))
+                    roi_est = 0.0
+                scored.append((action, val, category, float(roi_est)))
+                roi_vals.append(float(roi_est))
             cat_rank = {"exponential": 2, "linear": 1, "marginal": 0}
-            scored.sort(key=lambda x: (-cat_rank.get(x[2], 0), -x[1]))
+            if roi_vals:
+                max_roi = max(roi_vals)
+                min_roi = min(roi_vals)
+            else:
+                max_roi = min_roi = 0.0
+
+            def _norm(r: float) -> float:
+                if max_roi == min_roi:
+                    return 0.0
+                return (r - min_roi) / (max_roi - min_roi)
+
+            scored.sort(
+                key=lambda x: (
+                    -(
+                        cat_rank.get(x[2], 0)
+                        + _norm(x[3])
+                    ),
+                    -x[1],
+                )
+            )
             return scored[0][0]
         return max(values, key=values.get)
 

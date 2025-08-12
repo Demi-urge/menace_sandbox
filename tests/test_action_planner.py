@@ -74,6 +74,55 @@ def test_predict_next_action(tmp_path):
     assert planner.predict_next_action("A") == "B"
 
 
+def test_roi_prediction_prioritizes_high_estimate(tmp_path):
+    class Predictor:
+        mapping = {1.0: (0.1, "linear"), 2.0: (0.9, "linear")}
+
+        def predict(self, feats):
+            feat = feats[0][0]
+            return self.mapping.get(feat, (0.0, "marginal"))
+
+    feature_map = {"B": 1.0, "C": 2.0}
+
+    def feature_fn(action: str):
+        return [feature_map[action]]
+
+    pdb = PathwayDB(tmp_path / "p.db")
+    roi = DummyROIDB()
+    pdb.log(
+        PathwayRecord(
+            actions="A->B",
+            inputs="",
+            outputs="",
+            exec_time=1.0,
+            resources="",
+            outcome=Outcome.SUCCESS,
+            roi=1.0,
+        )
+    )
+    pdb.log(
+        PathwayRecord(
+            actions="A->C",
+            inputs="",
+            outputs="",
+            exec_time=1.0,
+            resources="",
+            outcome=Outcome.SUCCESS,
+            roi=1.0,
+        )
+    )
+    planner = ap.ActionPlanner(
+        pdb,
+        roi,
+        epsilon=0.0,
+        reward_fn=lambda a, r: 1.0,
+        feature_fn=feature_fn,
+        roi_predictor=Predictor(),
+        use_adaptive_roi=True,
+    )
+    assert planner.predict_next_action("A") == "C"
+
+
 def test_planner_updates_on_event(tmp_path):
     bus = UnifiedEventBus()
     pdb = PathwayDB(tmp_path / "p.db", event_bus=bus)
