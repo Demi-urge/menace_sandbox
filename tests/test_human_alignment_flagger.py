@@ -117,6 +117,32 @@ def test_complexity_without_docstring_raises_maintainability_warning():
     )
 
 
+def test_flag_improvement_warns_on_unsafe_subprocess():
+    code = "import subprocess\nsubprocess.run('ls', shell=True)"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "workflow.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        "unsafe subprocess" in issue.get("issue", "")
+        for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_warns_on_unsandboxed_fs():
+    code = "open('/etc/passwd', 'w')"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "workflow.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        "unsandboxed" in issue.get("issue", "")
+        for issue in warnings["maintainability"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # flag_alignment_issues -----------------------------------------------------
 
@@ -179,6 +205,21 @@ def obfuscation_diff() -> dict:
     }
 
 
+@pytest.fixture
+def unsafe_subprocess_diff() -> dict:
+    return {
+        "run.py": {
+            "added": ["import subprocess", "subprocess.run('ls', shell=True)"],
+            "removed": [],
+        }
+    }
+
+
+@pytest.fixture
+def unsandboxed_fs_diff() -> dict:
+    return {"fs.py": {"added": ["open('/etc/passwd', 'w')"], "removed": []}}
+
+
 def test_flag_alignment_issues_eval(eval_diff):
     findings = haf.flag_alignment_issues(eval_diff)
     assert any(f.get("category") == "risky_construct" for f in findings)
@@ -213,3 +254,13 @@ def test_flag_alignment_issues_obfuscation(obfuscation_diff):
         f.get("category") == "opacity" and "identifier" in f.get("snippet", "")
         for f in findings
     )
+
+
+def test_flag_alignment_issues_unsafe_subprocess(unsafe_subprocess_diff):
+    findings = haf.flag_alignment_issues(unsafe_subprocess_diff)
+    assert any(f.get("category") == "unsafe_subprocess" for f in findings)
+
+
+def test_flag_alignment_issues_unsandboxed_fs(unsandboxed_fs_diff):
+    findings = haf.flag_alignment_issues(unsandboxed_fs_diff)
+    assert any(f.get("category") == "filesystem_mutation" for f in findings)
