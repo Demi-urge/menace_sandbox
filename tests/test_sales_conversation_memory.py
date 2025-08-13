@@ -20,6 +20,19 @@ def test_ttl_expiration(monkeypatch):
     assert mem.get_recent() == []
 
 
+def test_personal_data_removed_after_ttl(monkeypatch):
+    mem = SalesConversationMemory(ttl=1)
+    mem.add_message("Alice's email is alice@example.com", "user", timestamp=0)
+    # Before TTL expires, message should be present without extra identifiers
+    monkeypatch.setattr(time, "time", lambda: 0.5)
+    assert mem.get_recent() == [
+        {"text": "Alice's email is alice@example.com", "role": "user"}
+    ]
+    # After TTL expires, message should be purged
+    monkeypatch.setattr(time, "time", lambda: 2)
+    assert mem.get_recent() == []
+
+
 def test_cta_push_pop():
     mem = SalesConversationMemory()
     mem.push_cta({"event": "message"})
