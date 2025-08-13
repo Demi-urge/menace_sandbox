@@ -105,16 +105,45 @@ def test_complexity_without_docstring_raises_maintainability_warning():
         metrics={},
         logs=[],
     )
+    complexity_warning = next(
+        (
+            issue
+            for issue in warnings["maintainability"]
+            if issue.get("issue") == "high cyclomatic complexity"
+            and issue.get("file") == "module.py"
+        ),
+        None,
+    )
+    assert complexity_warning is not None
     assert any(
-        issue.get("issue") == "high cyclomatic complexity"
-        and issue.get("file") == "module.py"
-        for issue in warnings["maintainability"]
+        func.get("name") == "complex" and func.get("score", 0) > 10
+        for func in complexity_warning.get("functions", [])
     )
     assert any(
         issue.get("issue") == "missing docstring"
         and issue.get("file") == "module.py"
         for issue in warnings["maintainability"]
     )
+
+
+def test_flag_improvement_detects_missing_type_hints():
+    code = "def add(a, b):\n    return a + b\n"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    hint_warning = next(
+        (
+            issue
+            for issue in warnings["maintainability"]
+            if issue.get("issue") == "missing type hints"
+            and issue.get("file") == "module.py"
+        ),
+        None,
+    )
+    assert hint_warning is not None
+    assert "add" in hint_warning.get("functions", [])
 
 
 def test_flag_improvement_warns_on_unsafe_subprocess():
