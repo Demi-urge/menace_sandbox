@@ -107,3 +107,33 @@ flagger = HumanAlignmentFlagger(settings)
 Every rule is invoked for each changed file and any returned issues are merged
 into the final report.
 
+## Improvement evaluation and review
+
+`HumanAlignmentAgent` wraps `flag_improvement` to score proposed workflow
+changes. Each warning is normalised against
+`IMPROVEMENT_WARNING_THRESHOLD` and persisted via
+`violation_logger.log_violation` when the severity exceeds the configured
+limits. This mirrors the commit-level checks so optimisation suggestions are
+screened before integration.
+
+`AlignmentReviewAgent` polls persisted warnings using
+`load_recent_alignment_warnings` and forwards unseen entries to
+`SecurityAuditor` for triage. The auditor records them in
+`logs/alignment_warnings.jsonl`, ensuring Security AI receives a stream of
+alignment concerns.
+
+### Reviewing warnings
+
+Reviewers examine the recorded warnings and mark decisions with
+`alignment_review_agent.review_warning`:
+
+```python
+from alignment_review_agent import review_warning
+
+review_warning("abc123", "approved")  # accept the change
+review_warning("def456", "rejected")  # require follow-up
+```
+
+Entries left as `pending` continue to appear in the review queue, providing a
+simple approval workflow.
+
