@@ -27,8 +27,33 @@ entries when desired.
 ## Adaptive ROI Prediction
 
 Longer term ROI trends can be estimated with the lightweight
-`AdaptiveROIPredictor` model. The `adaptive_roi_cli` module exposes
-simple subcommands and can be executed via ``python -m menace_sandbox.adaptive_roi_cli``:
+`AdaptiveROIPredictor` model.
+
+### Building the dataset
+
+Training requires a feature matrix describing past improvement cycles.
+`adaptive_roi_dataset.build_dataset()` assembles this matrix from the
+evolution, ROI and evaluation databases:
+
+```python
+from menace_sandbox.adaptive_roi_dataset import build_dataset
+X, y, growth = build_dataset(
+    "evolution_history.db", "roi.db", "evaluation_history.db"
+)
+```
+
+`load_training_data()` offers a higher level helper that exports the
+dataset to CSV. The CLI can refresh this file periodically without
+retraining the model:
+
+```bash
+python -m menace_sandbox.adaptive_roi_cli refresh --once --output-csv roi_dataset.csv
+```
+
+### Training the predictor
+
+The `adaptive_roi_cli` module exposes simple subcommands and can be
+executed via ``python -m menace_sandbox.adaptive_roi_cli``:
 
 ```bash
 python -m menace_sandbox.adaptive_roi_cli train
@@ -40,24 +65,24 @@ python -m menace_sandbox.adaptive_roi_cli refresh --once
 
 `train` fits a new model on available history, `predict` returns an ROI
 forecast sequence and growth type for a JSON encoded feature matrix
-(`--horizon` controls the number of steps) and `retrain` updates an existing
-model with the latest data. The `schedule`
-command calls `load_training_data()` to assemble the latest dataset and
-retrains the model at a fixed interval (default one hour). Pass
-`--interval` to adjust the cadence or `--once` to run a single cycle,
-which is useful for cron jobs. `refresh` performs the dataset rebuild step
-on a timer without retraining the model:
+(`--horizon` controls the number of steps) and `retrain` updates an
+existing model with the latest data. The `schedule` command calls
+`load_training_data()` to assemble the latest dataset and retrains the
+model at a fixed interval (default one hour). Pass `--interval` to
+adjust the cadence or `--once` to run a single cycle, which is useful
+for cron jobs. `refresh` performs the dataset rebuild step on a timer
+without retraining the model:
 
 ```cron
 0 * * * * python -m menace_sandbox.adaptive_roi_cli schedule --history sandbox_data/roi_history.json
 ```
 
 Training stores the most influential input metrics in a companion
-``.meta.json`` file under ``selected_features`` whenever the model exposes
-``feature_importances_``. Running `adaptive_roi_cli` with the
-``--selected-features`` flag restricts `build_dataset()` to these columns so you
-can periodically retrain on a pruned feature set and drop low-importance
-metrics from future runs.
+``.meta.json`` file under ``selected_features`` whenever the model
+exposes ``feature_importances_``. Running `adaptive_roi_cli` with the
+``--selected-features`` flag restricts `build_dataset()` to these columns
+so you can periodically retrain on a pruned feature set and drop
+low-importance metrics from future runs.
 
 The feature matrix produced by `build_dataset()` now also includes
 `gpt_feedback_score`, `gpt_feedback_tokens`, `long_term_perf_delta`,
@@ -120,17 +145,51 @@ multiplies the base weight by the predicted ROI and a growth multiplier.
 Actions forecast to deliver exponential growth therefore rise to the top
 of the queue.
 
-### Growth classification and threshold tuning
+### Self-improvement module integration
+
+Self-improvement loops can consume these predictions directly.
+`SelfImprovementEngine` initialises an `AdaptiveROIPredictor` and
+`ROITracker` when adaptive ROI prioritisation is enabled. During each
+cycle it queries the predictor for the expected ROI and growth class of
+candidate actions:
+
+```python
+from menace_sandbox.self_improvement_engine import SelfImprovementEngine
+
+engine = SelfImprovementEngine(bot_name="alpha")
+roi_seq, growth, *_ = engine.roi_predictor.predict([[0.1, 0.2, 0.0]])
+if growth == "exponential":
+    print("scale up the improvement plan")
+```
+
+Predictions and realised outcomes are recorded in
+`engine.roi_tracker`, enabling later retraining with
+``adaptive_roi_cli schedule``.
+
+### Growth classification, interpretation and threshold tuning
 
 The predictor labels horizons as ``exponential``, ``linear`` or
-``marginal`` based on slope and curvature thresholds. Treat these classes
-as broad guidance rather than exact guarantees. Start with the defaults
-estimated by `calibrate_thresholds()` and adjust using the
-`--slope-threshold` and `--curvature-threshold` flags when calling the
-CLI. Raising the thresholds yields more conservative classifications
-while lowering them makes the model more sensitive to small changes.
-Monitor `ROITracker.evaluate_model()` to ensure the thresholds produce
-accurate forecasts for your dataset.
+``marginal`` based on slope and curvature thresholds.
+
+```python
+from menace_sandbox.adaptive_roi_predictor import AdaptiveROIPredictor
+
+pred = AdaptiveROIPredictor()
+_, growth, *_ = pred.predict([[0.05, 0.1, 0.0]])
+print(growth)  # "linear"
+```
+
+- ``exponential`` – ROI accelerates each cycle; consider aggressive scaling.
+- ``linear`` – steady improvement; keep the current strategy.
+- ``marginal`` – little change; deprioritise the action.
+
+Treat these classes as broad guidance rather than exact guarantees. Start
+with the defaults estimated by `calibrate_thresholds()` and adjust using
+the `--slope-threshold` and `--curvature-threshold` flags when calling the
+CLI. Raising the thresholds yields more conservative classifications while
+lowering them makes the model more sensitive to small changes. Monitor
+`ROITracker.evaluate_model()` to ensure the thresholds produce accurate
+forecasts for your dataset.
 
 
 ## Usage Example
