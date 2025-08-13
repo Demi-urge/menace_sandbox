@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Iterable, Dict, Optional
+from typing import List, Iterable, Dict, Optional, Any
 import logging
 
 try:
@@ -82,6 +82,7 @@ class AutomationResult:
     """Final pipeline output."""
     package: Optional[TaskPackage]
     roi: Optional[ROIResult]
+    warnings: Dict[str, List[Dict[str, Any]]] | None = None
 
 
 class ModelAutomationPipeline:

@@ -468,6 +468,7 @@ class _CycleMeta:
     delta: float
     modules: list[str]
     reason: str
+    warnings: dict | None = None
 
 
 class _SandboxMetaLogger:
@@ -482,11 +483,16 @@ class _SandboxMetaLogger:
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
-        self, cycle: int, roi: float, modules: list[str], reason: str
+        self,
+        cycle: int,
+        roi: float,
+        modules: list[str],
+        reason: str,
+        warnings: dict | None = None,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
-        self.records.append(_CycleMeta(cycle, roi, delta, modules, reason))
+        self.records.append(_CycleMeta(cycle, roi, delta, modules, reason, warnings))
         for m in modules:
             if self.module_index:
                 try:
@@ -499,15 +505,16 @@ class _SandboxMetaLogger:
                 gid = m
             self.module_deltas.setdefault(gid, []).append(delta)
         try:
-            self.audit.record(
-                {
-                    "cycle": cycle,
-                    "roi": roi,
-                    "delta": delta,
-                    "modules": modules,
-                    "reason": reason,
-                }
-            )
+            record = {
+                "cycle": cycle,
+                "roi": roi,
+                "delta": delta,
+                "modules": modules,
+                "reason": reason,
+            }
+            if warnings:
+                record["warnings"] = warnings
+            self.audit.record(record)
         except Exception:
             logger.exception("meta log record failed")
         logger.debug(
