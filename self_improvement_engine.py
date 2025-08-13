@@ -736,6 +736,7 @@ class SelfImprovementEngine:
         self._synergy_cache: dict | None = None
         self.alignment_flagger = HumanAlignmentFlagger()
         self.cycle_logs: list[dict[str, Any]] = []
+        self.warning_summary: list[dict[str, Any]] = []
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
@@ -2012,6 +2013,24 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "adaptive roi scheduled retrain failed: %s", exc
                 )
+
+    def _record_warning_summary(
+        self, delta: float, warnings: dict[str, list[dict[str, Any]]]
+    ) -> None:
+        """Store high-severity warnings that coincide with positive ROI."""
+        if delta <= 0:
+            return
+        if warnings.get("ethics") or warnings.get("risk_reward"):
+            entry = {"roi_delta": delta, "warnings": warnings}
+            self.warning_summary.append(entry)
+            self.logger.warning(
+                "improvement flagged with high severity warnings",
+                extra=log_record(**entry),
+            )
+
+    def get_warning_summary(self) -> list[dict[str, Any]]:
+        """Return summary entries for high-severity warning improvements."""
+        return list(self.warning_summary)
 
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
@@ -4319,6 +4338,7 @@ class SelfImprovementEngine:
                     self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
             delta = after_roi - before_roi
+            warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
                 try:
                     metrics = result.roi.__dict__ if result.roi else None
@@ -4327,6 +4347,11 @@ class SelfImprovementEngine:
                         result.warnings = warnings
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
+            self.logger.info(
+                "roi delta",
+                extra=log_record(roi_delta=delta, warnings=warnings),
+            )
+            self._record_warning_summary(delta, warnings)
             self.roi_delta_ema = (
                 1 - self.roi_ema_alpha
             ) * self.roi_delta_ema + self.roi_ema_alpha * delta
