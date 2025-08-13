@@ -22,6 +22,9 @@ from coverage import Coverage
 from .error_logger import ErrorLogger, TelemetryEvent
 from .knowledge_graph import KnowledgeGraph
 from .quick_fix_engine import generate_patch
+from .human_alignment_agent import HumanAlignmentAgent
+from .human_alignment_flagger import _collect_diff_data
+from .violation_logger import log_violation
 
 
 class CoverageSubprocessError(RuntimeError):
@@ -197,7 +200,36 @@ class SelfDebuggerSandbox(AutomatedDebugger):
             return
         for mod in modules:
             try:
-                generate_patch(mod, self.engine)
+                with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                    src = Path(mod)
+                    if src.suffix == "":
+                        src = src.with_suffix(".py")
+                    rel = src.name if src.is_absolute() else src
+                    before_target = Path(before_dir) / rel
+                    before_target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, before_target)
+                    patch_id = generate_patch(mod, self.engine)
+                    if patch_id is not None:
+                        after_target = Path(after_dir) / rel
+                        after_target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, after_target)
+                        diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                        workflow_changes = [
+                            {"file": f, "code": "\n".join(d["added"])}
+                            for f, d in diff_data.items()
+                            if d["added"]
+                        ]
+                        if workflow_changes:
+                            agent = HumanAlignmentAgent()
+                            warnings = agent.evaluate_changes(workflow_changes, None, [])
+                            if any(warnings.values()):
+                                log_violation(
+                                    str(patch_id),
+                                    "alignment_warning",
+                                    1,
+                                    {"warnings": warnings},
+                                    alignment_warning=True,
+                                )
                 self.logger.info("preemptive patch applied", extra=log_record(module=mod))
             except Exception:
                 self.logger.exception("preemptive fix failed", extra=log_record(module=mod))
