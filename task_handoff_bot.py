@@ -185,7 +185,7 @@ class WorkflowDB(EmbeddableDBMixin):
         if row:
             rec = self._row_to_record(row)
             try:
-                self.add_embedding(workflow_id, rec, "workflow")
+                self.add_embedding(workflow_id, rec, "workflow", source_id=str(workflow_id))
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception(
                     "embedding hook failed for %s: %s", workflow_id, exc
@@ -208,7 +208,7 @@ class WorkflowDB(EmbeddableDBMixin):
             if row:
                 rec = self._row_to_record(row)
                 try:
-                    self.add_embedding(wid, rec, "workflow")
+                    self.add_embedding(wid, rec, "workflow", source_id=str(wid))
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding hook failed for %s: %s", wid, exc)
         if self.event_bus:
@@ -259,7 +259,7 @@ class WorkflowDB(EmbeddableDBMixin):
         wf.wid = cur.lastrowid
 
         try:
-            self.add_embedding(wf.wid, wf, "workflow")
+            self.add_embedding(wf.wid, wf, "workflow", source_id=str(wf.wid))
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
 

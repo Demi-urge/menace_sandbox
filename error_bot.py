@@ -379,7 +379,9 @@ class ErrorDB(EmbeddableDBMixin):
         found = self.find_error(message)
         if found is not None:
             try:
-                self.add_embedding(found, {"message": message}, kind="error")
+                self.add_embedding(
+                    found, {"message": message}, kind="error", source_id=str(found)
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
@@ -396,7 +398,9 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         err_id = int(cur.lastrowid)
         try:
-            self.add_embedding(err_id, {"message": message}, kind="error")
+            self.add_embedding(
+                err_id, {"message": message}, kind="error", source_id=str(err_id)
+            )
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", err_id, exc)
         self._publish(
