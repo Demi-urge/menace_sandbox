@@ -48,3 +48,10 @@ def test_cta_reset():
     mem.push_cta({"event": "reply"})
     mem.clear_cta_stack()
     assert mem.cta_stack == []
+
+
+def test_cta_expiration(monkeypatch):
+    mem = SalesConversationMemory(ttl=10)
+    mem.push_cta({"event": "step"}, timestamp=0)
+    monkeypatch.setattr(time, "time", lambda: 11)
+    assert mem.cta_stack == []

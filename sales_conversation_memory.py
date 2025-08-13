@@ -12,42 +12,62 @@ class SalesConversationMemory:
 
     def __init__(self, max_messages: int = 6, ttl: float = 60.0) -> None:
         self.ttl = ttl
-        # Store entries as (timestamp, {"role": role, "text": text})
+        # Store queue entries as ``(timestamp, {"role": role, "text": text})``
         self._messages: Deque[Tuple[float, Dict[str, str]]] = deque(
             maxlen=max_messages
         )
-        # Track a chain of call-to-action (CTA) events.
-        self.cta_stack: List[Dict[str, Any]] = []
+        # Track a chain of call-to-action (CTA) events with timestamps.
+        self._cta_stack: List[Tuple[float, Dict[str, Any]]] = []
 
-    def _purge(self, current_time: float | None = None) -> None:
+    def prune(
+        self, decay_seconds: float | None = None, current_time: float | None = None
+    ) -> None:
+        """Remove queue and stack entries older than ``decay_seconds``."""
+
         if current_time is None:
             current_time = time.time()
-        while self._messages and current_time - self._messages[0][0] > self.ttl:
+        window = decay_seconds if decay_seconds is not None else self.ttl
+        cutoff = current_time - window
+        while self._messages and self._messages[0][0] < cutoff:
             self._messages.popleft()
+        self._cta_stack = [s for s in self._cta_stack if s[0] >= cutoff]
 
     def add_message(
         self, text: str, role: str, timestamp: float | None = None
     ) -> None:
         ts = timestamp if timestamp is not None else time.time()
-        self._purge(ts)
+        self.prune(current_time=ts)
         self._messages.append((ts, {"text": text, "role": role}))
 
-    def push_cta(self, step: Dict[str, Any]) -> None:
+    def push_cta(self, step: Dict[str, Any], timestamp: float | None = None) -> None:
         """Push a CTA step onto the stack."""
-        self.cta_stack.append(step)
+
+        ts = timestamp if timestamp is not None else time.time()
+        self.prune(current_time=ts)
+        self._cta_stack.append((ts, step))
 
     def pop_cta(self) -> Dict[str, Any] | None:
         """Pop the most recent CTA step off the stack."""
-        if self.cta_stack:
-            return self.cta_stack.pop()
+
+        self.prune()
+        if self._cta_stack:
+            return self._cta_stack.pop()[1]
         return None
 
     def clear_cta_stack(self) -> None:
         """Clear the CTA stack, resolving or expiring the current chain."""
-        self.cta_stack.clear()
+
+        self._cta_stack.clear()
+
+    @property
+    def cta_stack(self) -> List[Dict[str, Any]]:
+        """Return CTA stack entries without timestamps."""
+
+        self.prune()
+        return [step for _, step in self._cta_stack]
 
     def get_recent(self) -> List[Dict[str, str]]:
-        self._purge()
+        self.prune()
         return [msg for _, msg in self._messages]
 
 
