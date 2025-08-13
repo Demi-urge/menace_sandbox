@@ -64,10 +64,13 @@ from orphan_analyzer import classify_module, analyze_redundancy
 import numpy as np
 import socket
 import contextlib
+import subprocess
 from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
+from .human_alignment_flagger import flag_alignment_risks
+from .audit_logger import log_event as audit_log_event
 
 logger = get_logger(__name__)
 
@@ -1046,7 +1049,9 @@ class SelfImprovementEngine:
                         self.logger.exception("alert dispatch failed for %s", name)
                 elif action == "patch":
                     try:
-                        generate_patch(name, self.self_coding_engine)
+                        patch_id = generate_patch(name, self.self_coding_engine)
+                        if patch_id is not None:
+                            self._alignment_review_last_commit(f"scenario_patch_{patch_id}")
                     except Exception:
                         self.logger.exception("patch generation failed for %s", name)
                 elif action == "rerun":
@@ -1058,6 +1063,46 @@ class SelfImprovementEngine:
         self._scenario_pass_rate = frac - 1.0
         self._last_scenario_trend = trend
         self._last_scenario_metrics = dict(metrics)
+
+    # ------------------------------------------------------------------
+    def _alignment_review_last_commit(self, description: str) -> None:
+        """Run alignment flagger on the most recent commit."""
+        try:
+            diff_proc = subprocess.run(
+                ["git", "show", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            patch = diff_proc.stdout
+            files_proc = subprocess.run(
+                ["git", "show", "--pretty=", "--name-only", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            files = [ln.strip() for ln in files_proc.stdout.splitlines() if ln.strip()]
+        except Exception:
+            return
+
+        warnings = flag_alignment_risks(patch, {"files": files})
+        if warnings:
+            try:
+                audit_log_event(
+                    "alignment_flag",
+                    {"description": description, "warnings": warnings, "files": files},
+                )
+            except Exception:
+                self.logger.exception("alignment audit log failed")
+            try:
+                dispatch_alert(
+                    "alignment_warning",
+                    2,
+                    "alignment warnings detected",
+                    {"description": description, "warnings": warnings},
+                )
+            except Exception:
+                self.logger.exception("alignment warning dispatch failed")
 
     # ------------------------------------------------------------------
     def _weighted_synergy_adjustment(self, window: int = 3) -> float:
@@ -1991,6 +2036,8 @@ class SelfImprovementEngine:
                 mutation["roi"] = after_metric
             self._last_mutation_id = int(mutation["event_id"])
             self._last_patch_id = patch_id
+            if patch_id is not None and not reverted:
+                self._alignment_review_last_commit(f"self_opt_patch_{patch_id}")
             if tracker:
                 try:
                     tracker.update(
@@ -3516,6 +3563,8 @@ class SelfImprovementEngine:
             )
             try:
                 patch_id = generate_patch(mod, self.self_coding_engine)
+                if patch_id is not None:
+                    self._alignment_review_last_commit(f"preventative_patch_{patch_id}")
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -3574,6 +3623,8 @@ class SelfImprovementEngine:
                 )
                 try:
                     patch_id = generate_patch(mod, self.self_coding_engine)
+                    if patch_id is not None:
+                        self._alignment_review_last_commit(f"high_risk_patch_{patch_id}")
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
                             self.error_bot.db.add_telemetry(
@@ -3907,6 +3958,8 @@ class SelfImprovementEngine:
                         mutation["roi"] = after_metric
                     self._last_mutation_id = int(mutation["event_id"])
                     self._last_patch_id = patch_id
+                    if patch_id is not None and not reverted:
+                        self._alignment_review_last_commit(f"helper_patch_{patch_id}")
                     if self.policy:
                         try:
                             self.logger.info(
