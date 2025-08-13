@@ -6,8 +6,12 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
-import os
 import logging
+
+try:  # pragma: no cover - support package and standalone usage
+    from config import get_config  # type: ignore
+except Exception:  # pragma: no cover - fallback to package import
+    from menace.config import get_config  # type: ignore
 
 try:
     import spacy  # type: ignore
@@ -122,7 +126,7 @@ class QueryBot:
         nlu: SimpleNLU | None = None,
     ) -> None:
         if client is None:
-            api_key = os.environ.get("OPENAI_API_KEY", "")
+            api_key = get_config().api_keys.openai
             client = ChatGPTClient(api_key)
         self.client = client
         self.fetcher = fetcher or DataFetcher()

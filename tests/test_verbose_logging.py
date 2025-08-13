@@ -1,21 +1,29 @@
 import logging
-import os
+import importlib
+
+import menace.config as config
+from menace.unified_event_bus import UnifiedEventBus
+
 
 def test_setup_logging_debug(monkeypatch):
-    monkeypatch.delenv("SANDBOX_CENTRAL_LOGGING", raising=False)
-    monkeypatch.setenv("SANDBOX_DEBUG", "1")
+    config.CONFIG = None
+    config._OVERRIDES = {"logging": {"verbosity": "DEBUG"}}
     import logging_utils as lu
-
-    lu.setup_logging()
-    assert logging.getLogger().level == logging.DEBUG
-
-
-def test_setup_logging_verbose_compat(monkeypatch):
-    monkeypatch.delenv("SANDBOX_CENTRAL_LOGGING", raising=False)
-    monkeypatch.setenv("SANDBOX_VERBOSE", "1")
-    import importlib, logging_utils as lu
-
     importlib.reload(lu)
     lu.setup_logging()
     assert logging.getLogger().level == logging.DEBUG
+
+
+def test_logging_updates_on_config_reload(monkeypatch):
+    bus = UnifiedEventBus()
+    config.set_event_bus(bus)
+    config.CONFIG = None
+    config._OVERRIDES = {"logging": {"verbosity": "INFO"}}
+    import logging_utils as lu
+    importlib.reload(lu)
+    lu.setup_logging()
+    assert logging.getLogger().level == logging.INFO
+    config._OVERRIDES = {"logging": {"verbosity": "ERROR"}}
+    config.reload()
+    assert logging.getLogger().level == logging.ERROR
 
