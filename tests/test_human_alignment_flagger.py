@@ -265,6 +265,22 @@ def test_flag_improvement_detects_removed_type_hints():
     )
 
 
+def test_flag_improvement_compares_baseline(tmp_path):
+    baseline = tmp_path / "baseline.yaml"
+    baseline.write_text("tests: 1\ncomplexity: 1\n")
+    settings = SandboxSettings(alignment_baseline_metrics_path=str(baseline))
+    code = "def f(x):\n    if x:\n        return x\n"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={"accuracy": 0.9},
+        logs=[],
+        settings=settings,
+    )
+    issues = [w.get("issue", "") for w in warnings["maintainability"]]
+    assert any("test count decreased" in issue for issue in issues)
+    assert any("complexity increased" in issue for issue in issues)
+
+
 # ---------------------------------------------------------------------------
 # flag_alignment_issues -----------------------------------------------------
 
