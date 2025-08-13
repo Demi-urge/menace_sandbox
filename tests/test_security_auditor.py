@@ -62,6 +62,8 @@ def test_alignment_review_agent_invokes_auditor(monkeypatch):
 
     agent._run()  # run the loop once per sequence entry
 
-    assert calls == [warn1, warn2, warn3]
+    assert "summary" in calls[0]
+    filtered = [c for c in calls if "summary" not in c]
+    assert filtered == [warn1, warn2, warn3]
 
 
