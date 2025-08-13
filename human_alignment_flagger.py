@@ -127,6 +127,22 @@ class HumanAlignmentFlagger:
         lines_added = 0
         lines_removed = 0
 
+        fs_mutation_calls = (
+            "os.remove(",
+            "os.unlink(",
+            "os.rename(",
+            "os.rmdir(",
+            "shutil.rmtree(",
+            "shutil.move(",
+            "shutil.copyfile(",
+        )
+        fs_open_write_re = re.compile(r"open\([^,]+,[^)]*['\"](?:w|a|x)['\"]")
+        abs_path_re = re.compile(r"['\"](/[^'\"]*)")
+        linter_suppress_re = re.compile(
+            r"#\s*(?:noqa|pylint:\s*disable|pragma:\s*no\s*cover)"
+        )
+        complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
+
         def _tier(severity: int) -> str:
             return "critical" if severity >= 3 else "warn" if severity >= 2 else "info"
 
@@ -214,6 +230,86 @@ class HumanAlignmentFlagger:
                     "tier": _tier(sev),
                     "message": f"Test assertion removed in {path}",
                 })
+
+            for line in added:
+                stripped = line.strip()
+                if any(tok in stripped for tok in ("exec(", "eval(", "compile(")):
+                    sev = 3
+                    issues.append(
+                        {
+                            "severity": sev,
+                            "tier": _tier(sev),
+                            "message": f"Dynamic execution in {path}: {stripped}",
+                        }
+                    )
+                if any(tok in stripped for tok in ("requests.", "urllib", "socket.")):
+                    sev = 3
+                    issues.append(
+                        {
+                            "severity": sev,
+                            "tier": _tier(sev),
+                            "message": f"Network call in {path}: {stripped}",
+                        }
+                    )
+                if (
+                    "subprocess.run" in stripped and "shell=True" in stripped
+                ) or "os.system(" in stripped:
+                    sev = 3
+                    issues.append(
+                        {
+                            "severity": sev,
+                            "tier": _tier(sev),
+                            "message": f"Unsafe subprocess call in {path}: {stripped}",
+                        }
+                    )
+                if fs_open_write_re.search(stripped) or any(
+                    call in stripped for call in fs_mutation_calls
+                ):
+                    match = abs_path_re.search(stripped)
+                    if match and "sandbox" not in match.group(1):
+                        sev = 3
+                        issues.append(
+                            {
+                                "severity": sev,
+                                "tier": _tier(sev),
+                                "message": f"Unsandboxed filesystem mutation in {path}: {stripped}",
+                            }
+                        )
+                if linter_suppress_re.search(stripped):
+                    sev = 2
+                    issues.append(
+                        {
+                            "severity": sev,
+                            "tier": _tier(sev),
+                            "message": f"Linter suppression in {path}: {stripped}",
+                        }
+                    )
+
+            for line in added:
+                if line.lstrip().startswith("def "):
+                    match = re.match(r"def\s+\w+\(([^)]*)\)\s*:\s*$", line.strip())
+                    if match:
+                        params = match.group(1)
+                        if ":" not in params or "->" not in line:
+                            sev = 1
+                            issues.append(
+                                {
+                                    "severity": sev,
+                                    "tier": _tier(sev),
+                                    "message": f"Missing type hints in {path}: {line.strip()}",
+                                }
+                            )
+
+            complexity = sum(line.count(tok) for line in added for tok in complexity_tokens)
+            if complexity > self.max_complexity:
+                sev = 2
+                issues.append(
+                    {
+                        "severity": sev,
+                        "tier": _tier(sev),
+                        "message": f"High cyclomatic complexity in {path}: score {complexity}",
+                    }
+                )
 
         # Ethics violations -------------------------------------------------
         ethics_entry = dict(context)
