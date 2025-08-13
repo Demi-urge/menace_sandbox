@@ -4,6 +4,7 @@ import types
 import importlib.util
 import builtins
 import pytest
+import json
 
 # Create a minimal fake 'menace' package with required submodules
 pkg = types.ModuleType("menace")
@@ -372,6 +373,61 @@ def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_p
 
     assert engine.cycle_logs and engine.cycle_logs[0]["patch_id"] == 1
     assert engine.cycle_logs[0]["score"] == engine.cycle_logs[0]["report"]["score"]
+
+
+def test_flag_patch_alignment_escalates_high_severity(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo_test.py b/foo_test.py\n"
+        "--- a/foo_test.py\n"
+        "+++ b/foo_test.py\n"
+        "@@ -1,5 +1 @@\n"
+        "-\"\"\"Doc\"\"\"\n"
+        "-import logging\n"
+        "-def test_something():\n"
+        "-    logging.info(\"hi\")\n"
+        "-    assert 1 == 1\n"
+        "+pass\n"
+    )
+    alerts: list[tuple[tuple, dict]] = []
+
+    def fake_alert(*a, **k):
+        alerts.append((a, k))
+
+    monkeypatch.setattr(sie, "dispatch_alert", fake_alert)
+    monkeypatch.setattr(sie.security_auditor, "dispatch_alignment_warning", lambda record: None)
+
+    class Bus:
+        def publish(self, topic, record):
+            pass
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=Bus(),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    assert alerts and alerts[0][0][0] == "alignment_review"
+    log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
+    data = json.loads(log_file.read_text().splitlines()[0])
+    assert data.get("escalated")
 
 
 def teardown_module(module):
