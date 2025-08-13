@@ -666,7 +666,7 @@ def test_alignment_review_agent_dispatches_quick_fix_warnings(monkeypatch, tmp_p
 
     agent._run()
 
-    assert dispatched and dispatched[0]["entry_id"] == "quick_fix_1"
+    assert dispatched and dispatched[1]["entry_id"] == "quick_fix_1"
 
 
 def teardown_module(module):
