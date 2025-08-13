@@ -619,6 +619,56 @@ def test_flag_patch_alignment_threshold_escalation(monkeypatch, tmp_path):
     assert alerts and alerts[0][0][0] == "alignment_review"
 
 
+def test_alignment_review_agent_dispatches_quick_fix_warnings(monkeypatch, tmp_path):
+    sie = _load_engine()
+    from menace import violation_logger, quick_fix_engine, security_auditor
+    import menace.alignment_review_agent as ara
+
+    monkeypatch.setattr(violation_logger, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        violation_logger, "LOG_PATH", str(tmp_path / "violations.jsonl")
+    )
+
+    def gen_patch(module, engine=None):
+        violation_logger.log_violation(
+            "quick_fix_1",
+            "alignment_warning",
+            2,
+            {"file": module},
+            alignment_warning=True,
+        )
+        return 1
+
+    monkeypatch.setattr(quick_fix_engine, "generate_patch", gen_patch)
+
+    quick_fix_engine.generate_patch("foo.py")
+
+    dispatched: list = []
+    monkeypatch.setattr(
+        security_auditor,
+        "dispatch_alignment_warning",
+        lambda record: dispatched.append(record),
+    )
+
+    agent = ara.AlignmentReviewAgent(
+        interval=0,
+        auditor=types.SimpleNamespace(
+            audit=security_auditor.dispatch_alignment_warning
+        ),
+    )
+
+    def fake_load(limit: int = 50):
+        warnings = violation_logger.load_recent_alignment_warnings(limit)
+        agent._stop.set()
+        return warnings
+
+    monkeypatch.setattr(ara, "load_recent_alignment_warnings", fake_load)
+
+    agent._run()
+
+    assert dispatched and dispatched[0]["entry_id"] == "quick_fix_1"
+
+
 def teardown_module(module):
     for name in list(sys.modules):
         if name.startswith("menace"):
