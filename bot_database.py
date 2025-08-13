@@ -8,13 +8,14 @@ import dataclasses
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Sequence
 from time import time
 
 from .auto_link import auto_link
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
+from .embeddable_db_mixin import EmbeddableDBMixin
 import warnings
 try:
     from .menace_db import MenaceDB
@@ -61,6 +62,9 @@ class BotRecord:
     dependencies: list[str] = field(default_factory=list)
     resources: Dict[str, Any] = field(default_factory=dict)
     hierarchy_level: str = ""
+    purpose: str = ""
+    tags: list[str] = field(default_factory=list)
+    toolchain: str = ""
     creation_date: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     last_modification_date: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     status: str = "active"
@@ -93,7 +97,7 @@ class FailedMenace:
     next_retry: float = field(default_factory=time)
 
 
-class BotDB:
+class BotDB(EmbeddableDBMixin):
     """SQLite database tracking bots and relationships."""
 
     MAX_RETRIES = 5
@@ -104,6 +108,9 @@ class BotDB:
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         menace_db: "MenaceDB" | None = None,
+        vector_backend: str = "annoy",
+        vector_index_path: Path | str = "bot_embeddings.index",
+        embedding_version: int = 1,
     ) -> None:
         db_path = path or os.getenv("BOT_DB_PATH", "bots.db")
         # make connection usable across threads for async tasks
@@ -112,6 +119,7 @@ class BotDB:
         self.menace_db = menace_db
         self.failed_events: list[FailedEvent] = []
         self.failed_menace: list[FailedMenace] = []
+        self.failed_embeddings: list[tuple[int, str]] = []
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
@@ -124,6 +132,9 @@ class BotDB:
                 dependencies TEXT,
                 resources TEXT,
                 hierarchy_level TEXT,
+                purpose TEXT,
+                tags TEXT,
+                toolchain TEXT,
                 creation_date TEXT,
                 last_modification_date TEXT,
                 status TEXT,
@@ -135,6 +146,12 @@ class BotDB:
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(bots)").fetchall()]
         if "hierarchy_level" not in cols:
             self.conn.execute("ALTER TABLE bots ADD COLUMN hierarchy_level TEXT")
+        if "purpose" not in cols:
+            self.conn.execute("ALTER TABLE bots ADD COLUMN purpose TEXT")
+        if "tags" not in cols:
+            self.conn.execute("ALTER TABLE bots ADD COLUMN tags TEXT")
+        if "toolchain" not in cols:
+            self.conn.execute("ALTER TABLE bots ADD COLUMN toolchain TEXT")
         if "version" not in cols:
             self.conn.execute("ALTER TABLE bots ADD COLUMN version TEXT")
         if "estimated_profit" not in cols:
@@ -153,6 +170,12 @@ class BotDB:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bots_type ON bots(type)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bots_status ON bots(status)")
         self.conn.commit()
+        EmbeddableDBMixin.__init__(
+            self,
+            vector_backend=vector_backend,
+            index_path=vector_index_path,
+            embedding_version=embedding_version,
+        )
 
     # basic helpers -----------------------------------------------------
     def find_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -204,8 +227,21 @@ class BotDB:
                     if item.attempt <= self.MAX_RETRIES:
                         item.next_retry = now + 2 ** (item.attempt - 1)
                         still_pending.append(item)
-                
+
             self.failed_menace = still_pending
+        if self.failed_embeddings:
+            remaining_emb: list[tuple[int, str]] = []
+            for bid, text in self.failed_embeddings:
+                emb = self._embed(text)
+                if emb is None:
+                    remaining_emb.append((bid, text))
+                    continue
+                try:
+                    self.add_embedding(bid, emb, metadata={"kind": "bot"})
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding retry failed for %s: %s", bid, exc)
+                    remaining_emb.append((bid, text))
+            self.failed_embeddings = remaining_emb
 
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
     def add_bot(
@@ -220,10 +256,10 @@ class BotDB:
             """
             INSERT INTO bots(
                 name, type, tasks, parent_id, dependencies,
-                resources, hierarchy_level,
+                resources, hierarchy_level, purpose, tags, toolchain,
                 creation_date, last_modification_date, status,
                 version, estimated_profit
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 rec.name,
@@ -233,6 +269,9 @@ class BotDB:
                 _serialize_list(rec.dependencies),
                 _safe_json_dumps(rec.resources),
                 rec.hierarchy_level,
+                rec.purpose,
+                _serialize_list(rec.tags),
+                rec.toolchain,
                 rec.creation_date,
                 rec.last_modification_date,
                 rec.status,
@@ -242,6 +281,19 @@ class BotDB:
         )
         rec.bid = int(cur.lastrowid)
         self.conn.commit()
+        emb_text = " ".join(
+            [rec.purpose, " ".join(rec.tags), rec.toolchain]
+        ).strip()
+        if emb_text:
+            emb = self._embed(emb_text)
+            if emb is not None:
+                try:
+                    self.add_embedding(rec.bid, emb, metadata={"kind": "bot"})
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed: %s", exc)
+                    self.failed_embeddings.append((rec.bid, emb_text))
+            else:
+                self.failed_embeddings.append((rec.bid, emb_text))
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -265,11 +317,66 @@ class BotDB:
         params = list(fields.values()) + [bot_id]
         self.conn.execute(f"UPDATE bots SET {sets} WHERE id=?", params)
         self.conn.commit()
+        if any(k in fields for k in ("purpose", "tags", "toolchain")):
+            row = self.conn.execute(
+                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
+                (bot_id,),
+            ).fetchone()
+            if row:
+                tag_list = _deserialize_list(row["tags"] or "")
+                emb_text = " ".join(
+                    [
+                        row["purpose"] or "",
+                        " ".join(tag_list),
+                        row["toolchain"] or "",
+                    ]
+                ).strip()
+                if emb_text:
+                    emb = self._embed(emb_text)
+                    if emb is not None:
+                        try:
+                            self.add_embedding(bot_id, emb, metadata={"kind": "bot"})
+                        except Exception as exc:  # pragma: no cover - best effort
+                            logger.exception("embedding store failed: %s", exc)
+                            self.failed_embeddings.append((bot_id, emb_text))
+                    else:
+                        self.failed_embeddings.append((bot_id, emb_text))
         if self.event_bus:
             payload = {"bot_id": bot_id, **fields}
             if not publish_with_retry(self.event_bus, "bot:update", payload):
                 logger.exception("failed to publish bot:update event")
                 self.failed_events.append(FailedEvent("bot:update", payload))
+
+    # embedding --------------------------------------------------------
+    def _embed(self, text: str) -> list[float] | None:
+        if not hasattr(self, "_embedder"):
+            try:  # pragma: no cover - optional dependency
+                from sentence_transformers import SentenceTransformer  # type: ignore
+            except Exception:
+                self._embedder = None
+            else:
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        if getattr(self, "_embedder", None):
+            try:
+                return self._embedder.encode([text])[0].tolist()
+            except Exception:  # pragma: no cover - runtime issues
+                return None
+        return None
+
+    def search_by_vector(
+        self, vector: Sequence[float], top_k: int = 5
+    ) -> list[Dict[str, Any]]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: list[Dict[str, Any]] = []
+        for rec_id, dist in matches:
+            row = self.conn.execute(
+                "SELECT * FROM bots WHERE id=?", (rec_id,)
+            ).fetchone()
+            if row:
+                rec = dict(row)
+                rec["_distance"] = dist
+                results.append(rec)
+        return results
 
     # linking -----------------------------------------------------------
     def link_model(self, bot_id: int, model_id: int) -> None:

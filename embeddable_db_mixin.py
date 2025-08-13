@@ -170,16 +170,25 @@ class EmbeddableDBMixin:
         self._ensure_index(len(vector))
         if self._vector_index is None:
             return
-        idx = len(self._id_map)
         if self.vector_backend == "faiss":
             import numpy as np  # type: ignore
 
             self._vector_index.add(np.array([vector], dtype="float32"))
+            self._id_map.append(record_id)
+            self._save_index()
         else:
-            self._vector_index.add_item(idx, list(vector))
+            from annoy import AnnoyIndex  # type: ignore
+
+            self._vector_index = AnnoyIndex(len(vector), "angular")
+            cur = self.conn.execute(
+                "SELECT record_id, vector FROM embeddings ORDER BY rowid"
+            )
+            self._id_map = []
+            for i, (rid, vec_json) in enumerate(cur.fetchall()):
+                self._vector_index.add_item(i, json.loads(vec_json))
+                self._id_map.append(rid)
             self._vector_index.build(10)
-        self._id_map.append(record_id)
-        self._save_index()
+            self._save_index()
 
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 5
