@@ -83,6 +83,7 @@ from .human_alignment_flagger import (
 )
 from .audit_logger import log_event as audit_log_event
 from .violation_logger import log_violation
+from .alignment_review_agent import AlignmentReviewAgent
 
 logger = get_logger(__name__)
 
@@ -552,6 +553,7 @@ class SelfImprovementEngine:
         err_bot = ErrorBot(ErrorDB(), MetricsDB())
         self.error_bot = err_bot
         self.diagnostics = diagnostics or DiagnosticManager(MetricsDB(), err_bot)
+        self._alignment_agent: AlignmentReviewAgent | None = None
         self.last_run = 0.0
         self.capital_bot = capital_bot
         self.energy_threshold = energy_threshold
@@ -4337,6 +4339,12 @@ class SelfImprovementEngine:
                 except Exception as exc:
                     self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
+            if self._alignment_agent is None:
+                try:
+                    self._alignment_agent = AlignmentReviewAgent()
+                    self._alignment_agent.start()
+                except Exception:
+                    self.logger.exception("alignment review agent failed to start")
             delta = after_roi - before_roi
             warnings: dict[str, list[dict[str, Any]]] = {}
             if delta > 0:
