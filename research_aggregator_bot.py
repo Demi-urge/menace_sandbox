@@ -190,6 +190,7 @@ class InfoDB(EmbeddableDBMixin):
             index_path=vector_index_path,
             metadata_path=meta_path,
             embedding_version=embedding_version,
+            backend=vector_backend,
         )
 
     def set_current_model(self, model_id: int) -> None:

@@ -128,6 +128,7 @@ class WorkflowDB(EmbeddableDBMixin):
             self,
             index_path=vector_index_path,
             embedding_version=embedding_version,
+            backend=vector_backend,
         )
 
     # --------------------------------------------------------------

@@ -43,6 +43,7 @@ class InformationDB(EmbeddableDBMixin):
         *,
         vector_index_path: str = "information_embeddings.index",
         embedding_version: int = 1,
+        vector_backend: str = "annoy",
     ) -> None:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -68,6 +69,7 @@ class InformationDB(EmbeddableDBMixin):
             index_path=vector_index_path,
             metadata_path=meta_path,
             embedding_version=embedding_version,
+            backend=vector_backend,
         )
 
     # ------------------------------------------------------------------

@@ -234,6 +234,7 @@ class ErrorDB(EmbeddableDBMixin):
             index_path=vector_index_path,
             metadata_path=Path(vector_index_path).with_suffix(".json"),
             embedding_version=embedding_version,
+            backend=vector_backend,
         )
 
     def _publish(self, topic: str, payload: object) -> None:
