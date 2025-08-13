@@ -245,6 +245,77 @@ def test_load_corrupted_weights_logs_warning(tmp_path, caplog):
     assert "failed to load synergy weights" in caplog.text
 
 
+def test_flag_improvement_logs_violation(monkeypatch, tmp_path):
+    sie = _load_engine()
+    from menace import violation_logger as vl
+
+    log_path = tmp_path / "violation_log.jsonl"
+    monkeypatch.setattr(vl, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(vl, "LOG_PATH", str(log_path))
+
+    code = "import subprocess\nsubprocess.run('ls', shell=True)"
+    warnings = sie.flag_improvement(
+        workflow_changes=[{"file": "workflow.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    engine = types.SimpleNamespace(_cycle_count=0)
+    sie.SelfImprovementEngine._log_improvement_warnings(engine, warnings)
+
+    data = json.loads(log_path.read_text().splitlines()[0])
+    assert data["evidence"]["file"] == "workflow.py"
+    assert "subprocess.run" in data["evidence"].get("snippet", "")
+
+
+def test_flag_patch_alignment_logs_violation(monkeypatch, tmp_path):
+    sie = _load_engine()
+    from menace import violation_logger as vl
+
+    log_path = tmp_path / "violation_log.jsonl"
+    monkeypatch.setattr(vl, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(vl, "LOG_PATH", str(log_path))
+
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+
+    class Bus:
+        def publish(self, topic, record):
+            pass
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=Bus(),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    data = json.loads(log_path.read_text().splitlines()[0])
+    assert data["evidence"]["file"] == "foo.py"
+    assert "Logging removed" in data["evidence"].get("snippet", "")
+
+
 def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
     sie = _load_engine()
     diff = (
