@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import subprocess
+import shutil
+import tempfile
 from typing import Tuple, Iterable
 
 from .error_cluster_predictor import ErrorClusterPredictor
@@ -12,6 +14,9 @@ from .error_cluster_predictor import ErrorClusterPredictor
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
+from .human_alignment_flagger import _collect_diff_data
+from .human_alignment_agent import HumanAlignmentAgent
+from .violation_logger import log_violation
 
 
 def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int | None:
@@ -48,17 +53,42 @@ def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int
 
     try:
         patch_id: int | None
-        try:
-            patch_id, _, _ = engine.apply_patch(
-                path,
-                "preemptive_fix",
-                reason="preemptive_fix",
-                trigger="quick_fix_engine",
-            )
-        except AttributeError:
-            engine.patch_file(path, "preemptive_fix")
-            patch_id = None
-        return patch_id
+        with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+            rel = path.name if path.is_absolute() else path
+            before_target = Path(before_dir) / rel
+            before_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, before_target)
+            try:
+                patch_id, _, _ = engine.apply_patch(
+                    path,
+                    "preemptive_fix",
+                    reason="preemptive_fix",
+                    trigger="quick_fix_engine",
+                )
+            except AttributeError:
+                engine.patch_file(path, "preemptive_fix")
+                patch_id = None
+            after_target = Path(after_dir) / rel
+            after_target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, after_target)
+            diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+            workflow_changes = [
+                {"file": f, "code": "\n".join(d["added"])}
+                for f, d in diff_data.items()
+                if d["added"]
+            ]
+            if workflow_changes:
+                agent = HumanAlignmentAgent()
+                warnings = agent.evaluate_changes(workflow_changes, None, [])
+                if any(warnings.values()):
+                    log_violation(
+                        str(patch_id) if patch_id is not None else str(path),
+                        "alignment_warning",
+                        1,
+                        {"warnings": warnings},
+                        alignment_warning=True,
+                    )
+            return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", module, exc)
         return None
