@@ -1,5 +1,4 @@
 import time
-
 import pytest
 
 from menace import config
@@ -20,10 +19,7 @@ class DummyBus:
 
 def test_watcher_triggers_reload(tmp_path, monkeypatch):
     # Ensure no watcher is running from previous tests
-    if config._WATCHER is not None:
-        config._WATCHER.stop()
-        config._WATCHER.join()
-        config._WATCHER = None
+    config.shutdown()
 
     settings = tmp_path / "settings.yaml"
     profile = tmp_path / "dev.yaml"
@@ -57,11 +53,9 @@ bot:
     config._CONFIG_PATH = None
     config._OVERRIDES = {}
     config.CONFIG = None
-    config._WATCHER_ENABLED = True
-
     bus = DummyBus()
     config.set_event_bus(bus)
-    config.get_config()
+    config.get_config(watch=True)
 
     profile.write_text("logging:\n  verbosity: INFO\n", encoding="utf-8")
 
@@ -74,8 +68,5 @@ bot:
     assert any(topic == "config.reload" for topic, _ in bus.events)
 
     # cleanup watcher
-    if config._WATCHER is not None:
-        config._WATCHER.stop()
-        config._WATCHER.join()
-        config._WATCHER = None
+    config.shutdown()
     config.set_event_bus(None)
