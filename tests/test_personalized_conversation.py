@@ -1,5 +1,3 @@
-import pytest
-pytest.skip("optional dependencies not installed", allow_module_level=True)
 import menace.personalized_conversation as pc
 
 
@@ -15,3 +13,9 @@ def test_modes():
     bot.set_mode("formal")
     text = bot.ask("hi")
     assert not text.endswith("!)")
+
+
+def test_resistance_shifts_mode():
+    bot = pc.PersonalizedConversationManager(StubClient(), mode="casual")
+    bot.ask("no thanks")
+    assert bot.mode == "formal"
