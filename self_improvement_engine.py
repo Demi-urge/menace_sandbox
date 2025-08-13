@@ -1136,7 +1136,24 @@ class SelfImprovementEngine:
                             before_target = Path(before_dir) / rel
                             before_target.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(src, before_target)
+                            self.logger.info(
+                                "gpt_suggestion",
+                                extra=log_record(
+                                    module=name,
+                                    suggestion="scenario_patch",
+                                    tags=["fix_attempt"],
+                                ),
+                            )
                             patch_id = generate_patch(name, self.self_coding_engine)
+                            self.logger.info(
+                                "patch result",
+                                extra=log_record(
+                                    module=name,
+                                    patch_id=patch_id,
+                                    success=patch_id is not None,
+                                    tags=["fix_result"],
+                                ),
+                            )
                             if patch_id is not None:
                                 after_target = Path(after_dir) / rel
                                 after_target.parent.mkdir(parents=True, exist_ok=True)
@@ -3884,7 +3901,24 @@ class SelfImprovementEngine:
                     before_target = Path(before_dir) / rel
                     before_target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src, before_target)
+                    self.logger.info(
+                        "gpt_suggestion",
+                        extra=log_record(
+                            module=mod,
+                            suggestion="preventative_patch",
+                            tags=["fix_attempt"],
+                        ),
+                    )
                     patch_id = generate_patch(mod, self.self_coding_engine)
+                    self.logger.info(
+                        "patch result",
+                        extra=log_record(
+                            module=mod,
+                            patch_id=patch_id,
+                            success=patch_id is not None,
+                            tags=["fix_result"],
+                        ),
+                    )
                     if patch_id is not None:
                         after_target = Path(after_dir) / rel
                         after_target.parent.mkdir(parents=True, exist_ok=True)
@@ -3977,7 +4011,24 @@ class SelfImprovementEngine:
                         before_target = Path(before_dir) / rel
                         before_target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, before_target)
+                        self.logger.info(
+                            "gpt_suggestion",
+                            extra=log_record(
+                                module=mod,
+                                suggestion="high_risk_patch",
+                                tags=["fix_attempt"],
+                            ),
+                        )
                         patch_id = generate_patch(mod, self.self_coding_engine)
+                        self.logger.info(
+                            "patch result",
+                            extra=log_record(
+                                module=mod,
+                                patch_id=patch_id,
+                                success=patch_id is not None,
+                                tags=["fix_result"],
+                            ),
+                        )
                         if patch_id is not None:
                             after_target = Path(after_dir) / rel
                             after_target.parent.mkdir(parents=True, exist_ok=True)
