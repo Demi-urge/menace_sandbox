@@ -2,11 +2,25 @@ from __future__ import annotations
 
 """Background agent that forwards alignment warnings to the security auditor."""
 
+import argparse
 import logging
 import threading
+from typing import Any, List, Dict
 
-from .violation_logger import load_recent_alignment_warnings
+from .violation_logger import (
+    load_persisted_alignment_warnings,
+    mark_warning_approved,
+    mark_warning_pending,
+    mark_warning_rejected,
+    update_warning_status,
+)
 from .security_auditor import SecurityAuditor
+
+
+def load_recent_alignment_warnings() -> List[Dict[str, Any]]:
+    """Return pending alignment warnings (compatibility wrapper)."""
+
+    return load_persisted_alignment_warnings(review_status="pending")
 
 
 class AlignmentReviewAgent:
@@ -59,6 +73,37 @@ class AlignmentReviewAgent:
                 self.logger.exception("alignment review loop failed")
             self._stop.wait(self.interval)
 
+    # ------------------------------------------------------------------
+    def set_review_status(self, entry_id: str, status: str) -> None:
+        """Update the review status for a warning."""
 
-__all__ = ["AlignmentReviewAgent"]
+        update_warning_status(entry_id, status)
+
+
+def review_warning(entry_id: str, status: str) -> None:
+    """Utility for marking the review decision of a warning."""
+
+    if status == "approved":
+        mark_warning_approved(entry_id)
+    elif status == "rejected":
+        mark_warning_rejected(entry_id)
+    else:
+        mark_warning_pending(entry_id)
+
+
+def _cli() -> None:
+    parser = argparse.ArgumentParser(
+        description="Record review decision for an alignment warning"
+    )
+    parser.add_argument("entry_id")
+    parser.add_argument("status", choices=["pending", "approved", "rejected"])
+    args = parser.parse_args()
+    review_warning(args.entry_id, args.status)
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI utility
+    _cli()
+
+
+__all__ = ["AlignmentReviewAgent", "review_warning", "load_recent_alignment_warnings"]
 
