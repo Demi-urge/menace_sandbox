@@ -84,6 +84,14 @@ def test_obfuscation_triggers_opacity(obfuscation_patch):
     assert any("Opacity" in issue["message"] for issue in report["issues"])
 
 
+def test_report_includes_score_and_tiers(unsafe_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(unsafe_patch, {})
+    assert report["score"] == 2
+    assert report["tiers"].get("warn", 0) >= 1
+    assert all("tier" in issue for issue in report["issues"])
+
+
 def test_forbidden_keyword_in_code_improvement_triggers_warning():
     code = "def introduce_reward_hack():\n    return 'auto_reward'\n"
     warnings = haf.flag_improvement(
