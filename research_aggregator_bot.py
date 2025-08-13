@@ -444,21 +444,6 @@ class InfoDB(EmbeddableDBMixin):
 
         return " ".join(self._flatten_fields(data))
 
-    def _embed(self, text: str) -> list[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:
-                self._embedder = None
-            else:
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:  # pragma: no cover - runtime issues
-                return self._embedder.encode([text])[0].tolist()
-            except Exception:
-                return None
-        return None
-
     def vector(self, rec: Any) -> list[float] | None:
         """Return an embedding for ``rec`` or a stored record id."""
 
@@ -466,7 +451,7 @@ class InfoDB(EmbeddableDBMixin):
             return getattr(self, "_metadata", {}).get(str(rec), {}).get("vector")
 
         text = self._embed_text(rec)
-        return self._embed(text) if text else None
+        return self.encode_text(text) if text else None
 
     def search_by_vector(
         self, vector: Iterable[float], top_k: int = 5

@@ -111,21 +111,6 @@ class InformationDB(EmbeddableDBMixin):
             }
         return " ".join(self._flatten_fields(data))
 
-    def _embed(self, text: str) -> List[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:
-                self._embedder = None
-            else:
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:  # pragma: no cover - runtime issues
-                return self._embedder.encode([text])[0].tolist()
-            except Exception:
-                return None
-        return None
-
     # ------------------------------------------------------------------
     def add(self, rec: InformationRecord) -> int:
         keywords = _serialize_keywords(rec.keywords)
@@ -213,7 +198,7 @@ class InformationDB(EmbeddableDBMixin):
         if isinstance(rec, (int, str)):
             return EmbeddableDBMixin.vector(self, rec)
         text = self._embed_text(rec)
-        return self._embed(text) if text else None
+        return self.encode_text(text) if text else None
 
     def search_by_vector(self, vector: Sequence[float], top_k: int = 5) -> List[dict[str, Any]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
