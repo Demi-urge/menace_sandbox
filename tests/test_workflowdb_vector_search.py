@@ -1,13 +1,18 @@
 from types import MethodType
 
+import pytest
+
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 
 
-def test_workflow_vector_search(tmp_path):
+@pytest.mark.parametrize("backend", ["annoy", "faiss"])
+def test_workflow_vector_search(tmp_path, backend):
+    if backend == "faiss":
+        pytest.importorskip("faiss")
     db = WorkflowDB(
         path=tmp_path / "wf.db",
-        vector_backend="annoy",
-        vector_index_path=tmp_path / "wf.index",
+        vector_backend=backend,
+        vector_index_path=tmp_path / f"wf.{backend}.index",
     )
 
     captured: list[str] = []

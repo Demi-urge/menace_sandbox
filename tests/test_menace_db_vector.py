@@ -1,36 +1,25 @@
-import json
+import sqlite3
 import pytest
 
-pytest.importorskip("sqlalchemy")
-
-from menace.databases import MenaceDB
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 
 
-def test_query_vector(tmp_path):
-    db = MenaceDB(url=f"sqlite:///{tmp_path / 'm.db'}")
-    with db.engine.begin() as conn:
-        conn.execute(
-            db.memory_embeddings.insert().values(
-                id=1,
-                key="k1",
-                data="hello",
-                version=1,
-                tags="",
-                ts="t",
-                embedding=json.dumps([1.0, 0.0]),
-            )
-        )
-        conn.execute(
-            db.memory_embeddings.insert().values(
-                id=2,
-                key="k2",
-                data="world",
-                version=1,
-                tags="",
-                ts="t",
-                embedding=json.dumps([0.0, 1.0]),
-            )
-        )
-    res = db.query_vector([1.0, 0.0], limit=1)
-    assert res and res[0]["key"] == "k1"
+class _MemoryDB(EmbeddableDBMixin):
+    def __init__(self, path, backend, index_path):
+        self.conn = sqlite3.connect(path)
+        self.conn.row_factory = sqlite3.Row
+        EmbeddableDBMixin.__init__(self, vector_backend=backend, index_path=index_path)
+
+
+@pytest.mark.parametrize("backend", ["annoy", "faiss"])
+def test_search_by_vector(tmp_path, backend):
+    if backend == "faiss":
+        pytest.importorskip("faiss")
+    db = _MemoryDB(tmp_path / "mem.db", backend, tmp_path / f"mem.{backend}.index")
+    db.add_embedding("a", [1.0, 0.0])
+    db.add_embedding("b", [0.0, 1.0])
+    r1 = db.search_by_vector([1.0, 0.0], top_k=1)
+    assert r1 and r1[0][0] == "a"
+    r2 = db.search_by_vector([0.0, 1.0], top_k=1)
+    assert r2 and r2[0][0] == "b"
 

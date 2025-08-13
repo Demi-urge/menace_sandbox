@@ -31,7 +31,8 @@ class EmbeddableDBMixin:
         embedding_version: int = 1,
         table_name: str = "embeddings",
     ) -> None:
-        self.vector_backend = vector_backend if vector_backend in {"faiss", "annoy"} else "annoy"
+        requested = vector_backend if vector_backend in {"faiss", "annoy"} else "annoy"
+        self.vector_backend = self._select_backend(requested)
         self.index_path = Path(index_path)
         self.embedding_version = embedding_version
         self.embeddings_table = table_name
@@ -57,8 +58,33 @@ class EmbeddableDBMixin:
 
     # ------------------------------------------------------------------
     # internal helpers
+    def _select_backend(self, requested: str) -> str:
+        """Return an available backend, falling back if necessary."""
+        available: list[str] = []
+        try:  # pragma: no cover - optional dependency
+            import faiss  # type: ignore
+        except Exception:
+            pass
+        else:
+            available.append("faiss")
+        try:  # pragma: no cover - optional dependency
+            from annoy import AnnoyIndex  # type: ignore
+        except Exception:
+            pass
+        else:
+            available.append("annoy")
+        if requested in available:
+            return requested
+        if available:
+            logger.warning("%s backend unavailable, falling back to %s", requested, available[0])
+            return available[0]
+        logger.warning("No vector backend available; similarity search disabled.")
+        return ""
+
     def _load_index(self) -> None:
         """Load existing index and id map from disk if available."""
+        if self.vector_backend not in {"faiss", "annoy"}:
+            return
         if self._id_map_path.exists():
             try:
                 self._id_map = json.loads(self._id_map_path.read_text())
@@ -92,6 +118,8 @@ class EmbeddableDBMixin:
                 self._vector_index.load(str(self.index_path))
 
     def _ensure_index(self, dim: int) -> None:
+        if self.vector_backend not in {"faiss", "annoy"}:
+            return
         if self._vector_index is not None:
             return
         self._vector_dim = dim
@@ -111,7 +139,7 @@ class EmbeddableDBMixin:
             self._vector_index = AnnoyIndex(dim, "angular")
 
     def _save_index(self) -> None:
-        if self._vector_index is None:
+        if self._vector_index is None or self.vector_backend not in {"faiss", "annoy"}:
             return
         if self.vector_backend == "faiss":
             try:  # pragma: no cover - optional dependency

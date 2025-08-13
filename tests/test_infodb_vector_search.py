@@ -27,13 +27,17 @@ for name, attrs in mods.items():
     sys.modules.setdefault(name, module)
 
 import menace.research_aggregator_bot as rab
+import pytest
 
 
-def test_infodb_vector_search(tmp_path):
+@pytest.mark.parametrize("backend", ["annoy", "faiss"])
+def test_infodb_vector_search(tmp_path, backend):
+    if backend == "faiss":
+        pytest.importorskip("faiss")
     db = rab.InfoDB(
         tmp_path / "i.db",
-        vector_backend="annoy",
-        vector_index_path=tmp_path / "i.index",
+        vector_backend=backend,
+        vector_index_path=tmp_path / f"i.{backend}.index",
     )
 
     captured: list[str] = []
@@ -56,7 +60,7 @@ def test_infodb_vector_search(tmp_path):
         timestamp=time.time(),
     )
     db.add(item)
-    assert captured and "tags:t1" in captured[0] and "associated_bots:bot" in captured[0]
+    assert captured and "tags=t1" in captured[0] and "associated_bots=bot" in captured[0]
 
     res1 = db.search_by_vector([1.0, 0.0], top_k=1)
     assert res1 and res1[0].topic == "Topic"

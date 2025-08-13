@@ -1,14 +1,19 @@
 from types import MethodType
 
+import pytest
+
 from menace.error_bot import ErrorDB
 from menace.error_logger import TelemetryEvent
 
 
-def test_errordb_vector_search(tmp_path):
+@pytest.mark.parametrize("backend", ["annoy", "faiss"])
+def test_errordb_vector_search(tmp_path, backend):
+    if backend == "faiss":
+        pytest.importorskip("faiss")
     db = ErrorDB(
         path=tmp_path / "e.db",
-        vector_backend="annoy",
-        vector_index_path=tmp_path / "e.index",
+        vector_backend=backend,
+        vector_index_path=tmp_path / f"e.{backend}.index",
     )
 
     captured: list[str] = []
