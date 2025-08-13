@@ -57,6 +57,8 @@ class WorkflowRecord:
     """Stored workflow broken down from a plan."""
 
     workflow: List[str]
+    action_chains: List[str] = field(default_factory=list)
+    argument_strings: List[str] = field(default_factory=list)
     assigned_bots: List[str] = field(default_factory=list)
     enhancements: List[str] = field(default_factory=list)
     title: str = ""
@@ -96,6 +98,8 @@ class WorkflowDB(EmbeddableDBMixin):
             CREATE TABLE IF NOT EXISTS workflows(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 workflow TEXT,
+                action_chains TEXT,
+                argument_strings TEXT,
                 assigned_bots TEXT,
                 enhancements TEXT,
                 title TEXT,
@@ -113,6 +117,11 @@ class WorkflowDB(EmbeddableDBMixin):
             )
             """,
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(workflows)").fetchall()]
+        if "action_chains" not in cols:
+            self.conn.execute("ALTER TABLE workflows ADD COLUMN action_chains TEXT")
+        if "argument_strings" not in cols:
+            self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
         self.conn.commit()
         EmbeddableDBMixin.__init__(
             self,
@@ -126,6 +135,8 @@ class WorkflowDB(EmbeddableDBMixin):
     def _row_to_record(self, row: sqlite3.Row) -> WorkflowRecord:
         return WorkflowRecord(
             workflow=row["workflow"].split(",") if row["workflow"] else [],
+            action_chains=row["action_chains"].split(",") if row["action_chains"] else [],
+            argument_strings=row["argument_strings"].split(",") if row["argument_strings"] else [],
             assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
             enhancements=row["enhancements"].split(",") if row["enhancements"] else [],
             title=row["title"] or "",
@@ -147,6 +158,8 @@ class WorkflowDB(EmbeddableDBMixin):
         parts = [
             " ".join(rec.workflow),
             " ".join(rec.task_sequence),
+            " ".join(rec.action_chains),
+            " ".join(rec.argument_strings),
             " ".join(rec.assigned_bots),
             " ".join(rec.enhancements),
             rec.title,
@@ -229,13 +242,15 @@ class WorkflowDB(EmbeddableDBMixin):
         cur = self.conn.execute(
             """
             INSERT INTO workflows(
-                workflow, assigned_bots, enhancements, title, description,
+                workflow, action_chains, argument_strings, assigned_bots, enhancements, title, description,
                 task_sequence, tags, category, type, status,
                 rejection_reason, workflow_duration, performance_data, estimated_profit_per_bot, timestamp
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 ",".join(wf.workflow),
+                ",".join(wf.action_chains),
+                ",".join(wf.argument_strings),
                 ",".join(wf.assigned_bots),
                 ",".join(wf.enhancements),
                 wf.title,
