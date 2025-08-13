@@ -1,13 +1,18 @@
 from types import MethodType
 
+import pytest
+
 from menace.bot_database import BotDB, BotRecord
 
 
-def test_vector_search(tmp_path):
+@pytest.mark.parametrize("backend", ["annoy", "faiss"])
+def test_vector_search(tmp_path, backend):
+    if backend == "faiss":
+        pytest.importorskip("faiss")
     db = BotDB(
         path=tmp_path / "b.db",
-        vector_backend="annoy",
-        vector_index_path=tmp_path / "b.index",
+        vector_backend=backend,
+        vector_index_path=tmp_path / f"b.{backend}.index",
     )
 
     captured: list[str] = []

@@ -59,6 +59,7 @@ dependencies = [
     ,"sentence-transformers"
     ,"hdbscan"
     ,"annoy"
+    ,"faiss-cpu"
     ,"libcst"
     ,"kafka-python"
     ,"pyspark"

@@ -152,6 +152,20 @@ See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching
 Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.
 Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md).
 
+### Embedding lifecycle
+
+Databases such as `BotDB`, `WorkflowDB`, `ErrorDB`, `EnhancementDB` and
+`InfoDB` subclass `EmbeddableDBMixin` to persist and query vector
+embeddings.  When a record is added or updated the mixin's
+``try_add_embedding`` helper stores the vector in a dedicated
+``<table>_embeddings`` table together with metadata like
+``created_at`` and ``embedding_version``.  The mixin builds a FAISS or
+Annoy index (falling back to whichever backend is available) and saves
+it to ``vector_index_path`` so subsequent calls to
+``search_by_vector`` can efficiently return similar records.  Updating
+the embedding version automatically refreshes stored vectors and
+rebuilds the index as needed.
+
 ### Orphan discovery helpers
 
 See [docs/recursive_orphan_workflow.md](docs/recursive_orphan_workflow.md) for a
