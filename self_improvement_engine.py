@@ -80,6 +80,7 @@ from .human_alignment_flagger import (
     flag_alignment_issues,
     _collect_diff_data,
 )
+from .human_alignment_agent import HumanAlignmentAgent
 from .audit_logger import log_event as audit_log_event
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
@@ -4440,10 +4441,10 @@ class SelfImprovementEngine:
                 try:
                     metrics = result.roi.__dict__ if result.roi else None
                     settings = SandboxSettings()
-                    warnings = flag_improvement(actions, metrics, None, settings=settings)
+                    agent = HumanAlignmentAgent(settings=settings)
+                    warnings = agent.evaluate_changes(actions, metrics, None)
                     if any(warnings.values()):
                         result.warnings = warnings
-                        self._log_improvement_warnings(warnings)
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
             self.logger.info(
