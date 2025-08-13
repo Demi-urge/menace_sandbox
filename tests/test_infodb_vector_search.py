@@ -31,9 +31,10 @@ import pytest
 
 
 @pytest.mark.parametrize("backend", ["annoy", "faiss"])
-def test_infodb_vector_search(tmp_path, backend):
+def test_embedding_workflow(tmp_path, backend):
     if backend == "faiss":
         pytest.importorskip("faiss")
+        pytest.importorskip("numpy")
     db = rab.InfoDB(
         tmp_path / "i.db",
         vector_backend=backend,
@@ -46,9 +47,9 @@ def test_infodb_vector_search(tmp_path, backend):
         captured.append(text)
         if "first" in text:
             return [1.0, 0.0]
-        if "updated" in text:
+        if "second" in text:
             return [0.0, 1.0]
-        return [0.5, 0.5]
+        return [1.0, 1.0]
 
     db._embed = MethodType(fake_embed, db)
 
@@ -60,13 +61,21 @@ def test_infodb_vector_search(tmp_path, backend):
         timestamp=time.time(),
     )
     db.add(item)
+    assert str(item.item_id) in db._metadata
     assert captured and "tags=t1" in captured[0] and "associated_bots=bot" in captured[0]
 
     res1 = db.search_by_vector([1.0, 0.0], top_k=1)
     assert res1 and res1[0].topic == "Topic"
 
-    db.update(item.item_id, content="updated")
-    assert len(captured) == 2 and "updated" in captured[1]
-
+    # insert record without embedding and backfill
+    db.conn.execute(
+        "INSERT INTO info(title, tags, content, timestamp) VALUES (?,?,?,?)",
+        ("Second", "t2", "second", time.time()),
+    )
+    db.conn.commit()
+    new_id = db.conn.execute("SELECT id FROM info WHERE title='Second'").fetchone()[0]
+    assert str(new_id) not in db._metadata
+    db.backfill_embeddings()
+    assert str(new_id) in db._metadata
     res2 = db.search_by_vector([0.0, 1.0], top_k=1)
-    assert res2 and res2[0].content == "updated"
+    assert res2 and res2[0].title == "Second"
