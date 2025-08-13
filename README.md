@@ -17,6 +17,10 @@
 - Atomic write mirroring with `TransactionManager`
 - Remote database replication via `DatabaseRouter(remote_url=...)`
 - Change Data Capture events published to `UnifiedEventBus`
+- Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
+  errors, enhancements and research items. Each database stores its own
+  embedding fields and can use either a FAISS or Annoy backend for
+  similarity queries.
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
