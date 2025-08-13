@@ -304,6 +304,34 @@ class EnhancementDB(EmbeddableDBMixin):
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", enhancement_id)
 
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Generate embeddings for enhancement records missing vectors."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT id, before_code, after_code, summary FROM enhancements "
+                "WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                text = "\n".join(
+                    p for p in [row["before_code"], row["after_code"], row["summary"]] if p
+                )
+                if not text:
+                    continue
+                emb = self._embed(text)
+                if emb is None:
+                    continue
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "enhancement", "source_id": row["id"]},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for %s", row["id"])
+
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:
             with self._connect() as conn:

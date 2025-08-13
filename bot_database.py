@@ -359,6 +359,37 @@ class BotDB(EmbeddableDBMixin):
                 logger.exception("failed to publish bot:update event")
                 self.failed_events.append(FailedEvent("bot:update", payload))
 
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Generate embeddings for legacy bot records lacking them."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT id, purpose, tags, toolchain FROM bots "
+                "WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                tag_list = _deserialize_list(row["tags"] or "")
+                emb_text = " ".join(
+                    [row["purpose"] or "", " ".join(tag_list), row["toolchain"] or ""]
+                ).strip()
+                if not emb_text:
+                    continue
+                emb = self._embed(emb_text)
+                if emb is None:
+                    self.failed_embeddings.append((row["id"], emb_text))
+                    continue
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "bot", "source_id": row["id"]},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed: %s", exc)
+                    self.failed_embeddings.append((row["id"], emb_text))
+
     # embedding --------------------------------------------------------
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):

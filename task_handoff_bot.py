@@ -288,6 +288,29 @@ class WorkflowDB(EmbeddableDBMixin):
             results.append(self._row_to_record(row))
         return results
 
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Generate embeddings for workflows missing vectors."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT * FROM workflows WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                rec = self._row_to_record(row)
+                emb = self._embed(self._embed_text(rec))
+                if emb is None:
+                    continue
+                try:
+                    self.add_embedding(
+                        rec.wid,
+                        emb,
+                        metadata={"kind": "workflow", "source_id": rec.wid},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for %s", rec.wid)
+
     # --------------------------------------------------------------
     # embedding/search
     def _embed(self, text: str) -> list[float] | None:
