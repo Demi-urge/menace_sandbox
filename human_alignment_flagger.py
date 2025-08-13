@@ -8,6 +8,9 @@ raises an exception and only relies on lightweight heuristics.
 
 from __future__ import annotations
 
+import difflib
+import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -236,6 +239,113 @@ def flag_improvement(
 
     return warnings
 
+def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Dict[str, str]]:
+    """Return a list of alignment findings for given *diff_data*.
 
-__all__ = ["HumanAlignmentFlagger", "flag_alignment_risks", "flag_improvement"]
+    Parameters
+    ----------
+    diff_data : dict
+        Mapping of file paths to dictionaries with ``"added"`` and
+        ``"removed"`` line lists.
+    """
+
+    findings: List[Dict[str, str]] = []
+    risky_tokens = ("eval(", "exec(")
+    complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
+
+    for path, changes in diff_data.items():
+        added_lines = changes.get("added", [])
+        joined = "\n".join(added_lines)
+
+        # Direct risky constructs
+        for line in added_lines:
+            if any(tok in line for tok in risky_tokens):
+                findings.append({
+                    "category": "risky_construct",
+                    "location": path,
+                    "snippet": line.strip(),
+                })
+
+        # Missing logging
+        if any(line.lstrip().startswith("def ") for line in added_lines) and not any(
+            "logging" in line or "logger" in line for line in added_lines
+        ):
+            findings.append({
+                "category": "missing_logging",
+                "location": path,
+                "snippet": "Function added without logging",
+            })
+
+        # Cyclomatic complexity heuristic
+        complexity = sum(line.count(tok) for line in added_lines for tok in complexity_tokens)
+        if complexity > 10:
+            findings.append({
+                "category": "high_complexity",
+                "location": path,
+                "snippet": f"complexity score {complexity}",
+            })
+
+        # Ethics violations
+        try:
+            result = flag_violations({"generated_code": joined})
+            for item in result.get("violations", []):
+                findings.append({
+                    "category": f"ethics:{item.get('category', '')}",
+                    "location": path,
+                    "snippet": item.get("matched_keyword", ""),
+                })
+        except Exception:
+            pass
+
+    return findings
+
+
+def _collect_diff_data(before: Path, after: Path) -> Dict[str, Dict[str, List[str]]]:
+    """Return diff mapping between *before* and *after* directories."""
+
+    diff: Dict[str, Dict[str, List[str]]] = {}
+    for new_path in after.rglob("*"):
+        if not new_path.is_file():
+            continue
+        rel = new_path.relative_to(after)
+        old_path = before / rel
+        added: List[str] = []
+        removed: List[str] = []
+        if old_path.exists():
+            before_lines = old_path.read_text().splitlines()
+            after_lines = new_path.read_text().splitlines()
+            for line in difflib.unified_diff(before_lines, after_lines, lineterm=""):
+                if line.startswith("+") and not line.startswith("+++"):
+                    added.append(line[1:])
+                elif line.startswith("-") and not line.startswith("---"):
+                    removed.append(line[1:])
+        else:
+            added = new_path.read_text().splitlines()
+        diff[str(rel)] = {"added": added, "removed": removed}
+    return diff
+
+
+def main(argv: List[str] | None = None) -> None:
+    """CLI entry point for scanning directory diffs."""
+
+    args = argv or sys.argv[1:]
+    if len(args) != 2:
+        print("Usage: python human_alignment_flagger.py before_dir after_dir", file=sys.stderr)
+        raise SystemExit(1)
+    before_dir, after_dir = map(Path, args)
+    diff_data = _collect_diff_data(before_dir, after_dir)
+    findings = flag_alignment_issues(diff_data)
+    print(json.dumps(findings, indent=2))
+
+
+__all__ = [
+    "HumanAlignmentFlagger",
+    "flag_alignment_risks",
+    "flag_improvement",
+    "flag_alignment_issues",
+]
+
+
+if __name__ == "__main__":
+    main()
 
