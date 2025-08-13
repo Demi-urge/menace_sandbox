@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import logging
+import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -119,6 +120,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         score REAL,
                         timestamp TEXT,
                         context TEXT,
+                        before_code TEXT,
+                        after_code TEXT,
                         title TEXT,
                         description TEXT,
                         tags TEXT,
@@ -138,6 +141,14 @@ class EnhancementDB(EmbeddableDBMixin):
                         "PRAGMA table_info(enhancements)"
                     ).fetchall()
                 ]
+                if "before_code" not in cols:
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN before_code TEXT"
+                    )
+                if "after_code" not in cols:
+                    conn.execute(
+                        "ALTER TABLE enhancements ADD COLUMN after_code TEXT"
+                    )
                 if "triggered_by" not in cols:
                     conn.execute(
                         "ALTER TABLE enhancements ADD COLUMN triggered_by TEXT"
@@ -207,10 +218,10 @@ class EnhancementDB(EmbeddableDBMixin):
                     """
                     INSERT INTO enhancements(
                         idea, rationale, summary, score, timestamp, context,
-                        title, description, tags, type, assigned_bots,
+                        before_code, after_code, title, description, tags, type, assigned_bots,
                         rejection_reason, cost_estimate, category, associated_bots,
                         triggered_by
-                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         enh.idea,
@@ -219,6 +230,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         enh.score,
                         enh.timestamp,
                         enh.context,
+                        enh.before_code,
+                        enh.after_code,
                         enh.title,
                         enh.description,
                         tags,
@@ -260,7 +273,7 @@ class EnhancementDB(EmbeddableDBMixin):
                 conn.execute(
                     """
                     UPDATE enhancements SET
-                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?,
+                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?, before_code=?, after_code=?,
                         title=?, description=?, tags=?, type=?, assigned_bots=?,
                         rejection_reason=?, cost_estimate=?, category=?, associated_bots=?,
                         triggered_by=?
@@ -273,6 +286,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         enh.score,
                         enh.timestamp,
                         enh.context,
+                        enh.before_code,
+                        enh.after_code,
                         enh.title,
                         enh.description,
                         tags,
@@ -315,9 +330,20 @@ class EnhancementDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                text = "\n".join(
-                    p for p in [row["before_code"], row["after_code"], row["summary"]] if p
-                )
+                parts: List[str] = []
+                if row["before_code"] or row["after_code"]:
+                    diff = "\n".join(
+                        difflib.unified_diff(
+                            (row["before_code"] or "").splitlines(),
+                            (row["after_code"] or "").splitlines(),
+                            lineterm="",
+                        )
+                    )
+                    if diff:
+                        parts.append(diff)
+                if row["summary"]:
+                    parts.append(row["summary"])
+                text = "\n".join(parts)
                 if not text:
                     continue
                 emb = self._embed(text)
@@ -445,6 +471,8 @@ class EnhancementDB(EmbeddableDBMixin):
                         score=row["score"],
                         timestamp=row["timestamp"],
                         context=row["context"],
+                        before_code=row["before_code"] or "",
+                        after_code=row["after_code"] or "",
                         title=row["title"] or "",
                         description=row["description"] or "",
                         tags=row["tags"].split(",") if row["tags"] else [],
@@ -470,8 +498,20 @@ class EnhancementDB(EmbeddableDBMixin):
     # --------------------------------------------------------------
     # embedding/search helpers
     def _embed_text(self, enh: Enhancement) -> str:
-        parts = [enh.before_code, enh.after_code, enh.summary]
-        return "\n".join(p for p in parts if p)
+        parts: List[str] = []
+        if enh.before_code or enh.after_code:
+            diff = "\n".join(
+                difflib.unified_diff(
+                    (enh.before_code or "").splitlines(),
+                    (enh.after_code or "").splitlines(),
+                    lineterm="",
+                )
+            )
+            if diff:
+                parts.append(diff)
+        if enh.summary:
+            parts.append(enh.summary)
+        return "\n".join(parts)
 
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):
@@ -504,6 +544,8 @@ class EnhancementDB(EmbeddableDBMixin):
                     score=row["score"],
                     timestamp=row["timestamp"],
                     context=row["context"],
+                    before_code=row["before_code"] or "",
+                    after_code=row["after_code"] or "",
                     title=row["title"] or "",
                     description=row["description"] or "",
                     tags=row["tags"].split(",") if row["tags"] else [],
