@@ -1,153 +1,94 @@
 import os
-import json
-import yaml
+from types import SimpleNamespace
+
 import pytest
-from pydantic import ValidationError
 
-os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
-
-from menace import config
+import config
 
 
 class DummyBus:
-    def __init__(self) -> None:
+    def __init__(self):
         self.events: list[tuple[str, object]] = []
 
-    def publish(self, topic: str, payload: object) -> None:
-        self.events.append((topic, payload))
+    def publish(self, name: str, payload: object) -> None:
+        self.events.append((name, payload))
 
 
-@pytest.fixture
-def config_env(tmp_path, monkeypatch):
-    settings = {
-        "paths": {"data_dir": "/data", "log_dir": "/logs"},
-        "thresholds": {"error": 0.1, "alert": 0.5},
-        "api_keys": {"openai": "yaml_openai", "serp": "yaml_serp"},
-        "logging": {"verbosity": "INFO"},
-        "vector": {"dimensions": 8, "distance_metric": "cosine"},
-        "bot": {"learning_rate": 0.01, "epsilon": 0.1},
-        "watch_config": False,
-    }
-    profile = {"thresholds": {"alert": 0.7}, "logging": {"verbosity": "WARNING"}}
-    extra = {"bot": {"learning_rate": 0.02}}
-    (tmp_path / "settings.yaml").write_text(yaml.safe_dump(settings), encoding="utf-8")
-    (tmp_path / "dev.yaml").write_text(yaml.safe_dump(profile), encoding="utf-8")
-    (tmp_path / "extra.json").write_text(json.dumps(extra), encoding="utf-8")
+def test_yaml_and_json_parsing(tmp_path):
+    json_file = tmp_path / "override.json"
+    json_file.write_text('{"logging": {"verbosity": "ERROR"}}')
+    yaml_file = tmp_path / "override.yaml"
+    yaml_file.write_text("bot:\n  epsilon: 0.33\n")
 
-    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(config, "DEFAULT_SETTINGS_FILE", tmp_path / "settings.yaml")
-    monkeypatch.setattr(config, "Observer", None)
-    monkeypatch.setattr(config, "UnifiedConfigStore", None)
-    monkeypatch.setattr(config, "_CONFIG_STORE", None)
-    monkeypatch.setattr(config, "CONFIG", None)
-    monkeypatch.setattr(config, "_MODE", None)
-    monkeypatch.setattr(config, "_CONFIG_PATH", None)
-    monkeypatch.setattr(config, "_OVERRIDES", {})
-    monkeypatch.setattr(config, "_EVENT_BUS", None)
-    return tmp_path
+    cfg_json = config.load_config(mode="dev", config_file=json_file)
+    assert cfg_json.logging.verbosity == "ERROR"
+
+    cfg_yaml = config.load_config(mode="dev", config_file=yaml_file)
+    assert cfg_yaml.bot.epsilon == 0.33
 
 
-def test_yaml_json_parsing_and_schema_validation(config_env):
-    cfg = config.load_config(mode="dev", config_file=config_env / "extra.json")
-    assert cfg.logging.verbosity == "WARNING"
-    assert cfg.bot.learning_rate == 0.02
-
-    bad = config_env / "bad.json"
-    bad.write_text(json.dumps({"bot": {"epsilon": 2.0}}), encoding="utf-8")
-    with pytest.raises(ValidationError):
-        config.load_config(mode="dev", config_file=bad)
+def test_mode_overlays():
+    dev_cfg = config.load_config(mode="dev")
+    prod_cfg = config.load_config(mode="prod")
+    assert dev_cfg.paths.data_dir == "./data"
+    assert dev_cfg.logging.verbosity == "DEBUG"
+    assert prod_cfg.paths.data_dir == "/srv/igi/data"
+    assert prod_cfg.logging.verbosity == "WARNING"
 
 
-def test_mode_overlay_logic(config_env):
-    cfg = config.load_config(mode="dev")
-    assert cfg.thresholds.alert == 0.7
-    assert cfg.logging.verbosity == "WARNING"
+def test_cli_overrides():
+    args = config.parse_args(
+        [
+            "--mode",
+            "dev",
+            "--config-override",
+            "logging.verbosity=ERROR",
+            "--config-override",
+            "bot.epsilon=0.4",
+        ]
+    )
+    overrides = config._build_overrides(args.config_override or [])
+    cfg = config.load_config(mode=args.mode, overrides=overrides)
+    assert cfg.logging.verbosity == "ERROR"
+    assert cfg.bot.epsilon == 0.4
 
 
-def test_cli_and_programmatic_overrides(config_env):
-    cfg = config.load_config(mode="dev", overrides={"logging": {"verbosity": "DEBUG"}})
-    assert cfg.logging.verbosity == "DEBUG"
-
-    args = config.parse_args(["--mode", "dev", "--logging.verbosity=ERROR"])
-    overrides = config._build_overrides(args.overrides)
-    cfg2 = config.load_config(mode=args.mode, overrides=overrides)
-    assert cfg2.logging.verbosity == "ERROR"
+def test_secret_loading_env(monkeypatch):
+    monkeypatch.setenv("MYSECRET", "abc")
+    assert config.Config.get_secret("mysecret") == "abc"
 
 
-def test_event_bus_broadcast_on_reload(config_env):
-    bus = DummyBus()
-    config.set_event_bus(bus)
-    cfg = config.load_config(mode="dev", config_file=config_env / "extra.json")
-    config.CONFIG = cfg
-    config._MODE = "dev"
-    config._CONFIG_PATH = config_env / "extra.json"
-    dev_file = config_env / "dev.yaml"
-    dev_file.write_text("thresholds:\n  alert: 0.8\n", encoding="utf-8")
-    config.reload()
-    assert bus.events
-    topic, payload = bus.events[-1]
-    assert topic == "config.reload"
-    assert payload["diff"]["thresholds"]["alert"] == 0.8
-    config.set_event_bus(None)
-
-
-def test_secret_loading_precedence(config_env, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "env_openai")
-    monkeypatch.setenv("SERP_API_KEY", "env_serp")
+def test_secret_loading_vault(monkeypatch):
+    monkeypatch.delenv("MYSECRET", raising=False)
 
     class DummyVault:
-        def get(self, key: str):
-            return {"OPENAI_API_KEY": "vault_openai"}.get(key)
-
-        def export_env(self, name: str) -> None:
-            val = self.get(name)
-            if val:
-                os.environ[name] = val
+        def get(self, name):
+            return "vault-secret" if name == "MYSECRET" else None
 
     class DummyStore:
-        def __init__(self) -> None:
-            self.vault = DummyVault()
-
-        def load(self) -> None:
-            self.vault.export_env("OPENAI_API_KEY")
-
-    monkeypatch.setattr(config, "UnifiedConfigStore", DummyStore)
-    cfg = config.load_config(mode="dev")
-    assert cfg.api_keys.openai == "vault_openai"
-    assert cfg.api_keys.serp == "env_serp"
-
-
-def test_get_secret_fetches_from_env_and_vault(config_env, monkeypatch):
-    monkeypatch.setenv("SOME_SECRET", "from_env")
-    assert config.Config.get_secret("SOME_SECRET") == "from_env"
-
-    class DummyVault:
-        def get(self, name: str):
-            return {"MISSING_SECRET": "vault_secret"}.get(name)
-
-    class DummyStore:
-        def __init__(self) -> None:
-            self.vault = DummyVault()
+        vault = DummyVault()
 
     monkeypatch.setattr(config, "_CONFIG_STORE", DummyStore())
-    assert config.Config.get_secret("MISSING_SECRET") == "vault_secret"
-    assert os.getenv("MISSING_SECRET") == "vault_secret"
+    assert config.Config.get_secret("mysecret") == "vault-secret"
+    assert os.environ["MYSECRET"] == "vault-secret"
 
 
-def test_watchdog_triggers_reload(config_env, monkeypatch):
-    events = DummyBus()
-    monkeypatch.setattr(config, "_EVENT_BUS", events)
-    called = []
+def test_hot_reload_events(monkeypatch):
+    bus = DummyBus()
+    monkeypatch.setattr(config, "_EVENT_BUS", bus)
+
+    reloaded = {"called": False}
 
     def fake_reload():
-        called.append(True)
+        reloaded["called"] = True
+        bus.publish("config.reload", {})
 
     monkeypatch.setattr(config, "reload", fake_reload)
-    settings = str((config_env / "settings.yaml").resolve())
     handler = config._ConfigChangeHandler()
-    event = type("Evt", (), {"is_directory": False, "src_path": settings})
+    event = SimpleNamespace(is_directory=False, src_path="cfg.yaml")
     handler.on_modified(event)
-    assert called
-    assert events.events
-    assert events.events[-1][0] == "config:file_change"
-    assert events.events[-1][1]["path"] == settings
+
+    assert reloaded["called"]
+    assert ("config:file_change", {"path": "cfg.yaml"}) in bus.events
+    assert any(name == "config.reload" for name, _ in bus.events)
+

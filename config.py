@@ -448,13 +448,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--config", help="Additional configuration YAML file to merge", dest="config_file"
     )
     parser.add_argument(
+        "--config-override",
+        action="append",
+        dest="config_override",
+        metavar="KEY=VALUE",
+        help="Override configuration values (can be specified multiple times)",
+    )
+    parser.add_argument(
         "--no-watch",
         action="store_true",
         help="Disable config file watcher",
     )
-    args, unknown = parser.parse_known_args(argv)
-    args.overrides = [arg[2:] for arg in unknown if arg.startswith("--")]
-    return args
+    return parser.parse_args(argv)
 
 
 def reload(event_bus: "EventBus" | None = None) -> Config:
@@ -494,7 +499,7 @@ def main(argv: list[str] | None = None) -> None:
     global _MODE, _CONFIG_PATH, _OVERRIDES
     _MODE = args.mode
     _CONFIG_PATH = Path(args.config_file) if args.config_file else None
-    _OVERRIDES = _build_overrides(args.overrides or [])
+    _OVERRIDES = _build_overrides(args.config_override or [])
     cfg = get_config(watch=not args.no_watch)
     print(cfg.model_dump())
 
