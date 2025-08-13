@@ -547,6 +547,9 @@ def _sandbox_cycle_runner(
         except Exception as exc:
             record_error(exc)
             result = SimpleNamespace(roi=None)
+        warnings = getattr(result, "warnings", None)
+        if warnings:
+            logger.warning("improvement warnings", extra=log_record(warnings=warnings))
         logger.info(
             "patch engine complete",
             extra=log_record(cycle=idx, roi=result.roi.roi if result.roi else 0.0),
@@ -968,7 +971,7 @@ def _sandbox_cycle_runner(
                 )
             except Exception:
                 logger.exception("metric prediction failed")
-        ctx.meta_log.log_cycle(idx, roi, name_list, "self_improvement")
+        ctx.meta_log.log_cycle(idx, roi, name_list, "self_improvement", warnings=warnings)
         forecast, interval = tracker.forecast()
         mae = tracker.rolling_mae()
         reliability = tracker.reliability()

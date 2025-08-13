@@ -72,6 +72,7 @@ from . import mutation_logger as MutationLogger
 from .human_alignment_flagger import (
     flag_alignment_risks,
     HumanAlignmentFlagger,
+    flag_improvement,
 )
 from .audit_logger import log_event as audit_log_event
 
@@ -4258,6 +4259,14 @@ class SelfImprovementEngine:
                     self.logger.exception("data_bot evolution logging failed: %s", exc)
             self.last_run = time.time()
             delta = after_roi - before_roi
+            if delta > 0:
+                try:
+                    metrics = result.roi.__dict__ if result.roi else None
+                    warnings = flag_improvement(actions, metrics, None)
+                    if any(warnings.values()):
+                        result.warnings = warnings
+                except Exception as exc:
+                    self.logger.exception("improvement flagging failed: %s", exc)
             self.roi_delta_ema = (
                 1 - self.roi_ema_alpha
             ) * self.roi_delta_ema + self.roi_ema_alpha * delta
