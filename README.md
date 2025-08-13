@@ -736,6 +736,28 @@ This prints messages such as ``Starting autonomous run 1/2`` followed by the
 standard module rankings once each run finishes. Metrics from all runs are
 written to ``sandbox_data/roi_history.json`` so they can be aggregated later.
 
+### Sandbox safety
+
+Each optimisation loop now runs a **human‑alignment flagger** on the latest
+commit before changes are merged.  The checker scans the diff for removed
+docstrings, rising complexity, unsafe patterns and ethics violations.  Any
+issues are printed as warnings and recorded as ``alignment_flag`` events in
+``logs/audit_log.jsonl`` (mirrored to ``logs/audit_log.db``).  Reviewers consult
+these logs and either amend the patch or approve it when the warnings are
+acceptable.
+
+Example output::
+
+    Alignment warnings detected:
+    - Docstring removed in util/helpers.py.
+    - Unsafe code pattern: eval on input().
+
+Warnings at or above ``ALIGNMENT_WARNING_THRESHOLD`` are surfaced for manual
+inspection, while scores beyond ``ALIGNMENT_FAILURE_THRESHOLD`` are treated as
+high‑risk and typically require corrective commits before integration.
+Controls are exposed via ``ENABLE_ALIGNMENT_FLAGGER`` to disable the check and
+``ALIGNMENT_BASELINE_METRICS_PATH`` to override the baseline metrics snapshot.
+
 ### Advanced sandbox commands
 
 - ``--auto-thresholds`` recomputes ROI and synergy thresholds every cycle so
