@@ -588,46 +588,24 @@ class ROITracker:
 
         self.drift_metrics["mae"] = mae
         self.drift_metrics["accuracy"] = acc
-
-        if (mae > mae_threshold) or (cls_pairs and acc < acc_threshold) or drift_detected:
+        if self._adaptive_predictor is None:
             try:
-                from .alert_dispatcher import dispatch_alert
+                from .adaptive_roi_predictor import AdaptiveROIPredictor
 
-                dispatch_alert(
-                    "adaptive_roi_drift",
-                    5,
-                    "ROI prediction quality degraded",
-                    {"mae": mae, "accuracy": acc},
+                self._adaptive_predictor = AdaptiveROIPredictor()
+            except Exception:
+                self._adaptive_predictor = None
+        if self._adaptive_predictor is not None:
+            try:
+                self._adaptive_predictor.record_drift(
+                    acc,
+                    mae,
+                    acc_threshold=acc_threshold,
+                    mae_threshold=mae_threshold,
+                    retrain=True,
                 )
             except Exception:
-                logger.exception("failed to dispatch drift alert")
-            try:
-                self.save_history(history_path)
-            except Exception:
-                logger.exception("failed to persist history for retrain")
-            try:
-                from .adaptive_roi_cli import _schedule as schedule
-                import contextlib, io
-
-                args = argparse.Namespace(
-                    evolution_db="evolution_history.db",
-                    roi_db="roi.db",
-                    evaluation_db="evaluation_history.db",
-                    roi_events_db=roi_events_path,
-                    history=history_path,
-                    output_csv="sandbox_data/adaptive_roi.csv",
-                    interval=0,
-                    once=True,
-                    cv=3,
-                    param_grid=None,
-                    selected_features=False,
-                    log_path="sandbox_data/adaptive_roi_schedule.log",
-                    model="sandbox_data/adaptive_roi.pkl",
-                )
-                with contextlib.redirect_stdout(io.StringIO()):
-                    schedule(args)
-            except Exception:
-                logger.exception("failed to trigger adaptive ROI retrain")
+                logger.exception("failed to update adaptive ROI predictor")
 
         return acc, mae
 
