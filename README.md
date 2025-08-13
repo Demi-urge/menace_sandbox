@@ -20,7 +20,8 @@
 - Vector embedding search via `EmbeddableDBMixin` for bots, workflows,
   errors, enhancements and research items. Each database stores its own
   embedding fields and can use either a FAISS or Annoy backend for
-  similarity queries.
+  similarity queries. See [docs/embedding_system.md](docs/embedding_system.md)
+  for configuration details and backfilling instructions.
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
