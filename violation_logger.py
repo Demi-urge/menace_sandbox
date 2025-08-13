@@ -63,13 +63,23 @@ def persist_alignment_warning(record: Dict[str, Any]) -> None:
                 entry_id TEXT,
                 violation_type TEXT,
                 severity INTEGER,
-                patch_link TEXT
+                patch_link TEXT,
+                review_status TEXT DEFAULT 'pending'
             )
             """
         )
+        # Ensure the new column exists for pre-existing databases
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(warnings)").fetchall()]
+        if "review_status" not in cols:
+            conn.execute(
+                "ALTER TABLE warnings ADD COLUMN review_status TEXT DEFAULT 'pending'"
+            )
+            conn.execute(
+                "UPDATE warnings SET review_status = 'pending' WHERE review_status IS NULL"
+            )
         conn.execute(
-            "INSERT INTO warnings (timestamp, entry_id, violation_type, severity, patch_link)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO warnings (timestamp, entry_id, violation_type, severity, patch_link, review_status)"
+            " VALUES (?, ?, ?, ?, ?, 'pending')",
             (
                 record.get("timestamp"),
                 record.get("entry_id"),
@@ -84,6 +94,7 @@ def load_persisted_alignment_warnings(
     limit: int = 50,
     min_severity: int | None = None,
     max_severity: int | None = None,
+    review_status: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Load alignment warnings from the SQLite store."""
 
@@ -93,7 +104,7 @@ def load_persisted_alignment_warnings(
         return []
     conn = sqlite3.connect(ALIGNMENT_DB_PATH)
     query = (
-        "SELECT timestamp, entry_id, violation_type, severity, patch_link FROM warnings WHERE 1=1"
+        "SELECT timestamp, entry_id, violation_type, severity, patch_link, review_status FROM warnings WHERE 1=1"
     )
     params: List[Any] = []
     if min_severity is not None:
@@ -102,6 +113,9 @@ def load_persisted_alignment_warnings(
     if max_severity is not None:
         query += " AND severity <= ?"
         params.append(max_severity)
+    if review_status is not None:
+        query += " AND review_status = ?"
+        params.append(review_status)
     query += " ORDER BY timestamp DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(query, params).fetchall()
@@ -113,9 +127,40 @@ def load_persisted_alignment_warnings(
             "violation_type": row[2],
             "severity": row[3],
             "patch_link": row[4],
+            "review_status": row[5],
         }
         for row in rows
     ]
+
+
+def update_warning_status(entry_id: str, status: str) -> None:
+    """Update the review status for a warning identified by ``entry_id``."""
+
+    _ensure_log_dir()
+    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
+    with conn:
+        conn.execute(
+            "UPDATE warnings SET review_status = ? WHERE entry_id = ?",
+            (status, entry_id),
+        )
+
+
+def mark_warning_pending(entry_id: str) -> None:
+    """Mark a warning as pending review."""
+
+    update_warning_status(entry_id, "pending")
+
+
+def mark_warning_approved(entry_id: str) -> None:
+    """Mark a warning as approved."""
+
+    update_warning_status(entry_id, "approved")
+
+
+def mark_warning_rejected(entry_id: str) -> None:
+    """Mark a warning as rejected."""
+
+    update_warning_status(entry_id, "rejected")
 
 
 def log_violation(
@@ -268,6 +313,10 @@ __all__ = [
     "load_recent_alignment_warnings",
     "persist_alignment_warning",
     "load_persisted_alignment_warnings",
+    "update_warning_status",
+    "mark_warning_pending",
+    "mark_warning_approved",
+    "mark_warning_rejected",
     "recent_alignment_warnings",
     "violation_summary",
     "set_event_bus",
