@@ -767,6 +767,32 @@ high‑risk and typically require corrective commits before integration.
 Controls are exposed via ``ENABLE_ALIGNMENT_FLAGGER`` to disable the check and
 ``ALIGNMENT_BASELINE_METRICS_PATH`` to override the baseline metrics snapshot.
 
+Run the checker directly against two source trees when reviewing changes::
+
+    python human_alignment_flagger.py repo/before repo/after
+
+For automated pipelines import the flagger and act on the reported tiers::
+
+    from human_alignment_flagger import HumanAlignmentFlagger, flag_improvement
+    import subprocess, json
+
+    diff = subprocess.check_output(["git", "diff", "HEAD~1"]).decode()
+    report = HumanAlignmentFlagger().flag_patch(diff, {"actor": "ci"})
+    for issue in report["issues"]:
+        print(f"{issue['tier']}: {issue['message']}")
+
+    # Optional: validate proposed workflow changes
+    changes = [{"file": "util.py", "code": "print('hi')"}]
+    warnings = flag_improvement(changes, None, [])
+    print(warnings["maintainability"])
+
+The Menace integrity model interprets tiers as follows:
+
+* ``info`` – recorded for transparency, no action required.
+* ``warn`` – developer or reviewer should investigate before merging.
+* ``critical`` – treated as integrity violations and usually block deployment
+  until resolved or explicitly waived.
+
 ### Advanced sandbox commands
 
 - ``--auto-thresholds`` recomputes ROI and synergy thresholds every cycle so

@@ -12,6 +12,28 @@ Checks cover a range of maintainability and safety heuristics including:
 * removal of type hints or absence of annotations in new code
 * direct network, ``exec``/``eval`` calls or other risky patterns
 
+Each reported issue includes a numeric ``severity`` along with a ``tier``
+(``info``, ``warn`` or ``critical``) describing how the Menace integrity model
+expects reviewers to act:
+
+* ``info`` entries are logged for transparency only.
+* ``warn`` entries should be reviewed and either fixed or explicitly waived.
+* ``critical`` entries normally block integration until resolved.
+
+Example
+-------
+
+>>> diff = '''--- a/util.py\n+++ b/util.py\n@@\n-def add(a, b):\n-    return a+b\n+def add(a: int, b: int) -> int:\n+    return a + b\n'''
+>>> flagger = HumanAlignmentFlagger()
+>>> report = flagger.flag_patch(diff, {"author": "bot"})
+>>> report["tiers"]
+{'info': 1}
+
+To run the checker from the command line provide a pair of directories
+representing the "before" and "after" trees:
+
+``$ python human_alignment_flagger.py old/ new/``
+
 The module only relies on lightweight parsing and never raises.
 """
 
@@ -248,6 +270,12 @@ def flag_improvement(
         Dictionary with ``ethics``, ``risk_reward`` and ``maintainability``
         warning lists.  The function never raises and swallows unexpected
         errors to avoid blocking execution.
+
+    Examples
+    --------
+    >>> changes = [{"file": "util.py", "code": "print('hi')"}]
+    >>> flag_improvement(changes, None, [])['maintainability'][0]['issue']
+    'missing docstring'
     """
 
     warnings: Dict[str, List[Dict[str, Any]]] = {
@@ -764,7 +792,25 @@ def _collect_diff_data(before: Path, after: Path) -> Dict[str, Dict[str, List[st
 
 
 def main(argv: List[str] | None = None) -> None:
-    """CLI entry point for scanning directory diffs."""
+    """CLI entry point for scanning directory diffs.
+
+    Parameters
+    ----------
+    argv : list of str, optional
+        Command line arguments; if ``None`` ``sys.argv`` is used.
+
+    Examples
+    --------
+    Run the checker from the shell by passing two directory snapshots::
+
+        $ python human_alignment_flagger.py repo/before repo/after
+
+    Programmatic invocation mirrors the command line interface::
+
+        >>> main(["repo/before", "repo/after"])
+
+    A JSON report describing any findings is printed to stdout.
+    """
 
     args = argv or sys.argv[1:]
     if len(args) != 2:
