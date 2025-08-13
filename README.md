@@ -785,6 +785,19 @@ high‑risk and typically require corrective commits before integration.
 Controls are exposed via ``ENABLE_ALIGNMENT_FLAGGER`` to disable the check and
 ``ALIGNMENT_BASELINE_METRICS_PATH`` to override the baseline metrics snapshot.
 
+Enable the full alignment pipeline by setting the relevant environment
+variables and launching the review agent:
+
+```bash
+ENABLE_ALIGNMENT_FLAGGER=1 \
+ALIGNMENT_WARNING_THRESHOLD=0.5 \
+ALIGNMENT_FAILURE_THRESHOLD=0.9 \
+IMPROVEMENT_WARNING_THRESHOLD=0.5 \
+IMPROVEMENT_FAILURE_THRESHOLD=0.9 \
+python alignment_review_agent.py &  # start reviewer in background
+python run_autonomous.py
+```
+
 Run the checker directly against two source trees when reviewing changes::
 
     python human_alignment_flagger.py repo/before repo/after
