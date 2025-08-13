@@ -79,6 +79,9 @@ test = [
     "pytest",
     "hypothesis"
 ]
+watch = [
+    "watchdog"
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

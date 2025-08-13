@@ -19,6 +19,8 @@ import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING
+import sys
+import site
 
 try:  # pragma: no cover - optional dependencies
     from .unified_config_store import UnifiedConfigStore
@@ -29,6 +31,22 @@ try:  # pragma: no cover - optional dependency
     from .vault_secret_provider import VaultSecretProvider
 except Exception:  # pragma: no cover - fallback when module missing
     VaultSecretProvider = None  # type: ignore[misc,assignment]
+
+# Watchdog is an optional dependency and a local module named ``watchdog.py``
+# exists in this package. To import the third-party library we temporarily
+# adjust ``sys.path`` so that site-packages are searched first and remove any
+# previously loaded module named ``watchdog``.
+_orig_sys_path = list(sys.path)
+try:  # pragma: no cover - optional dependency
+    sys.modules.pop("watchdog", None)
+    sys.path = site.getsitepackages() + sys.path
+    from watchdog.events import FileSystemEventHandler  # type: ignore
+    from watchdog.observers import Observer  # type: ignore
+except Exception:  # pragma: no cover - fallback when module missing
+    Observer = None  # type: ignore[misc,assignment]
+    FileSystemEventHandler = object  # type: ignore[misc,assignment]
+finally:  # ensure path restoration
+    sys.path = _orig_sys_path
 
 import yaml
 from pydantic import (
@@ -134,6 +152,7 @@ class Config(BaseModel):
     logging: Logging
     vector: Vector
     bot: Bot
+    watch_config: bool = True
 
     model_config = ConfigDict(extra="forbid")
 
@@ -162,6 +181,8 @@ _CONFIG_PATH: Path | None = None
 _OVERRIDES: Dict[str, Any] = {}
 CONFIG: Config | None = None
 _EVENT_BUS: "EventBus" | None = None
+_WATCHER_ENABLED: bool = True
+_WATCHER: "Observer" | None = None
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -198,6 +219,54 @@ def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any
         elif old_val != new_val:
             diff[key] = new_val
     return diff
+
+
+class _ConfigChangeHandler(FileSystemEventHandler):
+    """Watchdog handler that reloads configuration on file changes."""
+
+    def __init__(self, files: set[str]) -> None:
+        self._files = files
+
+    def on_modified(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return
+        if event.src_path in self._files:
+            if _EVENT_BUS is not None:
+                try:  # pragma: no cover - best effort only
+                    _EVENT_BUS.publish("config:file_change", {"path": event.src_path})
+                except Exception:
+                    logger.exception("failed publishing config change event")
+            try:  # pragma: no cover - best effort only
+                reload()
+            except Exception:
+                logger.exception("failed reloading config after change")
+
+    def on_moved(self, event):  # type: ignore[override]
+        if getattr(event, "is_directory", False):
+            return
+        dest = getattr(event, "dest_path", None)
+        if dest and dest in self._files:
+            self.on_modified(event)
+
+
+def _start_watcher(files: list[Path]) -> None:
+    """Start a watchdog observer for *files* if supported."""
+
+    global _WATCHER
+    if _WATCHER is not None or Observer is None or not _WATCHER_ENABLED:
+        return
+    watched = {str(f.resolve()) for f in files}
+    handler = _ConfigChangeHandler(watched)
+    observer = Observer()
+    scheduled: set[str] = set()
+    for f in files:
+        directory = str(f.parent.resolve())
+        if directory not in scheduled:
+            observer.schedule(handler, directory, recursive=False)
+            scheduled.add(directory)
+    observer.daemon = True
+    observer.start()
+    _WATCHER = observer
 
 
 def load_config(
@@ -273,6 +342,17 @@ def load_config(
     cfg = Config.model_validate(data)
     if overrides:
         cfg = cfg.apply_overrides(overrides)
+
+    if (
+        _WATCHER_ENABLED
+        and getattr(cfg, "watch_config", True)
+        and Observer is not None
+    ):
+        paths = [DEFAULT_SETTINGS_FILE, profile_file]
+        if config_file:
+            paths.append(Path(config_file))
+        _start_watcher(paths)
+
     return cfg
 
 
@@ -324,6 +404,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--config", help="Additional configuration YAML file to merge", dest="config_file"
     )
     parser.add_argument(
+        "--no-watch",
+        action="store_true",
+        help="Disable config file watcher",
+    )
+    parser.add_argument(
         "overrides",
         nargs="*",
         help="Configuration overrides in key=value format",
@@ -349,10 +434,11 @@ def reload() -> Config:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    global _MODE, _CONFIG_PATH, _OVERRIDES
+    global _MODE, _CONFIG_PATH, _OVERRIDES, _WATCHER_ENABLED
     _MODE = args.mode
     _CONFIG_PATH = Path(args.config_file) if args.config_file else None
     _OVERRIDES = _build_overrides(args.overrides or [])
+    _WATCHER_ENABLED = not args.no_watch
     cfg = get_config()
     print(cfg.model_dump())
 
