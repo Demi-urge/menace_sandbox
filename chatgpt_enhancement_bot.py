@@ -242,7 +242,11 @@ class EnhancementDB(EmbeddableDBMixin):
         emb = self._embed(text)
         if emb is not None:
             try:
-                self.add_embedding(enh_id, emb, metadata={"kind": "enhancement"})
+                self.add_embedding(
+                    enh_id,
+                    emb,
+                    metadata={"kind": "enhancement", "source_id": enh_id},
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", enh_id)
         return enh_id
@@ -292,7 +296,11 @@ class EnhancementDB(EmbeddableDBMixin):
         emb = self._embed(text)
         if emb is not None:
             try:
-                self.add_embedding(enhancement_id, emb, metadata={"kind": "enhancement"})
+                self.add_embedding(
+                    enhancement_id,
+                    emb,
+                    metadata={"kind": "enhancement", "source_id": enhancement_id},
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", enhancement_id)
 

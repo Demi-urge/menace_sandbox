@@ -237,7 +237,11 @@ class BotDB(EmbeddableDBMixin):
                     remaining_emb.append((bid, text))
                     continue
                 try:
-                    self.add_embedding(bid, emb, metadata={"kind": "bot"})
+                    self.add_embedding(
+                        bid,
+                        emb,
+                        metadata={"kind": "bot", "source_id": bid},
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding retry failed for %s: %s", bid, exc)
                     remaining_emb.append((bid, text))
@@ -288,7 +292,11 @@ class BotDB(EmbeddableDBMixin):
             emb = self._embed(emb_text)
             if emb is not None:
                 try:
-                    self.add_embedding(rec.bid, emb, metadata={"kind": "bot"})
+                    self.add_embedding(
+                        rec.bid,
+                        emb,
+                        metadata={"kind": "bot", "source_id": rec.bid},
+                    )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding store failed: %s", exc)
                     self.failed_embeddings.append((rec.bid, emb_text))
@@ -335,7 +343,11 @@ class BotDB(EmbeddableDBMixin):
                     emb = self._embed(emb_text)
                     if emb is not None:
                         try:
-                            self.add_embedding(bot_id, emb, metadata={"kind": "bot"})
+                            self.add_embedding(
+                                bot_id,
+                                emb,
+                                metadata={"kind": "bot", "source_id": bot_id},
+                            )
                         except Exception as exc:  # pragma: no cover - best effort
                             logger.exception("embedding store failed: %s", exc)
                             self.failed_embeddings.append((bot_id, emb_text))
