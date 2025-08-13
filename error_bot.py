@@ -246,21 +246,6 @@ class ErrorDB(EmbeddableDBMixin):
                 if error_bot_exceptions:
                     error_bot_exceptions.inc()
 
-    def _embed(self, text: str) -> list[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:  # pragma: no cover
-                self._embedder = None
-            else:  # pragma: no cover
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:
-                return self._embedder.encode([text])[0].tolist()  # type: ignore
-            except Exception:  # pragma: no cover
-                return None
-        return None
-
     def vector(self, rec: Any) -> list[float] | None:
         """Return an embedding for ``rec``.
 
@@ -268,7 +253,7 @@ class ErrorDB(EmbeddableDBMixin):
         ``message``/``stack_trace`` attributes.  When an integer id is
         provided the stored vector is returned directly from the mixin's
         metadata.  For other inputs the ``message`` and ``stack_trace`` fields
-        are concatenated and encoded via :meth:`_embed`.
+        are concatenated and encoded via :meth:`encode_text`.
         """
 
         if isinstance(rec, int):
@@ -288,7 +273,7 @@ class ErrorDB(EmbeddableDBMixin):
             )
             stack = getattr(rec, "stack_trace", "")
             text = f"{msg} {stack}".strip()
-        return self._embed(text) if text else None
+        return self.encode_text(text) if text else None
 
     def add_known(self, message: str, solution: str) -> None:
         self.conn.execute(

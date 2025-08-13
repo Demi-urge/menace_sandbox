@@ -362,25 +362,7 @@ class BotDB(EmbeddableDBMixin):
         text = " ".join(
             filter(None, [purpose, ",".join(tags), ",".join(toolchain)])
         )
-        vec = self._embed(text)
-        if vec is None:
-            raise ValueError("embedding backend unavailable")
-        return vec
-
-    def _embed(self, text: str) -> list[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:
-                self._embedder = None
-            else:
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:
-                return self._embedder.encode([text])[0].tolist()
-            except Exception:  # pragma: no cover - runtime issues
-                return None
-        return None
+        return self.encode_text(text)
 
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 5

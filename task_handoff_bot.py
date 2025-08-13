@@ -302,21 +302,6 @@ class WorkflowDB(EmbeddableDBMixin):
 
     # --------------------------------------------------------------
     # embedding/search
-    def _embed(self, text: str) -> list[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:
-                self._embedder = None
-            else:
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:
-                return self._embedder.encode([text])[0].tolist()
-            except Exception:  # pragma: no cover - runtime issues
-                return None
-        return None
-
     def vector(self, rec: Any) -> list[float]:
         """Embed ``rec`` into a vector using its action chain and arguments."""
 
@@ -333,10 +318,7 @@ class WorkflowDB(EmbeddableDBMixin):
         elif not isinstance(rec, WorkflowRecord):
             raise TypeError("unsupported record type")
         text = self._vector_text(rec)
-        vec = self._embed(text)
-        if vec is None:
-            raise ValueError("embedding backend unavailable")
-        return vec
+        return self.encode_text(text)
 
     def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[WorkflowRecord]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
