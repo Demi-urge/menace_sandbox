@@ -285,23 +285,17 @@ class BotDB(EmbeddableDBMixin):
         )
         rec.bid = int(cur.lastrowid)
         self.conn.commit()
-        emb_text = " ".join(
-            [rec.purpose, " ".join(rec.tags), rec.toolchain]
-        ).strip()
-        if emb_text:
-            emb = self._embed(emb_text)
-            if emb is not None:
-                try:
-                    self.add_embedding(
-                        rec.bid,
-                        emb,
-                        metadata={"kind": "bot", "source_id": rec.bid},
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed: %s", exc)
-                    self.failed_embeddings.append((rec.bid, emb_text))
-            else:
-                self.failed_embeddings.append((rec.bid, emb_text))
+        emb = self.vector(rec)
+        if emb:
+            try:
+                self.add_embedding(
+                    rec.bid,
+                    emb,
+                    metadata={"kind": "bot", "source_id": rec.bid},
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding store failed: %s", exc)
+                self.failed_embeddings.append((rec.bid, " ".join([rec.purpose, " ".join(rec.tags), rec.toolchain]).strip()))
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -327,32 +321,33 @@ class BotDB(EmbeddableDBMixin):
         self.conn.commit()
         if any(k in fields for k in ("purpose", "tags", "toolchain")):
             row = self.conn.execute(
-                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
+                "SELECT id, purpose, tags, toolchain FROM bots WHERE id=?",
                 (bot_id,),
             ).fetchone()
             if row:
-                tag_list = _deserialize_list(row["tags"] or "")
-                emb_text = " ".join(
-                    [
-                        row["purpose"] or "",
-                        " ".join(tag_list),
-                        row["toolchain"] or "",
-                    ]
-                ).strip()
-                if emb_text:
-                    emb = self._embed(emb_text)
-                    if emb is not None:
-                        try:
-                            self.add_embedding(
-                                bot_id,
-                                emb,
-                                metadata={"kind": "bot", "source_id": bot_id},
-                            )
-                        except Exception as exc:  # pragma: no cover - best effort
-                            logger.exception("embedding store failed: %s", exc)
-                            self.failed_embeddings.append((bot_id, emb_text))
-                    else:
+                emb = self.vector(dict(row))
+                if emb:
+                    try:
+                        self.add_embedding(
+                            bot_id,
+                            emb,
+                            metadata={"kind": "bot", "source_id": bot_id},
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.exception("embedding store failed: %s", exc)
+                        emb_text = " ".join([
+                            row["purpose"] or "",
+                            " ".join(_deserialize_list(row["tags"] or "")),
+                            row["toolchain"] or "",
+                        ]).strip()
                         self.failed_embeddings.append((bot_id, emb_text))
+                else:
+                    emb_text = " ".join([
+                        row["purpose"] or "",
+                        " ".join(_deserialize_list(row["tags"] or "")),
+                        row["toolchain"] or "",
+                    ]).strip()
+                    self.failed_embeddings.append((bot_id, emb_text))
         if self.event_bus:
             payload = {"bot_id": bot_id, **fields}
             if not publish_with_retry(self.event_bus, "bot:update", payload):
@@ -370,15 +365,15 @@ class BotDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                tag_list = _deserialize_list(row["tags"] or "")
-                emb_text = " ".join(
-                    [row["purpose"] or "", " ".join(tag_list), row["toolchain"] or ""]
-                ).strip()
-                if not emb_text:
-                    continue
-                emb = self._embed(emb_text)
-                if emb is None:
-                    self.failed_embeddings.append((row["id"], emb_text))
+                emb = self.vector(dict(row))
+                if not emb:
+                    emb_text = " ".join([
+                        row["purpose"] or "",
+                        " ".join(_deserialize_list(row["tags"] or "")),
+                        row["toolchain"] or "",
+                    ]).strip()
+                    if emb_text:
+                        self.failed_embeddings.append((row["id"], emb_text))
                     continue
                 try:
                     self.add_embedding(
@@ -388,9 +383,38 @@ class BotDB(EmbeddableDBMixin):
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding store failed: %s", exc)
+                    emb_text = " ".join([
+                        row["purpose"] or "",
+                        " ".join(_deserialize_list(row["tags"] or "")),
+                        row["toolchain"] or "",
+                    ]).strip()
                     self.failed_embeddings.append((row["id"], emb_text))
 
     # embedding --------------------------------------------------------
+    def vector(self, rec: Any) -> list[float] | None:
+        """Return embedding for ``rec`` using purpose, tags and toolchain.
+
+        Accepts a :class:`BotRecord`, mapping with those fields, or a raw
+        identifier to retrieve a stored embedding via :class:`EmbeddableDBMixin`.
+        """
+
+        if isinstance(rec, (int, str)):
+            return EmbeddableDBMixin.vector(self, rec)
+        if isinstance(rec, BotRecord):
+            purpose = rec.purpose
+            tags = rec.tags
+            toolchain = rec.toolchain
+        else:
+            purpose = rec.get("purpose", "")
+            tags_val = rec.get("tags", [])
+            if isinstance(tags_val, str):
+                tags = _deserialize_list(tags_val)
+            else:
+                tags = list(tags_val)
+            toolchain = rec.get("toolchain", "")
+        text = " ".join([purpose, " ".join(tags), toolchain]).strip()
+        return self._embed(text) if text else None
+
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):
             try:  # pragma: no cover - optional dependency
