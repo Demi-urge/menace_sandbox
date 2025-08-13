@@ -308,15 +308,14 @@ class InfoDB(EmbeddableDBMixin):
                 except sqlite3.OperationalError:
                     self.has_fts = False
             conn.commit()
-        if embedding is not None:
-            try:
-                self.add_embedding(
-                    item.item_id,
-                    embedding,
-                    metadata={"kind": "info", "source_id": item.item_id},
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("embedding store failed for %s", item.item_id)
+        embedding = embedding if embedding is not None else self.vector(item)
+        item.embedding = embedding
+        self.try_add_embedding(
+            item.item_id,
+            item,
+            metadata={"kind": "info", "source_id": item.item_id},
+            vector=embedding,
+        )
 
         if self.event_bus:
             try:
@@ -362,19 +361,14 @@ class InfoDB(EmbeddableDBMixin):
             notes=row["notes"] or "",
             energy=row["energy"] or 1,
             corroboration_count=row["corroboration_count"] or 0,
-            embedding=self.vector(row["id"]),
         )
-        text = self._embed_text(item)
-        emb = self._embed(text)
-        if emb is not None:
-            try:
-                self.add_embedding(
-                    info_id,
-                    emb,
-                    metadata={"kind": "info", "source_id": info_id},
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("embedding store failed for %s", info_id)
+        emb = self.vector(item)
+        self.try_add_embedding(
+            info_id,
+            item,
+            metadata={"kind": "info", "source_id": info_id},
+            vector=emb,
+        )
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for legacy research items missing vectors."""
@@ -392,34 +386,15 @@ class InfoDB(EmbeddableDBMixin):
                         existing = json.loads(row["embedding"])
                     except Exception:
                         existing = None
-                if existing is None:
-                    fields = {
-                        "title": row["title"] or "",
-                        "summary": row["summary"] or "",
-                        "content": row["content"] or "",
-                        "tags": (row["tags"].split(",") if row["tags"] else []),
-                        "category": row["category"] or "",
-                        "type": row["type"] or "",
-                        "associated_bots": (row["associated_bots"].split(",") if row["associated_bots"] else []),
-                        "associated_errors": (row["associated_errors"].split(",") if row["associated_errors"] else []),
-                        "performance_data": row["performance_data"] or "",
-                        "source_url": row["source_url"] or "",
-                        "notes": row["notes"] or "",
-                    }
-                    text = " ".join(self._flatten_fields(fields))
-                    emb = self._embed(text)
-                    if emb is None:
-                        continue
-                else:
-                    emb = existing
-                try:
-                    self.add_embedding(
-                        row["id"],
-                        emb,
-                        metadata={"kind": "info", "source_id": row["id"]},
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed for %s", row["id"])
+                emb = existing if existing is not None else self.vector(row)
+                if emb is None:
+                    continue
+                self.try_add_embedding(
+                    row["id"],
+                    row,
+                    metadata={"kind": "info", "source_id": row["id"]},
+                    vector=emb,
+                )
 
     def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
         pairs: list[str] = []
@@ -468,6 +443,38 @@ class InfoDB(EmbeddableDBMixin):
             except Exception:
                 return None
         return None
+
+    def vector(self, rec: Any) -> list[float] | None:
+        """Return an embedding for ``rec`` or a stored record id."""
+
+        if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
+            return EmbeddableDBMixin.vector(self, rec)
+        if isinstance(rec, ResearchItem):
+            text = self._embed_text(rec)
+        else:
+            if isinstance(rec, sqlite3.Row):
+                rec = dict(rec)
+            fields = {
+                "title": rec.get("title") or rec.get("topic", ""),
+                "summary": rec.get("summary", ""),
+                "content": rec.get("content", ""),
+                "tags": rec.get("tags", []),
+                "category": rec.get("category", ""),
+                "type": rec.get("type") or rec.get("type_", ""),
+                "associated_bots": rec.get("associated_bots", []),
+                "associated_errors": rec.get("associated_errors", []),
+                "performance_data": rec.get("performance_data", ""),
+                "source_url": rec.get("source_url", ""),
+                "notes": rec.get("notes", ""),
+            }
+            if isinstance(fields["tags"], str):
+                fields["tags"] = fields["tags"].split(",") if fields["tags"] else []
+            for key in ("associated_bots", "associated_errors"):
+                val = fields[key]
+                if isinstance(val, str):
+                    fields[key] = val.split(",") if val else []
+            text = " ".join(self._flatten_fields(fields))
+        return self._embed(text) if text else None
 
     def search_by_vector(
         self, vector: Iterable[float], top_k: int = 5
