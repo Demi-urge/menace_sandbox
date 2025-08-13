@@ -4,6 +4,15 @@ This module exposes :class:`HumanAlignmentFlagger` which analyses unified
 diff strings and returns structured reports describing any detected
 alignment concerns.  The checker is intentionally conservative – it never
 raises an exception and only relies on lightweight heuristics.
+
+Checks cover a range of maintainability and safety heuristics including:
+
+* comment density changes and explicit comment removals
+* introduction of single-character identifiers and linter suppressions
+* removal of type hints or absence of annotations in new code
+* direct network, ``exec``/``eval`` calls or other risky patterns
+
+The module only relies on lightweight parsing and never raises.
 """
 
 from __future__ import annotations
@@ -277,10 +286,12 @@ def flag_improvement(
     )
     fs_open_write_re = re.compile(r"open\([^,]+,[^)]*['\"](?:w|a|x)['\"]")
     abs_path_re = re.compile(r"['\"](/[^'\"]*)")
+    linter_suppress_re = re.compile(r"#\s*(?:noqa|pylint:\s*disable|pragma:\s*no\s*cover)")
 
     for change in workflow_changes or []:
         file_path = change.get("file") or ""
         code = change.get("code") or change.get("content") or ""
+        diff_text = change.get("diff") or ""
         if file_path.startswith("tests") or file_path.endswith("_test.py") or file_path.startswith("test_"):
             has_tests = True
         if file_path.endswith(".py"):
@@ -314,6 +325,49 @@ def flag_improvement(
             stripped = code.lstrip()
             if not (stripped.startswith('"""') or stripped.startswith("'''")):
                 warnings["maintainability"].append({"file": file_path, "issue": "missing docstring"})
+
+            # Detect removal of type hints using diff information
+            if diff_text:
+                removed_hints: List[str] = []
+                for line in diff_text.splitlines():
+                    if line.startswith("-") and not line.startswith("---"):
+                        content = line[1:]
+                        snippet = content
+                        if content.strip().startswith("def") and content.rstrip().endswith(":"):
+                            snippet += "\n    pass"
+                        try:
+                            snippet_tree = ast.parse(snippet)
+                        except SyntaxError:
+                            continue
+                        has_annotation = False
+                        for node in ast.walk(snippet_tree):
+                            if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+                                has_annotation = True
+                                break
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                if node.returns is not None:
+                                    has_annotation = True
+                                    break
+                                for arg in (
+                                    list(node.args.args)
+                                    + list(getattr(node.args, "posonlyargs", []))
+                                    + list(node.args.kwonlyargs)
+                                ):
+                                    if getattr(arg, "annotation", None) is not None:
+                                        has_annotation = True
+                                        break
+                                if has_annotation:
+                                    break
+                        if has_annotation:
+                            removed_hints.append(content.strip())
+                if removed_hints:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "removed type hints",
+                            "snippets": removed_hints,
+                        }
+                    )
 
             try:
                 tree = ast.parse(code)
@@ -367,6 +421,9 @@ def flag_improvement(
 
                 complex_functions = []
                 missing_hints = []
+                single_letters: set[str] = set()
+                network_calls: List[str] = []
+                exec_calls: List[str] = []
                 for node in tree.body:
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         score = _compute_complexity(node)
@@ -374,6 +431,24 @@ def flag_improvement(
                             complex_functions.append({"name": node.name, "score": score})
                         if not _has_type_hints(node):
                             missing_hints.append(node.name)
+
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Name):
+                        if len(node.id) == 1 and node.id.isalpha():
+                            single_letters.add(node.id)
+                    elif isinstance(node, ast.Call):
+                        func = node.func
+                        name = ""
+                        if isinstance(func, ast.Name):
+                            name = func.id
+                        elif isinstance(func, ast.Attribute):
+                            base = func.value
+                            if isinstance(base, ast.Name):
+                                name = f"{base.id}.{func.attr}"
+                        if name in {"exec", "eval"}:
+                            exec_calls.append(name)
+                        elif name.split(".")[0] in {"requests", "urllib", "http", "socket"}:
+                            network_calls.append(name)
 
                 if complex_functions:
                     warnings["maintainability"].append(
@@ -389,6 +464,30 @@ def flag_improvement(
                             "file": file_path,
                             "issue": "missing type hints",
                             "functions": missing_hints,
+                        }
+                    )
+                if single_letters:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "obfuscated variable names",
+                            "names": sorted(single_letters),
+                        }
+                    )
+                if exec_calls:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "direct exec call",
+                            "calls": exec_calls,
+                        }
+                    )
+                if network_calls:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "network call",
+                            "calls": network_calls,
                         }
                     )
 
@@ -421,6 +520,7 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
     )
     fs_open_write_re = re.compile(r"open\([^,]+,[^)]*['\"](?:w|a|x)['\"]")
     abs_path_re = re.compile(r"['\"](/[^'\"]*)")
+    linter_suppress_re = re.compile(r"#\s*(?:noqa|pylint:\s*disable|pragma:\s*no\s*cover)")
 
     for path, changes in diff_data.items():
         added_lines = changes.get("added", [])
@@ -456,6 +556,16 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
                         }
                     )
 
+            # Linter directive suppression
+            if linter_suppress_re.search(line):
+                findings.append(
+                    {
+                        "category": "linter_suppression",
+                        "location": path,
+                        "snippet": line.strip(),
+                    }
+                )
+
             # Direct risky constructs
             if any(tok in line for tok in risky_tokens):
                 findings.append(
@@ -484,6 +594,17 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
                 "location": path,
                 "snippet": f"complexity score {complexity}",
             })
+
+        # Removed comments
+        for line in removed_lines:
+            if line.lstrip().startswith("#"):
+                findings.append(
+                    {
+                        "category": "comment_removed",
+                        "location": path,
+                        "snippet": line.strip(),
+                    }
+                )
 
         # Opacity: comment density decrease
         removed_comments = sum(1 for l in removed_lines if l.lstrip().startswith("#"))

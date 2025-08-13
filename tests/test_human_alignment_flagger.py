@@ -172,6 +172,65 @@ def test_flag_improvement_warns_on_unsandboxed_fs():
     )
 
 
+def test_flag_improvement_detects_obfuscated_names():
+    code = "def f():\n    a = 1\n    b = a\n    return b"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        issue.get("issue") == "obfuscated variable names"
+        for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_detects_exec_call():
+    code = "def f():\n    exec('print(1)')"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        "exec" in issue.get("issue", "") for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_detects_network_call():
+    code = "import requests\nrequests.get('http://example.com')"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        "network call" in issue.get("issue", "") for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_detects_removed_type_hints():
+    code = "def add(a, b):\n    return a + b"
+    diff = (
+        "--- a/module.py\n"
+        "+++ b/module.py\n"
+        "@@\n"
+        "-def add(a: int, b: int) -> int:\n"
+        "-    return a + b\n"
+        "+def add(a, b):\n"
+        "+    return a + b\n"
+    )
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code, "diff": diff}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        issue.get("issue") == "removed type hints"
+        for issue in warnings["maintainability"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # flag_alignment_issues -----------------------------------------------------
 
@@ -249,6 +308,11 @@ def unsandboxed_fs_diff() -> dict:
     return {"fs.py": {"added": ["open('/etc/passwd', 'w')"], "removed": []}}
 
 
+@pytest.fixture
+def linter_suppression_diff() -> dict:
+    return {"lint.py": {"added": ["x = 1  # noqa"], "removed": []}}
+
+
 def test_flag_alignment_issues_eval(eval_diff):
     findings = haf.flag_alignment_issues(eval_diff)
     assert any(f.get("category") == "risky_construct" for f in findings)
@@ -293,3 +357,13 @@ def test_flag_alignment_issues_unsafe_subprocess(unsafe_subprocess_diff):
 def test_flag_alignment_issues_unsandboxed_fs(unsandboxed_fs_diff):
     findings = haf.flag_alignment_issues(unsandboxed_fs_diff)
     assert any(f.get("category") == "filesystem_mutation" for f in findings)
+
+
+def test_flag_alignment_issues_comment_removed(comment_removal_diff):
+    findings = haf.flag_alignment_issues(comment_removal_diff)
+    assert any(f.get("category") == "comment_removed" for f in findings)
+
+
+def test_flag_alignment_issues_linter_suppression(linter_suppression_diff):
+    findings = haf.flag_alignment_issues(linter_suppression_diff)
+    assert any(f.get("category") == "linter_suppression" for f in findings)
