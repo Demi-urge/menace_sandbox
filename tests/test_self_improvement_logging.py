@@ -15,6 +15,32 @@ stub = types.ModuleType("menace.logging_utils")
 stub.log_record = lambda **k: {}
 sys.modules["menace.logging_utils"] = stub
 
+# Lightweight stubs for modules pulling heavy dependencies
+dmm = types.ModuleType("dynamic_module_mapper")
+dmm.build_module_map = lambda *a, **k: {}
+dmm.discover_module_groups = lambda *a, **k: {}
+sys.modules["dynamic_module_mapper"] = dmm
+
+oa = types.ModuleType("orphan_analyzer")
+oa.classify_module = lambda *a, **k: "ok"
+oa.analyze_redundancy = lambda *a, **k: {}
+sys.modules["orphan_analyzer"] = oa
+
+sandbox_runner = types.ModuleType("sandbox_runner")
+env_mod = types.ModuleType("sandbox_runner.environment")
+env_mod.auto_include_modules = lambda *a, **k: None
+env_mod.run_workflow_simulations = lambda *a, **k: ([], {})
+env_mod.try_integrate_into_workflows = lambda *a, **k: []
+sandbox_runner.environment = env_mod
+sys.modules["sandbox_runner"] = sandbox_runner
+sys.modules["sandbox_runner.environment"] = env_mod
+
+error_logger = types.ModuleType("menace.error_logger")
+error_logger.TelemetryEvent = type("TelemetryEvent", (), {})
+sys.modules["menace.error_logger"] = error_logger
+
+sys.modules["menace.synergy_history_db"] = types.ModuleType("menace.synergy_history_db")
+
 # Simple stubs for modules referenced in self_improvement_engine
 for name in [
     "self_model_bootstrap",
@@ -254,6 +280,95 @@ def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
     assert engine.cycle_logs and engine.cycle_logs[0]["report"]["issues"]
     log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
     assert log_file.exists()
+
+
+def test_flag_patch_alignment_dispatches_warning(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+    dispatched = []
+
+    def fake_dispatch(record):
+        dispatched.append(record)
+
+    monkeypatch.setattr(sie.security_auditor, "dispatch_alignment_warning", fake_dispatch)
+
+    class Bus:
+        def publish(self, topic, record):
+            pass
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=Bus(),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    assert dispatched and dispatched[0]["patch_id"] == 1
+
+
+def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+
+    def fail_dispatch(record):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sie.security_auditor, "dispatch_alignment_warning", fail_dispatch)
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=None,
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    assert engine.cycle_logs and engine.cycle_logs[0]["patch_id"] == 1
 
 
 def teardown_module(module):

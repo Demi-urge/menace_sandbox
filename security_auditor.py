@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Basic security auditing helpers with an optional auto-fix loop."""
 
+from typing import Mapping, Any
 import logging
 
 
@@ -31,4 +32,18 @@ def fix_until_safe(auditor: "SecurityAuditor", *, attempts: int = 3) -> bool:
     return True
 
 
-__all__ = ["SecurityAuditor", "fix_until_safe"]
+def dispatch_alignment_warning(report: Mapping[str, Any]) -> None:
+    """Accept alignment warnings from external flaggers.
+
+    The default implementation simply logs the provided *report*.  Callers
+    may monkeypatch this function in tests or provide their own dispatcher
+    to integrate with a real security monitoring system.
+    """
+
+    try:
+        logging.getLogger(__name__).warning("alignment warning: %s", report)
+    except Exception:  # pragma: no cover - defensive logging
+        logging.getLogger(__name__).exception("alignment warning dispatch failed")
+
+
+__all__ = ["SecurityAuditor", "fix_until_safe", "dispatch_alignment_warning"]
