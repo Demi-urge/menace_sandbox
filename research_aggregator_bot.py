@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from .auto_link import auto_link
 
@@ -33,6 +33,7 @@ from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
 from .database_router import DatabaseRouter
+from .embeddable_db_mixin import EmbeddableDBMixin
 try:
     from .menace_db import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -98,7 +99,7 @@ class ResearchMemory:
                 self.long.append(it)
 
 
-class InfoDB:
+class InfoDB(EmbeddableDBMixin):
     """SQLite storage for collected research."""
 
     def __init__(
@@ -111,6 +112,9 @@ class InfoDB:
         *,
         event_bus: Optional[UnifiedEventBus] = None,
         menace_db: "MenaceDB" | None = None,
+        vector_backend: str = "annoy",
+        vector_index_path: Path | str = "info_embeddings.index",
+        embedding_version: int = 1,
     ) -> None:
         self.path = path
         self.event_bus = event_bus
@@ -120,66 +124,74 @@ class InfoDB:
         self.video_bot = video_bot
         self.menace_db = menace_db
         self.has_fts = False
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS info(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    model_id INTEGER,
-                    contrarian_id INTEGER,
-                    title TEXT,
-                    summary TEXT,
-                    tags TEXT,
-                    category TEXT,
-                    type TEXT,
-                    content TEXT,
-                    data_depth REAL,
-                    source_url TEXT,
-                    notes TEXT,
-                    associated_bots TEXT,
-                    associated_errors TEXT,
-                    performance_data TEXT,
-                    timestamp REAL,
-                    energy INTEGER,
-                    corroboration_count INTEGER,
-                    embedding TEXT
-                )
-                """
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        conn = self.conn
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS info(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_id INTEGER,
+                contrarian_id INTEGER,
+                title TEXT,
+                summary TEXT,
+                tags TEXT,
+                category TEXT,
+                type TEXT,
+                content TEXT,
+                data_depth REAL,
+                source_url TEXT,
+                notes TEXT,
+                associated_bots TEXT,
+                associated_errors TEXT,
+                performance_data TEXT,
+                timestamp REAL,
+                energy INTEGER,
+                corroboration_count INTEGER,
+                embedding TEXT
             )
-            cols = [r[1] for r in conn.execute("PRAGMA table_info(info)").fetchall()]
-            for name, stmt in {
-                "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
-                "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
-                "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
-                "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
-                "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
-                "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
-                "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
-                "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
-                "embedding": "ALTER TABLE info ADD COLUMN embedding TEXT",
-            }.items():
-                if name not in cols:
-                    conn.execute(stmt)
+            """
+        )
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(info)").fetchall()]
+        for name, stmt in {
+            "model_id": "ALTER TABLE info ADD COLUMN model_id INTEGER",
+            "contrarian_id": "ALTER TABLE info ADD COLUMN contrarian_id INTEGER",
+            "summary": "ALTER TABLE info ADD COLUMN summary TEXT",
+            "data_depth": "ALTER TABLE info ADD COLUMN data_depth REAL",
+            "source_url": "ALTER TABLE info ADD COLUMN source_url TEXT",
+            "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
+            "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
+            "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
+            "embedding": "ALTER TABLE info ADD COLUMN embedding TEXT",
+        }.items():
+            if name not in cols:
+                conn.execute(stmt)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
+        )
+        try:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_workflows(info_id INTEGER, workflow_id INTEGER)"
+                "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
             )
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_enhancements(info_id INTEGER, enhancement_id INTEGER)"
+                "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
             )
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS info_bots(info_id INTEGER, bot_id INTEGER)"
-            )
-            try:
-                conn.execute(
-                    "CREATE VIRTUAL TABLE IF NOT EXISTS info_fts USING fts5(title, tags, content)"
-                )
-                conn.execute(
-                    "INSERT OR IGNORE INTO info_fts(rowid, title, tags, content) SELECT id, title, tags, content FROM info"
-                )
-                self.has_fts = True
-            except sqlite3.OperationalError:
-                self.has_fts = False
-            conn.commit()
+            self.has_fts = True
+        except sqlite3.OperationalError:
+            self.has_fts = False
+        conn.commit()
+        EmbeddableDBMixin.__init__(
+            self,
+            vector_backend=vector_backend,
+            index_path=vector_index_path,
+            embedding_version=embedding_version,
+        )
 
     def set_current_model(self, model_id: int) -> None:
         """Persist the current model id for future inserts."""
@@ -213,7 +225,6 @@ class InfoDB:
         tags = ",".join(item.tags)
         bots = ",".join(item.associated_bots)
         errors = ",".join(item.associated_errors)
-        emb_json = json.dumps(embedding) if embedding is not None else None
 
         # cross reference existing items based on energy level
         notes = []
@@ -249,6 +260,12 @@ class InfoDB:
                         notes.append("validated:video_fail")
         item.notes = "; ".join(notes)
         item.corroboration_count = corroboration_count
+
+        if embedding is None:
+            text = self._embed_text(item)
+            embedding = self._embed(text)
+        item.embedding = embedding
+        emb_json = json.dumps(embedding) if embedding is not None else None
 
         with sqlite3.connect(self.path) as conn:
             cur = conn.execute(
@@ -295,6 +312,12 @@ class InfoDB:
                 except sqlite3.OperationalError:
                     self.has_fts = False
             conn.commit()
+        if embedding is not None:
+            try:
+                self.add_embedding(item.item_id, embedding, metadata={"kind": "info"})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("embedding store failed for %s", item.item_id)
+
         if self.event_bus:
             try:
                 self.event_bus.publish("info:new", dataclasses.asdict(item))
@@ -306,6 +329,121 @@ class InfoDB:
             except Exception as exc:
                 warnings.warn(f"MenaceDB insert failed: {exc}")
         return int(item.item_id)
+
+    def update(self, info_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        sets = ", ".join(f"{k}=?" for k in fields)
+        params = list(fields.values()) + [info_id]
+        with sqlite3.connect(self.path) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute(f"UPDATE info SET {sets} WHERE id=?", params)
+            row = conn.execute("SELECT * FROM info WHERE id=?", (info_id,)).fetchone()
+            conn.commit()
+        if not row:
+            return
+        item = ResearchItem(
+            topic=row["title"],
+            content=row["content"],
+            timestamp=row["timestamp"],
+            title=row["title"],
+            tags=row["tags"].split(",") if row["tags"] else [],
+            item_id=row["id"],
+            category=row["category"] or "",
+            type_=row["type"] or "",
+            associated_bots=row["associated_bots"].split(",") if row["associated_bots"] else [],
+            associated_errors=row["associated_errors"].split(",") if row["associated_errors"] else [],
+            performance_data=row["performance_data"] or "",
+            summary=row["summary"] or "",
+            model_id=row["model_id"] or 0,
+            contrarian_id=row["contrarian_id"] or 0,
+            data_depth=row["data_depth"] or 0.0,
+            source_url=row["source_url"] or "",
+            notes=row["notes"] or "",
+            energy=row["energy"] or 1,
+            corroboration_count=row["corroboration_count"] or 0,
+            embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+        )
+        text = self._embed_text(item)
+        emb = self._embed(text)
+        if emb is not None:
+            with sqlite3.connect(self.path) as conn:
+                conn.execute(
+                    "UPDATE info SET embedding=? WHERE id=?",
+                    (json.dumps(emb), info_id),
+                )
+                conn.commit()
+            try:
+                self.add_embedding(info_id, emb, metadata={"kind": "info"})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("embedding store failed for %s", info_id)
+
+    def _embed_text(self, item: ResearchItem) -> str:
+        fields = {
+            "title": item.title or item.topic,
+            "summary": item.summary,
+            "content": item.content,
+            "tags": ",".join(item.tags),
+            "category": item.category,
+            "type": item.type_,
+            "associated_bots": ",".join(item.associated_bots),
+            "associated_errors": ",".join(item.associated_errors),
+            "performance_data": item.performance_data,
+            "source_url": item.source_url,
+            "notes": item.notes,
+        }
+        return " ".join(f"{k}:{v}" for k, v in fields.items() if v)
+
+    def _embed(self, text: str) -> list[float] | None:
+        if not hasattr(self, "_embedder"):
+            try:  # pragma: no cover - optional dependency
+                from sentence_transformers import SentenceTransformer  # type: ignore
+            except Exception:
+                self._embedder = None
+            else:
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        if getattr(self, "_embedder", None):
+            try:  # pragma: no cover - runtime issues
+                return self._embedder.encode([text])[0].tolist()
+            except Exception:
+                return None
+        return None
+
+    def search_by_vector(
+        self, vector: Iterable[float], top_k: int = 5
+    ) -> List[ResearchItem]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: List[ResearchItem] = []
+        for rec_id, dist in matches:
+            row = self.conn.execute(
+                "SELECT * FROM info WHERE id=?", (rec_id,)
+            ).fetchone()
+            if row:
+                item = ResearchItem(
+                    topic=row["title"],
+                    content=row["content"],
+                    timestamp=row["timestamp"],
+                    title=row["title"],
+                    tags=row["tags"].split(",") if row["tags"] else [],
+                    item_id=row["id"],
+                    category=row["category"] or "",
+                    type_=row["type"] or "",
+                    associated_bots=row["associated_bots"].split(",") if row["associated_bots"] else [],
+                    associated_errors=row["associated_errors"].split(",") if row["associated_errors"] else [],
+                    performance_data=row["performance_data"] or "",
+                    summary=row["summary"] or "",
+                    model_id=row["model_id"] or 0,
+                    contrarian_id=row["contrarian_id"] or 0,
+                    data_depth=row["data_depth"] or 0.0,
+                    source_url=row["source_url"] or "",
+                    notes=row["notes"] or "",
+                    energy=row["energy"] or 1,
+                    corroboration_count=row["corroboration_count"] or 0,
+                    embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+                )
+                setattr(item, "_distance", dist)
+                results.append(item)
+        return results
 
     def search(self, term: str) -> List[ResearchItem]:
         pattern = f"%{term.lower()}%"
