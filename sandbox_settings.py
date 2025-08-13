@@ -159,6 +159,22 @@ class SandboxSettings(BaseSettings):
             "flagging critical issues."
         ),
     )
+    improvement_warning_threshold: float = Field(
+        0.5,
+        env="IMPROVEMENT_WARNING_THRESHOLD",
+        description=(
+            "Normalised severity at or above this value triggers logging of "
+            "self-improvement warnings."
+        ),
+    )
+    improvement_failure_threshold: float = Field(
+        0.9,
+        env="IMPROVEMENT_FAILURE_THRESHOLD",
+        description=(
+            "Normalised severity at or above this value marks self-improvement "
+            "issues as failures."
+        ),
+    )
     alignment_baseline_metrics_path: str = Field(
         "sandbox_metrics.yaml",
         env="ALIGNMENT_BASELINE_METRICS_PATH",
