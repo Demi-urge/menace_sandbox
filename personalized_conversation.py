@@ -8,7 +8,7 @@ import re
 from .conversation_manager_bot import ConversationManagerBot
 from .chatgpt_idea_bot import ChatGPTClient
 from .mirror_bot import MirrorBot
-from .sales_conversation_memory import SalesConversationMemory
+from neurosales.interaction_memory import InteractionMemory
 
 
 class PersonalizedConversationManager(ConversationManagerBot):
@@ -19,14 +19,15 @@ class PersonalizedConversationManager(ConversationManagerBot):
         client: ChatGPTClient,
         mode: str = "formal",
         mirror: MirrorBot | None = None,
-        memory: SalesConversationMemory | None = None,
+        memory: InteractionMemory | None = None,
         **kwargs,
     ) -> None:
         super().__init__(client, **kwargs)
         self.mode = mode
         self.mirror = mirror or MirrorBot()
-        self.memory = memory or SalesConversationMemory()
+        self.memory = memory or InteractionMemory()
         self._objection_keywords = {"no", "not", "don't", "cant", "can't", "won't"}
+        self.emotional_strategy = "empathetic"
 
     def set_mode(self, mode: str) -> None:
         self.mode = mode
@@ -53,24 +54,29 @@ class PersonalizedConversationManager(ConversationManagerBot):
 
     # --- Resistance detection -----------------------------------
     def detect_resistance(self) -> None:
-        """Flip mode or escalate if objection patterns are found."""
+        """Detect repeated objections and adjust strategy."""
 
-        recent = self.memory.get_recent()
-        objections = [
+        recent = self.memory.recent_messages()
+        negatives = [
             m
             for m in recent
-            if m["role"] == "user"
-            and any(k in m["text"].lower() for k in self._objection_keywords)
+            if m.role == "user"
+            and any(k in m.message.lower() for k in self._objection_keywords)
         ]
-        cta_objection = any(
-            any(k in str(step).lower() for k in self._objection_keywords)
-            for step in self.memory.cta_stack
-        )
-        if objections or cta_objection:
+        if len(negatives) >= 2:
             if self.mode == "casual":
                 self.mode = "formal"
             else:
                 self.notify("resistance detected")
+            self.emotional_strategy = (
+                "assertive"
+                if self.emotional_strategy == "empathetic"
+                else "empathetic"
+            )
+            self.memory.push_event(
+                "resistance",
+                escalation_level=len(self.memory.current_chain()) + 1,
+            )
 
     def ask(self, query: str, target_bot: Optional[str] = None) -> str:  # type: ignore[override]
         adjusted = self._apply_strategy(query)
@@ -80,8 +86,8 @@ class PersonalizedConversationManager(ConversationManagerBot):
             response = self._chatgpt(adjusted)
 
         # Record conversation without personal identifiers
-        self.memory.add_message(query, "user")
-        self.memory.add_message(response, "assistant")
+        self.memory.append_message(query, "user")
+        self.memory.append_message(response, "assistant")
 
         self.detect_resistance()
 

@@ -15,7 +15,13 @@ def test_modes():
     assert not text.endswith("!)")
 
 
-def test_resistance_shifts_mode():
+def test_resistance_triggers_strategy_and_cta():
     bot = pc.PersonalizedConversationManager(StubClient(), mode="casual")
     bot.ask("no thanks")
+    assert bot.mode == "casual"
+    assert bot.emotional_strategy == "empathetic"
+    assert bot.memory.current_chain() == []
+    bot.ask("still not interested")
     assert bot.mode == "formal"
+    assert bot.emotional_strategy == "assertive"
+    assert bot.memory.current_chain()
