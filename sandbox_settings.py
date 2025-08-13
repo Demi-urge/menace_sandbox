@@ -123,6 +123,40 @@ class SandboxSettings(BaseSettings):
         description="Raise an error when canonical scenarios are missing coverage.",
     )
 
+    enable_alignment_flagger: bool = Field(
+        True,
+        env="ENABLE_ALIGNMENT_FLAGGER",
+        description=(
+            "Run the human-alignment flagger after each commit. Enabled by default to "
+            "surface potential safety regressions early."
+        ),
+    )
+    alignment_warning_threshold: float = Field(
+        0.5,
+        env="ALIGNMENT_WARNING_THRESHOLD",
+        description=(
+            "Risk scores at or above this value raise non-blocking warnings. The "
+            "default of 0.5 balances sensitivity with noise."
+        ),
+    )
+    alignment_failure_threshold: float = Field(
+        0.9,
+        env="ALIGNMENT_FAILURE_THRESHOLD",
+        description=(
+            "Risk scores at or above this value are considered severe. A high "
+            "default of 0.9 avoids false positives while still flagging critical "
+            "issues."
+        ),
+    )
+    alignment_baseline_metrics_path: str = Field(
+        "sandbox_metrics.yaml",
+        env="ALIGNMENT_BASELINE_METRICS_PATH",
+        description=(
+            "Path to baseline metrics file for maintainability comparisons. By "
+            "default this points to the repository's sandbox_metrics.yaml snapshot."
+        ),
+    )
+
     # self test integration scoring knobs
     integration_score_threshold: float = Field(
         0.0,
