@@ -265,12 +265,51 @@ def flag_improvement(
 
     # Maintainability heuristics -----------------------------------------
     has_tests = False
+    fs_mutation_calls = (
+        "os.remove(",
+        "os.unlink(",
+        "os.rename(",
+        "os.rmdir(",
+        "shutil.rmtree(",
+        "shutil.move(",
+        "shutil.copyfile(",
+    )
+    fs_open_write_re = re.compile(r"open\([^,]+,[^)]*['\"](?:w|a|x)['\"]")
+    abs_path_re = re.compile(r"['\"](/[^'\"]*)")
+
     for change in workflow_changes or []:
         file_path = change.get("file") or ""
         code = change.get("code") or change.get("content") or ""
         if file_path.startswith("tests") or file_path.endswith("_test.py") or file_path.startswith("test_"):
             has_tests = True
         if file_path.endswith(".py"):
+            lines = code.splitlines()
+            for line in lines:
+                if (
+                    "subprocess.Popen" in line
+                    or ("subprocess.run" in line and "shell=True" in line)
+                    or "os.system(" in line
+                ):
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "unsafe subprocess call",
+                            "snippet": line.strip(),
+                        }
+                    )
+                if fs_open_write_re.search(line) or any(
+                    call in line for call in fs_mutation_calls
+                ):
+                    match = abs_path_re.search(line)
+                    if match and "sandbox" not in match.group(1):
+                        warnings["maintainability"].append(
+                            {
+                                "file": file_path,
+                                "issue": "unsandboxed filesystem mutation",
+                                "snippet": line.strip(),
+                            }
+                        )
+
             stripped = code.lstrip()
             if not (stripped.startswith('"""') or stripped.startswith("'''")):
                 warnings["maintainability"].append({"file": file_path, "issue": "missing docstring"})
@@ -305,20 +344,61 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
     findings: List[Dict[str, str]] = []
     risky_tokens = ("eval(", "exec(")
     complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
+    fs_mutation_calls = (
+        "os.remove(",
+        "os.unlink(",
+        "os.rename(",
+        "os.rmdir(",
+        "shutil.rmtree(",
+        "shutil.move(",
+        "shutil.copyfile(",
+    )
+    fs_open_write_re = re.compile(r"open\([^,]+,[^)]*['\"](?:w|a|x)['\"]")
+    abs_path_re = re.compile(r"['\"](/[^'\"]*)")
 
     for path, changes in diff_data.items():
         added_lines = changes.get("added", [])
         removed_lines = changes.get("removed", [])
         joined = "\n".join(added_lines)
 
-        # Direct risky constructs
         for line in added_lines:
+            # Unsafe subprocess usage
+            if (
+                "subprocess.Popen" in line
+                or ("subprocess.run" in line and "shell=True" in line)
+                or "os.system(" in line
+            ):
+                findings.append(
+                    {
+                        "category": "unsafe_subprocess",
+                        "location": path,
+                        "snippet": line.strip(),
+                    }
+                )
+
+            # Direct file-system mutations outside sandbox paths
+            if fs_open_write_re.search(line) or any(
+                call in line for call in fs_mutation_calls
+            ):
+                match = abs_path_re.search(line)
+                if match and "sandbox" not in match.group(1):
+                    findings.append(
+                        {
+                            "category": "filesystem_mutation",
+                            "location": path,
+                            "snippet": line.strip(),
+                        }
+                    )
+
+            # Direct risky constructs
             if any(tok in line for tok in risky_tokens):
-                findings.append({
-                    "category": "risky_construct",
-                    "location": path,
-                    "snippet": line.strip(),
-                })
+                findings.append(
+                    {
+                        "category": "risky_construct",
+                        "location": path,
+                        "snippet": line.strip(),
+                    }
+                )
 
         # Missing logging
         if any(line.lstrip().startswith("def ") for line in added_lines) and not any(
