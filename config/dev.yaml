@@ -1,0 +1,10 @@
+paths:
+  data_dir: ./data
+  log_dir: ./logs
+logging:
+  verbosity: DEBUG
+bot:
+  epsilon: 0.2
+api_keys:
+  openai: dev-openai-key
+  serp: dev-serp-key

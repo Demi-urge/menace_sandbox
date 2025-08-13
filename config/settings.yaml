@@ -1,0 +1,17 @@
+paths:
+  data_dir: /var/lib/igi/data
+  log_dir: /var/log/igi
+thresholds:
+  error: 0.5
+  alert: 0.9
+api_keys:
+  openai: "REPLACE_WITH_OPENAI_KEY"
+  serp: "REPLACE_WITH_SERP_API_KEY"
+logging:
+  verbosity: INFO
+vector:
+  dimensions: 512
+  distance_metric: cosine
+bot:
+  learning_rate: 0.01
+  epsilon: 0.1
