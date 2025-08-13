@@ -1079,6 +1079,12 @@ class DatabaseRouter:
                 logger.error("info update sqlite failed: %s", exc)
                 row = None
         if self.menace_db:
+            emb = None
+            try:
+                emb = self.info_db.vector(info_id)  # type: ignore[attr-defined]
+            except Exception:
+                emb = None
+
             def op() -> None:
                 with self.menace_db.engine.begin() as conn:
                     conn.execute(
@@ -1086,6 +1092,17 @@ class DatabaseRouter:
                         .where(self.menace_db.information.c.info_id == info_id)
                         .values(**fields)
                     )
+                    if emb is not None:
+                        conn.execute(
+                            self.menace_db.information_embeddings.insert().prefix_with("OR REPLACE").values(
+                                record_id=str(info_id),
+                                vector=json.dumps(emb),
+                                created_at=datetime.utcnow().isoformat(),
+                                embedding_version=getattr(self.info_db, "embedding_version", 1),
+                                kind="info",
+                                source_id=str(info_id),
+                            )
+                        )
 
             def rollback() -> None:
                 if row is not None and path:

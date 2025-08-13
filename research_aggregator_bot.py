@@ -113,7 +113,7 @@ class InfoDB(EmbeddableDBMixin):
         event_bus: Optional[UnifiedEventBus] = None,
         menace_db: "MenaceDB" | None = None,
         vector_backend: str = "annoy",
-        vector_index_path: Path | str = "info_embeddings.index",
+        vector_index_path: Path | str = "information_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
         self.path = path
@@ -189,6 +189,7 @@ class InfoDB(EmbeddableDBMixin):
             vector_backend=vector_backend,
             index_path=vector_index_path,
             embedding_version=embedding_version,
+            table_name="information_embeddings",
         )
 
     def set_current_model(self, model_id: int) -> None:
@@ -374,7 +375,7 @@ class InfoDB(EmbeddableDBMixin):
         """Generate embeddings for legacy research items missing vectors."""
         while True:
             rows = self.conn.execute(
-                "SELECT * FROM info WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                f"SELECT * FROM info WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
                 (batch_size,),
             ).fetchall()
             if not rows:
@@ -684,6 +685,17 @@ class InfoDB(EmbeddableDBMixin):
                 )
             )
             info_id = int(res.inserted_primary_key[0])
+            if item.embedding:
+                conn.execute(
+                    mdb.information_embeddings.insert().prefix_with("OR REPLACE").values(
+                        record_id=str(info_id),
+                        vector=json.dumps(item.embedding),
+                        created_at=datetime.utcnow().isoformat(),
+                        embedding_version=self.embedding_version,
+                        kind="info",
+                        source_id=str(info_id),
+                    )
+                )
             if item.model_id:
                 row = conn.execute(
                     mdb.models.select().where(mdb.models.c.model_id == item.model_id)
