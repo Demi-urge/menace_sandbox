@@ -21,6 +21,22 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Alignment flagger integration
+
+After applying a commit the engine invokes `HumanAlignmentFlagger` on the latest
+diff. The flagger reports removed docstrings or logging, missing tests, high
+complexity blocks and ethics or risk/reward issues. Every report is written to
+`sandbox_data/alignment_flags.jsonl` with the commit hash and is also published
+on the event bus under the `alignment:flag` topic.
+
+Security AI or developers should tail the JSON Lines file or subscribe to the
+event bus to review warnings. Alerts labelled `alignment_warning` are emitted
+when scores exceed `ALIGNMENT_WARNING_THRESHOLD`, while entries above
+`ALIGNMENT_FAILURE_THRESHOLD` deserve immediate attention. Set
+`ENABLE_ALIGNMENT_FLAGGER=0` to disable the check or adjust
+`ALIGNMENT_WARNING_THRESHOLD`, `ALIGNMENT_FAILURE_THRESHOLD` and
+`ALIGNMENT_BASELINE_METRICS_PATH` to tune its behaviour.
+
 ## Adaptive ROI Prediction
 
 `SelfImprovementEngine` can call the `AdaptiveROIPredictor` to estimate the
