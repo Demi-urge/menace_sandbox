@@ -45,14 +45,20 @@ import json
 import yaml
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol
 import re
 from collections import Counter
+from importlib import import_module, util
 
 from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
 from reward_sanity_checker import check_risk_reward_alignment
 from sandbox_settings import SandboxSettings
+
+
+class Rule(Protocol):
+    def __call__(self, path: str, added: list[str], removed: list[str]) -> list[dict]:
+        ...
 
 
 def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
@@ -107,14 +113,51 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
 class HumanAlignmentFlagger:
     """Analyse diffs for alignment risks and maintainability issues."""
 
-    def __init__(self, settings: Optional[SandboxSettings] = None) -> None:
+    def __init__(
+        self,
+        settings: Optional[SandboxSettings] = None,
+        rules: Optional[List[Rule]] = None,
+    ) -> None:
         self.settings = settings
-        rules = getattr(settings, "alignment_rules", None) if settings else None
-        self.max_complexity = getattr(rules, "max_complexity_score", 10)
-        self.max_comment_drop = getattr(rules, "max_comment_density_drop", 0.1)
-        self.allowed_network_calls = getattr(rules, "allowed_network_calls", 0)
-        self.comment_density_severity = getattr(rules, "comment_density_severity", 2)
-        self.network_call_severity = getattr(rules, "network_call_severity", 3)
+        cfg = getattr(settings, "alignment_rules", None) if settings else None
+        self.max_complexity = getattr(cfg, "max_complexity_score", 10)
+        self.max_comment_drop = getattr(cfg, "max_comment_density_drop", 0.1)
+        self.allowed_network_calls = getattr(cfg, "allowed_network_calls", 0)
+        self.comment_density_severity = getattr(cfg, "comment_density_severity", 2)
+        self.network_call_severity = getattr(cfg, "network_call_severity", 3)
+
+        self.rules: List[Rule] = list(rules or [])
+        module_paths = getattr(cfg, "rule_modules", []) if cfg else []
+        for mod in module_paths:
+            module = None
+            try:
+                module = import_module(mod)
+            except Exception:
+                try:
+                    if "" not in sys.path:
+                        sys.path.append("")
+                    module = import_module(mod)
+                except Exception:
+                    try:
+                        rel = Path(mod.replace(".", "/") + ".py")
+                        search_paths = [Path.cwd(), Path(__file__).resolve().parent]
+                        search_paths.extend(Path(p) for p in sys.path if p)
+                        if rel.is_absolute():
+                            candidate = rel
+                        else:
+                            candidate = next((p / rel for p in search_paths if (p / rel).exists()), None)
+                        if candidate and candidate.exists():
+                            spec = util.spec_from_file_location(mod, candidate)
+                            module = util.module_from_spec(spec)
+                            assert spec and spec.loader
+                            spec.loader.exec_module(module)
+                    except Exception:
+                        module = None
+            if not module:
+                continue
+            rule = getattr(module, "rule", None)
+            if callable(rule):
+                self.rules.append(rule)  # type: ignore[arg-type]
 
     def flag_patch(self, diff: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Return a structured report for *diff* with optional *context*.
@@ -319,6 +362,12 @@ class HumanAlignmentFlagger:
                         "message": f"High cyclomatic complexity in {path}: score {complexity}",
                     }
                 )
+
+            for rule in self.rules:
+                try:
+                    issues.extend(rule(path, added, removed))
+                except Exception:
+                    continue
 
         # Ethics violations -------------------------------------------------
         ethics_entry = dict(context)
@@ -1028,6 +1077,7 @@ __all__ = [
     "flag_alignment_risks",
     "flag_improvement",
     "flag_alignment_issues",
+    "Rule",
 ]
 
 

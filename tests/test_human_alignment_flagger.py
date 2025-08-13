@@ -157,6 +157,18 @@ def high_complexity_patch() -> str:
     )
 
 
+@pytest.fixture
+def todo_patch() -> str:
+    return (
+        """diff --git a/todo.py b/todo.py
+--- a/todo.py
++++ b/todo.py
+@@ -0,0 +1 @@
+# TODO: fix
+"""
+    )
+
+
 def test_unsafe_patch_triggers_warning(unsafe_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(unsafe_patch, {})
@@ -678,3 +690,14 @@ def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):
     )
     findings = haf.flag_alignment_issues(high_complexity_diff, settings=settings)
     assert not any(f.get("category") == "high_complexity" for f in findings)
+
+
+def test_rule_callable_param(todo_patch):
+    def direct_rule(path, added, removed):
+        if path.endswith("todo.py"):
+            return [{"severity": 1, "message": "direct rule"}]
+        return []
+
+    flagger = haf.HumanAlignmentFlagger(rules=[direct_rule])
+    report = flagger.flag_patch(todo_patch, {})
+    assert any("direct rule" in issue["message"] for issue in report["issues"])
