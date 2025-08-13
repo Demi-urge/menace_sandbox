@@ -417,21 +417,31 @@ class InfoDB(EmbeddableDBMixin):
         _walk("", data)
         return pairs
 
-    def _embed_text(self, item: ResearchItem) -> str:
-        fields = {
-            "title": item.title or item.topic,
-            "summary": item.summary,
-            "content": item.content,
-            "tags": item.tags,
-            "category": item.category,
-            "type": item.type_,
-            "associated_bots": item.associated_bots,
-            "associated_errors": item.associated_errors,
-            "performance_data": item.performance_data,
-            "source_url": item.source_url,
-            "notes": item.notes,
-        }
-        return " ".join(self._flatten_fields(fields))
+    def _embed_text(self, rec: ResearchItem | dict[str, Any] | sqlite3.Row) -> str:
+        """Return a flattened ``key=value`` string for ``rec``.
+
+        All fields of :class:`ResearchItem` are first converted to a mapping
+        using :func:`dataclasses.asdict`.  For plain ``dict`` or ``sqlite3.Row``
+        instances the data is copied so that comma separated list fields can be
+        normalised back into lists.  The resulting mapping is then flattened
+        into ``key=value`` pairs, including any nested data, before being
+        joined into a single space separated string.
+        """
+
+        if isinstance(rec, ResearchItem):
+            data: dict[str, Any] = dataclasses.asdict(rec)
+        elif isinstance(rec, sqlite3.Row):
+            data = dict(rec)
+        else:
+            data = dict(rec)
+
+        # normalise common comma separated fields back into lists
+        for key in ("tags", "associated_bots", "associated_errors", "categories"):
+            val = data.get(key)
+            if isinstance(val, str):
+                data[key] = [v for v in val.split(",") if v]
+
+        return " ".join(self._flatten_fields(data))
 
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):
@@ -453,31 +463,8 @@ class InfoDB(EmbeddableDBMixin):
 
         if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
             return getattr(self, "_metadata", {}).get(str(rec), {}).get("vector")
-        if isinstance(rec, ResearchItem):
-            text = self._embed_text(rec)
-        else:
-            if isinstance(rec, sqlite3.Row):
-                rec = dict(rec)
-            fields = {
-                "title": rec.get("title") or rec.get("topic", ""),
-                "summary": rec.get("summary", ""),
-                "content": rec.get("content", ""),
-                "tags": rec.get("tags", []),
-                "category": rec.get("category", ""),
-                "type": rec.get("type") or rec.get("type_", ""),
-                "associated_bots": rec.get("associated_bots", []),
-                "associated_errors": rec.get("associated_errors", []),
-                "performance_data": rec.get("performance_data", ""),
-                "source_url": rec.get("source_url", ""),
-                "notes": rec.get("notes", ""),
-            }
-            if isinstance(fields["tags"], str):
-                fields["tags"] = fields["tags"].split(",") if fields["tags"] else []
-            for key in ("associated_bots", "associated_errors"):
-                val = fields[key]
-                if isinstance(val, str):
-                    fields[key] = val.split(",") if val else []
-            text = " ".join(self._flatten_fields(fields))
+
+        text = self._embed_text(rec)
         return self._embed(text) if text else None
 
     def search_by_vector(
