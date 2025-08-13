@@ -40,6 +40,7 @@ except Exception:  # pragma: no cover - optional
 
 from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
+from .violation_logger import recent_alignment_warnings
 
 
 def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
@@ -91,6 +92,12 @@ class EvaluationDashboard:
             return {}
         max_avg = max(totals[n] / counts[n] for n in totals)
         return {n: (totals[n] / counts[n]) / max_avg for n in totals}
+
+    # ------------------------------------------------------------------
+    def alignment_warning_panel(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return recent alignment warnings for review."""
+
+        return recent_alignment_warnings(limit)
 
     # ------------------------------------------------------------------
     def roi_prediction_panel(

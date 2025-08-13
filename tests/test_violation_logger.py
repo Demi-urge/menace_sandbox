@@ -66,3 +66,13 @@ def test_cli_alignment_warnings(monkeypatch, tmp_path, capsys):
     out = capsys.readouterr().out
     data = json.loads(out)
     assert data and data[0]["entry_id"] == "warn1"
+
+
+def test_recent_alignment_warnings_alias(tmp_path, monkeypatch):
+    log_path = tmp_path / "violation_log.jsonl"
+    monkeypatch.setattr(vl, "LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(vl, "LOG_PATH", str(log_path))
+
+    vl.log_violation("warn2", "alignment", 3, {}, alignment_warning=True)
+    warnings = vl.recent_alignment_warnings(10)
+    assert warnings and warnings[0]["entry_id"] == "warn2"

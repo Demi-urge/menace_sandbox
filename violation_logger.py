@@ -146,6 +146,16 @@ def load_recent_alignment_warnings(limit: int = 50) -> List[Dict[str, Any]]:
     return warnings
 
 
+def recent_alignment_warnings(limit: int = 50) -> List[Dict[str, Any]]:
+    """Convenience wrapper returning recent alignment warnings.
+
+    This helper provides a shorter public name while delegating to
+    :func:`load_recent_alignment_warnings` for the actual retrieval logic.
+    """
+
+    return load_recent_alignment_warnings(limit)
+
+
 def violation_summary(entry_id: str) -> str:
     """Return a brief summary of all violations for *entry_id*."""
     if not os.path.exists(LOG_PATH):
@@ -174,6 +184,7 @@ __all__ = [
     "log_violation",
     "load_recent_violations",
     "load_recent_alignment_warnings",
+    "recent_alignment_warnings",
     "violation_summary",
     "set_event_bus",
 ]

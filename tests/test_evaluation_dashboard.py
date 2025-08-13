@@ -160,3 +160,11 @@ def test_roi_prediction_events_panel():
     assert panel_w["growth_class_accuracy"] == pytest.approx(0.0)
     assert panel_w["drift_flags"] == [True]
 
+
+def test_alignment_warning_panel(monkeypatch):
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+    monkeypatch.setattr(ed, "recent_alignment_warnings", lambda limit=50: [{"entry_id": "w"}])
+    warnings = dash.alignment_warning_panel()
+    assert warnings and warnings[0]["entry_id"] == "w"
+
