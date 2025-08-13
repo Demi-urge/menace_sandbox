@@ -58,6 +58,19 @@ def obfuscation_patch() -> str:
     )
 
 
+@pytest.fixture
+def missing_annotation_patch() -> str:
+    return (
+        """diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -0,0 +1,2 @@
++def add(a, b):
++    return a + b
+"""
+    )
+
+
 def test_unsafe_patch_triggers_warning(unsafe_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(unsafe_patch, {})
@@ -82,6 +95,14 @@ def test_obfuscation_triggers_opacity(obfuscation_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(obfuscation_patch, {})
     assert any("Opacity" in issue["message"] for issue in report["issues"])
+
+
+def test_flag_patch_detects_missing_annotations(missing_annotation_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(missing_annotation_patch, {})
+    assert any(
+        "Missing type annotations" in issue["message"] for issue in report["issues"]
+    )
 
 
 def test_forbidden_keyword_in_code_improvement_triggers_warning():
@@ -145,6 +166,27 @@ def test_flag_improvement_detects_missing_type_hints():
     )
     assert hint_warning is not None
     assert "add" in hint_warning.get("functions", [])
+
+
+def test_flag_improvement_detects_comment_density_drop():
+    code = "x = compute()"
+    diff = (
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@\n"
+        "-# comment\n"
+        "-x = compute()\n"
+        "+x = compute()\n"
+    )
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "foo.py", "code": code, "diff": diff}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        issue.get("issue") == "comment density decreased"
+        for issue in warnings["maintainability"]
+    )
 
 
 def test_flag_improvement_warns_on_unsafe_subprocess():

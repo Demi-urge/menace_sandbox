@@ -110,9 +110,15 @@ class HumanAlignmentFlagger:
             removed_comments = info.get("comments_removed", 0)
             added_comments = info.get("comments_added", 0)
             if removed_comments > 0:
-                removed_ratio = removed_comments / max(len(removed), 1)
-                added_ratio = added_comments / max(len(added), 1)
-                if added_ratio < removed_ratio:
+                removed_code = sum(
+                    1 for line in removed if line.strip() and not line.lstrip().startswith("#")
+                )
+                added_code = sum(
+                    1 for line in added if line.strip() and not line.lstrip().startswith("#")
+                )
+                prev_ratio = removed_comments / max(removed_comments + removed_code, 1)
+                new_ratio = added_comments / max(added_comments + added_code, 1)
+                if prev_ratio - new_ratio > 0.1:
                     issues.append(
                         {
                             "severity": 2,
@@ -141,6 +147,41 @@ class HumanAlignmentFlagger:
                     "severity": 1,
                     "message": f"{path} may lack module docstring",
                 })
+
+            if path.endswith(".py"):
+                missing_annotations: List[str] = []
+                for line in added:
+                    stripped = line.lstrip()
+                    if stripped.startswith("def ") and stripped.rstrip().endswith(":"):
+                        snippet = stripped + "\n    pass"
+                        try:
+                            func_node = ast.parse(snippet).body[0]
+                        except SyntaxError:
+                            continue
+                        if isinstance(func_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                            args = (
+                                list(func_node.args.args)
+                                + list(getattr(func_node.args, "posonlyargs", []))
+                                + list(func_node.args.kwonlyargs)
+                            )
+                            if func_node.args.vararg:
+                                args.append(func_node.args.vararg)
+                            if func_node.args.kwarg:
+                                args.append(func_node.args.kwarg)
+                            if func_node.returns is None or any(
+                                a.annotation is None for a in args
+                            ):
+                                missing_annotations.append(func_node.name)
+                if missing_annotations:
+                    issues.append(
+                        {
+                            "severity": 2,
+                            "message": (
+                                f"Missing type annotations in {path}: "
+                                + ", ".join(missing_annotations)
+                            ),
+                        }
+                    )
 
             # Logging statements removed
             if any("logging." in line or "logger." in line for line in removed):
@@ -340,11 +381,16 @@ def flag_improvement(
             if not (stripped.startswith('"""') or stripped.startswith("'''")):
                 warnings["maintainability"].append({"file": file_path, "issue": "missing docstring"})
 
-            # Detect removal of type hints using diff information
+            # Detect comment density decrease and removal of type hints using diff information
             if diff_text:
                 removed_hints: List[str] = []
+                added_lines: List[str] = []
+                removed_lines: List[str] = []
                 for line in diff_text.splitlines():
-                    if line.startswith("-") and not line.startswith("---"):
+                    if line.startswith("+") and not line.startswith("+++"):
+                        added_lines.append(line[1:])
+                    elif line.startswith("-") and not line.startswith("---"):
+                        removed_lines.append(line[1:])
                         content = line[1:]
                         snippet = content
                         if content.strip().startswith("def") and content.rstrip().endswith(":"):
@@ -382,6 +428,21 @@ def flag_improvement(
                             "snippets": removed_hints,
                         }
                     )
+                removed_comments = sum(1 for l in removed_lines if l.lstrip().startswith("#"))
+                added_comments = sum(1 for l in added_lines if l.lstrip().startswith("#"))
+                removed_code = sum(
+                    1 for l in removed_lines if l.strip() and not l.lstrip().startswith("#")
+                )
+                added_code = sum(
+                    1 for l in added_lines if l.strip() and not l.lstrip().startswith("#")
+                )
+                if removed_comments > 0:
+                    prev_ratio = removed_comments / max(removed_comments + removed_code, 1)
+                    new_ratio = added_comments / max(added_comments + added_code, 1)
+                    if prev_ratio - new_ratio > 0.1:
+                        warnings["maintainability"].append(
+                            {"file": file_path, "issue": "comment density decreased"}
+                        )
 
             try:
                 tree = ast.parse(code)
