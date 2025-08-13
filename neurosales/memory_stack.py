@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 from .memory_queue import MessageEntry
@@ -22,10 +22,17 @@ class CTAChain:
 
 
 class MemoryStack:
-    """Simple LIFO stack tracking CTA chains."""
+    """Simple LIFO stack tracking CTA chains with expiry."""
 
-    def __init__(self) -> None:
+    def __init__(self, decay_seconds: float = 300) -> None:
+        self.decay = timedelta(seconds=decay_seconds)
         self._stack: List[CTAChain] = []
+
+    def _expire_old_chains(self) -> None:
+        """Drop chains older than the decay window."""
+
+        cutoff = datetime.now(timezone.utc) - self.decay
+        self._stack = [c for c in self._stack if c.created_at >= cutoff]
 
     @staticmethod
     def _get_ts(entry: MessageEntry | datetime) -> datetime:
@@ -48,6 +55,7 @@ class MemoryStack:
         timestamps of the individual messages.
         """
 
+        self._expire_old_chains()
         self._stack.append(
             CTAChain(
                 message_ts=self._get_ts(message),
@@ -58,12 +66,12 @@ class MemoryStack:
 
     def peek_chain(self) -> CTAChain | None:
         """Return the most recently added chain without removing it."""
-
+        self._expire_old_chains()
         return self._stack[-1] if self._stack else None
 
     def pop_chain(self) -> CTAChain | None:
         """Remove and return the most recent chain."""
-
+        self._expire_old_chains()
         return self._stack.pop() if self._stack else None
 
 
