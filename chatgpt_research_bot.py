@@ -103,6 +103,7 @@ def configure_logging(
 
 
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory
 
 DatabaseRouter = _deps.load(
     "DatabaseRouter", lambda: __import__("menace.database_router", fromlist=["DatabaseRouter"]).DatabaseRouter
@@ -595,6 +596,7 @@ class ChatGPTResearchBot:
         self.db_steward = db_steward
         self.summary_config = summary_config or SummaryConfig()
         self.settings = settings or ResearchBotSettings()
+        self.gpt_memory = GPTMemory()
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit
@@ -617,7 +619,12 @@ class ChatGPTResearchBot:
 
         def _do() -> str:
             b_prompt = self._budget_prompt(prompt)
-            data = self.client.ask([{"role": "user", "content": b_prompt}], validate=False)
+            data = self.client.ask(
+                [{"role": "user", "content": b_prompt}],
+                validate=False,
+                knowledge=self.gpt_memory,
+                tags=["research"],
+            )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))
                 return ""

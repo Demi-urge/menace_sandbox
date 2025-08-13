@@ -74,6 +74,7 @@ class ChatGPTClient:
         max_retries: int | None = None,
         validate: bool = True,
         knowledge: Any | None = None,
+        tags: Iterable[str] | None = None,
     ) -> Dict[str, object]:
         memory = None
         if knowledge is not None:
@@ -113,7 +114,7 @@ class ChatGPTClient:
             if memory and hasattr(memory, "log_interaction"):
                 try:
                     text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    memory.log_interaction(user_prompt, text, [])
+                    memory.log_interaction(user_prompt, text, tags or [])
                 except Exception:
                     logger.exception("failed to log interaction")
             return result
@@ -143,7 +144,7 @@ class ChatGPTClient:
                     if memory and hasattr(memory, "log_interaction"):
                         try:
                             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            memory.log_interaction(user_prompt, text, [])
+                            memory.log_interaction(user_prompt, text, tags or [])
                         except Exception:
                             logger.exception("failed to log interaction")
                     return result
@@ -157,7 +158,7 @@ class ChatGPTClient:
                     if memory and hasattr(memory, "log_interaction"):
                         try:
                             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            memory.log_interaction(user_prompt, text, [])
+                            memory.log_interaction(user_prompt, text, tags or [])
                         except Exception:
                             logger.exception("failed to log interaction")
                     return result
@@ -175,7 +176,7 @@ class ChatGPTClient:
                         if memory and hasattr(memory, "log_interaction"):
                             try:
                                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                memory.log_interaction(user_prompt, text, [])
+                                memory.log_interaction(user_prompt, text, tags or [])
                             except Exception:
                                 logger.exception("failed to log interaction")
                         return result
@@ -187,7 +188,7 @@ class ChatGPTClient:
                         if memory and hasattr(memory, "log_interaction"):
                             try:
                                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                memory.log_interaction(user_prompt, text, [])
+                                memory.log_interaction(user_prompt, text, tags or [])
                             except Exception:
                                 logger.exception("failed to log interaction")
                         return result
@@ -195,7 +196,7 @@ class ChatGPTClient:
                 if memory and hasattr(memory, "log_interaction"):
                     try:
                         text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        memory.log_interaction(user_prompt, text, [])
+                        memory.log_interaction(user_prompt, text, tags or [])
                     except Exception:
                         logger.exception("failed to log interaction")
                 return data
@@ -207,7 +208,7 @@ class ChatGPTClient:
                 if memory and hasattr(memory, "log_interaction"):
                     try:
                         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        memory.log_interaction(user_prompt, text, [])
+                        memory.log_interaction(user_prompt, text, tags or [])
                     except Exception:
                         logger.exception("failed to log interaction")
                 return result
@@ -224,7 +225,7 @@ class ChatGPTClient:
         if memory and hasattr(memory, "log_interaction"):
             try:
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                memory.log_interaction(user_prompt, text, [])
+                memory.log_interaction(user_prompt, text, tags or [])
             except Exception:
                 logger.exception("failed to log interaction")
         return result

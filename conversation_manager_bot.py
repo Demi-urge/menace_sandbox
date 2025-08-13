@@ -22,6 +22,7 @@ from neurosales import (
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory
 
 try:
     import speech_recognition as sr  # type: ignore
@@ -58,6 +59,7 @@ class ConversationManagerBot:
         self._notifications: List[str] = []
         self.report_bot = report_bot or ReportGenerationBot()
         self.strategy = "neutral"
+        self.gpt_memory = GPTMemory()
         self._objection_keywords = {"no", "not", "don't", "cant", "can't", "won't"}
         self.resistance_handler: Callable[[List[MessageEntry], CTAChain | None], None] | None = None
 
@@ -116,7 +118,14 @@ class ConversationManagerBot:
     def _chatgpt(self, prompt: str) -> str:
         if prompt in self.cache:
             return self.cache[prompt]
-        data = self.client.ask([{"role": "user", "content": prompt}])
+        try:
+            data = self.client.ask(
+                [{"role": "user", "content": prompt}],
+                knowledge=self.gpt_memory,
+                tags=["idea"],
+            )
+        except TypeError:
+            data = self.client.ask([{"role": "user", "content": prompt}])
         text = (
             data.get("choices", [{}])[0]
             .get("message", {})

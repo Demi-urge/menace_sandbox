@@ -20,6 +20,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -61,6 +62,7 @@ class SelfCodingEngine:
     ) -> None:
         self.code_db = code_db
         self.memory_mgr = memory_mgr
+        self.gpt_memory = GPTMemory(memory_mgr)
         self.pipeline = pipeline
         self.data_bot = data_bot
         self.patch_db = patch_db
@@ -296,7 +298,11 @@ class SelfCodingEngine:
             repo_layout=repo_layout,
         )
         try:
-            data = self.llm_client.ask([{"role": "user", "content": prompt}])
+            data = self.llm_client.ask(
+                [{"role": "user", "content": prompt}],
+                knowledge=self.gpt_memory,
+                tags=["code_fix"],
+            )
         except Exception:
             data = {}
         text = (
