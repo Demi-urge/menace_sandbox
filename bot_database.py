@@ -119,7 +119,6 @@ class BotDB(EmbeddableDBMixin):
         self.menace_db = menace_db
         self.failed_events: list[FailedEvent] = []
         self.failed_menace: list[FailedMenace] = []
-        self.failed_embeddings: list[tuple[int, str]] = []
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
             """
@@ -172,7 +171,6 @@ class BotDB(EmbeddableDBMixin):
         self.conn.commit()
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
             embedding_version=embedding_version,
         )
@@ -229,23 +227,7 @@ class BotDB(EmbeddableDBMixin):
                         still_pending.append(item)
 
             self.failed_menace = still_pending
-        if self.failed_embeddings:
-            remaining_emb: list[tuple[int, str]] = []
-            for bid, text in self.failed_embeddings:
-                emb = self._embed(text)
-                if emb is None:
-                    remaining_emb.append((bid, text))
-                    continue
-                try:
-                    self.add_embedding(
-                        bid,
-                        emb,
-                        metadata={"kind": "bot", "source_id": bid},
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding retry failed for %s: %s", bid, exc)
-                    remaining_emb.append((bid, text))
-            self.failed_embeddings = remaining_emb
+
 
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
     def add_bot(
@@ -285,27 +267,10 @@ class BotDB(EmbeddableDBMixin):
         )
         rec.bid = int(cur.lastrowid)
         self.conn.commit()
-        emb = self.vector(rec)
-        if emb:
-            try:
-                self.add_embedding(
-                    rec.bid,
-                    emb,
-                    metadata={"kind": "bot", "source_id": rec.bid},
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding insert failed for %s: %s", rec.bid, exc)
-                text = " ".join(
-                    filter(None, [rec.purpose, ",".join(rec.tags), ",".join(rec.toolchain)])
-                )
-                if text:
-                    self.failed_embeddings.append((rec.bid, text))
-        else:
-            text = " ".join(
-                filter(None, [rec.purpose, ",".join(rec.tags), ",".join(rec.toolchain)])
-            )
-            if text:
-                self.failed_embeddings.append((rec.bid, text))
+        try:
+            self.add_embedding(rec.bid, rec, "bot", source_id=str(rec.bid))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding insert failed for %s: %s", rec.bid, exc)
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -343,111 +308,38 @@ class BotDB(EmbeddableDBMixin):
         params = list(fields.values()) + [bot_id]
         self.conn.execute(f"UPDATE bots SET {sets} WHERE id=?", params)
         self.conn.commit()
-        if any(k in fields for k in ("purpose", "tags", "toolchain")):
+        try:
             row = self.conn.execute(
-                "SELECT id, purpose, tags, toolchain FROM bots WHERE id=?",
-                (bot_id,),
+                "SELECT * FROM bots WHERE id=?", (bot_id,)
             ).fetchone()
             if row:
-                emb = self.vector(dict(row))
-                if emb:
-                    try:
-                        self.add_embedding(
-                            bot_id,
-                            emb,
-                            metadata={"kind": "bot", "source_id": bot_id},
-                        )
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.exception("embedding update failed for %s: %s", bot_id, exc)
-                        emb_text = " ".join(
-                            filter(
-                                None,
-                                [
-                                    row["purpose"] or "",
-                                    ",".join(_deserialize_list(row["tags"] or "")),
-                                    ",".join(_deserialize_list(row["toolchain"] or "")),
-                                ],
-                            )
-                        )
-                        if emb_text:
-                            self.failed_embeddings.append((bot_id, emb_text))
-                else:
-                    emb_text = " ".join(
-                        filter(
-                            None,
-                            [
-                                row["purpose"] or "",
-                                ",".join(_deserialize_list(row["tags"] or "")),
-                                ",".join(_deserialize_list(row["toolchain"] or "")),
-                            ],
-                        )
-                    )
-                    if emb_text:
-                        self.failed_embeddings.append((bot_id, emb_text))
+                self.add_embedding(bot_id, dict(row), "bot", source_id=str(bot_id))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding update failed for %s: %s", bot_id, exc)
         if self.event_bus:
             payload = {"bot_id": bot_id, **fields}
             if not publish_with_retry(self.event_bus, "bot:update", payload):
                 logger.exception("failed to publish bot:update event")
                 self.failed_events.append(FailedEvent("bot:update", payload))
 
-    def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for legacy bot records lacking them."""
-        while True:
-            rows = self.conn.execute(
-                "SELECT id, purpose, tags, toolchain FROM bots "
-                "WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
-                (batch_size,),
-            ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                rec = dict(row)
-                try:
-                    vec = self.vector(rec)
-                    if vec is None:
-                        text = " ".join(
-                            filter(
-                                None,
-                                [
-                                    rec.get("purpose", ""),
-                                    ",".join(_deserialize_list(rec.get("tags", ""))),
-                                    ",".join(_deserialize_list(rec.get("toolchain", ""))),
-                                ],
-                            )
-                        )
-                        if text:
-                            self.failed_embeddings.append((row["id"], text))
-                        continue
-                    self.add_embedding(
-                        row["id"],
-                        vec,
-                        metadata={"kind": "bot", "source_id": row["id"]},
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding backfill failed for %s: %s", row["id"], exc)
-                    text = " ".join(
-                        filter(
-                            None,
-                            [
-                                rec.get("purpose", ""),
-                                ",".join(_deserialize_list(rec.get("tags", ""))),
-                                ",".join(_deserialize_list(rec.get("toolchain", ""))),
-                            ],
-                        )
-                    )
-                    if text:
-                        self.failed_embeddings.append((row["id"], text))
-
     # embedding --------------------------------------------------------
-    def vector(self, rec: Any) -> list[float] | None:
-        """Return embedding for ``rec`` using purpose, tags and toolchain.
+    def iter_records(self) -> Iterable[tuple[Any, Any, str]]:
+        cur = self.conn.execute("SELECT * FROM bots")
+        for row in cur.fetchall():
+            yield row["id"], dict(row), "bot"
 
-        Accepts a :class:`BotRecord`, mapping with those fields, or a raw
-        identifier to retrieve a stored embedding via :class:`EmbeddableDBMixin`.
-        """
+    def backfill_embeddings(self) -> None:
+        EmbeddableDBMixin.backfill_embeddings(self)
 
+    def vector(self, rec: Any) -> list[float]:
         if isinstance(rec, (int, str)):
-            return EmbeddableDBMixin.vector(self, rec)
+            row = self.conn.execute(
+                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
+                (rec,),
+            ).fetchone()
+            if not row:
+                raise ValueError("record not found")
+            rec = dict(row)
         if isinstance(rec, BotRecord):
             purpose = rec.purpose
             tags = rec.tags
@@ -455,19 +347,24 @@ class BotDB(EmbeddableDBMixin):
         else:
             purpose = rec.get("purpose", "")
             tags_val = rec.get("tags", [])
-            if isinstance(tags_val, str):
-                tags = _deserialize_list(tags_val)
-            else:
-                tags = list(tags_val)
+            tags = (
+                _deserialize_list(tags_val)
+                if isinstance(tags_val, str)
+                else list(tags_val)
+            )
             tc_val = rec.get("toolchain", [])
-            if isinstance(tc_val, str):
-                toolchain = _deserialize_list(tc_val)
-            else:
-                toolchain = list(tc_val)
+            toolchain = (
+                _deserialize_list(tc_val)
+                if isinstance(tc_val, str)
+                else list(tc_val)
+            )
         text = " ".join(
             filter(None, [purpose, ",".join(tags), ",".join(toolchain)])
         )
-        return self._embed(text) if text else None
+        vec = self._embed(text)
+        if vec is None:
+            raise ValueError("embedding backend unavailable")
+        return vec
 
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):
