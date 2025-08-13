@@ -1260,6 +1260,7 @@ class SelfImprovementEngine:
                     "alignment severity below warning threshold",
                     extra=log_record(patch_id=patch_id, severity=max_severity),
                 )
+                _update_alignment_baseline(settings)
                 return
             for idx, issue in enumerate(issues):
                 msg = issue.get("message", "")
@@ -1310,6 +1311,8 @@ class SelfImprovementEngine:
                     fh.write(json.dumps(record) + "\n")
             except Exception:
                 self.logger.exception("alignment flag persistence failed")
+            if not escalated:
+                _update_alignment_baseline(settings)
         except Exception:
             self.logger.exception(
                 "alignment flagging failed", extra=log_record(patch_id=patch_id)
