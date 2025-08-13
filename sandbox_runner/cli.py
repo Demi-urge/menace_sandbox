@@ -1044,6 +1044,11 @@ def main(argv: List[str] | None = None) -> None:
         help="display scenario summary after runs",
     )
     parser.add_argument(
+        "--alignment-warnings",
+        action="store_true",
+        help="display recent alignment warnings and exit",
+    )
+    parser.add_argument(
         "--fail-on-missing-scenarios",
         action="store_true",
         help=(
@@ -1431,6 +1436,11 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["GPT_SECTION_SUMMARY_DEPTH"] = str(args.summary_depth)
     if args.max_recursion_depth is not None:
         os.environ["SANDBOX_MAX_RECURSION_DEPTH"] = str(args.max_recursion_depth)
+
+    if getattr(args, "alignment_warnings", False):
+        from menace import violation_logger as vl
+        print(json.dumps(vl.load_recent_alignment_warnings(), indent=2))
+        return
 
     if getattr(args, "purge_stale", False):
         from sandbox_runner.environment import purge_leftovers
