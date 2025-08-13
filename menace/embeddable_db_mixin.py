@@ -186,6 +186,23 @@ class EmbeddableDBMixin:
             self._vector_index.build(10)
             self._save_index()
 
+    def try_add_embedding(
+        self,
+        record_id: Any,
+        record: Any,
+        *,
+        metadata: dict[str, Any] | None = None,
+        vector: Sequence[float] | None = None,
+    ) -> None:
+        """Best-effort embedding generation and storage."""
+
+        try:
+            vec = vector if vector is not None else self.vector(record)
+            if vec is not None:
+                self.add_embedding(record_id, vec, metadata=metadata)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", record_id, exc)
+
     def _prepare_metadata(
         self, metadata: dict[str, Any] | None
     ) -> tuple[str, int, str, str]:

@@ -251,17 +251,11 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return -1
-        text = self._embed_text(enh)
-        emb = self._embed(text)
-        if emb is not None:
-            try:
-                self.add_embedding(
-                    enh_id,
-                    emb,
-                    metadata={"kind": "enhancement", "source_id": enh_id},
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("embedding store failed for %s", enh_id)
+        self.try_add_embedding(
+            enh_id,
+            enh,
+            metadata={"kind": "enhancement", "source_id": enh_id},
+        )
         return enh_id
 
     def update(self, enhancement_id: int, enh: Enhancement) -> None:
@@ -307,17 +301,11 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return
-        text = self._embed_text(enh)
-        emb = self._embed(text)
-        if emb is not None:
-            try:
-                self.add_embedding(
-                    enhancement_id,
-                    emb,
-                    metadata={"kind": "enhancement", "source_id": enhancement_id},
-                )
-            except Exception:  # pragma: no cover - best effort
-                logger.exception("embedding store failed for %s", enhancement_id)
+        self.try_add_embedding(
+            enhancement_id,
+            enh,
+            metadata={"kind": "enhancement", "source_id": enhancement_id},
+        )
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for enhancement records missing vectors."""
@@ -330,33 +318,15 @@ class EnhancementDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                parts: List[str] = []
-                if row["before_code"] or row["after_code"]:
-                    diff = "\n".join(
-                        difflib.unified_diff(
-                            (row["before_code"] or "").splitlines(),
-                            (row["after_code"] or "").splitlines(),
-                            lineterm="",
-                        )
-                    )
-                    if diff:
-                        parts.append(diff)
-                if row["summary"]:
-                    parts.append(row["summary"])
-                text = "\n".join(parts)
-                if not text:
-                    continue
-                emb = self._embed(text)
+                emb = self.vector(row)
                 if emb is None:
                     continue
-                try:
-                    self.add_embedding(
-                        row["id"],
-                        emb,
-                        metadata={"kind": "enhancement", "source_id": row["id"]},
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed for %s", row["id"])
+                self.try_add_embedding(
+                    row["id"],
+                    row,
+                    metadata={"kind": "enhancement", "source_id": row["id"]},
+                    vector=emb,
+                )
 
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:
@@ -527,6 +497,35 @@ class EnhancementDB(EmbeddableDBMixin):
             except Exception:
                 return None
         return None
+
+    def vector(self, rec: Any) -> list[float] | None:
+        """Return an embedding for ``rec`` or a stored record id."""
+
+        if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
+            return EmbeddableDBMixin.vector(self, rec)
+        if isinstance(rec, Enhancement):
+            text = self._embed_text(rec)
+        else:
+            if isinstance(rec, sqlite3.Row):
+                rec = dict(rec)
+            before = rec.get("before_code", "") if isinstance(rec, dict) else getattr(rec, "before_code", "")
+            after = rec.get("after_code", "") if isinstance(rec, dict) else getattr(rec, "after_code", "")
+            summary = rec.get("summary", "") if isinstance(rec, dict) else getattr(rec, "summary", "")
+            parts: List[str] = []
+            if before or after:
+                diff = "\n".join(
+                    difflib.unified_diff(
+                        (before or "").splitlines(),
+                        (after or "").splitlines(),
+                        lineterm="",
+                    )
+                )
+                if diff:
+                    parts.append(diff)
+            if summary:
+                parts.append(summary)
+            text = "\n".join(parts)
+        return self._embed(text) if text else None
 
     def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[Enhancement]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)

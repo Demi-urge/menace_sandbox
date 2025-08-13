@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .auto_link import auto_link
-from typing import Optional, Iterable, List, TYPE_CHECKING, Sequence
+from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -257,6 +257,19 @@ class ErrorDB(EmbeddableDBMixin):
                 return None
         return None
 
+    def vector(self, rec: Any) -> list[float] | None:
+        """Return an embedding for ``rec`` or a stored record id."""
+
+        if isinstance(rec, int):
+            return EmbeddableDBMixin.vector(self, rec)
+        if isinstance(rec, str):
+            text = rec
+        elif isinstance(rec, dict):
+            text = rec.get("message") or rec.get("cause") or ""
+        else:
+            text = getattr(rec, "message", "") or getattr(rec, "cause", "")
+        return self._embed(text) if text else None
+
     def add_known(self, message: str, solution: str) -> None:
         self.conn.execute(
             "INSERT OR IGNORE INTO known_errors(message, solution) VALUES (?, ?)",
@@ -356,13 +369,11 @@ class ErrorDB(EmbeddableDBMixin):
         """Insert a new error if not already present and return its id."""
         found = self.find_error(message)
         if found is not None:
-            emb = self._embed(message)
-            if emb:
-                self.add_embedding(
-                    found,
-                    emb,
-                    metadata={"kind": "error", "source_id": found},
-                )
+            self.try_add_embedding(
+                found,
+                message,
+                metadata={"kind": "error", "source_id": found},
+            )
             return found
         cur = self.conn.execute(
             "INSERT INTO errors(message, type, description, resolution, ts) VALUES (?,?,?,?,?)",
@@ -376,13 +387,11 @@ class ErrorDB(EmbeddableDBMixin):
         )
         self.conn.commit()
         err_id = int(cur.lastrowid)
-        emb = self._embed(message)
-        if emb:
-            self.add_embedding(
-                err_id,
-                emb,
-                metadata={"kind": "error", "source_id": err_id},
-            )
+        self.try_add_embedding(
+            err_id,
+            message,
+            metadata={"kind": "error", "source_id": err_id},
+        )
         self._publish(
             "errors:new",
             {
@@ -412,17 +421,15 @@ class ErrorDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                emb = self._embed(row["message"])
+                emb = self.vector(row["message"])
                 if not emb:
                     continue
-                try:
-                    self.add_embedding(
-                        row["id"],
-                        emb,
-                        metadata={"kind": "error", "source_id": row["id"]},
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed for %s", row["id"])
+                self.try_add_embedding(
+                    row["id"],
+                    row["message"],
+                    metadata={"kind": "error", "source_id": row["id"]},
+                    vector=emb,
+                )
 
         # Backfill telemetry records
         while True:
@@ -439,18 +446,16 @@ class ErrorDB(EmbeddableDBMixin):
                 break
             for row in rows:
                 text = f"{row['cause']} {row['stack_trace']}".strip()
-                emb = self._embed(text)
+                emb = self.vector(text)
                 if not emb:
                     continue
                 src = row["task_id"] or row["bot_id"] or ""
-                try:
-                    self.add_embedding(
-                        row["id"],
-                        emb,
-                        metadata={"kind": "telemetry", "source_id": src},
-                    )
-                except Exception:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed for telemetry %s", row["id"])
+                self.try_add_embedding(
+                    row["id"],
+                    text,
+                    metadata={"kind": "telemetry", "source_id": src},
+                    vector=emb,
+                )
 
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(
@@ -538,16 +543,16 @@ class ErrorDB(EmbeddableDBMixin):
             )
         self.conn.commit()
         emb_text = f"{event.root_cause} {event.stack_trace}".strip()
-        emb = self._embed(emb_text)
-        if emb:
-            self.add_embedding(
-                int(cur.lastrowid),
-                emb,
-                metadata={
-                    "kind": "telemetry",
-                    "source_id": event.task_id or event.bot_id or "",
-                },
-            )
+        emb = self.vector(emb_text)
+        self.try_add_embedding(
+            int(cur.lastrowid),
+            emb_text,
+            metadata={
+                "kind": "telemetry",
+                "source_id": event.task_id or event.bot_id or "",
+            },
+            vector=emb,
+        )
         if self.graph:
             try:  # pragma: no cover - best effort
                 self.graph.save(self.graph.path)

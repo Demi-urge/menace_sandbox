@@ -236,15 +236,12 @@ class BotDB(EmbeddableDBMixin):
                 if emb is None:
                     remaining_emb.append((bid, text))
                     continue
-                try:
-                    self.add_embedding(
-                        bid,
-                        emb,
-                        metadata={"kind": "bot", "source_id": bid},
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding retry failed for %s: %s", bid, exc)
-                    remaining_emb.append((bid, text))
+                self.try_add_embedding(
+                    bid,
+                    text,
+                    metadata={"kind": "bot", "source_id": bid},
+                    vector=emb,
+                )
             self.failed_embeddings = remaining_emb
 
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
@@ -287,15 +284,19 @@ class BotDB(EmbeddableDBMixin):
         self.conn.commit()
         emb = self.vector(rec)
         if emb:
-            try:
-                self.add_embedding(
+            self.try_add_embedding(
+                rec.bid,
+                rec,
+                metadata={"kind": "bot", "source_id": rec.bid},
+                vector=emb,
+            )
+        else:
+            self.failed_embeddings.append(
+                (
                     rec.bid,
-                    emb,
-                    metadata={"kind": "bot", "source_id": rec.bid},
+                    " ".join([rec.purpose, " ".join(rec.tags), rec.toolchain]).strip(),
                 )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding store failed: %s", exc)
-                self.failed_embeddings.append((rec.bid, " ".join([rec.purpose, " ".join(rec.tags), rec.toolchain]).strip()))
+            )
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -327,20 +328,12 @@ class BotDB(EmbeddableDBMixin):
             if row:
                 emb = self.vector(dict(row))
                 if emb:
-                    try:
-                        self.add_embedding(
-                            bot_id,
-                            emb,
-                            metadata={"kind": "bot", "source_id": bot_id},
-                        )
-                    except Exception as exc:  # pragma: no cover - best effort
-                        logger.exception("embedding store failed: %s", exc)
-                        emb_text = " ".join([
-                            row["purpose"] or "",
-                            " ".join(_deserialize_list(row["tags"] or "")),
-                            row["toolchain"] or "",
-                        ]).strip()
-                        self.failed_embeddings.append((bot_id, emb_text))
+                    self.try_add_embedding(
+                        bot_id,
+                        dict(row),
+                        metadata={"kind": "bot", "source_id": bot_id},
+                        vector=emb,
+                    )
                 else:
                     emb_text = " ".join([
                         row["purpose"] or "",
@@ -375,20 +368,12 @@ class BotDB(EmbeddableDBMixin):
                     if emb_text:
                         self.failed_embeddings.append((row["id"], emb_text))
                     continue
-                try:
-                    self.add_embedding(
-                        row["id"],
-                        emb,
-                        metadata={"kind": "bot", "source_id": row["id"]},
-                    )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding store failed: %s", exc)
-                    emb_text = " ".join([
-                        row["purpose"] or "",
-                        " ".join(_deserialize_list(row["tags"] or "")),
-                        row["toolchain"] or "",
-                    ]).strip()
-                    self.failed_embeddings.append((row["id"], emb_text))
+                self.try_add_embedding(
+                    row["id"],
+                    dict(row),
+                    metadata={"kind": "bot", "source_id": row["id"]},
+                    vector=emb,
+                )
 
     # embedding --------------------------------------------------------
     def vector(self, rec: Any) -> list[float] | None:
