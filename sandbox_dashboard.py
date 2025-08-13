@@ -12,6 +12,7 @@ import logging
 from .metrics_dashboard import MetricsDashboard
 from .roi_tracker import ROITracker
 from . import synergy_weight_cli
+from .alignment_dashboard import load_alignment_flag_records
 
 
 _TEMPLATE = """
@@ -27,6 +28,7 @@ _TEMPLATE = """
 <canvas id="security" width="400" height="200"></canvas>
 <canvas id="weights" width="400" height="200"></canvas>
 <canvas id="scenarios" width="400" height="200"></canvas>
+<div id="warnings"></div>
 <script>
 async function load() {
   const data = await fetch('/roi_data').then(r => r.json());
@@ -46,6 +48,14 @@ async function load() {
   if (!sdata.error && sdata.labels.length) {
     new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
   }
+  if (data.warnings && data.warnings.some(w => w)) {
+    let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
+    for (let i = 0; i < data.roi.length; i++) {
+      html += `<tr><td>${i}</td><td>${data.roi[i]}</td><td>${data.warnings[i] || ''}</td></tr>`;
+    }
+    html += '</table>';
+    document.getElementById('warnings').innerHTML = html;
+  }
 }
 load();
 </script>
@@ -62,11 +72,13 @@ class SandboxDashboard(MetricsDashboard):
         history_file: str | Path = "roi_history.json",
         weights_log: str | Path = synergy_weight_cli.LOG_PATH,
         summary_file: str | Path = Path("sandbox_data") / "scenario_summary.json",
+        alignment_flags_file: str | Path = Path("sandbox_data") / "alignment_flags.jsonl",
     ) -> None:
         super().__init__(history_file)
         self.load_error = ""
         self.weights_log = Path(weights_log)
         self.summary_file = Path(summary_file)
+        self.alignment_flags_file = Path(alignment_flags_file)
         self.app.add_url_rule('/', 'index', self.index)
         self.app.add_url_rule('/roi_data', 'roi_data', self.roi_data)
         self.app.add_url_rule('/weights', 'weights', self.weights_data)
@@ -96,11 +108,24 @@ class SandboxDashboard(MetricsDashboard):
             return jsonify({'error': self.load_error}), 500
         labels = list(range(len(tracker.roi_history)))
         security = tracker.metrics_history.get('security_score', [])
+        warnings = ["" for _ in labels]
+        records = load_alignment_flag_records(self.alignment_flags_file)
+        for idx, rec in enumerate(records):
+            if idx >= len(warnings):
+                break
+            issues = rec.get('report', {}).get('issues', [])
+            msg = "; ".join(i.get('message', '') for i in issues if i.get('message'))
+            if not msg:
+                sev = rec.get('severity')
+                if sev is not None:
+                    msg = f"severity {sev}"
+            warnings[idx] = msg
         return jsonify({
             'labels': labels,
             'roi': tracker.roi_history,
             'security': security,
             'category_counts': tracker.category_summary(),
+            'warnings': warnings,
         }), 200
 
     def weights_data(self) -> tuple[str, int]:

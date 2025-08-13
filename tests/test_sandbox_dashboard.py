@@ -42,6 +42,21 @@ def test_roi_route(tmp_path):
     assert data["security"] == [0.8, 0.9]
 
 
+def test_roi_route_includes_alignment_warnings(tmp_path):
+    history = tmp_path / "hist.json"
+    _make_history(history)
+    flags = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
+    flags.parent.mkdir(parents=True, exist_ok=True)
+    record = {"patch_id": 1, "severity": 2, "report": {"issues": [{"message": "warn"}]}}
+    flags.write_text(json.dumps(record) + "\n")
+    dash = SandboxDashboard(history, alignment_flags_file=flags)
+    client = dash.app.test_client()
+    resp = client.get("/roi_data")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["warnings"][0] == "warn"
+
+
 def test_load_error(tmp_path, monkeypatch, caplog):
     history = tmp_path / "hist.json"
 
