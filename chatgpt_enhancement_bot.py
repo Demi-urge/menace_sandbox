@@ -82,7 +82,8 @@ class EnhancementDB(EmbeddableDBMixin):
         override_manager: Optional[OverridePolicyManager] = None,
         *,
         vector_backend: str = "annoy",
-        vector_index_path: Path | str = "enhancement_embeddings.index",
+        vector_index_path: Path | str = "enhancement_embeddings.ann",
+        metadata_path: Path | str | None = None,
         embedding_version: int = 1,
     ) -> None:
         self.path = Path(path) if path else DB_PATH
@@ -90,12 +91,14 @@ class EnhancementDB(EmbeddableDBMixin):
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init()
+        self.vector_backend = vector_backend  # kept for compatibility
+        if metadata_path is None:
+            metadata_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
+            metadata_path=metadata_path,
             embedding_version=embedding_version,
-            table_name="enhancement_embeddings",
         )
 
     def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper
@@ -203,6 +206,14 @@ class EnhancementDB(EmbeddableDBMixin):
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS enhancement_embeddings (
+                        record_id TEXT PRIMARY KEY,
+                        kind TEXT
+                    )
+                    """
+                )
                 conn.commit()
         except sqlite3.Error as exc:
             logger.exception("database initialization failed: %s", exc)
@@ -252,14 +263,9 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return -1
+        # generate vector embedding for the newly inserted record
         try:
-            vec = self.vector(enh)
-            if vec is not None:
-                self.add_embedding(
-                    enh_id,
-                    vec,
-                    metadata={"kind": "enhancement", "source_id": enh_id},
-                )
+            self.add_embedding(enh_id, enh, "enhancement", source_id=str(enh_id))
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("failed to add enhancement embedding: %s", exc)
             if RAISE_ERRORS:
@@ -309,43 +315,54 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return
+        # update embedding for modified record
         try:
-            vec = self.vector(enh)
-            if vec is not None:
-                self.add_embedding(
-                    enhancement_id,
-                    vec,
-                    metadata={"kind": "enhancement", "source_id": enhancement_id},
-                )
+            self.add_embedding(
+                enhancement_id,
+                enh,
+                "enhancement",
+                source_id=str(enhancement_id),
+            )
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("failed to update enhancement embedding: %s", exc)
             if RAISE_ERRORS:
                 raise
 
+    def add_embedding(self, record_id: Any, record: Any, kind: str, *, source_id: str = "") -> None:
+        """Store embedding via mixin and mirror minimal metadata in SQLite."""
+        super().add_embedding(record_id, record, kind, source_id=source_id)
+        try:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO enhancement_embeddings(record_id, kind) VALUES (?, ?)",
+                (str(record_id), kind),
+            )
+            self.conn.commit()
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to persist embedding metadata for %s", record_id)
+
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for enhancement records missing vectors."""
+        """Generate embeddings for existing records lacking vectors."""
+        offset = 0
         while True:
             rows = self.conn.execute(
-                "SELECT id, before_code, after_code, summary FROM enhancements "
-                f"WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
-                (batch_size,),
+                "SELECT * FROM enhancements ORDER BY id LIMIT ? OFFSET ?",
+                (batch_size, offset),
             ).fetchall()
             if not rows:
                 break
             for row in rows:
+                rid = row["id"]
+                if str(rid) in getattr(self, "_metadata", {}):
+                    continue
                 try:
-                    vec = self.vector(row)
-                    if vec is None:
-                        continue
-                    self.add_embedding(
-                        row["id"],
-                        vec,
-                        metadata={"kind": "enhancement", "source_id": row["id"]},
-                    )
+                    self.add_embedding(rid, row, "enhancement", source_id=str(rid))
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception(
-                        "embedding backfill failed for %s: %s", row["id"], exc
+                        "embedding backfill failed for %s: %s", rid, exc
                     )
+                    if RAISE_ERRORS:
+                        raise
+            offset += batch_size
 
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:
@@ -486,65 +503,62 @@ class EnhancementDB(EmbeddableDBMixin):
 
     # --------------------------------------------------------------
     # embedding/search helpers
-    def _embed_text(self, enh: Enhancement) -> str:
+    def vector(self, rec: Any) -> list[float] | None:
+        """Return an embedding vector for ``rec`` or ``rec`` id."""
+
+        # allow passing a record identifier
+        if isinstance(rec, (int, str)) and str(rec).isdigit():
+            row = self.conn.execute(
+                "SELECT before_code, after_code, summary, context FROM enhancements WHERE id=?",
+                (int(rec),),
+            ).fetchone()
+            if not row:
+                return None
+            rec = row
+
+        # normalise mapping/row objects
+        if isinstance(rec, Enhancement):
+            before, after, summary, context = (
+                rec.before_code,
+                rec.after_code,
+                rec.summary,
+                rec.context,
+            )
+        else:
+            if isinstance(rec, sqlite3.Row):
+                rec = dict(rec)
+            before = rec.get("before_code", "") if isinstance(rec, dict) else ""
+            after = rec.get("after_code", "") if isinstance(rec, dict) else ""
+            summary = rec.get("summary", "") if isinstance(rec, dict) else ""
+            context = rec.get("context", "") if isinstance(rec, dict) else ""
+
         parts: List[str] = []
-        if enh.before_code or enh.after_code:
+        if before or after:
             diff = "\n".join(
                 difflib.unified_diff(
-                    (enh.before_code or "").splitlines(),
-                    (enh.after_code or "").splitlines(),
+                    (before or "").splitlines(),
+                    (after or "").splitlines(),
                     lineterm="",
                 )
             )
             if diff:
                 parts.append(diff)
-        if enh.summary:
-            parts.append(enh.summary)
-        return "\n".join(parts)
+        elif context:
+            parts.append(context)
+        if summary:
+            parts.append(summary)
+
+        text = "\n".join(parts).strip()
+        if not text:
+            return None
+        return self._embed(text)
 
     def _embed(self, text: str) -> list[float] | None:
-        if not hasattr(self, "_embedder"):
-            try:  # pragma: no cover - optional dependency
-                from sentence_transformers import SentenceTransformer  # type: ignore
-            except Exception:
-                self._embedder = None
-            else:
-                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-        if getattr(self, "_embedder", None):
-            try:  # pragma: no cover - runtime issues
-                return self._embedder.encode([text])[0].tolist()
-            except Exception:
-                return None
-        return None
-
-    def vector(self, rec: Any) -> list[float] | None:
-        """Return an embedding for ``rec`` or a stored record id."""
-
-        if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
-            return EmbeddableDBMixin.vector(self, rec)
-        if isinstance(rec, Enhancement):
-            text = self._embed_text(rec)
-        else:
-            if isinstance(rec, sqlite3.Row):
-                rec = dict(rec)
-            before = rec.get("before_code", "") if isinstance(rec, dict) else getattr(rec, "before_code", "")
-            after = rec.get("after_code", "") if isinstance(rec, dict) else getattr(rec, "after_code", "")
-            summary = rec.get("summary", "") if isinstance(rec, dict) else getattr(rec, "summary", "")
-            parts: List[str] = []
-            if before or after:
-                diff = "\n".join(
-                    difflib.unified_diff(
-                        (before or "").splitlines(),
-                        (after or "").splitlines(),
-                        lineterm="",
-                    )
-                )
-                if diff:
-                    parts.append(diff)
-            if summary:
-                parts.append(summary)
-            text = "\n".join(parts)
-        return self._embed(text) if text else None
+        """Encode ``text`` using the shared sentence transformer."""
+        try:  # pragma: no cover - optional dependency
+            return self.encode_text(text)
+        except Exception:
+            return None
 
     def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[Enhancement]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)

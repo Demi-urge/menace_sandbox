@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, List, Sequence
+from pathlib import Path
 import json
 import sqlite3
 import logging
@@ -40,7 +41,6 @@ class InformationDB(EmbeddableDBMixin):
         self,
         path: str = "information.db",
         *,
-        vector_backend: str = "annoy",
         vector_index_path: str = "information_embeddings.index",
         embedding_version: int = 1,
     ) -> None:
@@ -62,12 +62,12 @@ class InformationDB(EmbeddableDBMixin):
             """,
         )
         self.conn.commit()
+        meta_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
+            metadata_path=meta_path,
             embedding_version=embedding_version,
-            table_name="information_embeddings",
         )
 
     # ------------------------------------------------------------------
@@ -147,13 +147,12 @@ class InformationDB(EmbeddableDBMixin):
         self.conn.commit()
         rec.info_id = int(cur.lastrowid)
         try:
-            vec = self.vector(rec)
-            if vec is not None:
-                self.add_embedding(
-                    rec.info_id,
-                    vec,
-                    metadata={"kind": "info", "source_id": rec.info_id},
-                )
+            self.add_embedding(
+                rec.info_id,
+                rec,
+                "info",
+                source_id=str(rec.info_id),
+            )
         except Exception as exc:  # pragma: no cover - best effort
             logging.getLogger(__name__).exception(
                 "embedding hook failed for %s: %s", rec.info_id, exc
@@ -172,13 +171,12 @@ class InformationDB(EmbeddableDBMixin):
         ).fetchone()
         if row:
             try:
-                vec = self.vector(dict(row))
-                if vec is not None:
-                    self.add_embedding(
-                        info_id,
-                        vec,
-                        metadata={"kind": "info", "source_id": info_id},
-                    )
+                self.add_embedding(
+                    info_id,
+                    dict(row),
+                    "info",
+                    source_id=str(info_id),
+                )
             except Exception as exc:  # pragma: no cover - best effort
                 logging.getLogger(__name__).exception(
                     "embedding hook failed for %s: %s", info_id, exc
@@ -186,27 +184,27 @@ class InformationDB(EmbeddableDBMixin):
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for records missing vectors."""
+        offset = 0
         while True:
             rows = self.conn.execute(
-                f"SELECT * FROM information WHERE info_id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
-                (batch_size,),
+                "SELECT * FROM information ORDER BY info_id LIMIT ? OFFSET ?",
+                (batch_size, offset),
             ).fetchall()
             if not rows:
                 break
             for row in rows:
+                rid = row["info_id"]
+                if str(rid) in getattr(self, "_metadata", {}):
+                    continue
                 try:
-                    vec = self.vector(dict(row))
-                    if vec is None:
-                        continue
-                    self.add_embedding(
-                        row["info_id"],
-                        vec,
-                        metadata={"kind": "info", "source_id": row["info_id"]},
-                    )
+                    self.add_embedding(rid, dict(row), "info", source_id=str(rid))
                 except Exception as exc:  # pragma: no cover - best effort
                     logging.getLogger(__name__).exception(
-                        "embedding backfill failed for %s: %s", row["info_id"], exc
+                        "embedding backfill failed for %s: %s", rid, exc
                     )
+                    if RAISE_ERRORS:
+                        raise
+            offset += batch_size
 
     # ------------------------------------------------------------------
     def vector(self, rec: Any) -> List[float] | None:

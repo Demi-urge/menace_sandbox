@@ -184,12 +184,12 @@ class InfoDB(EmbeddableDBMixin):
         except sqlite3.OperationalError:
             self.has_fts = False
         conn.commit()
+        meta_path = Path(vector_index_path).with_suffix(".json")
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
+            metadata_path=meta_path,
             embedding_version=embedding_version,
-            table_name="information_embeddings",
         )
 
     def set_current_model(self, model_id: int) -> None:
@@ -260,10 +260,8 @@ class InfoDB(EmbeddableDBMixin):
         item.notes = "; ".join(notes)
         item.corroboration_count = corroboration_count
 
-        if embedding is None:
-            text = self._embed_text(item)
-            embedding = self._embed(text)
-        item.embedding = embedding
+        # embedding will be generated via add_embedding
+        item.embedding = embedding if embedding is not None else None
 
         with sqlite3.connect(self.path) as conn:
             cur = conn.execute(
@@ -309,19 +307,19 @@ class InfoDB(EmbeddableDBMixin):
                 except sqlite3.OperationalError:
                     self.has_fts = False
             conn.commit()
-        vec = embedding if embedding is not None else self.vector(item)
-        item.embedding = vec
-        if vec is not None:
-            try:
-                self.add_embedding(
-                    item.item_id,
-                    vec,
-                    metadata={"kind": "info", "source_id": item.item_id},
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception(
-                    "embedding hook failed for %s: %s", item.item_id, exc
-                )
+        item.embedding = None
+        try:
+            self.add_embedding(
+                item.item_id,
+                item,
+                "info",
+                source_id=str(item.item_id),
+            )
+            item.embedding = getattr(self, "_metadata", {}).get(str(item.item_id), {}).get("vector")
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception(
+                "embedding hook failed for %s: %s", item.item_id, exc
+            )
 
         if self.event_bus:
             try:
@@ -368,46 +366,39 @@ class InfoDB(EmbeddableDBMixin):
             energy=row["energy"] or 1,
             corroboration_count=row["corroboration_count"] or 0,
         )
-        vec = self.vector(item)
-        if vec is not None:
-            try:
-                self.add_embedding(
-                    info_id,
-                    vec,
-                    metadata={"kind": "info", "source_id": info_id},
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception("embedding hook failed for %s: %s", info_id, exc)
+        try:
+            self.add_embedding(
+                info_id,
+                item,
+                "info",
+                source_id=str(info_id),
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", info_id, exc)
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for legacy research items missing vectors."""
+        offset = 0
         while True:
             rows = self.conn.execute(
-                f"SELECT * FROM info WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
-                (batch_size,),
+                "SELECT * FROM info ORDER BY id LIMIT ? OFFSET ?",
+                (batch_size, offset),
             ).fetchall()
             if not rows:
                 break
             for row in rows:
-                existing = None
-                if "embedding" in row.keys() and row["embedding"]:
-                    try:
-                        existing = json.loads(row["embedding"])
-                    except Exception:
-                        existing = None
-                vec = existing if existing is not None else self.vector(row)
-                if vec is None:
+                rid = row["id"]
+                if str(rid) in getattr(self, "_metadata", {}):
                     continue
                 try:
-                    self.add_embedding(
-                        row["id"],
-                        vec,
-                        metadata={"kind": "info", "source_id": row["id"]},
-                    )
+                    self.add_embedding(rid, row, "info", source_id=str(rid))
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception(
-                        "embedding backfill failed for %s: %s", row["id"], exc
+                        "embedding backfill failed for %s: %s", rid, exc
                     )
+                    if RAISE_ERRORS:
+                        raise
+            offset += batch_size
 
     def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
         pairs: list[str] = []
@@ -461,7 +452,7 @@ class InfoDB(EmbeddableDBMixin):
         """Return an embedding for ``rec`` or a stored record id."""
 
         if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
-            return EmbeddableDBMixin.vector(self, rec)
+            return getattr(self, "_metadata", {}).get(str(rec), {}).get("vector")
         if isinstance(rec, ResearchItem):
             text = self._embed_text(rec)
         else:
@@ -519,7 +510,7 @@ class InfoDB(EmbeddableDBMixin):
                     notes=row["notes"] or "",
                     energy=row["energy"] or 1,
                     corroboration_count=row["corroboration_count"] or 0,
-                    embedding=self.vector(row["id"]),
+                    embedding=getattr(self, "_metadata", {}).get(str(row["id"]), {}).get("vector"),
                 )
                 setattr(item, "_distance", dist)
                 results.append(item)
