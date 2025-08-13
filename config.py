@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
 
 import yaml
 from pydantic import (
@@ -25,6 +26,12 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - import for typing only
+    from .unified_event_bus import EventBus
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +148,7 @@ _MODE: str | None = None
 _CONFIG_PATH: Path | None = None
 _OVERRIDES: Dict[str, Any] = {}
 CONFIG: Config | None = None
+_EVENT_BUS: "EventBus" | None = None
 
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -160,6 +168,23 @@ def _merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
         else:
             base[key] = value
     return base
+
+
+def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a nested dict of keys whose values changed from *old* to *new*."""
+
+    if old is None:
+        return new
+    diff: Dict[str, Any] = {}
+    for key, new_val in new.items():
+        old_val = old.get(key) if isinstance(old, dict) else None
+        if isinstance(new_val, dict) and isinstance(old_val, dict):
+            nested = _dict_diff(old_val, new_val)
+            if nested:
+                diff[key] = nested
+        elif old_val != new_val:
+            diff[key] = new_val
+    return diff
 
 
 def load_config(
@@ -217,6 +242,13 @@ def get_config() -> Config:
     return CONFIG
 
 
+def set_event_bus(bus: "EventBus" | None) -> None:
+    """Configure the event bus used for reload notifications."""
+
+    global _EVENT_BUS
+    _EVENT_BUS = bus
+
+
 # ---------------------------------------------------------------------------
 # Command-line interface
 # ---------------------------------------------------------------------------
@@ -253,9 +285,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def reload() -> Config:
     """Reload configuration from disk using stored parameters."""
-
     global CONFIG
+
+    old_data = CONFIG.model_dump() if CONFIG else None
     CONFIG = load_config(_MODE, _CONFIG_PATH, _OVERRIDES)
+    new_data = CONFIG.model_dump()
+    if _EVENT_BUS is not None:
+        try:
+            payload = {"config": new_data, "diff": _dict_diff(old_data, new_data)}
+            _EVENT_BUS.publish("config:reload", payload)
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("failed publishing config reload event")
     return CONFIG
 
 
