@@ -54,6 +54,7 @@ import pickle
 import io
 import tempfile
 import math
+import shutil
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
@@ -73,8 +74,11 @@ from .human_alignment_flagger import (
     flag_alignment_risks,
     HumanAlignmentFlagger,
     flag_improvement,
+    flag_alignment_issues,
+    _collect_diff_data,
 )
 from .audit_logger import log_event as audit_log_event
+from .violation_logger import log_violation
 
 logger = get_logger(__name__)
 
@@ -3618,17 +3622,41 @@ class SelfImprovementEngine:
                 ),
             )
             try:
-                patch_id = generate_patch(mod, self.self_coding_engine)
-                if patch_id is not None:
-                    self._alignment_review_last_commit(f"preventative_patch_{patch_id}")
-                    self._flag_patch_alignment(
-                        patch_id,
-                        {
-                            "trigger": "preventative_patch",
-                            "module": str(mod),
-                            "patch_id": patch_id,
-                        },
-                    )
+                patch_id = None
+                with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                    src = Path(mod)
+                    if src.suffix == "":
+                        src = src.with_suffix(".py")
+                    rel = src.name if src.is_absolute() else src
+                    before_target = Path(before_dir) / rel
+                    before_target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, before_target)
+                    patch_id = generate_patch(mod, self.self_coding_engine)
+                    if patch_id is not None:
+                        after_target = Path(after_dir) / rel
+                        after_target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, after_target)
+                        diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                        findings = flag_alignment_issues(diff_data)
+                        if findings:
+                            log_violation(
+                                str(patch_id),
+                                "alignment_warning",
+                                1,
+                                {"findings": findings},
+                                alignment_warning=True,
+                            )
+                        self._alignment_review_last_commit(
+                            f"preventative_patch_{patch_id}"
+                        )
+                        self._flag_patch_alignment(
+                            patch_id,
+                            {
+                                "trigger": "preventative_patch",
+                                "module": str(mod),
+                                "patch_id": patch_id,
+                            },
+                        )
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -3686,17 +3714,41 @@ class SelfImprovementEngine:
                     ),
                 )
                 try:
-                    patch_id = generate_patch(mod, self.self_coding_engine)
-                    if patch_id is not None:
-                        self._alignment_review_last_commit(f"high_risk_patch_{patch_id}")
-                        self._flag_patch_alignment(
-                            patch_id,
-                            {
-                                "trigger": "high_risk_patch",
-                                "module": str(mod),
-                                "patch_id": patch_id,
-                            },
-                        )
+                    patch_id = None
+                    with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                        src = Path(mod)
+                        if src.suffix == "":
+                            src = src.with_suffix(".py")
+                        rel = src.name if src.is_absolute() else src
+                        before_target = Path(before_dir) / rel
+                        before_target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, before_target)
+                        patch_id = generate_patch(mod, self.self_coding_engine)
+                        if patch_id is not None:
+                            after_target = Path(after_dir) / rel
+                            after_target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src, after_target)
+                            diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                            findings = flag_alignment_issues(diff_data)
+                            if findings:
+                                log_violation(
+                                    str(patch_id),
+                                    "alignment_warning",
+                                    1,
+                                    {"findings": findings},
+                                    alignment_warning=True,
+                                )
+                            self._alignment_review_last_commit(
+                                f"high_risk_patch_{patch_id}"
+                            )
+                            self._flag_patch_alignment(
+                                patch_id,
+                                {
+                                    "trigger": "high_risk_patch",
+                                    "module": str(mod),
+                                    "patch_id": patch_id,
+                                },
+                            )
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
                             self.error_bot.db.add_telemetry(
