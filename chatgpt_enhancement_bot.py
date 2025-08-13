@@ -15,6 +15,7 @@ from typing import Any, Iterable, List, Optional, Iterator
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory
 from . import RAISE_ERRORS
 from .embeddable_db_mixin import EmbeddableDBMixin
 
@@ -740,6 +741,7 @@ class ChatGPTEnhancementBot:
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
+        self.gpt_memory = GPTMemory()
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT
@@ -757,7 +759,11 @@ class ChatGPTEnhancementBot:
         )
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
-            data = self.client.ask([{"role": "user", "content": prompt}])
+            data = self.client.ask(
+                [{"role": "user", "content": prompt}],
+                knowledge=self.gpt_memory,
+                tags=["idea"],
+            )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
             if RAISE_ERRORS:

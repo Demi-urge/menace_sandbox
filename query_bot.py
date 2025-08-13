@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover - optional
 logger = logging.getLogger(__name__)
 
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory
 from . import database_manager
 
 
@@ -132,6 +133,7 @@ class QueryBot:
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
+        self.gpt_memory = GPTMemory()
 
     def process(self, query: str, context_id: str) -> QueryResult:
         parsed = self.nlu.parse(query)
@@ -139,7 +141,11 @@ class QueryBot:
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
         prompt = f"Summarize the following data: {json.dumps(data)}"
-        answer = self.client.ask([{"role": "user", "content": prompt}])
+        answer = self.client.ask(
+            [{"role": "user", "content": prompt}],
+            knowledge=self.gpt_memory,
+            tags=["research"],
+        )
         text = (
             answer.get("choices", [{}])[0].get("message", {}).get("content", "")
         )
