@@ -21,6 +21,7 @@ class AlignmentRules(BaseModel):
     allowed_network_calls: int = 0
     comment_density_severity: int = 2
     network_call_severity: int = 3
+    rule_modules: list[str] = Field(default_factory=list)
 
 
 class SandboxSettings(BaseSettings):

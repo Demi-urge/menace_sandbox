@@ -70,3 +70,40 @@ operators can review and escalate issues.  High‑severity entries at or above
 `ALIGNMENT_FAILURE_THRESHOLD` merit immediate remediation before changes are
 merged.
 
+## Custom rules
+
+`HumanAlignmentFlagger` supports pluggable rules. A rule is a callable with the
+signature `rule(path: str, added: list[str], removed: list[str]) -> list[dict]`
+and should return issue dictionaries containing at least `severity` and
+`message` fields. Rules may be provided directly when constructing the flagger:
+
+```python
+from menace.human_alignment_flagger import HumanAlignmentFlagger
+
+def todo_rule(path, added, removed):
+    if any("TODO" in line for line in added):
+        return [{"severity": 1, "message": f"TODO found in {path}"}]
+    return []
+
+flagger = HumanAlignmentFlagger(rules=[todo_rule])
+```
+
+Rules can also be distributed as modules exposing a `rule` function and
+registered via `SandboxSettings`:
+
+```python
+# my_rules.py
+def rule(path: str, added: list[str], removed: list[str]) -> list[dict]:
+    ...
+
+from sandbox_settings import SandboxSettings, AlignmentRules
+
+settings = SandboxSettings(
+    alignment_rules=AlignmentRules(rule_modules=["my_rules"])
+)
+flagger = HumanAlignmentFlagger(settings)
+```
+
+Every rule is invoked for each changed file and any returned issues are merged
+into the final report.
+
