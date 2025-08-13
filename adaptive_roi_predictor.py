@@ -71,6 +71,7 @@ except Exception:  # pragma: no cover - statsmodels missing
 
 import pickle
 
+from .logging_utils import get_logger
 from .adaptive_roi_dataset import build_dataset, _label_growth
 from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
@@ -82,6 +83,9 @@ __all__ = [
     "predict",
     "load_training_data",
 ]
+
+
+logger = get_logger(__name__)
 
 
 class ARIMARegressor:
@@ -272,14 +276,56 @@ class AdaptiveROIPredictor:
             pass
 
     # ------------------------------------------------------------------
-    def record_drift(self, accuracy: float, mae: float) -> None:
-        """Store the most recent drift metrics and persist them."""
+    def record_drift(
+        self,
+        accuracy: float,
+        mae: float,
+        *,
+        acc_threshold: float = 0.6,
+        mae_threshold: float = 0.1,
+        retrain: bool = False,
+    ) -> None:
+        """Store the most recent drift metrics and handle retraining.
+
+        Parameters
+        ----------
+        accuracy, mae:
+            Latest evaluation metrics.
+        acc_threshold, mae_threshold:
+            Bounds outside of which model drift is assumed.
+        retrain:
+            When ``True`` and thresholds are violated the model is updated via
+            :meth:`partial_fit` or a full :meth:`train`.
+        """
 
         self.drift_metrics = {"accuracy": float(accuracy), "mae": float(mae)}
         try:  # pragma: no cover - disk issues
             self._save_meta()
         except Exception:
             pass
+
+        if not retrain:
+            return
+
+        if accuracy < acc_threshold or mae > mae_threshold:
+            try:
+                self.partial_fit()
+                logger.info(
+                    "adaptive ROI model retrained (acc=%.3f, mae=%.3f)",
+                    accuracy,
+                    mae,
+                )
+            except Exception:
+                logger.exception("incremental update failed, full retrain")
+                try:
+                    self.train()
+                    logger.info(
+                        "adaptive ROI model retrained from scratch (acc=%.3f, mae=%.3f)",
+                        accuracy,
+                        mae,
+                    )
+                except Exception:
+                    logger.exception("full retrain failed")
 
     # ------------------------------------------------------------------
     def partial_fit(
@@ -823,12 +869,13 @@ class AdaptiveROIPredictor:
             acc_threshold=accuracy_threshold,
             **kwargs,
         )
-        self.record_drift(acc, mae)
-        if retrain and (acc < accuracy_threshold or mae > mae_threshold):
-            try:
-                self.train()
-            except Exception:  # pragma: no cover - retrain failure
-                pass
+        self.record_drift(
+            acc,
+            mae,
+            acc_threshold=accuracy_threshold,
+            mae_threshold=mae_threshold,
+            retrain=retrain,
+        )
         return acc, mae
 
 
