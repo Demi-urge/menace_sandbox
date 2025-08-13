@@ -69,7 +69,10 @@ from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
-from .human_alignment_flagger import flag_alignment_risks
+from .human_alignment_flagger import (
+    flag_alignment_risks,
+    HumanAlignmentFlagger,
+)
 from .audit_logger import log_event as audit_log_event
 
 logger = get_logger(__name__)
@@ -722,6 +725,8 @@ class SelfImprovementEngine:
         self.roi_delta_ema: float = 0.0
         self._last_growth_type: str | None = None
         self._synergy_cache: dict | None = None
+        self.alignment_flagger = HumanAlignmentFlagger()
+        self.cycle_logs: list[dict[str, Any]] = []
         self.logger = get_logger("SelfImprovementEngine")
         self._load_state()
         self._load_synergy_weights()
@@ -1103,6 +1108,33 @@ class SelfImprovementEngine:
                 )
             except Exception:
                 self.logger.exception("alignment warning dispatch failed")
+
+    # ------------------------------------------------------------------
+    def _flag_patch_alignment(
+        self, patch_id: int | None, context: dict[str, Any]
+    ) -> None:
+        """Analyse the latest commit for alignment concerns and log findings."""
+        if patch_id is None:
+            return
+        try:
+            diff_proc = subprocess.run(
+                ["git", "show", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            diff = diff_proc.stdout
+        except Exception:
+            return
+        try:
+            report = self.alignment_flagger.flag_patch(diff, context)
+            self.cycle_logs.append(
+                {"cycle": self._cycle_count, "patch_id": patch_id, "report": report}
+            )
+        except Exception:
+            self.logger.exception(
+                "alignment flagging failed", extra=log_record(patch_id=patch_id)
+            )
 
     # ------------------------------------------------------------------
     def _weighted_synergy_adjustment(self, window: int = 3) -> float:
@@ -2038,6 +2070,9 @@ class SelfImprovementEngine:
             self._last_patch_id = patch_id
             if patch_id is not None and not reverted:
                 self._alignment_review_last_commit(f"self_opt_patch_{patch_id}")
+                self._flag_patch_alignment(
+                    patch_id, {"trigger": "optimize_self", "patch_id": patch_id}
+                )
             if tracker:
                 try:
                     tracker.update(
@@ -3565,6 +3600,14 @@ class SelfImprovementEngine:
                 patch_id = generate_patch(mod, self.self_coding_engine)
                 if patch_id is not None:
                     self._alignment_review_last_commit(f"preventative_patch_{patch_id}")
+                    self._flag_patch_alignment(
+                        patch_id,
+                        {
+                            "trigger": "preventative_patch",
+                            "module": str(mod),
+                            "patch_id": patch_id,
+                        },
+                    )
                 if self.error_bot and hasattr(self.error_bot, "db"):
                     try:
                         self.error_bot.db.add_telemetry(
@@ -3625,6 +3668,14 @@ class SelfImprovementEngine:
                     patch_id = generate_patch(mod, self.self_coding_engine)
                     if patch_id is not None:
                         self._alignment_review_last_commit(f"high_risk_patch_{patch_id}")
+                        self._flag_patch_alignment(
+                            patch_id,
+                            {
+                                "trigger": "high_risk_patch",
+                                "module": str(mod),
+                                "patch_id": patch_id,
+                            },
+                        )
                     if self.error_bot and hasattr(self.error_bot, "db"):
                         try:
                             self.error_bot.db.add_telemetry(
@@ -3960,6 +4011,10 @@ class SelfImprovementEngine:
                     self._last_patch_id = patch_id
                     if patch_id is not None and not reverted:
                         self._alignment_review_last_commit(f"helper_patch_{patch_id}")
+                        self._flag_patch_alignment(
+                            patch_id,
+                            {"trigger": "automation_cycle", "patch_id": patch_id},
+                        )
                     if self.policy:
                         try:
                             self.logger.info(
