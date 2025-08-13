@@ -55,6 +55,8 @@ import io
 import tempfile
 import math
 import shutil
+import ast
+import yaml
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
@@ -132,6 +134,66 @@ def _atomic_write(path: Path, data: bytes | str, *, binary: bool = False) -> Non
     _rotate_backups(path)
     os.replace(tmp, path)
 
+
+def _update_alignment_baseline(settings: SandboxSettings | None = None) -> None:
+    """Write current test counts and complexity scores to baseline metrics file."""
+    try:
+        settings = settings or SandboxSettings()
+        path_str = getattr(settings, "alignment_baseline_metrics_path", "")
+        if not path_str:
+            return
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        test_count = 0
+        total_complexity = 0
+        for file in repo.rglob("*.py"):
+            rel = file.relative_to(repo)
+            name = rel.name
+            rel_posix = rel.as_posix()
+            if (
+                rel_posix.startswith("tests")
+                or name.startswith("test_")
+                or name.endswith("_test.py")
+            ):
+                test_count += 1
+            try:
+                code = file.read_text(encoding="utf-8")
+                tree = ast.parse(code)
+            except Exception:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    score = 1
+                    for sub in ast.walk(node):
+                        if isinstance(
+                            sub,
+                            (
+                                ast.If,
+                                ast.For,
+                                ast.AsyncFor,
+                                ast.While,
+                                ast.With,
+                                ast.AsyncWith,
+                                ast.IfExp,
+                                ast.ListComp,
+                                ast.DictComp,
+                                ast.SetComp,
+                                ast.GeneratorExp,
+                            ),
+                        ):
+                            score += 1
+                        elif isinstance(sub, ast.BoolOp):
+                            score += len(getattr(sub, "values", [])) - 1
+                        elif isinstance(sub, ast.Try):
+                            score += len(sub.handlers)
+                            if sub.orelse:
+                                score += 1
+                            if sub.finalbody:
+                                score += 1
+                    total_complexity += score
+        data = {"tests": int(test_count), "complexity": int(total_complexity)}
+        _atomic_write(Path(path_str), yaml.safe_dump(data))
+    except Exception:
+        logger.exception("alignment baseline update failed")
 
 from .self_model_bootstrap import bootstrap
 from .research_aggregator_bot import (
@@ -4455,6 +4517,7 @@ class SelfImprovementEngine:
                     warnings = agent.evaluate_changes(actions, metrics, logs)
                     if any(warnings.values()):
                         result.warnings = warnings
+                    _update_alignment_baseline(settings)
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
             self.logger.info(
