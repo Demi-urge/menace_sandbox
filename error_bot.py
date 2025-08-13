@@ -226,12 +226,14 @@ class ErrorDB(EmbeddableDBMixin):
             """
         )
         self.conn.commit()
+        # ``vector_backend`` is accepted for backwards compatibility but only
+        # the Annoy based mixin is currently used.  ``vector_index_path`` is
+        # reused to derive the metadata path for the mixin.
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
+            metadata_path=Path(vector_index_path).with_suffix(".json"),
             embedding_version=embedding_version,
-            table_name="error_embeddings",
         )
 
     def _publish(self, topic: str, payload: object) -> None:
@@ -259,10 +261,18 @@ class ErrorDB(EmbeddableDBMixin):
         return None
 
     def vector(self, rec: Any) -> list[float] | None:
-        """Return an embedding for ``rec`` or a stored record id."""
+        """Return an embedding for ``rec``.
+
+        ``rec`` may be an existing record id, a mapping or an object with
+        ``message``/``stack_trace`` attributes.  When an integer id is
+        provided the stored vector is returned directly from the mixin's
+        metadata.  For other inputs the ``message`` and ``stack_trace`` fields
+        are concatenated and encoded via :meth:`_embed`.
+        """
 
         if isinstance(rec, int):
-            return EmbeddableDBMixin.vector(self, rec)
+            meta = self._metadata.get(str(rec))
+            return meta.get("vector") if meta else None
         if isinstance(rec, str):
             text = rec
         elif isinstance(rec, dict):
@@ -379,13 +389,7 @@ class ErrorDB(EmbeddableDBMixin):
         found = self.find_error(message)
         if found is not None:
             try:
-                vec = self.vector(message)
-                if vec is not None:
-                    self.add_embedding(
-                        found,
-                        vec,
-                        metadata={"kind": "error", "source_id": found},
-                    )
+                self.add_embedding(found, {"message": message}, kind="error")
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
@@ -402,13 +406,7 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         err_id = int(cur.lastrowid)
         try:
-            vec = self.vector(message)
-            if vec is not None:
-                self.add_embedding(
-                    err_id,
-                    vec,
-                    metadata={"kind": "error", "source_id": err_id},
-                )
+            self.add_embedding(err_id, {"message": message}, kind="error")
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", err_id, exc)
         self._publish(
@@ -432,57 +430,48 @@ class ErrorDB(EmbeddableDBMixin):
         """
 
         # Backfill error records
+        offset = 0
         while True:
             rows = self.conn.execute(
-                f"SELECT id, message FROM errors WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
-                (batch_size,),
+                "SELECT id, message FROM errors LIMIT ? OFFSET ?",
+                (batch_size, offset),
             ).fetchall()
             if not rows:
                 break
+            offset += batch_size
             for row in rows:
+                rid = row["id"]
+                if str(rid) in self._metadata:
+                    continue
                 try:
-                    vec = self.vector(row["message"])
-                    if vec is None:
-                        continue
-                    self.add_embedding(
-                        row["id"],
-                        vec,
-                        metadata={"kind": "error", "source_id": row["id"]},
-                    )
+                    self.add_embedding(rid, {"message": row["message"]}, kind="error")
                 except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception(
-                        "embedding backfill failed for %s: %s", row["id"], exc
-                    )
+                    logger.exception("embedding backfill failed for %s: %s", rid, exc)
 
         # Backfill telemetry records
+        offset = 0
         while True:
             rows = self.conn.execute(
-                f"""
+                """
                 SELECT id, cause, stack_trace, task_id, bot_id
                 FROM telemetry
-                WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table})
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (batch_size,),
+                (batch_size, offset),
             ).fetchall()
             if not rows:
                 break
+            offset += batch_size
             for row in rows:
+                rid = row["id"]
+                if str(rid) in self._metadata:
+                    continue
                 rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
+                src = row["task_id"] or row["bot_id"] or ""
                 try:
-                    vec = self.vector(rec)
-                    if vec is None:
-                        continue
-                    src = row["task_id"] or row["bot_id"] or ""
-                    self.add_embedding(
-                        row["id"],
-                        vec,
-                        metadata={"kind": "telemetry", "source_id": src},
-                    )
+                    self.add_embedding(rid, rec, kind="error", source_id=src)
                 except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception(
-                        "embedding backfill failed for %s: %s", row["id"], exc
-                    )
+                    logger.exception("embedding backfill failed for %s: %s", rid, exc)
 
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(
@@ -571,16 +560,12 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         rec_id = int(cur.lastrowid)
         try:
-            vec = self.vector(event)
-            if vec is not None:
-                self.add_embedding(
-                    rec_id,
-                    vec,
-                    metadata={
-                        "kind": "telemetry",
-                        "source_id": event.task_id or event.bot_id or "",
-                    },
-                )
+            self.add_embedding(
+                rec_id,
+                {"message": event.root_cause, "stack_trace": event.stack_trace},
+                kind="error",
+                source_id=event.task_id or event.bot_id or "",
+            )
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", rec_id, exc)
         if self.graph:
@@ -615,13 +600,14 @@ class ErrorDB(EmbeddableDBMixin):
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
         results: list[dict[str, object]] = []
         for rec_id, dist in matches:
+            rid = int(rec_id)
             row = self.conn.execute(
-                "SELECT cause, stack_trace FROM telemetry WHERE id=?", (rec_id,)
+                "SELECT cause, stack_trace FROM telemetry WHERE id=?", (rid,)
             ).fetchone()
             if row:
                 results.append(
                     {
-                        "id": rec_id,
+                        "id": rid,
                         "cause": row[0],
                         "stack_trace": row[1],
                         "_distance": dist,
@@ -629,11 +615,11 @@ class ErrorDB(EmbeddableDBMixin):
                 )
                 continue
             row = self.conn.execute(
-                "SELECT message FROM errors WHERE id=?", (rec_id,)
+                "SELECT message FROM errors WHERE id=?", (rid,)
             ).fetchone()
             if row:
                 results.append(
-                    {"id": rec_id, "message": row[0], "_distance": dist}
+                    {"id": rid, "message": row[0], "_distance": dist}
                 )
         return results
 
