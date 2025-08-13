@@ -11,7 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ethics_violation_detector import flag_violations
+from ethics_violation_detector import flag_violations, scan_log_entry
+from risk_domain_classifier import classify_action
+from reward_sanity_checker import check_risk_reward_alignment
 
 
 def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, List[str]]]:
@@ -121,5 +123,119 @@ def flag_alignment_risks(patch: str, metadata: Dict[str, Any]) -> List[str]:
     return [item["message"] for item in report.get("issues", [])]
 
 
-__all__ = ["HumanAlignmentFlagger", "flag_alignment_risks"]
+def flag_improvement(
+    workflow_changes: List[Dict[str, Any]] | None,
+    metrics: Dict[str, Any] | None,
+    logs: List[Dict[str, Any]] | None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Analyse prospective workflow improvements and return warnings.
+
+    Parameters
+    ----------
+    workflow_changes : list of dict or None
+        Each entry may contain ``file`` and ``code`` keys describing the
+        proposed modification.
+    metrics : dict or None
+        Optional action or evaluation data.
+    logs : list of dict or None
+        Recent log entries to scan for violations.
+
+    Returns
+    -------
+    dict
+        Dictionary with ``ethics``, ``risk_reward`` and ``maintainability``
+        warning lists.  The function never raises and swallows unexpected
+        errors to avoid blocking execution.
+    """
+
+    warnings: Dict[str, List[Dict[str, Any]]] = {
+        "ethics": [],
+        "risk_reward": [],
+        "maintainability": [],
+    }
+
+    # Ethics checks -------------------------------------------------------
+    for entry in logs or []:
+        try:
+            violations = scan_log_entry(entry)
+            if violations:
+                warnings["ethics"].append(
+                    {"source": "log", "entry": entry.get("id"), "violations": violations}
+                )
+        except Exception:
+            pass
+
+    for change in workflow_changes or []:
+        code = change.get("code") or change.get("content") or ""
+        try:
+            violations = scan_log_entry({"generated_code": code})
+            if violations:
+                warnings["ethics"].append(
+                    {"source": "code", "file": change.get("file"), "violations": violations}
+                )
+        except Exception:
+            pass
+
+    # Risk / reward misalignment -----------------------------------------
+    actions: List[Dict[str, Any]] = []
+
+    def _collect(container: Any) -> None:
+        if isinstance(container, list):
+            iterable = container
+        elif isinstance(container, dict):
+            iterable = container.get("actions") or container.get("logs") or []
+        else:
+            iterable = []
+        for item in iterable:
+            if not isinstance(item, dict):
+                continue
+            try:
+                classification = classify_action(item)
+            except Exception:
+                classification = {}
+            action = dict(item)
+            if "risk_score" not in action:
+                action["risk_score"] = classification.get("risk_score")
+            actions.append(action)
+
+    _collect(logs)
+    _collect(metrics)
+    try:
+        misaligned = check_risk_reward_alignment(actions)
+        if misaligned:
+            warnings["risk_reward"].extend(misaligned)
+    except Exception:
+        pass
+
+    # Maintainability heuristics -----------------------------------------
+    has_tests = False
+    for change in workflow_changes or []:
+        file_path = change.get("file") or ""
+        code = change.get("code") or change.get("content") or ""
+        if file_path.startswith("tests") or file_path.endswith("_test.py") or file_path.startswith("test_"):
+            has_tests = True
+        if file_path.endswith(".py"):
+            stripped = code.lstrip()
+            if not (stripped.startswith('"""') or stripped.startswith("'''")):
+                warnings["maintainability"].append({"file": file_path, "issue": "missing docstring"})
+            complexity = sum(
+                code.count(token)
+                for token in (" if ", " for ", " while ", " and ", " or ", " except ", " elif ")
+            )
+            if complexity > 10:
+                warnings["maintainability"].append(
+                    {
+                        "file": file_path,
+                        "issue": "high cyclomatic complexity",
+                        "score": complexity,
+                    }
+                )
+
+    if not has_tests:
+        warnings["maintainability"].append({"issue": "no tests provided"})
+
+    return warnings
+
+
+__all__ = ["HumanAlignmentFlagger", "flag_alignment_risks", "flag_improvement"]
 
