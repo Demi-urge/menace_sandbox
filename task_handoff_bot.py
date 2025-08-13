@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterable, Optional
+from typing import List, Dict, Callable, Any, Iterable, Optional, Sequence
 import logging
 
 import sqlite3
@@ -123,6 +123,19 @@ class WorkflowDB(EmbeddableDBMixin):
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
         self.conn.commit()
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_embeddings(
+                workflow_id INTEGER PRIMARY KEY,
+                vector TEXT,
+                created_at TEXT,
+                embedding_version INTEGER,
+                kind TEXT,
+                source_id TEXT
+            )
+            """,
+        )
+        self.conn.commit()
         EmbeddableDBMixin.__init__(
             self,
             vector_backend=vector_backend,
@@ -155,20 +168,8 @@ class WorkflowDB(EmbeddableDBMixin):
         )
 
     def _embed_text(self, rec: WorkflowRecord) -> str:
-        parts = [
-            " ".join(rec.workflow),
-            " ".join(rec.task_sequence),
-            " ".join(rec.action_chains),
-            " ".join(rec.argument_strings),
-            " ".join(rec.assigned_bots),
-            " ".join(rec.enhancements),
-            rec.title,
-            rec.description,
-            " ".join(rec.tags),
-            rec.category,
-            rec.type_,
-            rec.status,
-        ]
+        chain = rec.workflow + rec.task_sequence
+        parts = chain + rec.argument_strings
         return " ".join(p for p in parts if p)
 
     # --------------------------------------------------------------
@@ -322,39 +323,56 @@ class WorkflowDB(EmbeddableDBMixin):
                 return None
         return None
 
+    def add_embedding(
+        self,
+        record_id: Any,
+        vector: Sequence[float],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Store vector in both generic and workflow-specific tables."""
+
+        EmbeddableDBMixin.add_embedding(self, record_id, vector, metadata=metadata)
+        created_at, version, kind, source_id = self._prepare_metadata(metadata)
+        vec_json = json.dumps(list(vector))
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO workflow_embeddings(
+                workflow_id, vector, created_at, embedding_version, kind, source_id
+            ) VALUES (?,?,?,?,?,?)
+            """,
+            (record_id, vec_json, created_at, version, kind, source_id),
+        )
+        self.conn.commit()
+
     def vector(self, rec: Any) -> list[float] | None:
         """Return an embedding for ``rec`` or a stored record id."""
 
-        if isinstance(rec, int) or (isinstance(rec, str) and rec.isdigit()):
+        if isinstance(rec, int) or (isinstance(rec, str) and str(rec).isdigit()):
+            row = self.conn.execute(
+                "SELECT vector FROM workflow_embeddings WHERE workflow_id=?",
+                (int(rec),),
+            ).fetchone()
+            if row:
+                return json.loads(row[0])
             return EmbeddableDBMixin.vector(self, rec)
         if isinstance(rec, WorkflowRecord):
             text = self._embed_text(rec)
         else:
             if isinstance(rec, sqlite3.Row):
                 rec = dict(rec)
-            parts: list[str] = []
-            for key in (
-                "workflow",
-                "task_sequence",
-                "action_chains",
-                "argument_strings",
-                "assigned_bots",
-                "enhancements",
-                "title",
-                "description",
-                "tags",
-                "category",
-                "type",
-                "status",
-                "rejection_reason",
-            ):
+            chain: list[str] = []
+            for key in ("workflow", "task_sequence"):
                 val = rec.get(key) if isinstance(rec, dict) else getattr(rec, key, None)
                 if not val:
                     continue
                 if isinstance(val, str):
-                    parts.append(val)
+                    chain.extend(val.split(","))
                 elif isinstance(val, (list, tuple)):
-                    parts.append(" ".join(val))
+                    chain.extend(val)
+            args = rec.get("argument_strings") if isinstance(rec, dict) else getattr(rec, "argument_strings", [])
+            if isinstance(args, str):
+                args = args.split(",") if args else []
+            parts = chain + list(args or [])
             text = " ".join(parts)
         return self._embed(text) if text else None
 
