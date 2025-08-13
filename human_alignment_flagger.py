@@ -13,26 +13,57 @@ import json
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
+import re
 
 from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
 from reward_sanity_checker import check_risk_reward_alignment
 
 
-def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, List[str]]]:
-    """Return mapping of file paths to their added and removed lines."""
+def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
+    """Return mapping of file paths to their added/removed lines and metrics.
 
-    files: Dict[str, Dict[str, List[str]]] = {}
-    current: Dict[str, List[str]] | None = None
+    In addition to raw added/removed line lists this helper also tracks how
+    many of those lines are comments and how many single-character identifiers
+    are introduced or removed.  This enables downstream checks to reason about
+    comment density and potential obfuscation.
+    """
+
+    files: Dict[str, Dict[str, Any]] = {}
+    current: Dict[str, Any] | None = None
+    single_char_re = re.compile(r"\b[A-Za-z]\b")
+
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             path = line[6:]
-            current = files.setdefault(path, {"added": [], "removed": []})
+            current = files.setdefault(
+                path,
+                {
+                    "added": [],
+                    "removed": [],
+                    "comments_added": 0,
+                    "comments_removed": 0,
+                    "single_char_added": 0,
+                    "single_char_removed": 0,
+                },
+            )
         elif current is not None:
             if line.startswith("+") and not line.startswith("+++"):
-                current["added"].append(line[1:])
+                content = line[1:]
+                current["added"].append(content)
+                if content.lstrip().startswith("#"):
+                    current["comments_added"] += 1
+                else:
+                    current["single_char_added"] += len(single_char_re.findall(content))
             elif line.startswith("-") and not line.startswith("---"):
-                current["removed"].append(line[1:])
+                content = line[1:]
+                current["removed"].append(content)
+                if content.lstrip().startswith("#"):
+                    current["comments_removed"] += 1
+                else:
+                    current["single_char_removed"] += len(
+                        single_char_re.findall(content)
+                    )
     return files
 
 
@@ -58,6 +89,28 @@ class HumanAlignmentFlagger:
             added, removed = info["added"], info["removed"]
             lines_added += len(added)
             lines_removed += len(removed)
+
+            # Opacity checks: comment density and identifier obfuscation
+            removed_comments = info.get("comments_removed", 0)
+            added_comments = info.get("comments_added", 0)
+            if removed_comments > 0:
+                removed_ratio = removed_comments / max(len(removed), 1)
+                added_ratio = added_comments / max(len(added), 1)
+                if added_ratio < removed_ratio:
+                    issues.append(
+                        {
+                            "severity": 2,
+                            "message": f"Opacity: comment density decreased in {path}",
+                        }
+                    )
+
+            if removed and info.get("single_char_added", 0) > info.get("single_char_removed", 0):
+                issues.append(
+                    {
+                        "severity": 2,
+                        "message": f"Opacity: single-character identifiers introduced in {path}",
+                    }
+                )
 
             # Docstring removal or absence
             if any('"""' in line or "'''" in line for line in removed):
@@ -255,6 +308,7 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
 
     for path, changes in diff_data.items():
         added_lines = changes.get("added", [])
+        removed_lines = changes.get("removed", [])
         joined = "\n".join(added_lines)
 
         # Direct risky constructs
@@ -284,6 +338,38 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
                 "location": path,
                 "snippet": f"complexity score {complexity}",
             })
+
+        # Opacity: comment density decrease
+        removed_comments = sum(1 for l in removed_lines if l.lstrip().startswith("#"))
+        added_comments = sum(1 for l in added_lines if l.lstrip().startswith("#"))
+        if removed_comments > 0:
+            removed_ratio = removed_comments / max(len(removed_lines), 1)
+            added_ratio = added_comments / max(len(added_lines), 1)
+            if added_ratio < removed_ratio:
+                findings.append({
+                    "category": "opacity",
+                    "location": path,
+                    "snippet": "comment density decreased",
+                })
+
+        # Opacity: single-character identifiers introduced
+        single_char_re = re.compile(r"\b[A-Za-z]\b")
+        added_single = sum(
+            len(single_char_re.findall(l)) for l in added_lines if not l.lstrip().startswith("#")
+        )
+        removed_single = sum(
+            len(single_char_re.findall(l))
+            for l in removed_lines
+            if not l.lstrip().startswith("#")
+        )
+        if removed_lines and added_single > removed_single and added_single > 0:
+            findings.append(
+                {
+                    "category": "opacity",
+                    "location": path,
+                    "snippet": "single-character identifiers introduced",
+                }
+            )
 
         # Ethics violations
         try:
