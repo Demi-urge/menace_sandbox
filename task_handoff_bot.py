@@ -91,6 +91,7 @@ class WorkflowDB(EmbeddableDBMixin):
     ) -> None:
         self.path = path
         self.event_bus = event_bus
+        self.vector_backend = vector_backend  # kept for compatibility
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute(
@@ -123,22 +124,8 @@ class WorkflowDB(EmbeddableDBMixin):
         if "argument_strings" not in cols:
             self.conn.execute("ALTER TABLE workflows ADD COLUMN argument_strings TEXT")
         self.conn.commit()
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS workflow_embeddings(
-                workflow_id INTEGER PRIMARY KEY,
-                vector TEXT,
-                created_at TEXT,
-                embedding_version INTEGER,
-                kind TEXT,
-                source_id TEXT
-            )
-            """,
-        )
-        self.conn.commit()
         EmbeddableDBMixin.__init__(
             self,
-            vector_backend=vector_backend,
             index_path=vector_index_path,
             embedding_version=embedding_version,
         )
@@ -167,10 +154,19 @@ class WorkflowDB(EmbeddableDBMixin):
             wid=row["id"],
         )
 
-    def _embed_text(self, rec: WorkflowRecord) -> str:
-        chain = rec.workflow + rec.task_sequence
-        parts = chain + rec.argument_strings
-        return " ".join(p for p in parts if p)
+    def _vector_text(self, rec: WorkflowRecord) -> str:
+        """Build a descriptive text representation of ``rec``."""
+
+        actions = rec.workflow or rec.task_sequence
+        sequence = rec.task_sequence if rec.workflow != rec.task_sequence else []
+        parts: list[str] = []
+        if actions:
+            parts.append(" -> ".join(actions))
+        if sequence:
+            parts.append("sequence: " + " -> ".join(sequence))
+        if rec.argument_strings:
+            parts.append("args: " + ", ".join(rec.argument_strings))
+        return " | ".join(parts)
 
     # --------------------------------------------------------------
     # status updates
@@ -188,13 +184,7 @@ class WorkflowDB(EmbeddableDBMixin):
         if row:
             rec = self._row_to_record(row)
             try:
-                vec = self.vector(rec)
-                if vec is not None:
-                    self.add_embedding(
-                        workflow_id,
-                        vec,
-                        metadata={"kind": "workflow", "source_id": workflow_id},
-                    )
+                self.add_embedding(workflow_id, rec, "workflow")
             except Exception as exc:  # pragma: no cover - best effort
                 logger.exception(
                     "embedding hook failed for %s: %s", workflow_id, exc
@@ -217,13 +207,7 @@ class WorkflowDB(EmbeddableDBMixin):
             if row:
                 rec = self._row_to_record(row)
                 try:
-                    vec = self.vector(rec)
-                    if vec is not None:
-                        self.add_embedding(
-                            wid,
-                            vec,
-                            metadata={"kind": "workflow", "source_id": wid},
-                        )
+                    self.add_embedding(wid, rec, "workflow")
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding hook failed for %s: %s", wid, exc)
         if self.event_bus:
@@ -274,13 +258,7 @@ class WorkflowDB(EmbeddableDBMixin):
         wf.wid = cur.lastrowid
 
         try:
-            vec = self.vector(wf)
-            if vec is not None:
-                self.add_embedding(
-                    wf.wid,
-                    vec,
-                    metadata={"kind": "workflow", "source_id": wf.wid},
-                )
+            self.add_embedding(wf.wid, wf, "workflow")
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
 
@@ -306,29 +284,20 @@ class WorkflowDB(EmbeddableDBMixin):
             results.append(self._row_to_record(row))
         return results
 
-    def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for workflows missing vectors."""
-        while True:
-            rows = self.conn.execute(
-                "SELECT * FROM workflows WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
-                (batch_size,),
-            ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                rec = self._row_to_record(row)
-                try:
-                    vec = self.vector(rec)
-                    if vec is not None:
-                        self.add_embedding(
-                            rec.wid,
-                            vec,
-                            metadata={"kind": "workflow", "source_id": rec.wid},
-                        )
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception(
-                        "embedding backfill failed for %s: %s", rec.wid, exc
-                    )
+    def backfill_embeddings(self) -> None:
+        """Generate embeddings for workflow rows missing vectors."""
+
+        cur = self.conn.execute("SELECT * FROM workflows")
+        for row in cur.fetchall():
+            rec = self._row_to_record(row)
+            if str(rec.wid) in getattr(self, "_metadata", {}):
+                continue
+            try:
+                self.add_embedding(rec.wid, rec, "workflow")
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception(
+                    "embedding backfill failed for %s: %s", rec.wid, exc
+                )
 
     # --------------------------------------------------------------
     # embedding/search
@@ -347,58 +316,26 @@ class WorkflowDB(EmbeddableDBMixin):
                 return None
         return None
 
-    def add_embedding(
-        self,
-        record_id: Any,
-        vector: Sequence[float],
-        metadata: dict[str, Any] | None = None,
-    ) -> None:
-        """Store vector in both generic and workflow-specific tables."""
+    def vector(self, rec: Any) -> list[float]:
+        """Embed ``rec`` into a vector using its action chain and arguments."""
 
-        EmbeddableDBMixin.add_embedding(self, record_id, vector, metadata=metadata)
-        created_at, version, kind, source_id = self._prepare_metadata(metadata)
-        vec_json = json.dumps(list(vector))
-        self.conn.execute(
-            """
-            INSERT OR REPLACE INTO workflow_embeddings(
-                workflow_id, vector, created_at, embedding_version, kind, source_id
-            ) VALUES (?,?,?,?,?,?)
-            """,
-            (record_id, vec_json, created_at, version, kind, source_id),
-        )
-        self.conn.commit()
-
-    def vector(self, rec: Any) -> list[float] | None:
-        """Return an embedding for ``rec`` or a stored record id."""
-
-        if isinstance(rec, int) or (isinstance(rec, str) and str(rec).isdigit()):
+        if isinstance(rec, (int, str)):
             row = self.conn.execute(
-                "SELECT vector FROM workflow_embeddings WHERE workflow_id=?",
+                "SELECT * FROM workflows WHERE id=?",
                 (int(rec),),
             ).fetchone()
-            if row:
-                return json.loads(row[0])
-            return EmbeddableDBMixin.vector(self, rec)
-        if isinstance(rec, WorkflowRecord):
-            text = self._embed_text(rec)
-        else:
-            if isinstance(rec, sqlite3.Row):
-                rec = dict(rec)
-            chain: list[str] = []
-            for key in ("workflow", "task_sequence"):
-                val = rec.get(key) if isinstance(rec, dict) else getattr(rec, key, None)
-                if not val:
-                    continue
-                if isinstance(val, str):
-                    chain.extend(val.split(","))
-                elif isinstance(val, (list, tuple)):
-                    chain.extend(val)
-            args = rec.get("argument_strings") if isinstance(rec, dict) else getattr(rec, "argument_strings", [])
-            if isinstance(args, str):
-                args = args.split(",") if args else []
-            parts = chain + list(args or [])
-            text = " ".join(parts)
-        return self._embed(text) if text else None
+            if not row:
+                raise ValueError("record not found")
+            rec = self._row_to_record(row)
+        elif isinstance(rec, sqlite3.Row):
+            rec = self._row_to_record(rec)
+        elif not isinstance(rec, WorkflowRecord):
+            raise TypeError("unsupported record type")
+        text = self._vector_text(rec)
+        vec = self._embed(text)
+        if vec is None:
+            raise ValueError("embedding backend unavailable")
+        return vec
 
     def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[WorkflowRecord]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
