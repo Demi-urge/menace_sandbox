@@ -116,6 +116,7 @@ __all__ = [
     "deployment_bot",
     "bot_database",
     "code_database",
+    "information_db",
     "error_bot",
     "error_forecaster",
     "error_cluster_predictor",

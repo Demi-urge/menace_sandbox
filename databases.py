@@ -126,6 +126,17 @@ class MenaceDB:
             Column("bot_id", Integer, ForeignKey("bots.bot_id"), primary_key=True),
         )
 
+        self.information_embeddings = Table(
+            "information_embeddings",
+            self.meta,
+            Column("record_id", String, primary_key=True),
+            Column("vector", Text),
+            Column("created_at", String),
+            Column("embedding_version", Integer),
+            Column("kind", String),
+            Column("source_id", String),
+        )
+
         self.bots = Table(
             "bots",
             self.meta,
