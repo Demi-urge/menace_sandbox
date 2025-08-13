@@ -58,6 +58,10 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
+try:
+    from . import security_auditor
+except Exception:  # pragma: no cover - fallback for flat layout
+    import security_auditor  # type: ignore
 import sandbox_runner.environment as environment
 from .self_test_service import SelfTestService
 from orphan_analyzer import classify_module, analyze_redundancy
@@ -1143,6 +1147,10 @@ class SelfImprovementEngine:
         try:
             report = self.alignment_flagger.flag_patch(diff, context)
             record = {"patch_id": patch_id, "commit": commit_hash, "report": report}
+            try:
+                security_auditor.dispatch_alignment_warning(record)
+            except Exception:
+                self.logger.exception("alignment warning dispatch failed")
             self.cycle_logs.append({"cycle": self._cycle_count, **record})
             if self.event_bus:
                 try:
