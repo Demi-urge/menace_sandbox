@@ -1,34 +1,25 @@
-"""Utility for flagging potential human-alignment risks in code patches.
+"""Utilities for flagging potential human-alignment issues in code patches.
 
-The checker is intentionally lightweight and never raises an exception.  It
-accepts a unified diff *patch* and a ``metadata`` mapping which may contain
-additional context such as affected file paths or baseline static metrics.  The
-function returns a list of human readable warning strings describing any
-potential issues discovered.
+This module exposes :class:`HumanAlignmentFlagger` which analyses unified
+diff strings and returns structured reports describing any detected
+alignment concerns.  The checker is intentionally conservative – it never
+raises an exception and only relies on lightweight heuristics.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List
-import ast
 
-from codex_output_analyzer import flag_unsafe_patterns
 from ethics_violation_detector import flag_violations
-from orphan_analyzer import _static_metrics
 
 
-def _parse_diff_paths(patch: str) -> Dict[str, List[str]]:
-    """Return mapping of file paths to their added and removed lines.
-
-    The result maps each path to two lists: ``added`` and ``removed``.  Only
-    lines within hunks are considered which makes the helper robust for
-    high level diff headers.
-    """
+def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, List[str]]]:
+    """Return mapping of file paths to their added and removed lines."""
 
     files: Dict[str, Dict[str, List[str]]] = {}
     current: Dict[str, List[str]] | None = None
-    for line in patch.splitlines():
+    for line in diff.splitlines():
         if line.startswith("+++ b/"):
             path = line[6:]
             current = files.setdefault(path, {"added": [], "removed": []})
@@ -37,71 +28,98 @@ def _parse_diff_paths(patch: str) -> Dict[str, List[str]]:
                 current["added"].append(line[1:])
             elif line.startswith("-") and not line.startswith("---"):
                 current["removed"].append(line[1:])
-    return {k: [v["added"], v["removed"]] for k, v in files.items()}
+    return files
+
+
+class HumanAlignmentFlagger:
+    """Analyse diffs for alignment risks and maintainability issues."""
+
+    def flag_patch(self, diff: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a structured report for *diff* with optional *context*.
+
+        The report contains two high level metrics, ``lines_added`` and
+        ``lines_removed``, along with a list of ``issues``.  Each entry in
+        ``issues`` stores a ``severity`` score and a human readable
+        ``message``.
+        """
+
+        files = _parse_diff_paths(diff)
+
+        issues: List[Dict[str, Any]] = []
+        lines_added = 0
+        lines_removed = 0
+
+        for path, info in files.items():
+            added, removed = info["added"], info["removed"]
+            lines_added += len(added)
+            lines_removed += len(removed)
+
+            # Docstring removal or absence
+            if any('"""' in line or "'''" in line for line in removed):
+                issues.append({
+                    "severity": 3,
+                    "message": f"Docstring removed in {path}",
+                })
+            if path.endswith(".py") and len(added) > 1 and not any(
+                '"""' in line or "'''" in line for line in added[:5]
+            ):
+                issues.append({
+                    "severity": 1,
+                    "message": f"{path} may lack module docstring",
+                })
+
+            # Logging statements removed
+            if any("logging." in line or "logger." in line for line in removed):
+                issues.append({
+                    "severity": 2,
+                    "message": f"Logging removed in {path}",
+                })
+
+            # Test code removed
+            path_obj = Path(path)
+            if path_obj.parts and (path_obj.parts[0] == "tests" or "test" in path_obj.name):
+                if removed:
+                    issues.append({
+                        "severity": 4,
+                        "message": f"Test code removed in {path}",
+                    })
+            elif any("assert" in line for line in removed):
+                issues.append({
+                    "severity": 4,
+                    "message": f"Test assertion removed in {path}",
+                })
+
+        # Ethics violations -------------------------------------------------
+        ethics_entry = dict(context)
+        ethics_entry.setdefault("generated_code", diff)
+        try:
+            ethics = flag_violations(ethics_entry)
+        except Exception:
+            ethics = {"violations": [], "severity": 0}
+        for item in ethics.get("violations", []):
+            msg = (
+                f"{item.get('field', 'content')} contains forbidden keyword "
+                f"{item.get('matched_keyword', '')} ({item.get('category', '')})"
+            )
+            issues.append({
+                "severity": ethics.get("severity", 1),
+                "message": msg,
+            })
+
+        return {
+            "lines_added": lines_added,
+            "lines_removed": lines_removed,
+            "issues": issues,
+        }
 
 
 def flag_alignment_risks(patch: str, metadata: Dict[str, Any]) -> List[str]:
-    """Return a list of human-alignment warnings for *patch*.
+    """Backward compatibility wrapper returning only warning messages."""
 
-    The checker scans for loss of transparency such as removed docstrings or
-    increased complexity, evaluates newly added code for unsafe patterns and
-    reports any ethics violations signalled in *metadata*.
-    """
-
-    warnings: List[str] = []
-
-    try:
-        diff_info = _parse_diff_paths(patch)
-    except Exception:
-        diff_info = {}
-
-    # -- docstring removal -------------------------------------------------
-    for path, (_added, removed) in diff_info.items():
-        if any("\"\"\"" in line or "'''" in line for line in removed):
-            warnings.append(f"Docstring removed in {path}.")
-
-    # -- maintainability metrics ------------------------------------------
-    baseline: Dict[str, Dict[str, Any]] = metadata.get("baseline_metrics", {})
-    for path in diff_info.keys() or metadata.get("files", []):
-        try:
-            metrics = _static_metrics(Path(path))
-        except Exception:
-            continue
-        base = baseline.get(path, {})
-        if base.get("docstring") and not metrics.get("docstring"):
-            warnings.append(f"{path} lost module docstring.")
-        if metrics.get("complexity", 0) > base.get("complexity", 0):
-            warnings.append(
-                f"{path} complexity increased from {base.get('complexity', 0)} "
-                f"to {metrics.get('complexity', 0)}."
-            )
-        elif not base and not metrics.get("docstring"):
-            warnings.append(f"{path} lacks module docstring.")
-
-    # -- unsafe constructs -------------------------------------------------
-    added_code: str = "\n".join(
-        line for (added, _removed) in diff_info.values() for line in added
-    )
-    if added_code.strip():
-        try:
-            tree = ast.parse(added_code)
-            for item in flag_unsafe_patterns(tree):
-                message = getattr(item, "message", None) or item.get("message")
-                warnings.append(f"Unsafe code pattern: {message}.")
-        except Exception:
-            pass
-
-    # -- ethics violations -------------------------------------------------
-    try:
-        ethics = flag_violations(metadata)
-        for item in ethics.get("violations", []):
-            category = item.get("category", "unknown")
-            field = item.get("field", "")
-            warnings.append(f"Ethics violation in {field}: {category}.")
-    except Exception:
-        pass
-
-    return warnings
+    flagger = HumanAlignmentFlagger()
+    report = flagger.flag_patch(patch, metadata)
+    return [item["message"] for item in report.get("issues", [])]
 
 
-__all__ = ["flag_alignment_risks"]
+__all__ = ["HumanAlignmentFlagger", "flag_alignment_risks"]
+
