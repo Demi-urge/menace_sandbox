@@ -75,7 +75,6 @@ from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .human_alignment_flagger import (
-    flag_alignment_risks,
     HumanAlignmentFlagger,
     flag_improvement,
     flag_alignment_issues,
@@ -89,7 +88,6 @@ logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
 ADAPTIVE_ROI_TRAIN_INTERVAL = 3600  # seconds between scheduled retraining
-ALIGNMENT_REVIEW_THRESHOLD = 5
 
 
 # Default synergy weight values used when no valid file is available
@@ -1085,6 +1083,9 @@ class SelfImprovementEngine:
     # ------------------------------------------------------------------
     def _alignment_review_last_commit(self, description: str) -> None:
         """Run alignment flagger on the most recent commit."""
+        settings = SandboxSettings()
+        if not getattr(settings, "enable_alignment_flagger", True):
+            return
         try:
             diff_proc = subprocess.run(
                 ["git", "show", "HEAD"],
@@ -1103,8 +1104,16 @@ class SelfImprovementEngine:
         except Exception:
             return
 
-        warnings = flag_alignment_risks(patch, {"files": files})
-        if warnings:
+        try:
+            report = self.alignment_flagger.flag_patch(patch, {"files": files})
+        except Exception:
+            return
+        issues = report.get("issues", [])
+        max_severity = max((i.get("severity", 0) for i in issues), default=0) / 4.0
+        warn_th = settings.alignment_warning_threshold
+        fail_th = settings.alignment_failure_threshold
+        if max_severity >= warn_th:
+            warnings = [i.get("message", "") for i in issues]
             try:
                 audit_log_event(
                     "alignment_flag",
@@ -1112,15 +1121,21 @@ class SelfImprovementEngine:
                 )
             except Exception:
                 self.logger.exception("alignment audit log failed")
-            try:
-                dispatch_alert(
-                    "alignment_warning",
-                    2,
+            if max_severity >= fail_th:
+                try:
+                    dispatch_alert(
+                        "alignment_warning",
+                        5,
+                        "alignment failure detected",
+                        {"description": description, "severity": max_severity},
+                    )
+                except Exception:
+                    self.logger.exception("alignment warning dispatch failed")
+            else:
+                self.logger.warning(
                     "alignment warnings detected",
-                    {"description": description, "warnings": warnings},
+                    extra={"description": description, "warnings": warnings},
                 )
-            except Exception:
-                self.logger.exception("alignment warning dispatch failed")
 
     # ------------------------------------------------------------------
     def _flag_patch_alignment(
@@ -1128,6 +1143,9 @@ class SelfImprovementEngine:
     ) -> None:
         """Analyse the latest commit for alignment concerns and log findings."""
         if patch_id is None:
+            return
+        settings = SandboxSettings()
+        if not getattr(settings, "enable_alignment_flagger", True):
             return
         try:
             diff_proc = subprocess.run(
@@ -1151,25 +1169,36 @@ class SelfImprovementEngine:
         try:
             report = self.alignment_flagger.flag_patch(diff, context)
             score = report.get("score", 0)
+            issues = report.get("issues", [])
+            max_severity = max((i.get("severity", 0) for i in issues), default=0) / 4.0
             self.logger.info(
                 "alignment score computed",
-                extra=log_record(patch_id=patch_id, score=score),
+                extra=log_record(patch_id=patch_id, score=score, severity=max_severity),
             )
+            warn_th = settings.alignment_warning_threshold
+            fail_th = settings.alignment_failure_threshold
+            if max_severity < warn_th:
+                self.logger.info(
+                    "alignment severity below warning threshold",
+                    extra=log_record(patch_id=patch_id, severity=max_severity),
+                )
+                return
             record = {
                 "patch_id": patch_id,
                 "commit": commit_hash,
                 "score": score,
+                "severity": max_severity,
                 "report": report,
             }
             escalated = False
-            if score >= ALIGNMENT_REVIEW_THRESHOLD:
+            if max_severity >= fail_th:
                 escalated = True
                 try:
                     dispatch_alert(
                         "alignment_review",
                         5,
-                        "alignment score exceeded threshold",
-                        {"patch_id": patch_id, "score": score},
+                        "alignment severity exceeded threshold",
+                        {"patch_id": patch_id, "severity": max_severity},
                     )
                 except Exception:
                     self.logger.exception("alignment review dispatch failed")

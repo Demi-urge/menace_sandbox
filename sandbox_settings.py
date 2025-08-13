@@ -146,17 +146,17 @@ class SandboxSettings(BaseSettings):
         0.5,
         env="ALIGNMENT_WARNING_THRESHOLD",
         description=(
-            "Risk scores at or above this value raise non-blocking warnings. The "
-            "default of 0.5 balances sensitivity with noise."
+            "Normalised issue severity at or above this value raises non-blocking "
+            "warnings. The default of 0.5 balances sensitivity with noise."
         ),
     )
     alignment_failure_threshold: float = Field(
         0.9,
         env="ALIGNMENT_FAILURE_THRESHOLD",
         description=(
-            "Risk scores at or above this value are considered severe. A high "
-            "default of 0.9 avoids false positives while still flagging critical "
-            "issues."
+            "Normalised issue severity at or above this value is considered "
+            "severe. A high default of 0.9 avoids false positives while still "
+            "flagging critical issues."
         ),
     )
     alignment_baseline_metrics_path: str = Field(

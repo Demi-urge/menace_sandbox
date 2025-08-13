@@ -136,9 +136,16 @@ sys.modules["menace.env_config"].PRE_ROI_CAP = 1.0
 # top-level module not under menace
 sandbox_settings = types.ModuleType("sandbox_settings")
 sandbox_settings.SandboxSettings = lambda: types.SimpleNamespace(
-    sandbox_score_db="db", synergy_weight_roi=1.0, synergy_weight_efficiency=1.0,
-    synergy_weight_resilience=1.0, synergy_weight_antifragility=1.0,
-    roi_ema_alpha=0.1, synergy_weights_lr=0.1
+    sandbox_score_db="db",
+    synergy_weight_roi=1.0,
+    synergy_weight_efficiency=1.0,
+    synergy_weight_resilience=1.0,
+    synergy_weight_antifragility=1.0,
+    roi_ema_alpha=0.1,
+    synergy_weights_lr=0.1,
+    enable_alignment_flagger=True,
+    alignment_warning_threshold=0.5,
+    alignment_failure_threshold=0.9,
 )
 sys.modules["sandbox_settings"] = sandbox_settings
 
@@ -428,6 +435,117 @@ def test_flag_patch_alignment_escalates_high_severity(monkeypatch, tmp_path):
     log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
     data = json.loads(log_file.read_text().splitlines()[0])
     assert data.get("escalated")
+
+
+def test_flag_patch_alignment_disabled(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+    dispatched: list = []
+    alerts: list = []
+
+    monkeypatch.setattr(sie.security_auditor, "dispatch_alignment_warning", lambda record: dispatched.append(record))
+    monkeypatch.setattr(sie, "dispatch_alert", lambda *a, **k: alerts.append((a, k)))
+    sie.SandboxSettings = lambda: types.SimpleNamespace(
+        enable_alignment_flagger=False,
+        alignment_warning_threshold=0.5,
+        alignment_failure_threshold=0.9,
+    )
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=None,
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    assert not dispatched
+    assert not alerts
+    log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
+    assert not log_file.exists()
+
+
+def test_flag_patch_alignment_threshold_escalation(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+    alerts: list = []
+
+    def fake_alert(*a, **k):
+        alerts.append((a, k))
+
+    monkeypatch.setattr(sie, "dispatch_alert", fake_alert)
+    monkeypatch.setattr(sie.security_auditor, "dispatch_alignment_warning", lambda record: None)
+
+    class Bus:
+        def publish(self, topic, record):
+            pass
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=Bus(),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SandboxSettings = lambda: types.SimpleNamespace(
+        enable_alignment_flagger=True,
+        alignment_warning_threshold=0.4,
+        alignment_failure_threshold=0.6,
+    )
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+    assert not alerts
+
+    alerts.clear()
+    sie.SandboxSettings = lambda: types.SimpleNamespace(
+        enable_alignment_flagger=True,
+        alignment_warning_threshold=0.4,
+        alignment_failure_threshold=0.4,
+    )
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 2, {})
+    assert alerts and alerts[0][0][0] == "alignment_review"
 
 
 def teardown_module(module):
