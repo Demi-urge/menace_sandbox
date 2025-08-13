@@ -11,11 +11,20 @@ from pathlib import Path
 from typing import Any, Dict
 from datetime import datetime
 import contextvars
+import importlib
 
 
 _correlation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "correlation_id", default=None
 )
+
+
+def _config_mod():
+    """Return the configuration module regardless of import style."""
+    try:  # pragma: no cover - package installed
+        return importlib.import_module("menace.config")
+    except Exception:  # pragma: no cover - fallback to local import
+        return importlib.import_module("config")
 
 
 class CorrelationIDFilter(logging.Filter):
@@ -166,20 +175,31 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
                 handler["formatter"] = "json"
                 cfg["handlers"][hname] = handler
     logging.config.dictConfig(cfg)
+    cfg_mod = _config_mod()
     if level is None:
-        if os.getenv("SANDBOX_VERBOSE") == "1" or os.getenv("SANDBOX_DEBUG") == "1":
-            level = logging.DEBUG
-    if level is not None:
-        if isinstance(level, int):
-            logging.getLogger().setLevel(level)
-        else:
-            logging.getLogger().setLevel(getattr(logging, str(level).upper(), logging.INFO))
+        level_name = cfg_mod.get_config().logging.verbosity
+        level = getattr(logging, level_name.upper(), logging.INFO)
+    if isinstance(level, int):
+        logging.getLogger().setLevel(level)
+    else:
+        logging.getLogger().setLevel(getattr(logging, str(level).upper(), logging.INFO))
     handler = _central_handler()
     if handler:
         handler.addFilter(
             _ModuleFilter(["SelfTestService", "SynergyAutoTrainer", "synergy_monitor"])
         )
         logging.getLogger().addHandler(handler)
+
+    bus = getattr(cfg_mod, "_EVENT_BUS", None)
+    if bus:
+        bus.subscribe("config:reload", lambda *_: _apply_log_level())
+
+
+def _apply_log_level() -> None:
+    """Apply current config logging verbosity to root logger."""
+    cfg_mod = _config_mod()
+    level_name = cfg_mod.get_config().logging.verbosity
+    logging.getLogger().setLevel(getattr(logging, level_name.upper(), logging.INFO))
 
 
 _def_configured = False
