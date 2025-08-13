@@ -77,6 +77,13 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             path = line[6:]
+            ext = Path(path).suffix.lower()
+            # Determine comment markers based on file type so that we can
+            # track comment density in non-Python files such as YAML/JSON and
+            # shell scripts.
+            comment_markers = ["#"]
+            if ext in {".json"}:
+                comment_markers = ["//", "#"]
             current = files.setdefault(
                 path,
                 {
@@ -87,20 +94,22 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
                     "removed_comment_lines": [],
                     "single_char_added": 0,
                     "single_char_removed": 0,
+                    "comment_markers": comment_markers,
                 },
             )
         elif current is not None:
+            markers = current.get("comment_markers", ["#"])
             if line.startswith("+") and not line.startswith("+++"):
                 content = line[1:]
                 current["added"].append(content)
-                if content.lstrip().startswith("#"):
+                if any(content.lstrip().startswith(m) for m in markers):
                     current["comments_added"] += 1
                 else:
                     current["single_char_added"] += len(single_char_re.findall(content))
             elif line.startswith("-") and not line.startswith("---"):
                 content = line[1:]
                 current["removed"].append(content)
-                if content.lstrip().startswith("#"):
+                if any(content.lstrip().startswith(m) for m in markers):
                     current["comments_removed"] += 1
                     current["removed_comment_lines"].append(content)
                 else:
@@ -189,6 +198,19 @@ class HumanAlignmentFlagger:
             r"#\s*(?:noqa|pylint:\s*disable|pragma:\s*no\s*cover)"
         )
         complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
+        credential_re = re.compile(
+            r"['\"]?(?:password|secret|token|api[_-]?key)['\"]?\s*[:=]\s*['\"]?\S+",
+            re.IGNORECASE,
+        )
+        security_disable_re = re.compile(
+            r"(?:allow[_-]?privilege[_-]?escalation|privileged|enable[_-]?security)\s*[:=]\s*(?:true|false)",
+            re.IGNORECASE,
+        )
+        exec_flag_re = re.compile(
+            r"chmod\s+(?:\+x|[0-7]*7[0-7]*|[0-7]{3})|set\s+\+e",
+            re.IGNORECASE,
+        )
+        remote_exec_re = re.compile(r"(?:curl|wget).+\|\s*sh", re.IGNORECASE)
 
         def _tier(severity: int) -> str:
             return "critical" if severity >= 3 else "warn" if severity >= 2 else "info"
@@ -278,6 +300,66 @@ class HumanAlignmentFlagger:
                     "tier": _tier(sev),
                     "message": f"Test assertion removed in {path}",
                 })
+
+            # Configuration and script specific heuristics -----------------
+            ext = path_obj.suffix.lower()
+            if ext in {".yaml", ".yml", ".json"}:
+                for line in added:
+                    stripped = line.strip()
+                    if security_disable_re.search(stripped):
+                        lower = stripped.lower()
+                        if (
+                            ("allow" in lower and "true" in lower)
+                            or ("privileged" in lower and "true" in lower)
+                            or ("enable" in lower and "false" in lower)
+                        ):
+                            sev = 3
+                            issues.append(
+                                {
+                                    "severity": sev,
+                                    "tier": _tier(sev),
+                                    "message": f"Security feature disabled in {path}: {stripped}",
+                                }
+                            )
+                    if credential_re.search(stripped):
+                        sev = 3
+                        issues.append(
+                            {
+                                "severity": sev,
+                                "tier": _tier(sev),
+                                "message": f"Embedded credential in {path}: {stripped}",
+                            }
+                        )
+            elif ext in {".sh", ".bash"}:
+                for line in added:
+                    stripped = line.strip()
+                    if credential_re.search(stripped):
+                        sev = 3
+                        issues.append(
+                            {
+                                "severity": sev,
+                                "tier": _tier(sev),
+                                "message": f"Embedded credential in {path}: {stripped}",
+                            }
+                        )
+                    if remote_exec_re.search(stripped):
+                        sev = 3
+                        issues.append(
+                            {
+                                "severity": sev,
+                                "tier": _tier(sev),
+                                "message": f"Remote shell execution in {path}: {stripped}",
+                            }
+                        )
+                    elif exec_flag_re.search(stripped):
+                        sev = 2
+                        issues.append(
+                            {
+                                "severity": sev,
+                                "tier": _tier(sev),
+                                "message": f"Execution flag in {path}: {stripped}",
+                            }
+                        )
 
             network_calls: List[str] = []
             for line in added:

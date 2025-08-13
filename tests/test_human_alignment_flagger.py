@@ -169,6 +169,42 @@ def todo_patch() -> str:
     )
 
 
+@pytest.fixture
+def yaml_security_patch() -> str:
+    return (
+        """diff --git a/config.yaml b/config.yaml
+--- a/config.yaml
++++ b/config.yaml
+@@ -0,0 +1 @@
++allow_privilege_escalation: true
+"""
+    )
+
+
+@pytest.fixture
+def json_credential_patch() -> str:
+    return (
+        """diff --git a/config.json b/config.json
+--- a/config.json
++++ b/config.json
+@@ -0,0 +1 @@
++{"password": "secret"}
+"""
+    )
+
+
+@pytest.fixture
+def shell_exec_flag_patch() -> str:
+    return (
+        """diff --git a/run.sh b/run.sh
+--- a/run.sh
++++ b/run.sh
+@@ -0,0 +1 @@
++chmod +x /tmp/script.sh
+"""
+    )
+
+
 def test_unsafe_patch_triggers_warning(unsafe_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(unsafe_patch, {})
@@ -278,6 +314,31 @@ def test_high_complexity_flagged(high_complexity_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(high_complexity_patch, {})
     assert any("High cyclomatic complexity" in issue["message"] for issue in report["issues"])
+
+
+def test_yaml_security_feature_disabled_flagged(yaml_security_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(yaml_security_patch, {})
+    assert any(
+        "Security feature disabled" in issue["message"]
+        for issue in report["issues"]
+    )
+
+
+def test_json_embedded_credential_flagged(json_credential_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(json_credential_patch, {})
+    assert any(
+        "Embedded credential" in issue["message"] for issue in report["issues"]
+    )
+
+
+def test_shell_execution_flag_flagged(shell_exec_flag_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(shell_exec_flag_patch, {})
+    assert any(
+        "Execution flag" in issue["message"] for issue in report["issues"]
+    )
 
 
 def test_report_includes_score_and_tiers(unsafe_patch):
