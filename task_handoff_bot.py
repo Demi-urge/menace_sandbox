@@ -12,6 +12,7 @@ import logging
 
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
+from .embeddable_db_mixin import EmbeddableDBMixin
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
@@ -73,56 +74,134 @@ class WorkflowRecord:
     wid: int = 0
 
 
-class WorkflowDB:
-    """SQLite storage for generated workflows."""
 
-    def __init__(self, path: Path = Path("workflows.db"), *, event_bus: Optional[UnifiedEventBus] = None) -> None:
+class WorkflowDB(EmbeddableDBMixin):
+    """SQLite storage for generated workflows with vector search."""
+
+    def __init__(
+        self,
+        path: Path | str = Path("workflows.db"),
+        *,
+        event_bus: Optional[UnifiedEventBus] = None,
+        vector_backend: str = "annoy",
+        vector_index_path: Path | str = "workflow_embeddings.index",
+        embedding_version: int = 1,
+    ) -> None:
         self.path = path
         self.event_bus = event_bus
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS workflows(
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    workflow TEXT,
-                    assigned_bots TEXT,
-                    enhancements TEXT,
-                    title TEXT,
-                    description TEXT,
-                    task_sequence TEXT,
-                    tags TEXT,
-                    category TEXT,
-                    type TEXT,
-                    status TEXT,
-                    rejection_reason TEXT,
-                    workflow_duration REAL,
-                    performance_data TEXT,
-                    estimated_profit_per_bot REAL,
-                    timestamp TEXT
-                )
-                """
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflows(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workflow TEXT,
+                assigned_bots TEXT,
+                enhancements TEXT,
+                title TEXT,
+                description TEXT,
+                task_sequence TEXT,
+                tags TEXT,
+                category TEXT,
+                type TEXT,
+                status TEXT,
+                rejection_reason TEXT,
+                workflow_duration REAL,
+                performance_data TEXT,
+                estimated_profit_per_bot REAL,
+                timestamp TEXT
             )
-            conn.commit()
+            """,
+        )
+        self.conn.commit()
+        EmbeddableDBMixin.__init__(
+            self,
+            vector_backend=vector_backend,
+            index_path=vector_index_path,
+            embedding_version=embedding_version,
+        )
 
+    # --------------------------------------------------------------
+    # helpers
+    def _row_to_record(self, row: sqlite3.Row) -> WorkflowRecord:
+        return WorkflowRecord(
+            workflow=row["workflow"].split(",") if row["workflow"] else [],
+            assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
+            enhancements=row["enhancements"].split(",") if row["enhancements"] else [],
+            title=row["title"] or "",
+            description=row["description"] or "",
+            task_sequence=row["task_sequence"].split(",") if row["task_sequence"] else [],
+            tags=row["tags"].split(",") if row["tags"] else [],
+            category=row["category"] or "",
+            type_=row["type"] or "",
+            status=row["status"] or "",
+            rejection_reason=row["rejection_reason"] or "",
+            workflow_duration=row["workflow_duration"] or 0.0,
+            performance_data=row["performance_data"] or "",
+            estimated_profit_per_bot=row["estimated_profit_per_bot"] or 0.0,
+            timestamp=row["timestamp"],
+            wid=row["id"],
+        )
+
+    def _embed_text(self, rec: WorkflowRecord) -> str:
+        parts = [
+            " ".join(rec.workflow),
+            " ".join(rec.task_sequence),
+            " ".join(rec.assigned_bots),
+            " ".join(rec.enhancements),
+            rec.title,
+            rec.description,
+            " ".join(rec.tags),
+            rec.category,
+            rec.type_,
+            rec.status,
+        ]
+        return " ".join(p for p in parts if p)
+
+    # --------------------------------------------------------------
+    # status updates
     def update_status(self, workflow_id: int, status: str) -> None:
-        """Update the status for a single workflow."""
-        with sqlite3.connect(self.path) as conn:
-            conn.execute(
-                "UPDATE workflows SET status=? WHERE id=?",
-                (status, workflow_id),
-            )
-            conn.commit()
+        """Update the status for a single workflow and refresh embedding."""
+        self.conn.execute(
+            "UPDATE workflows SET status=? WHERE id=?",
+            (status, workflow_id),
+        )
+        self.conn.commit()
+        row = self.conn.execute(
+            "SELECT * FROM workflows WHERE id=?",
+            (workflow_id,),
+        ).fetchone()
+        if row:
+            rec = self._row_to_record(row)
+            emb = self._embed(self._embed_text(rec))
+            if emb is not None:
+                try:
+                    self.add_embedding(workflow_id, emb, metadata={"kind": "workflow"})
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for %s", workflow_id)
 
     def update_statuses(self, workflow_ids: Iterable[int], status: str) -> None:
-        """Bulk update workflow status."""
+        """Bulk update workflow status and refresh embeddings."""
         ids = list(workflow_ids)
-        with sqlite3.connect(self.path) as conn:
-            for wid in ids:
-                conn.execute(
-                    "UPDATE workflows SET status=? WHERE id=?",
-                    (status, wid),
-                )
-            conn.commit()
+        for wid in ids:
+            self.conn.execute(
+                "UPDATE workflows SET status=? WHERE id=?",
+                (status, wid),
+            )
+        self.conn.commit()
+        for wid in ids:
+            row = self.conn.execute(
+                "SELECT * FROM workflows WHERE id=?",
+                (wid,),
+            ).fetchone()
+            if row:
+                rec = self._row_to_record(row)
+                emb = self._embed(self._embed_text(rec))
+                if emb is not None:
+                    try:
+                        self.add_embedding(wid, emb, metadata={"kind": "workflow"})
+                    except Exception:  # pragma: no cover - best effort
+                        logger.exception("embedding store failed for %s", wid)
         if self.event_bus:
             try:
                 for wid in ids:
@@ -136,76 +215,96 @@ class WorkflowDB:
                     exc,
                 )
 
+    # --------------------------------------------------------------
+    # insert/fetch
     def add(self, wf: WorkflowRecord) -> int:
-        with sqlite3.connect(self.path) as conn:
-            cur = conn.execute(
-                """
-                INSERT INTO workflows(
-                    workflow, assigned_bots, enhancements, title, description,
-                    task_sequence, tags, category, type, status,
-                    rejection_reason, workflow_duration, performance_data, estimated_profit_per_bot, timestamp
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    ",".join(wf.workflow),
-                    ",".join(wf.assigned_bots),
-                    ",".join(wf.enhancements),
-                    wf.title,
-                    wf.description,
-                    ",".join(wf.task_sequence),
-                    ",".join(wf.tags),
-                    wf.category,
-                    wf.type_,
-                    wf.status,
-                    wf.rejection_reason,
-                    wf.workflow_duration,
-                    wf.performance_data,
-                    wf.estimated_profit_per_bot,
-                    wf.timestamp,
-                ),
-            )
-            conn.commit()
-            wf.wid = cur.lastrowid
-            if self.event_bus:
-                try:
-                    self.event_bus.publish("workflows:new", asdict(wf))
-                except Exception as exc:
-                    logger.warning(
-                        "failed to publish new workflow %s: %s",
-                        wf.wid,
-                        exc,
-                    )
-            return wf.wid
+        cur = self.conn.execute(
+            """
+            INSERT INTO workflows(
+                workflow, assigned_bots, enhancements, title, description,
+                task_sequence, tags, category, type, status,
+                rejection_reason, workflow_duration, performance_data, estimated_profit_per_bot, timestamp
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                ",".join(wf.workflow),
+                ",".join(wf.assigned_bots),
+                ",".join(wf.enhancements),
+                wf.title,
+                wf.description,
+                ",".join(wf.task_sequence),
+                ",".join(wf.tags),
+                wf.category,
+                wf.type_,
+                wf.status,
+                wf.rejection_reason,
+                wf.workflow_duration,
+                wf.performance_data,
+                wf.estimated_profit_per_bot,
+                wf.timestamp,
+            ),
+        )
+        self.conn.commit()
+        wf.wid = cur.lastrowid
+
+        emb = self._embed(self._embed_text(wf))
+        if emb is not None:
+            try:
+                self.add_embedding(wf.wid, emb, metadata={"kind": "workflow"})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("embedding store failed for %s", wf.wid)
+
+        if self.event_bus:
+            try:
+                self.event_bus.publish("workflows:new", asdict(wf))
+            except Exception as exc:
+                logger.warning(
+                    "failed to publish new workflow %s: %s",
+                    wf.wid,
+                    exc,
+                )
+        return wf.wid
 
     def fetch(self, limit: int = 20) -> List[WorkflowRecord]:
-        with sqlite3.connect(self.path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT * FROM workflows ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        self.conn.row_factory = sqlite3.Row
+        rows = self.conn.execute(
+            "SELECT * FROM workflows ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         results: List[WorkflowRecord] = []
         for row in rows:
-            results.append(
-                WorkflowRecord(
-                    workflow=row["workflow"].split(",") if row["workflow"] else [],
-                    assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
-                    enhancements=row["enhancements"].split(",") if row["enhancements"] else [],
-                    title=row["title"] or "",
-                    description=row["description"] or "",
-                    task_sequence=row["task_sequence"].split(",") if row["task_sequence"] else [],
-                    tags=row["tags"].split(",") if row["tags"] else [],
-                    category=row["category"] or "",
-                    type_=row["type"] or "",
-                    status=row["status"] or "",
-                    rejection_reason=row["rejection_reason"] or "",
-                    workflow_duration=row["workflow_duration"] or 0.0,
-                    performance_data=row["performance_data"] or "",
-                    estimated_profit_per_bot=row["estimated_profit_per_bot"] or 0.0,
-                    timestamp=row["timestamp"],
-                    wid=row["id"],
-                )
-            )
+            results.append(self._row_to_record(row))
+        return results
+
+    # --------------------------------------------------------------
+    # embedding/search
+    def _embed(self, text: str) -> list[float] | None:
+        if not hasattr(self, "_embedder"):
+            try:  # pragma: no cover - optional dependency
+                from sentence_transformers import SentenceTransformer  # type: ignore
+            except Exception:
+                self._embedder = None
+            else:
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        if getattr(self, "_embedder", None):
+            try:
+                return self._embedder.encode([text])[0].tolist()
+            except Exception:  # pragma: no cover - runtime issues
+                return None
+        return None
+
+    def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[WorkflowRecord]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: List[WorkflowRecord] = []
+        for rec_id, dist in matches:
+            row = self.conn.execute(
+                "SELECT * FROM workflows WHERE id=?",
+                (rec_id,),
+            ).fetchone()
+            if row:
+                rec = self._row_to_record(row)
+                setattr(rec, "_distance", dist)
+                results.append(rec)
         return results
 
 
