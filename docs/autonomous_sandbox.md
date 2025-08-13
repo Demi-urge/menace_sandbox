@@ -64,6 +64,21 @@ scenarios. A low `synergy_resilience` during a `hostile_input` run highlights
 weak resistance to malicious stubs. The `sandbox_dashboard.py` utility and the
 metrics dashboard expose these per-scenario values.
 
+## Human alignment flagger
+
+Each autonomous cycle runs `HumanAlignmentFlagger` against the most recent
+commit. The checker parses the Git diff, highlighting removed docstrings,
+logging statements, missing tests and potential ethics or risk/reward issues.
+Results are appended to `sandbox_data/alignment_flags.jsonl` and published on
+the event bus as `alignment:flag`.
+
+Security AI or developers should monitor the JSON log or subscribe to the event
+bus to review any warnings. Alerts labelled `alignment_warning` are raised when
+scores exceed `ALIGNMENT_WARNING_THRESHOLD`; values beyond
+`ALIGNMENT_FAILURE_THRESHOLD` warrant immediate investigation. The flagger can
+be tuned or disabled via `ENABLE_ALIGNMENT_FLAGGER` and
+`ALIGNMENT_BASELINE_METRICS_PATH`.
+
 ## First-time setup
 
 Follow these steps when launching the sandbox for the first time:
