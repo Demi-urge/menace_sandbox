@@ -416,6 +416,7 @@ def flag_improvement(
     workflow_changes: List[Dict[str, Any]] | None,
     metrics: Dict[str, Any] | None,
     logs: List[Dict[str, Any]] | None,
+    commit_info: Dict[str, Any] | None = None,
     settings: Optional[SandboxSettings] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Analyse prospective workflow improvements and return warnings.
@@ -429,6 +430,9 @@ def flag_improvement(
         Optional action or evaluation data.
     logs : list of dict or None
         Recent log entries to scan for violations.
+    commit_info : dict or None
+        Optional commit metadata containing at least ``message`` and ``author``
+        keys to scan for violations.
 
     Returns
     -------
@@ -485,6 +489,23 @@ def flag_improvement(
             if violations:
                 warnings["ethics"].append(
                     {"source": "code", "file": change.get("file"), "violations": violations}
+                )
+        except Exception:
+            pass
+
+    if commit_info:
+        try:
+            message = str(commit_info.get("message", ""))
+            entry = {"action_description": message}
+            violations = scan_log_entry(entry)
+            if violations:
+                warnings["ethics"].append(
+                    {
+                        "source": "commit",
+                        "author": commit_info.get("author"),
+                        "message": message,
+                        "violations": violations,
+                    }
                 )
         except Exception:
             pass

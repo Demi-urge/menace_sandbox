@@ -4514,7 +4514,16 @@ class SelfImprovementEngine:
                             logs = get_recent_events(limit=20)
                         except Exception:
                             logs = None
-                    warnings = agent.evaluate_changes(actions, metrics, logs)
+                    try:
+                        out = subprocess.check_output(
+                            ["git", "show", "-s", "--format=%an,%s"],
+                            text=True,
+                        ).strip()
+                        author, message = out.split(",", 1)
+                        commit_info = {"author": author, "message": message}
+                    except Exception:
+                        commit_info = None
+                    warnings = agent.evaluate_changes(actions, metrics, logs, commit_info)
                     if any(warnings.values()):
                         result.warnings = warnings
                     _update_alignment_baseline(settings)
