@@ -1128,9 +1128,24 @@ class SelfImprovementEngine:
                         self.logger.exception("alert dispatch failed for %s", name)
                 elif action == "patch":
                     try:
-                        patch_id = generate_patch(name, self.self_coding_engine)
-                        if patch_id is not None:
-                            self._alignment_review_last_commit(f"scenario_patch_{patch_id}")
+                        with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                            src = Path(name)
+                            if src.suffix == "":
+                                src = src.with_suffix(".py")
+                            rel = src.name if src.is_absolute() else src
+                            before_target = Path(before_dir) / rel
+                            before_target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src, before_target)
+                            patch_id = generate_patch(name, self.self_coding_engine)
+                            if patch_id is not None:
+                                after_target = Path(after_dir) / rel
+                                after_target.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(src, after_target)
+                                diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                                self._pre_commit_alignment_check(diff_data)
+                                self._alignment_review_last_commit(
+                                    f"scenario_patch_{patch_id}"
+                                )
                     except Exception:
                         self.logger.exception("patch generation failed for %s", name)
                 elif action == "rerun":
@@ -2190,6 +2205,44 @@ class SelfImprovementEngine:
                     alignment_warning=True,
                 )
 
+    def _pre_commit_alignment_check(
+        self, diff_data: dict[str, dict[str, list[str]]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Run ``flag_improvement`` on proposed changes before commit."""
+        settings = SandboxSettings()
+        if not getattr(settings, "enable_alignment_flagger", True):
+            return {}
+        workflow_changes: list[dict[str, Any]] = []
+        for file, diff in diff_data.items():
+            added = diff.get("added", [])
+            removed = diff.get("removed", [])
+            diff_text = "\n".join(["+" + ln for ln in added] + ["-" + ln for ln in removed])
+            workflow_changes.append(
+                {"file": file, "code": "\n".join(added), "diff": diff_text}
+            )
+        metrics = getattr(self, "_last_scenario_metrics", {})
+        warnings: dict[str, list[dict[str, Any]]] = {}
+        try:
+            warnings = flag_improvement(workflow_changes, metrics, [], None, settings)
+        except Exception:
+            warnings = {}
+        if any(warnings.values()):
+            self._log_improvement_warnings(warnings)
+            high = any(
+                int(w.get("severity", 1)) >= 3
+                for cat in warnings.values()
+                for w in cat
+            )
+            if high:
+                try:
+                    if self._alignment_agent is None:
+                        self._alignment_agent = AlignmentReviewAgent()
+                        self._alignment_agent.start()
+                    self._alignment_agent.auditor.audit({"warnings": warnings})
+                except Exception:
+                    self.logger.exception("alignment review agent audit failed")
+        return warnings
+
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
         if not self.self_coding_engine:
@@ -2242,13 +2295,25 @@ class SelfImprovementEngine:
                     )
                     return None, False, 0.0
 
-            patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                Path(__file__),
-                "self_improvement",
-                parent_patch_id=self._last_patch_id,
-                reason="self_improvement",
-                trigger="optimize_self",
-            )
+            with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
+                src = Path(__file__)
+                rel = src.name
+                before_target = Path(before_dir) / rel
+                before_target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, before_target)
+                patch_id, reverted, delta = self.self_coding_engine.apply_patch(
+                    Path(__file__),
+                    "self_improvement",
+                    parent_patch_id=self._last_patch_id,
+                    reason="self_improvement",
+                    trigger="optimize_self",
+                )
+                if patch_id is not None and not reverted:
+                    after_target = Path(after_dir) / rel
+                    after_target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, after_target)
+                    diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                    self._pre_commit_alignment_check(diff_data)
             before_metric = 0.0
             after_metric = delta
             if self.self_coding_engine.patch_db and patch_id is not None:
@@ -3822,6 +3887,7 @@ class SelfImprovementEngine:
                         after_target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(src, after_target)
                         diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                        self._pre_commit_alignment_check(diff_data)
                         findings = flag_alignment_issues(diff_data)
                         if findings:
                             log_violation(
@@ -3914,6 +3980,7 @@ class SelfImprovementEngine:
                             after_target.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(src, after_target)
                             diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
+                            self._pre_commit_alignment_check(diff_data)
                             findings = flag_alignment_issues(diff_data)
                             if findings:
                                 log_violation(
