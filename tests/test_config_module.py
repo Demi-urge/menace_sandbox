@@ -68,7 +68,7 @@ def test_cli_and_programmatic_overrides(config_env):
     cfg = config.load_config(mode="dev", overrides={"logging": {"verbosity": "DEBUG"}})
     assert cfg.logging.verbosity == "DEBUG"
 
-    args = config.parse_args(["--mode", "dev", "logging.verbosity=ERROR"])
+    args = config.parse_args(["--mode", "dev", "--logging.verbosity=ERROR"])
     overrides = config._build_overrides(args.overrides)
     cfg2 = config.load_config(mode=args.mode, overrides=overrides)
     assert cfg2.logging.verbosity == "ERROR"
