@@ -38,6 +38,7 @@ def config_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DEFAULT_SETTINGS_FILE", tmp_path / "settings.yaml")
     monkeypatch.setattr(config, "Observer", None)
     monkeypatch.setattr(config, "UnifiedConfigStore", None)
+    monkeypatch.setattr(config, "_CONFIG_STORE", None)
     monkeypatch.setattr(config, "CONFIG", None)
     monkeypatch.setattr(config, "_MODE", None)
     monkeypatch.setattr(config, "_CONFIG_PATH", None)
@@ -99,10 +100,39 @@ def test_secret_loading_precedence(config_env, monkeypatch):
         def get(self, key: str):
             return {"OPENAI_API_KEY": "vault_openai"}.get(key)
 
-    monkeypatch.setattr(config, "VaultSecretProvider", DummyVault)
+        def export_env(self, name: str) -> None:
+            val = self.get(name)
+            if val:
+                os.environ[name] = val
+
+    class DummyStore:
+        def __init__(self) -> None:
+            self.vault = DummyVault()
+
+        def load(self) -> None:
+            self.vault.export_env("OPENAI_API_KEY")
+
+    monkeypatch.setattr(config, "UnifiedConfigStore", DummyStore)
     cfg = config.load_config(mode="dev")
     assert cfg.api_keys.openai == "vault_openai"
     assert cfg.api_keys.serp == "env_serp"
+
+
+def test_get_secret_fetches_from_env_and_vault(config_env, monkeypatch):
+    monkeypatch.setenv("SOME_SECRET", "from_env")
+    assert config.Config.get_secret("SOME_SECRET") == "from_env"
+
+    class DummyVault:
+        def get(self, name: str):
+            return {"MISSING_SECRET": "vault_secret"}.get(name)
+
+    class DummyStore:
+        def __init__(self) -> None:
+            self.vault = DummyVault()
+
+    monkeypatch.setattr(config, "_CONFIG_STORE", DummyStore())
+    assert config.Config.get_secret("MISSING_SECRET") == "vault_secret"
+    assert os.getenv("MISSING_SECRET") == "vault_secret"
 
 
 def test_watchdog_triggers_reload(config_env, monkeypatch):
