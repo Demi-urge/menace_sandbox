@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import re
+from collections import Counter
 
 from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
@@ -101,6 +102,9 @@ class HumanAlignmentFlagger:
         lines_added = 0
         lines_removed = 0
 
+        def _tier(severity: int) -> str:
+            return "critical" if severity >= 3 else "warn" if severity >= 2 else "info"
+
         for path, info in files.items():
             added, removed = info["added"], info["removed"]
             lines_added += len(added)
@@ -113,39 +117,49 @@ class HumanAlignmentFlagger:
                 removed_ratio = removed_comments / max(len(removed), 1)
                 added_ratio = added_comments / max(len(added), 1)
                 if added_ratio < removed_ratio:
+                    sev = 2
                     issues.append(
                         {
-                            "severity": 2,
+                            "severity": sev,
+                            "tier": _tier(sev),
                             "message": f"Opacity: comment density decreased in {path}",
                         }
                     )
 
             if removed and info.get("single_char_added", 0) > info.get("single_char_removed", 0):
+                sev = 2
                 issues.append(
                     {
-                        "severity": 2,
+                        "severity": sev,
+                        "tier": _tier(sev),
                         "message": f"Opacity: single-character identifiers introduced in {path}",
                     }
                 )
 
             # Docstring removal or absence
             if any('"""' in line or "'''" in line for line in removed):
+                sev = 3
                 issues.append({
-                    "severity": 3,
+                    "severity": sev,
+                    "tier": _tier(sev),
                     "message": f"Docstring removed in {path}",
                 })
             if path.endswith(".py") and len(added) > 1 and not any(
                 '"""' in line or "'''" in line for line in added[:5]
             ):
+                sev = 1
                 issues.append({
-                    "severity": 1,
+                    "severity": sev,
+                    "tier": _tier(sev),
                     "message": f"{path} may lack module docstring",
                 })
 
             # Logging statements removed
             if any("logging." in line or "logger." in line for line in removed):
+                sev = 2
                 issues.append({
-                    "severity": 2,
+                    "severity": sev,
+                    "tier": _tier(sev),
                     "message": f"Logging removed in {path}",
                 })
 
@@ -153,13 +167,17 @@ class HumanAlignmentFlagger:
             path_obj = Path(path)
             if path_obj.parts and (path_obj.parts[0] == "tests" or "test" in path_obj.name):
                 if removed:
+                    sev = 4
                     issues.append({
-                        "severity": 4,
+                        "severity": sev,
+                        "tier": _tier(sev),
                         "message": f"Test code removed in {path}",
                     })
             elif any("assert" in line for line in removed):
+                sev = 4
                 issues.append({
-                    "severity": 4,
+                    "severity": sev,
+                    "tier": _tier(sev),
                     "message": f"Test assertion removed in {path}",
                 })
 
@@ -175,15 +193,22 @@ class HumanAlignmentFlagger:
                 f"{item.get('field', 'content')} contains forbidden keyword "
                 f"{item.get('matched_keyword', '')} ({item.get('category', '')})"
             )
+            sev = ethics.get("severity", 1)
             issues.append({
-                "severity": ethics.get("severity", 1),
+                "severity": sev,
+                "tier": _tier(sev),
                 "message": msg,
             })
+
+        score = sum(issue.get("severity", 0) for issue in issues)
+        tiers = Counter(issue.get("tier", "info") for issue in issues)
 
         return {
             "lines_added": lines_added,
             "lines_removed": lines_removed,
             "issues": issues,
+            "score": score,
+            "tiers": dict(tiers),
         }
 
 

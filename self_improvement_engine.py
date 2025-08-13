@@ -1149,7 +1149,17 @@ class SelfImprovementEngine:
             commit_hash = "unknown"
         try:
             report = self.alignment_flagger.flag_patch(diff, context)
-            record = {"patch_id": patch_id, "commit": commit_hash, "report": report}
+            score = report.get("score", 0)
+            self.logger.info(
+                "alignment score computed",
+                extra=log_record(patch_id=patch_id, score=score),
+            )
+            record = {
+                "patch_id": patch_id,
+                "commit": commit_hash,
+                "score": score,
+                "report": report,
+            }
             try:
                 security_auditor.dispatch_alignment_warning(record)
             except Exception:

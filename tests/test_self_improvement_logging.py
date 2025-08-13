@@ -258,7 +258,7 @@ def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
         cycle_logs=[],
         _cycle_count=0,
         event_bus=Bus(),
-        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
     )
 
     def fake_run(cmd, capture_output, text, check):
@@ -277,7 +277,8 @@ def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
     sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
 
     assert events and events[0][0] == "alignment:flag"
-    assert engine.cycle_logs and engine.cycle_logs[0]["report"]["issues"]
+    assert "score" in events[0][1] and events[0][1]["score"] > 0
+    assert engine.cycle_logs and engine.cycle_logs[0]["score"] > 0
     log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
     assert log_file.exists()
 
@@ -308,7 +309,7 @@ def test_flag_patch_alignment_dispatches_warning(monkeypatch, tmp_path):
         cycle_logs=[],
         _cycle_count=0,
         event_bus=Bus(),
-        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
     )
 
     def fake_run(cmd, capture_output, text, check):
@@ -327,6 +328,7 @@ def test_flag_patch_alignment_dispatches_warning(monkeypatch, tmp_path):
     sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
 
     assert dispatched and dispatched[0]["patch_id"] == 1
+    assert dispatched[0]["score"] == dispatched[0]["report"]["score"]
 
 
 def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_path):
@@ -350,7 +352,7 @@ def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_p
         cycle_logs=[],
         _cycle_count=0,
         event_bus=None,
-        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None, info=lambda *a, **k: None),
     )
 
     def fake_run(cmd, capture_output, text, check):
@@ -369,6 +371,7 @@ def test_flag_patch_alignment_dispatch_failure_does_not_raise(monkeypatch, tmp_p
     sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
 
     assert engine.cycle_logs and engine.cycle_logs[0]["patch_id"] == 1
+    assert engine.cycle_logs[0]["score"] == engine.cycle_logs[0]["report"]["score"]
 
 
 def teardown_module(module):
