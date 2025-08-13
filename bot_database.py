@@ -401,29 +401,40 @@ class BotDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                text = " ".join(
-                    filter(
-                        None,
-                        [
-                            row["purpose"] or "",
-                            ",".join(_deserialize_list(row["tags"] or "")),
-                            ",".join(_deserialize_list(row["toolchain"] or "")),
-                        ],
-                    )
-                )
-                emb = self._embed(text) if text else None
-                if not emb:
-                    if text:
-                        self.failed_embeddings.append((row["id"], text))
-                    continue
+                rec = dict(row)
                 try:
+                    vec = self.vector(rec)
+                    if vec is None:
+                        text = " ".join(
+                            filter(
+                                None,
+                                [
+                                    rec.get("purpose", ""),
+                                    ",".join(_deserialize_list(rec.get("tags", ""))),
+                                    ",".join(_deserialize_list(rec.get("toolchain", ""))),
+                                ],
+                            )
+                        )
+                        if text:
+                            self.failed_embeddings.append((row["id"], text))
+                        continue
                     self.add_embedding(
                         row["id"],
-                        emb,
+                        vec,
                         metadata={"kind": "bot", "source_id": row["id"]},
                     )
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.exception("embedding backfill failed for %s: %s", row["id"], exc)
+                    text = " ".join(
+                        filter(
+                            None,
+                            [
+                                rec.get("purpose", ""),
+                                ",".join(_deserialize_list(rec.get("tags", ""))),
+                                ",".join(_deserialize_list(rec.get("toolchain", ""))),
+                            ],
+                        )
+                    )
                     if text:
                         self.failed_embeddings.append((row["id"], text))
 

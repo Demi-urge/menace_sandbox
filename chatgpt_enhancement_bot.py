@@ -333,15 +333,19 @@ class EnhancementDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                emb = self.vector(row)
-                if emb is None:
-                    continue
-                self.try_add_embedding(
-                    row["id"],
-                    row,
-                    metadata={"kind": "enhancement", "source_id": row["id"]},
-                    vector=emb,
-                )
+                try:
+                    vec = self.vector(row)
+                    if vec is None:
+                        continue
+                    self.add_embedding(
+                        row["id"],
+                        vec,
+                        metadata={"kind": "enhancement", "source_id": row["id"]},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "embedding backfill failed for %s: %s", row["id"], exc
+                    )
 
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:

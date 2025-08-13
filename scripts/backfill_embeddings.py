@@ -16,6 +16,7 @@ from task_handoff_bot import WorkflowDB
 from chatgpt_enhancement_bot import EnhancementDB
 from error_bot import ErrorDB
 from research_aggregator_bot import InfoDB
+from information_db import InformationDB
 
 
 DB_CLASSES = {
@@ -24,6 +25,7 @@ DB_CLASSES = {
     "enhancement": EnhancementDB,
     "error": ErrorDB,
     "info": InfoDB,
+    "information": InformationDB,
 }
 
 
@@ -36,7 +38,7 @@ def main(databases: Iterable[str], backend: str, batch_size: int = 100) -> None:
         db.backfill_embeddings(batch_size=batch_size)
 
 
-if __name__ == "__main__":
+def cli() -> None:
     parser = argparse.ArgumentParser(
         description="Backfill embeddings for selected databases",
     )
@@ -61,4 +63,8 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
     main(args.db, args.backend, batch_size=args.batch_size)
+
+
+if __name__ == "__main__":
+    cli()
 

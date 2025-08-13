@@ -309,14 +309,19 @@ class InfoDB(EmbeddableDBMixin):
                 except sqlite3.OperationalError:
                     self.has_fts = False
             conn.commit()
-        embedding = embedding if embedding is not None else self.vector(item)
-        item.embedding = embedding
-        self.try_add_embedding(
-            item.item_id,
-            item,
-            metadata={"kind": "info", "source_id": item.item_id},
-            vector=embedding,
-        )
+        vec = embedding if embedding is not None else self.vector(item)
+        item.embedding = vec
+        if vec is not None:
+            try:
+                self.add_embedding(
+                    item.item_id,
+                    vec,
+                    metadata={"kind": "info", "source_id": item.item_id},
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception(
+                    "embedding hook failed for %s: %s", item.item_id, exc
+                )
 
         if self.event_bus:
             try:
@@ -363,13 +368,16 @@ class InfoDB(EmbeddableDBMixin):
             energy=row["energy"] or 1,
             corroboration_count=row["corroboration_count"] or 0,
         )
-        emb = self.vector(item)
-        self.try_add_embedding(
-            info_id,
-            item,
-            metadata={"kind": "info", "source_id": info_id},
-            vector=emb,
-        )
+        vec = self.vector(item)
+        if vec is not None:
+            try:
+                self.add_embedding(
+                    info_id,
+                    vec,
+                    metadata={"kind": "info", "source_id": info_id},
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding hook failed for %s: %s", info_id, exc)
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for legacy research items missing vectors."""
@@ -387,15 +395,19 @@ class InfoDB(EmbeddableDBMixin):
                         existing = json.loads(row["embedding"])
                     except Exception:
                         existing = None
-                emb = existing if existing is not None else self.vector(row)
-                if emb is None:
+                vec = existing if existing is not None else self.vector(row)
+                if vec is None:
                     continue
-                self.try_add_embedding(
-                    row["id"],
-                    row,
-                    metadata={"kind": "info", "source_id": row["id"]},
-                    vector=emb,
-                )
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        vec,
+                        metadata={"kind": "info", "source_id": row["id"]},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "embedding backfill failed for %s: %s", row["id"], exc
+                    )
 
     def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
         pairs: list[str] = []
