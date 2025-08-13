@@ -40,6 +40,27 @@ database includes an FTS5 table enabling fast full text search via
 dependency is available, embeddings are stored for each entry so that
 `query_vector()` can perform semantic search using cosine similarity.
 
+## EmbeddableDBMixin
+
+Several SQLite databases now inherit from `EmbeddableDBMixin` to persist
+vector embeddings alongside their primary tables.  The mixin stores vectors
+in a shared `embeddings` table and supports FAISS or Annoy for similarity
+search.
+
+| Database | Embedded fields |
+|----------|-----------------|
+| `BotDB` | `purpose`, `tags`, `toolchain` |
+| `WorkflowDB` | assigned bots, enhancements, title, description, tags, category, type, status |
+| `ErrorDB` | `message` |
+| `EnhancementDB` | `before_code`, `after_code`, `summary` |
+| `InfoDB` | title/topic, summary, content, tags, category, type, associated bots, associated errors, performance data, source URL, notes |
+
+Select the backend with the `vector_backend` argument (`"faiss"` or
+`"annoy"`) and index location via `vector_index_path`.  Setting
+`VECTOR_BACKEND` and `VECTOR_INDEX_PATH` environment variables provides
+defaults.  Existing databases can populate vectors with
+`backfill_embeddings()`.
+
 ## Cross Query Helpers
 
 Functions in `menace.cross_query` explore these links to surface related
