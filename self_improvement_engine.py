@@ -1127,10 +1127,30 @@ class SelfImprovementEngine:
         except Exception:
             return
         try:
+            commit_hash = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+        except Exception:
+            commit_hash = "unknown"
+        try:
             report = self.alignment_flagger.flag_patch(diff, context)
-            self.cycle_logs.append(
-                {"cycle": self._cycle_count, "patch_id": patch_id, "report": report}
-            )
+            record = {"patch_id": patch_id, "commit": commit_hash, "report": report}
+            self.cycle_logs.append({"cycle": self._cycle_count, **record})
+            if self.event_bus:
+                try:
+                    self.event_bus.publish("alignment:flag", record)
+                except Exception:
+                    self.logger.exception("alignment event publish failed")
+            try:
+                path = Path("sandbox_data") / "alignment_flags.jsonl"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+            except Exception:
+                self.logger.exception("alignment flag persistence failed")
         except Exception:
             self.logger.exception(
                 "alignment flagging failed", extra=log_record(patch_id=patch_id)
