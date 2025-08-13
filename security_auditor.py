@@ -20,8 +20,17 @@ class SecurityAuditor:
         return True
 
     # ------------------------------------------------------------------
-    def audit(self) -> bool:
-        """Security checks disabled - always return ``True``."""
+    def audit(self, report: Mapping[str, Any] | None = None) -> bool:
+        """Security checks disabled - always return ``True``.
+
+        Parameters
+        ----------
+        report:
+            Optional data associated with the audit request.  It is accepted
+            for API compatibility with callers that forward structured
+            warnings.  The argument is ignored by this no-op implementation.
+        """
+
         self.logger.info("security checks disabled")
         return True
 
