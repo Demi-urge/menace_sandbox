@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Callable, Any, Iterable, Optional, Sequence
+from typing import List, Dict, Callable, Any, Iterable, Optional, Sequence, Iterator
 import logging
 
 import sqlite3
@@ -285,20 +285,16 @@ class WorkflowDB(EmbeddableDBMixin):
             results.append(self._row_to_record(row))
         return results
 
-    def backfill_embeddings(self) -> None:
-        """Generate embeddings for workflow rows missing vectors."""
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
 
+    def iter_records(self) -> Iterator[tuple[int, WorkflowRecord, str]]:
+        """Yield all workflow records for embedding backfill."""
         cur = self.conn.execute("SELECT * FROM workflows")
         for row in cur.fetchall():
             rec = self._row_to_record(row)
-            if str(rec.wid) in getattr(self, "_metadata", {}):
-                continue
-            try:
-                self.add_embedding(rec.wid, rec, "workflow")
-            except Exception as exc:  # pragma: no cover - best effort
-                logger.exception(
-                    "embedding backfill failed for %s: %s", rec.wid, exc
-                )
+            yield rec.wid, rec, "workflow"
 
     # --------------------------------------------------------------
     # embedding/search
@@ -318,6 +314,10 @@ class WorkflowDB(EmbeddableDBMixin):
         elif not isinstance(rec, WorkflowRecord):
             raise TypeError("unsupported record type")
         text = self._vector_text(rec)
+        return self._embed(text)
+
+    def _embed(self, text: str) -> list[float]:
+        """Encode ``text`` to a vector (overridable for tests)."""
         return self.encode_text(text)
 
     def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[WorkflowRecord]:
