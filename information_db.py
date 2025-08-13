@@ -175,7 +175,21 @@ class InformationDB(EmbeddableDBMixin):
     # ------------------------------------------------------------------
     def vector(self, rec: Any) -> List[float] | None:
         if isinstance(rec, (int, str)):
-            return EmbeddableDBMixin.vector(self, rec)
+            rid = str(rec)
+            meta = self._metadata.get(rid)
+            if meta and "vector" in meta:
+                return meta["vector"]
+            try:
+                rec_id = int(rec)
+            except (TypeError, ValueError):
+                return None
+            row = self.conn.execute(
+                "SELECT * FROM information WHERE info_id=?", (rec_id,)
+            ).fetchone()
+            if not row:
+                return None
+            text = self._embed_text(dict(row))
+            return self._embed(text) if text else None
         text = self._embed_text(rec)
         return self._embed(text) if text else None
 
