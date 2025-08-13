@@ -8,8 +8,10 @@ def unsafe_patch() -> str:
         """diff --git a/foo.py b/foo.py
 --- a/foo.py
 +++ b/foo.py
-@@ -0,0 +1 @@
-+eval(input())
+@@ -1,2 +1 @@
+-import logging
+-logging.info('hi')
++pass
 """
     )
 
@@ -26,32 +28,15 @@ def clean_patch() -> str:
     )
 
 
-@pytest.fixture
-def flagger(monkeypatch):
-    def fake_flag_violations(entry):
-        code = entry.get("generated_code", "")
-        if "eval" in code:
-            return {
-                "violations": [
-                    {
-                        "field": "generated_code",
-                        "category": "unsafe",
-                        "matched_keyword": "eval",
-                    }
-                ],
-                "severity": 5,
-            }
-        return {"violations": [], "severity": 0}
-
-    monkeypatch.setattr(haf, "flag_violations", fake_flag_violations)
-    return haf.HumanAlignmentFlagger()
-
-
-def test_unsafe_patch_triggers_warning(unsafe_patch, flagger):
+def test_unsafe_patch_triggers_warning(unsafe_patch):
+    flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(unsafe_patch, {})
-    assert any("eval" in issue["message"] for issue in report["issues"])
+    assert any(
+        "Logging removed" in issue["message"] for issue in report["issues"]
+    )
 
 
-def test_clean_patch_has_no_warnings(clean_patch, flagger):
+def test_clean_patch_has_no_warnings(clean_patch):
+    flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(clean_patch, {})
     assert report["issues"] == []
