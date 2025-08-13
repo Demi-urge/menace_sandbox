@@ -99,6 +99,7 @@ class EnhancementDB(EmbeddableDBMixin):
             index_path=vector_index_path,
             metadata_path=metadata_path,
             embedding_version=embedding_version,
+            backend=vector_backend,
         )
 
     def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper

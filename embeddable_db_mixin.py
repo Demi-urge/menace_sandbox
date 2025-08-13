@@ -1,10 +1,10 @@
-"""Mixin providing embedding storage and Annoy based vector search.
+"""Mixin providing embedding storage and vector search backends.
 
 This module offers :class:`EmbeddableDBMixin` which can be mixed into a
 class managing a SQLite database.  The mixin stores embedding vectors in an
-Annoy index on disk and keeps companion metadata in a JSON file.  A lazily
-loaded `SentenceTransformer` model is provided for text-to-vector encoding,
-allowing subclasses to embed arbitrary records.
+Annoy or FAISS index on disk and keeps companion metadata in a JSON file.  A
+ lazily loaded `SentenceTransformer` model is provided for text-to-vector
+encoding, allowing subclasses to embed arbitrary records.
 
 Subclasses must provide a ``self.conn`` database connection and override
 :meth:`vector` to return an embedding for a record.  To support
@@ -24,6 +24,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - Annoy not installed
     AnnoyIndex = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    import faiss  # type: ignore
+except Exception:  # pragma: no cover - FAISS not installed
+    faiss = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover - NumPy not installed
+    np = None  # type: ignore
+
 
 class EmbeddableDBMixin:
     """Add embedding storage and similarity search to a database class."""
@@ -35,14 +45,16 @@ class EmbeddableDBMixin:
         metadata_path: str | Path = "embeddings.json",
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         embedding_version: int = 1,
+        backend: str = "annoy",
     ) -> None:
         self.index_path = Path(index_path)
         self.metadata_path = Path(metadata_path)
         self.model_name = model_name
         self.embedding_version = embedding_version
+        self.backend = backend
 
         self._model = None
-        self._index: AnnoyIndex | None = None
+        self._index: Any | None = None
         self._vector_dim = 0
         self._id_map: List[str] = []
         self._metadata: Dict[str, Dict[str, Any]] = {}
@@ -85,7 +97,7 @@ class EmbeddableDBMixin:
     # ------------------------------------------------------------------
     # index persistence
     def load_index(self) -> None:
-        """Load Annoy index and metadata from disk if available."""
+        """Load the vector index and metadata from disk if available."""
         if self.metadata_path.exists():
             data = json.loads(self.metadata_path.read_text())
             self._id_map = data.get("id_map", [])
@@ -93,17 +105,30 @@ class EmbeddableDBMixin:
             self._vector_dim = data.get("vector_dim", 0)
             if not self._id_map:
                 self._id_map = list(self._metadata.keys())
-        if AnnoyIndex and self.index_path.exists() and self._vector_dim:
-            self._index = AnnoyIndex(self._vector_dim, "angular")
-            self._index.load(str(self.index_path))
-        elif AnnoyIndex and self._metadata:
-            self._rebuild_index()
+        if self.backend == "annoy":
+            if AnnoyIndex and self.index_path.exists() and self._vector_dim:
+                self._index = AnnoyIndex(self._vector_dim, "angular")
+                self._index.load(str(self.index_path))
+            elif AnnoyIndex and self._metadata:
+                self._rebuild_index()
+        elif self.backend == "faiss":
+            if faiss and self.index_path.exists() and self._vector_dim:
+                self._index = faiss.read_index(str(self.index_path))
+            elif faiss and self._metadata:
+                self._rebuild_index()
 
     def save_index(self) -> None:
-        """Persist Annoy index and metadata to disk."""
-        if not AnnoyIndex or self._index is None:
+        """Persist vector index and metadata to disk."""
+        if self._index is None:
             return
-        self._index.save(str(self.index_path))
+        if self.backend == "annoy":
+            if not AnnoyIndex:
+                return
+            self._index.save(str(self.index_path))
+        elif self.backend == "faiss":
+            if not faiss:
+                return
+            faiss.write_index(self._index, str(self.index_path))
         data = {
             "id_map": self._id_map,
             "metadata": self._metadata,
@@ -112,16 +137,29 @@ class EmbeddableDBMixin:
         self.metadata_path.write_text(json.dumps(data, indent=2))
 
     def _rebuild_index(self) -> None:
-        """Rebuild Annoy index from stored metadata."""
-        if not AnnoyIndex or not self._metadata:
+        """Rebuild vector index from stored metadata."""
+        if not self._metadata:
             self._index = None
             return
         self._vector_dim = len(next(iter(self._metadata.values()))["vector"])
-        self._index = AnnoyIndex(self._vector_dim, "angular")
-        for i, rid in enumerate(self._id_map):
-            vec = self._metadata[rid]["vector"]
-            self._index.add_item(i, vec)
-        self._index.build(10)
+        if self.backend == "annoy":
+            if not AnnoyIndex:
+                self._index = None
+                return
+            self._index = AnnoyIndex(self._vector_dim, "angular")
+            for i, rid in enumerate(self._id_map):
+                vec = self._metadata[rid]["vector"]
+                self._index.add_item(i, vec)
+            self._index.build(10)
+        elif self.backend == "faiss":
+            if not faiss or not np:
+                self._index = None
+                return
+            self._index = faiss.IndexFlatIP(self._vector_dim)
+            vectors = [self._metadata[rid]["vector"] for rid in self._id_map]
+            if vectors:
+                arr = np.array(vectors, dtype="float32")
+                self._index.add(arr)
 
     # ------------------------------------------------------------------
     # public API
@@ -158,14 +196,26 @@ class EmbeddableDBMixin:
             self.load_index()
         if self._index is None:
             return []
-        ids, dists = self._index.get_nns_by_vector(
-            list(vector), top_k, include_distances=True
-        )
-        return [
-            (self._id_map[i], float(d))
-            for i, d in zip(ids, dists)
-            if i < len(self._id_map)
-        ]
+        if self.backend == "annoy":
+            ids, dists = self._index.get_nns_by_vector(
+                list(vector), top_k, include_distances=True
+            )
+            return [
+                (self._id_map[i], float(d))
+                for i, d in zip(ids, dists)
+                if i < len(self._id_map)
+            ]
+        elif self.backend == "faiss":
+            if not faiss or not np:
+                return []
+            vec = np.array([list(vector)], dtype="float32")
+            dists, ids = self._index.search(vec, top_k)
+            results: List[Tuple[Any, float]] = []
+            for idx, dist in zip(ids[0], dists[0]):
+                if 0 <= idx < len(self._id_map):
+                    results.append((self._id_map[idx], float(dist)))
+            return results
+        return []
 
     def backfill_embeddings(self) -> None:
         """Generate embeddings for all records lacking them."""
