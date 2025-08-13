@@ -198,6 +198,18 @@ def test_flag_improvement_detects_exec_call():
     )
 
 
+def test_flag_improvement_detects_eval_call():
+    code = "def f():\n    return eval('2+2')"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        "eval" in issue.get("issue", "") for issue in warnings["maintainability"]
+    )
+
+
 def test_flag_improvement_detects_network_call():
     code = "import requests\nrequests.get('http://example.com')"
     warnings = haf.flag_improvement(
@@ -207,6 +219,19 @@ def test_flag_improvement_detects_network_call():
     )
     assert any(
         "network call" in issue.get("issue", "") for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_detects_broad_except():
+    code = "def f():\n    try:\n        1/0\n    except:\n        pass"
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+    )
+    assert any(
+        issue.get("issue") == "broad exception handler"
+        for issue in warnings["maintainability"]
     )
 
 
@@ -314,6 +339,16 @@ def linter_suppression_diff() -> dict:
     return {"lint.py": {"added": ["x = 1  # noqa"], "removed": []}}
 
 
+@pytest.fixture
+def bare_except_diff() -> dict:
+    return {
+        "be.py": {
+            "added": ["try:", "    1/0", "except:", "    pass"],
+            "removed": [],
+        }
+    }
+
+
 def test_flag_alignment_issues_eval(eval_diff):
     findings = haf.flag_alignment_issues(eval_diff)
     assert any(f.get("category") == "risky_construct" for f in findings)
@@ -368,6 +403,14 @@ def test_flag_alignment_issues_comment_removed(comment_removal_diff):
 def test_flag_alignment_issues_linter_suppression(linter_suppression_diff):
     findings = haf.flag_alignment_issues(linter_suppression_diff)
     assert any(f.get("category") == "linter_suppression" for f in findings)
+
+
+def test_flag_alignment_issues_bare_except(bare_except_diff):
+    findings = haf.flag_alignment_issues(bare_except_diff)
+    assert any(
+        f.get("category") == "risky_construct" and "bare except" in f.get("snippet", "")
+        for f in findings
+    )
 
 
 def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):

@@ -438,6 +438,7 @@ def flag_improvement(
                 single_letters: set[str] = set()
                 network_calls: List[str] = []
                 exec_calls: List[str] = []
+                broad_excepts: List[int] = []
                 for node in tree.body:
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         score = _compute_complexity(node)
@@ -463,6 +464,8 @@ def flag_improvement(
                             exec_calls.append(name)
                         elif name.split(".")[0] in {"requests", "urllib", "http", "socket"}:
                             network_calls.append(name)
+                    elif isinstance(node, ast.ExceptHandler) and node.type is None:
+                        broad_excepts.append(getattr(node, "lineno", 0))
 
                 if complex_functions:
                     warnings["maintainability"].append(
@@ -492,7 +495,7 @@ def flag_improvement(
                     warnings["maintainability"].append(
                         {
                             "file": file_path,
-                            "issue": "direct exec call",
+                            "issue": "direct exec or eval call",
                             "calls": exec_calls,
                         }
                     )
@@ -502,6 +505,14 @@ def flag_improvement(
                             "file": file_path,
                             "issue": "network call",
                             "calls": network_calls,
+                        }
+                    )
+                if broad_excepts:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "broad exception handler",
+                            "lines": broad_excepts,
                         }
                     )
 
@@ -524,7 +535,7 @@ def flag_alignment_issues(
     """
 
     findings: List[Dict[str, str]] = []
-    risky_tokens = ("eval(", "exec(")
+    risky_tokens = ("eval(", "exec(")  # fallback if AST parsing fails
     complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
     rules = getattr(settings, "alignment_rules", None) if settings else None
     max_complexity = getattr(rules, "max_complexity_score", 10)
@@ -545,6 +556,46 @@ def flag_alignment_issues(
         added_lines = changes.get("added", [])
         removed_lines = changes.get("removed", [])
         joined = "\n".join(added_lines)
+
+        try:
+            tree = ast.parse(joined) if joined.strip() else None
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call):
+                    func_name = ""
+                    if isinstance(node.func, ast.Name):
+                        func_name = node.func.id
+                    elif isinstance(node.func, ast.Attribute):
+                        func_name = node.func.attr
+                    if func_name in {"exec", "eval"}:
+                        snippet = ast.get_source_segment(joined, node) or func_name
+                        findings.append(
+                            {
+                                "category": "risky_construct",
+                                "location": path,
+                                "snippet": snippet.strip(),
+                            }
+                        )
+                elif isinstance(node, ast.ExceptHandler) and node.type is None:
+                    findings.append(
+                        {
+                            "category": "risky_construct",
+                            "location": path,
+                            "snippet": "bare except",
+                        }
+                    )
+        else:
+            for line in added_lines:
+                if any(tok in line for tok in risky_tokens):
+                    findings.append(
+                        {
+                            "category": "risky_construct",
+                            "location": path,
+                            "snippet": line.strip(),
+                        }
+                    )
 
         for line in added_lines:
             # Unsafe subprocess usage
@@ -580,16 +631,6 @@ def flag_alignment_issues(
                 findings.append(
                     {
                         "category": "linter_suppression",
-                        "location": path,
-                        "snippet": line.strip(),
-                    }
-                )
-
-            # Direct risky constructs
-            if any(tok in line for tok in risky_tokens):
-                findings.append(
-                    {
-                        "category": "risky_construct",
                         "location": path,
                         "snippet": line.strip(),
                     }
