@@ -10,7 +10,7 @@ import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 from .override_policy import OverridePolicyManager
 
@@ -95,6 +95,7 @@ class EnhancementDB(EmbeddableDBMixin):
             vector_backend=vector_backend,
             index_path=vector_index_path,
             embedding_version=embedding_version,
+            table_name="enhancement_embeddings",
         )
 
     def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper
@@ -251,11 +252,18 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return -1
-        self.try_add_embedding(
-            enh_id,
-            enh,
-            metadata={"kind": "enhancement", "source_id": enh_id},
-        )
+        try:
+            vec = self.vector(enh)
+            if vec is not None:
+                self.add_embedding(
+                    enh_id,
+                    vec,
+                    metadata={"kind": "enhancement", "source_id": enh_id},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("failed to add enhancement embedding: %s", exc)
+            if RAISE_ERRORS:
+                raise
         return enh_id
 
     def update(self, enhancement_id: int, enh: Enhancement) -> None:
@@ -301,18 +309,25 @@ class EnhancementDB(EmbeddableDBMixin):
             if RAISE_ERRORS:
                 raise
             return
-        self.try_add_embedding(
-            enhancement_id,
-            enh,
-            metadata={"kind": "enhancement", "source_id": enhancement_id},
-        )
+        try:
+            vec = self.vector(enh)
+            if vec is not None:
+                self.add_embedding(
+                    enhancement_id,
+                    vec,
+                    metadata={"kind": "enhancement", "source_id": enhancement_id},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("failed to update enhancement embedding: %s", exc)
+            if RAISE_ERRORS:
+                raise
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Generate embeddings for enhancement records missing vectors."""
         while True:
             rows = self.conn.execute(
                 "SELECT id, before_code, after_code, summary FROM enhancements "
-                "WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                f"WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
                 (batch_size,),
             ).fetchall()
             if not rows:
