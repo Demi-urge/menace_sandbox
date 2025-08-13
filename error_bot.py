@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .auto_link import auto_link
-from typing import Optional, Iterable, List, TYPE_CHECKING
+from typing import Optional, Iterable, List, TYPE_CHECKING, Sequence
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -36,6 +36,7 @@ from .knowledge_graph import KnowledgeGraph
 from .database_router import DatabaseRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
+from .embeddable_db_mixin import EmbeddableDBMixin
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager
@@ -62,7 +63,7 @@ class ErrorRecord:
     ts: str = datetime.utcnow().isoformat()
 
 
-class ErrorDB:
+class ErrorDB(EmbeddableDBMixin):
     """SQLite-backed storage for known errors and discrepancies."""
 
     def __init__(
@@ -71,10 +72,14 @@ class ErrorDB:
         *,
         event_bus: Optional[EventBus] = None,
         graph: KnowledgeGraph | None = None,
+        vector_backend: str = "annoy",
+        vector_index_path: Path | str = "error_embeddings.index",
+        embedding_version: int = 1,
     ) -> None:
         self.path = Path(path)
         # Allow connection sharing across threads
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
         self.event_bus = event_bus
         self.graph = graph
         self.conn.execute(
@@ -221,6 +226,12 @@ class ErrorDB:
             """
         )
         self.conn.commit()
+        EmbeddableDBMixin.__init__(
+            self,
+            vector_backend=vector_backend,
+            index_path=vector_index_path,
+            embedding_version=embedding_version,
+        )
 
     def _publish(self, topic: str, payload: object) -> None:
         if self.event_bus:
@@ -230,6 +241,21 @@ class ErrorDB:
                 logger.exception("publish failed: %s", exc)
                 if error_bot_exceptions:
                     error_bot_exceptions.inc()
+
+    def _embed(self, text: str) -> list[float] | None:
+        if not hasattr(self, "_embedder"):
+            try:  # pragma: no cover - optional dependency
+                from sentence_transformers import SentenceTransformer  # type: ignore
+            except Exception:  # pragma: no cover
+                self._embedder = None
+            else:  # pragma: no cover
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        if getattr(self, "_embedder", None):
+            try:
+                return self._embedder.encode([text])[0].tolist()  # type: ignore
+            except Exception:  # pragma: no cover
+                return None
+        return None
 
     def add_known(self, message: str, solution: str) -> None:
         self.conn.execute(
@@ -330,6 +356,9 @@ class ErrorDB:
         """Insert a new error if not already present and return its id."""
         found = self.find_error(message)
         if found is not None:
+            emb = self._embed(message)
+            if emb:
+                self.add_embedding(found, emb, metadata={"kind": "error"})
             return found
         cur = self.conn.execute(
             "INSERT INTO errors(message, type, description, resolution, ts) VALUES (?,?,?,?,?)",
@@ -343,6 +372,9 @@ class ErrorDB:
         )
         self.conn.commit()
         err_id = int(cur.lastrowid)
+        emb = self._embed(message)
+        if emb:
+            self.add_embedding(err_id, emb, metadata={"kind": "error"})
         self._publish(
             "errors:new",
             {
@@ -388,7 +420,7 @@ class ErrorDB:
         """Insert a high-resolution error telemetry entry."""
         mods = event.module_counts or ({event.module: 1} if event.module else {})
         freq = sum(mods.values()) if mods else 1
-        self.conn.execute(
+        cur = self.conn.execute(
             """
             INSERT INTO telemetry(
                 task_id,
@@ -440,6 +472,10 @@ class ErrorDB:
                 ),
             )
         self.conn.commit()
+        emb_text = f"{event.root_cause} {event.stack_trace}".strip()
+        emb = self._embed(emb_text)
+        if emb:
+            self.add_embedding(int(cur.lastrowid), emb, metadata={"kind": "telemetry"})
         if self.graph:
             try:  # pragma: no cover - best effort
                 self.graph.save(self.graph.path)
@@ -465,6 +501,34 @@ class ErrorDB:
                 "frequency": freq,
             },
         )
+
+    def search_by_vector(
+        self, vector: Sequence[float], top_k: int = 5
+    ) -> list[dict[str, object]]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: list[dict[str, object]] = []
+        for rec_id, dist in matches:
+            row = self.conn.execute(
+                "SELECT cause, stack_trace FROM telemetry WHERE id=?", (rec_id,)
+            ).fetchone()
+            if row:
+                results.append(
+                    {
+                        "id": rec_id,
+                        "cause": row[0],
+                        "stack_trace": row[1],
+                        "_distance": dist,
+                    }
+                )
+                continue
+            row = self.conn.execute(
+                "SELECT message FROM errors WHERE id=?", (rec_id,)
+            ).fetchone()
+            if row:
+                results.append(
+                    {"id": rec_id, "message": row[0], "_distance": dist}
+                )
+        return results
 
     def fetch_error_stats(self) -> list[dict[str, int | str | None]]:
         """Return aggregated error counts grouped by category, module and cause."""
