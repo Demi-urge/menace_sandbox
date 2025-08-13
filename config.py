@@ -196,6 +196,35 @@ class Config(BaseModel):
 
         return load_config(mode=mode, overrides=overrides, event_bus=event_bus)
 
+    # ------------------------------------------------------------------
+    @staticmethod
+    def get_secret(name: str) -> str | None:
+        """Return secret *name* from loaded env or vault fallback."""
+
+        env_name = name.upper()
+        secret = os.getenv(env_name)
+        if secret:
+            return secret
+
+        provider = None
+        if _CONFIG_STORE is not None:
+            provider = getattr(_CONFIG_STORE, "vault", None)
+        elif VaultSecretProvider is not None:
+            try:  # pragma: no cover - best effort only
+                provider = VaultSecretProvider()
+            except Exception:
+                provider = None
+
+        if provider is not None:
+            try:  # pragma: no cover - best effort only
+                secret = provider.get(env_name)
+                if secret:
+                    os.environ[env_name] = secret
+                return secret
+            except Exception:
+                logger.exception("failed fetching secret %s from vault", env_name)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Configuration loading utilities
@@ -208,6 +237,7 @@ DEFAULT_SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
 _MODE: str | None = None
 _CONFIG_PATH: Path | None = None
 _OVERRIDES: Dict[str, Any] = {}
+_CONFIG_STORE: "UnifiedConfigStore" | None = None
 CONFIG: Config | None = None
 _EVENT_BUS: "EventBus" | None = None
 _WATCHER_ENABLED: bool = True
@@ -324,11 +354,13 @@ def load_config(
     if event_bus is not None:
         set_event_bus(event_bus)
 
-    if UnifiedConfigStore is not None:  # load .env before reading files
+    if UnifiedConfigStore is not None:  # load .env and vault secrets first
+        global _CONFIG_STORE
         try:
-            UnifiedConfigStore().load()
+            _CONFIG_STORE = UnifiedConfigStore()
+            _CONFIG_STORE.load()
         except Exception:  # pragma: no cover - best effort only
-            logger.exception("failed loading .env file")
+            logger.exception("failed loading unified config store")
 
     active_mode = mode or os.getenv("MENACE_MODE", "dev")
 
@@ -357,22 +389,6 @@ def load_config(
             env_overrides["api_keys"]["serp"] = serp_env
         data = _merge_dict(data, env_overrides)
 
-    # Vault overrides have highest precedence
-    if VaultSecretProvider is not None:
-        try:
-            provider = VaultSecretProvider()
-            vault_overrides: Dict[str, Any] = {}
-            openai_vault = provider.get("OPENAI_API_KEY")
-            serp_vault = provider.get("SERP_API_KEY")
-            if openai_vault or serp_vault:
-                vault_overrides["api_keys"] = {}
-                if openai_vault:
-                    vault_overrides["api_keys"]["openai"] = openai_vault
-                if serp_vault:
-                    vault_overrides["api_keys"]["serp"] = serp_vault
-                data = _merge_dict(data, vault_overrides)
-        except Exception:  # pragma: no cover - best effort only
-            logger.exception("failed fetching secrets from vault")
 
     cfg = Config.model_validate(data)
     if overrides:
