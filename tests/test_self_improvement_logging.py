@@ -9,6 +9,7 @@ import pytest
 pkg = types.ModuleType("menace")
 sys.modules["menace"] = pkg
 pkg.__path__ = [os.path.dirname(os.path.dirname(__file__))]
+pkg.RAISE_ERRORS = False
 
 stub = types.ModuleType("menace.logging_utils")
 stub.log_record = lambda **k: {}
@@ -30,6 +31,12 @@ for name in [
     "self_coding_engine",
     "action_planner",
     "evolution_history_db",
+    "self_test_service",
+    "quick_fix_engine",
+    "mutation_logger",
+    "adaptive_roi_predictor",
+    "adaptive_roi_dataset",
+    "roi_tracker",
     "self_improvement_policy",
     "pre_execution_roi_bot",
     "env_config",
@@ -62,6 +69,13 @@ sys.modules["menace.neuroplasticity"].Outcome = _Dummy
 sys.modules["menace.self_coding_engine"].SelfCodingEngine = _Dummy
 sys.modules["menace.action_planner"].ActionPlanner = _Dummy
 sys.modules["menace.evolution_history_db"].EvolutionHistoryDB = _Dummy
+sys.modules["menace.self_test_service"].SelfTestService = _Dummy
+sys.modules["menace.quick_fix_engine"].generate_patch = lambda *a, **k: None
+sys.modules["menace.mutation_logger"].log_patch = lambda *a, **k: None
+sys.modules["menace.adaptive_roi_predictor"].AdaptiveROIPredictor = _Dummy
+sys.modules["menace.adaptive_roi_predictor"].load_training_data = lambda *a, **k: None
+sys.modules["menace.adaptive_roi_dataset"].build_dataset = lambda *a, **k: []
+sys.modules["menace.roi_tracker"].ROITracker = _Dummy
 
 # Populate needed attributes
 sys.modules["menace.self_model_bootstrap"].bootstrap = lambda: None
@@ -195,6 +209,51 @@ def test_load_corrupted_weights_logs_warning(tmp_path, caplog):
     learner = sie.SynergyWeightLearner(path=path)
     assert learner.weights == sie.DEFAULT_SYNERGY_WEIGHTS
     assert "failed to load synergy weights" in caplog.text
+
+
+def test_flag_patch_alignment_logs_event(monkeypatch, tmp_path):
+    sie = _load_engine()
+    diff = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,2 +1 @@\n"
+        "-logging.info('hi')\n"
+        "+pass\n"
+    )
+    events = []
+
+    class Bus:
+        def publish(self, topic, record):
+            events.append((topic, record))
+
+    engine = types.SimpleNamespace(
+        alignment_flagger=sie.HumanAlignmentFlagger(),
+        cycle_logs=[],
+        _cycle_count=0,
+        event_bus=Bus(),
+        logger=types.SimpleNamespace(exception=lambda *a, **k: None),
+    )
+
+    def fake_run(cmd, capture_output, text, check):
+        if cmd == ["git", "show", "HEAD"]:
+            return types.SimpleNamespace(stdout=diff)
+        if cmd == ["git", "rev-parse", "HEAD"]:
+            return types.SimpleNamespace(stdout="abc123\n")
+        raise AssertionError("unexpected command")
+
+    monkeypatch.setattr(sie.subprocess, "run", fake_run)
+    import pathlib
+
+    orig_path = pathlib.Path
+    monkeypatch.setattr(sie, "Path", lambda p: orig_path(tmp_path / p))
+
+    sie.SelfImprovementEngine._flag_patch_alignment(engine, 1, {})
+
+    assert events and events[0][0] == "alignment:flag"
+    assert engine.cycle_logs and engine.cycle_logs[0]["report"]["issues"]
+    log_file = tmp_path / "sandbox_data" / "alignment_flags.jsonl"
+    assert log_file.exists()
 
 
 def teardown_module(module):
