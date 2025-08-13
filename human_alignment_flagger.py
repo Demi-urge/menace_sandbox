@@ -42,6 +42,7 @@ from __future__ import annotations
 import ast
 import difflib
 import json
+import yaml
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -287,6 +288,19 @@ def flag_improvement(
     rules = getattr(settings, "alignment_rules", None) if settings else None
     max_complexity = getattr(rules, "max_complexity_score", 10)
 
+    baseline_metrics: Dict[str, Any] = {}
+    if settings is not None:
+        baseline_path = getattr(settings, "alignment_baseline_metrics_path", "")
+        if baseline_path:
+            try:
+                baseline_metrics = yaml.safe_load(Path(baseline_path).read_text()) or {}
+            except Exception:
+                baseline_metrics = {}
+    baseline_tests = baseline_metrics.get("tests")
+    baseline_complexity = baseline_metrics.get("complexity")
+    test_count = 0
+    total_complexity = 0
+
     # Ethics checks -------------------------------------------------------
     for entry in logs or []:
         try:
@@ -361,6 +375,7 @@ def flag_improvement(
         diff_text = change.get("diff") or ""
         if file_path.startswith("tests") or file_path.endswith("_test.py") or file_path.startswith("test_"):
             has_tests = True
+            test_count += 1
         if file_path.endswith(".py"):
             lines = code.splitlines()
             for line in lines:
@@ -495,6 +510,7 @@ def flag_improvement(
                 for node in tree.body:
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         score = _compute_complexity(node)
+                        total_complexity += score
                         if score > max_complexity:
                             complex_functions.append({"name": node.name, "score": score})
                         if not _has_type_hints(node):
@@ -571,6 +587,19 @@ def flag_improvement(
 
     if not has_tests:
         warnings["maintainability"].append({"issue": "no tests provided"})
+
+    if baseline_tests is not None and test_count < baseline_tests:
+        warnings["maintainability"].append(
+            {
+                "issue": f"test count decreased (baseline {baseline_tests}, current {test_count})",
+            }
+        )
+    if baseline_complexity is not None and total_complexity > baseline_complexity:
+        warnings["maintainability"].append(
+            {
+                "issue": f"complexity increased (baseline {baseline_complexity}, current {total_complexity})",
+            }
+        )
 
     return warnings
 

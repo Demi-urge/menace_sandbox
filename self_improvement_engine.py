@@ -4403,7 +4403,8 @@ class SelfImprovementEngine:
             if delta > 0:
                 try:
                     metrics = result.roi.__dict__ if result.roi else None
-                    warnings = flag_improvement(actions, metrics, None)
+                    settings = SandboxSettings()
+                    warnings = flag_improvement(actions, metrics, None, settings=settings)
                     if any(warnings.values()):
                         result.warnings = warnings
                 except Exception as exc:
