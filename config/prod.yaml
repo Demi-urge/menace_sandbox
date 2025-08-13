@@ -1,0 +1,12 @@
+paths:
+  data_dir: /srv/igi/data
+  log_dir: /srv/igi/logs
+logging:
+  verbosity: WARNING
+thresholds:
+  alert: 0.95
+bot:
+  learning_rate: 0.005
+api_keys:
+  openai: prod-openai-key
+  serp: prod-serp-key
