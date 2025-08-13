@@ -167,6 +167,19 @@ class Config(BaseModel):
         _merge_dict(data, mapping)
         return Config.model_validate(data)
 
+    @classmethod
+    def from_overrides(
+        cls, overrides: Dict[str, Any], mode: str | None = None
+    ) -> "Config":
+        """Load configuration and apply *overrides* for testing.
+
+        This helper mirrors ``load_config`` but allows tests to provide a
+        dictionary of values that should be merged on top of the loaded
+        configuration without going through CLI parsing.
+        """
+
+        return load_config(mode=mode, overrides=overrides)
+
 
 # ---------------------------------------------------------------------------
 # Configuration loading utilities
@@ -280,7 +293,7 @@ def load_config(
     ----------
     mode:
         Optional profile name such as ``"dev"`` or ``"prod"``. When ``None`` the
-        value is read from the ``IGI_MODE`` environment variable or falls back to
+        value is read from the ``MENACE_MODE`` environment variable or falls back to
         ``"dev"``.
     config_file:
         Optional path to an additional configuration file that will be merged
@@ -295,7 +308,7 @@ def load_config(
         except Exception:  # pragma: no cover - best effort only
             logger.exception("failed loading .env file")
 
-    active_mode = mode or os.getenv("IGI_MODE", "dev")
+    active_mode = mode or os.getenv("MENACE_MODE", "dev")
 
     data = _load_yaml(DEFAULT_SETTINGS_FILE)
 
@@ -408,12 +421,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable config file watcher",
     )
-    parser.add_argument(
-        "overrides",
-        nargs="*",
-        help="Configuration overrides in key=value format",
-    )
-    return parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    args.overrides = [arg[2:] for arg in unknown if arg.startswith("--")]
+    return args
 
 
 def reload() -> Config:
