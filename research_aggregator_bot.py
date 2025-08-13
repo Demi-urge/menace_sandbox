@@ -147,8 +147,7 @@ class InfoDB(EmbeddableDBMixin):
                 performance_data TEXT,
                 timestamp REAL,
                 energy INTEGER,
-                corroboration_count INTEGER,
-                embedding TEXT
+                corroboration_count INTEGER
             )
             """
         )
@@ -162,7 +161,6 @@ class InfoDB(EmbeddableDBMixin):
             "notes": "ALTER TABLE info ADD COLUMN notes TEXT",
             "energy": "ALTER TABLE info ADD COLUMN energy INTEGER",
             "corroboration_count": "ALTER TABLE info ADD COLUMN corroboration_count INTEGER",
-            "embedding": "ALTER TABLE info ADD COLUMN embedding TEXT",
         }.items():
             if name not in cols:
                 conn.execute(stmt)
@@ -265,7 +263,6 @@ class InfoDB(EmbeddableDBMixin):
             text = self._embed_text(item)
             embedding = self._embed(text)
         item.embedding = embedding
-        emb_json = json.dumps(embedding) if embedding is not None else None
 
         with sqlite3.connect(self.path) as conn:
             cur = conn.execute(
@@ -273,8 +270,8 @@ class InfoDB(EmbeddableDBMixin):
                 INSERT INTO info(
                     model_id, contrarian_id, title, summary, tags, category, type, content,
                     data_depth, source_url, notes, associated_bots, associated_errors,
-                    performance_data, timestamp, energy, corroboration_count, embedding
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    performance_data, timestamp, energy, corroboration_count
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     item.model_id,
@@ -294,7 +291,6 @@ class InfoDB(EmbeddableDBMixin):
                     item.timestamp,
                     item.energy,
                     item.corroboration_count,
-                    emb_json,
                 ),
             )
             item.item_id = cur.lastrowid
@@ -366,17 +362,11 @@ class InfoDB(EmbeddableDBMixin):
             notes=row["notes"] or "",
             energy=row["energy"] or 1,
             corroboration_count=row["corroboration_count"] or 0,
-            embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+            embedding=self.vector(row["id"]),
         )
         text = self._embed_text(item)
         emb = self._embed(text)
         if emb is not None:
-            with sqlite3.connect(self.path) as conn:
-                conn.execute(
-                    "UPDATE info SET embedding=? WHERE id=?",
-                    (json.dumps(emb), info_id),
-                )
-                conn.commit()
             try:
                 self.add_embedding(
                     info_id,
@@ -396,29 +386,32 @@ class InfoDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                fields = {
-                    "title": row["title"] or "",
-                    "summary": row["summary"] or "",
-                    "content": row["content"] or "",
-                    "tags": row["tags"] or "",
-                    "category": row["category"] or "",
-                    "type": row["type"] or "",
-                    "associated_bots": row["associated_bots"] or "",
-                    "associated_errors": row["associated_errors"] or "",
-                    "performance_data": row["performance_data"] or "",
-                    "source_url": row["source_url"] or "",
-                    "notes": row["notes"] or "",
-                }
-                text = " ".join(f"{k}:{v}" for k, v in fields.items() if v)
-                emb = self._embed(text)
-                if emb is None:
-                    continue
-                emb_json = json.dumps(emb)
-                self.conn.execute(
-                    "UPDATE info SET embedding=? WHERE id=?",
-                    (emb_json, row["id"]),
-                )
-                self.conn.commit()
+                existing = None
+                if "embedding" in row.keys() and row["embedding"]:
+                    try:
+                        existing = json.loads(row["embedding"])
+                    except Exception:
+                        existing = None
+                if existing is None:
+                    fields = {
+                        "title": row["title"] or "",
+                        "summary": row["summary"] or "",
+                        "content": row["content"] or "",
+                        "tags": (row["tags"].split(",") if row["tags"] else []),
+                        "category": row["category"] or "",
+                        "type": row["type"] or "",
+                        "associated_bots": (row["associated_bots"].split(",") if row["associated_bots"] else []),
+                        "associated_errors": (row["associated_errors"].split(",") if row["associated_errors"] else []),
+                        "performance_data": row["performance_data"] or "",
+                        "source_url": row["source_url"] or "",
+                        "notes": row["notes"] or "",
+                    }
+                    text = " ".join(self._flatten_fields(fields))
+                    emb = self._embed(text)
+                    if emb is None:
+                        continue
+                else:
+                    emb = existing
                 try:
                     self.add_embedding(
                         row["id"],
@@ -428,21 +421,38 @@ class InfoDB(EmbeddableDBMixin):
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("embedding store failed for %s", row["id"])
 
+    def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
+        pairs: list[str] = []
+
+        def _walk(prefix: str, value: Any) -> None:
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    _walk(f"{prefix}.{k}" if prefix else k, v)
+            elif isinstance(value, (list, tuple, set)):
+                for v in value:
+                    _walk(prefix, v)
+            else:
+                if value not in (None, ""):
+                    pairs.append(f"{prefix}={value}")
+
+        _walk("", data)
+        return pairs
+
     def _embed_text(self, item: ResearchItem) -> str:
         fields = {
             "title": item.title or item.topic,
             "summary": item.summary,
             "content": item.content,
-            "tags": ",".join(item.tags),
+            "tags": item.tags,
             "category": item.category,
             "type": item.type_,
-            "associated_bots": ",".join(item.associated_bots),
-            "associated_errors": ",".join(item.associated_errors),
+            "associated_bots": item.associated_bots,
+            "associated_errors": item.associated_errors,
             "performance_data": item.performance_data,
             "source_url": item.source_url,
             "notes": item.notes,
         }
-        return " ".join(f"{k}:{v}" for k, v in fields.items() if v)
+        return " ".join(self._flatten_fields(fields))
 
     def _embed(self, text: str) -> list[float] | None:
         if not hasattr(self, "_embedder"):
@@ -489,7 +499,7 @@ class InfoDB(EmbeddableDBMixin):
                     notes=row["notes"] or "",
                     energy=row["energy"] or 1,
                     corroboration_count=row["corroboration_count"] or 0,
-                    embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+                    embedding=self.vector(row["id"]),
                 )
                 setattr(item, "_distance", dist)
                 results.append(item)
@@ -505,7 +515,7 @@ class InfoDB(EmbeddableDBMixin):
                         """
                         SELECT i.id, i.model_id, i.contrarian_id, i.title, i.summary, i.tags, i.category, i.type, i.content,
                                i.data_depth, i.source_url, i.notes, i.associated_bots, i.associated_errors,
-                               i.performance_data, i.timestamp, i.energy, i.corroboration_count, i.embedding
+                               i.performance_data, i.timestamp, i.energy, i.corroboration_count
                         FROM info AS i JOIN info_fts f ON f.rowid = i.id
                         WHERE info_fts MATCH ?
                         """,
@@ -517,7 +527,7 @@ class InfoDB(EmbeddableDBMixin):
                         """
                         SELECT id, model_id, contrarian_id, title, summary, tags, category, type, content,
                                data_depth, source_url, notes, associated_bots, associated_errors,
-                               performance_data, timestamp, energy, corroboration_count, embedding
+                               performance_data, timestamp, energy, corroboration_count
                         FROM info
                         WHERE LOWER(title) LIKE ? OR LOWER(tags) LIKE ?
                         """,
@@ -528,7 +538,7 @@ class InfoDB(EmbeddableDBMixin):
                     """
                     SELECT id, model_id, contrarian_id, title, summary, tags, category, type, content,
                            data_depth, source_url, notes, associated_bots, associated_errors,
-                           performance_data, timestamp, energy, corroboration_count, embedding
+                           performance_data, timestamp, energy, corroboration_count
                     FROM info
                     WHERE LOWER(title) LIKE ? OR LOWER(tags) LIKE ?
                     """,
@@ -557,7 +567,7 @@ class InfoDB(EmbeddableDBMixin):
                     notes=row["notes"] or "",
                     energy=row["energy"] or 1,
                     corroboration_count=row["corroboration_count"] or 0,
-                    embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+                    embedding=self.vector(row["id"]),
                 )
             )
         return results
@@ -641,7 +651,7 @@ class InfoDB(EmbeddableDBMixin):
                     notes=row["notes"] or "",
                     energy=row["energy"] or 1,
                     corroboration_count=row["corroboration_count"] or 0,
-                    embedding=json.loads(row["embedding"]) if row["embedding"] else None,
+                    embedding=self.vector(row["id"]),
                 )
             )
         return items
