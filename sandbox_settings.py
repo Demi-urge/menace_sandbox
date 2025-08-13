@@ -17,6 +17,10 @@ class AlignmentRules(BaseModel):
     """Thresholds for human-alignment checks."""
 
     max_complexity_score: int = 10
+    max_comment_density_drop: float = 0.1
+    allowed_network_calls: int = 0
+    comment_density_severity: int = 2
+    network_call_severity: int = 3
 
 
 class SandboxSettings(BaseSettings):
