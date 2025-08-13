@@ -7,6 +7,7 @@ import json
 import base64
 import hashlib
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Callable
 import sqlite3
@@ -29,15 +30,20 @@ if TYPE_CHECKING:  # pragma: no cover - circular imports
     from .bot_registry import BotRegistry
     from .neuroplasticity import PathwayDB
     from .research_aggregator_bot import InfoDB, ResearchItem
+    from .error_bot import ErrorDB
+    from .chatgpt_enhancement_bot import EnhancementDB
 else:  # pragma: no cover - type checking only
     InfoDB = object  # type: ignore
     ResearchItem = object  # type: ignore
     BotRegistry = object  # type: ignore
     PathwayDB = object  # type: ignore
+    ErrorDB = object  # type: ignore
+    EnhancementDB = object  # type: ignore
 from .menace_memory_manager import MenaceMemoryManager
 from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
+from .embeddable_db_mixin import EmbeddableDBMixin
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -53,6 +59,20 @@ class DBResult:
     info: List[Any]
     memory: List[Any]
     menace: List[Dict[str, Any]]
+
+
+class _QueryEncoder(EmbeddableDBMixin):
+    """Lightweight encoder used for semantic search queries."""
+
+    def __init__(self) -> None:  # pragma: no cover - simple initialiser
+        tmp = Path(tempfile.gettempdir())
+        super().__init__(index_path=tmp / "router_query.index", metadata_path=tmp / "router_query.json")
+
+    def vector(self, record: Any) -> List[float]:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    def iter_records(self):  # pragma: no cover - unused
+        return iter(())
 
 
 class DatabaseRouter:
@@ -81,14 +101,20 @@ class DatabaseRouter:
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
+        error_db: "ErrorDB" | None = None,
+        enhancement_db: "EnhancementDB" | None = None,
     ) -> None:
         from .research_aggregator_bot import InfoDB as _InfoDB
+        from .error_bot import ErrorDB as _ErrorDB
+        from .chatgpt_enhancement_bot import EnhancementDB as _EnhancementDB
 
         self.code_db = code_db or CodeDB(event_bus=event_bus)
         self.bot_db = bot_db or BotDB(event_bus=event_bus)
         self.info_db = info_db or _InfoDB(event_bus=event_bus)
         self.memory_mgr = memory_mgr or MenaceMemoryManager(event_bus=event_bus, bot_db=self.bot_db, info_db=self.info_db)
         self.workflow_db = workflow_db or WorkflowDB(event_bus=event_bus)
+        self.error_db = error_db or _ErrorDB(event_bus=event_bus)
+        self.enhancement_db = enhancement_db or _EnhancementDB()
         self.remote_url = remote_url
         if menace_db is not None:
             self.menace_db = menace_db
@@ -135,6 +161,7 @@ class DatabaseRouter:
         self.cache_seconds = cache_seconds
         self.cache_enabled = cache_seconds > 0
         self._cache: Dict[tuple, tuple[float, Any]] = {}
+        self._query_encoder = _QueryEncoder()
 
     # ------------------------------------------------------------------
     # Permission helpers
@@ -263,6 +290,52 @@ class DatabaseRouter:
         result = DBResult(code=code, bots=bots, info=info, memory=memory, menace=menace)
         self._log_action(requesting_bot, "query_all", {"term": term})
         return result
+
+    def semantic_search(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """Perform a semantic search across embeddable databases."""
+
+        try:
+            query_vector = self._query_encoder.encode_text(query_text)
+        except Exception as exc:
+            logger.error("query embedding failed: %s", exc)
+            return []
+
+        results: List[Dict[str, Any]] = []
+        dbs = [
+            ("bot", self.bot_db),
+            ("workflow", self.workflow_db),
+            ("error", getattr(self, "error_db", None)),
+            ("enhancement", getattr(self, "enhancement_db", None)),
+            ("info", self.info_db),
+        ]
+        for kind, db in dbs:
+            if not db or not hasattr(db, "search_by_vector"):
+                continue
+            try:
+                matches = db.search_by_vector(query_vector, top_k=top_k)
+            except Exception as exc:
+                logger.error("%s vector search failed: %s", kind, exc)
+                continue
+            for match in matches:
+                if isinstance(match, dict):
+                    source_id = match.get("id") or match.get("item_id")
+                    distance = match.get("_distance")
+                else:
+                    source_id = (
+                        getattr(match, "id", None)
+                        or getattr(match, "item_id", None)
+                        or getattr(match, "wid", None)
+                    )
+                    distance = getattr(match, "_distance", None)
+                results.append({
+                    "kind": kind,
+                    "source_id": source_id,
+                    "distance": distance,
+                    "record": match,
+                })
+
+        results.sort(key=lambda r: r["distance"] if r["distance"] is not None else float("inf"))
+        return results[:top_k]
 
     def execute_query(
         self, db: str, query: str, params: Iterable[Any] | None = None, *, requesting_bot: str | None = None
