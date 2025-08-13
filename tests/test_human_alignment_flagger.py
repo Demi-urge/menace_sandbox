@@ -74,3 +74,70 @@ def test_complexity_without_docstring_raises_maintainability_warning():
         and issue.get("file") == "module.py"
         for issue in warnings["maintainability"]
     )
+
+
+# ---------------------------------------------------------------------------
+# flag_alignment_issues -----------------------------------------------------
+
+
+@pytest.fixture
+def eval_diff() -> dict:
+    return {"module.py": {"added": ["result = eval('2+2')"], "removed": []}}
+
+
+@pytest.fixture
+def removed_logging_diff() -> dict:
+    return {
+        "module.py": {
+            "added": ["def process():", "    return 1"],
+            "removed": [
+                "def process():",
+                "    logging.info('start')",
+                "    return 1",
+            ],
+        }
+    }
+
+
+@pytest.fixture
+def high_complexity_diff() -> dict:
+    lines = [
+        "def complex():",
+        "    if a and b or c:",
+        "        for i in range(10):",
+        "            if i % 2 and i % 3 or i % 5:",
+        "                while x:",
+        "                    try:",
+        "                        pass",
+        "                    except Exception:",
+        "                        if z:",
+        "                            pass",
+        "    elif d or e:",
+        "        pass",
+    ]
+    return {"complex.py": {"added": lines, "removed": []}}
+
+
+@pytest.fixture
+def clean_diff() -> dict:
+    return {"clean.py": {"added": ["x = 1"], "removed": []}}
+
+
+def test_flag_alignment_issues_eval(eval_diff):
+    findings = haf.flag_alignment_issues(eval_diff)
+    assert any(f.get("category") == "risky_construct" for f in findings)
+
+
+def test_flag_alignment_issues_removed_logging(removed_logging_diff):
+    findings = haf.flag_alignment_issues(removed_logging_diff)
+    assert any(f.get("category") == "missing_logging" for f in findings)
+
+
+def test_flag_alignment_issues_high_complexity(high_complexity_diff):
+    findings = haf.flag_alignment_issues(high_complexity_diff)
+    assert any(f.get("category") == "high_complexity" for f in findings)
+
+
+def test_flag_alignment_issues_clean(clean_diff):
+    findings = haf.flag_alignment_issues(clean_diff)
+    assert findings == []
