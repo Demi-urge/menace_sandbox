@@ -25,11 +25,28 @@ def test_reload_emits_event(monkeypatch):
 
     config.reload()
 
-    assert bus.events, "expected a config:reload event"
+    assert bus.events, "expected a config.reload event"
     topic, payload = bus.events[-1]
-    assert topic == "config:reload"
+    assert topic == "config.reload"
     assert payload["config"]["logging"]["verbosity"] == "INFO"
     assert payload["diff"]["logging"]["verbosity"] == "INFO"
 
     # cleanup
+    config.set_event_bus(None)
+
+
+def test_apply_overrides_emits_event(monkeypatch):
+    bus = DummyBus()
+    config.set_event_bus(bus)
+    config.CONFIG = None
+    config._OVERRIDES = {}
+
+    cfg = config.get_config()
+    cfg.apply_overrides({"logging": {"verbosity": "WARNING"}})
+
+    assert bus.events, "expected a config.reload event"
+    topic, payload = bus.events[-1]
+    assert topic == "config.reload"
+    assert payload["diff"]["logging"]["verbosity"] == "WARNING"
+
     config.set_event_bus(None)

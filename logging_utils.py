@@ -192,7 +192,7 @@ def setup_logging(config_path: str | None = None, level: str | int | None = None
 
     bus = getattr(cfg_mod, "_EVENT_BUS", None)
     if bus:
-        bus.subscribe("config:reload", lambda *_: _apply_log_level())
+        bus.subscribe("config.reload", lambda *_: _apply_log_level())
 
 
 def _apply_log_level() -> None:

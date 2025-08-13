@@ -10,6 +10,10 @@ Precedence: ``Vault`` > ``Environment variables`` > ``YAML/JSON``.
 
 The configuration schema is validated using Pydantic models to provide helpful
 error messages for missing or invalid fields.
+
+When an optional :class:`~unified_event_bus.EventBus` is configured, a
+``config.reload`` event is published after reloads or overrides. Listeners may
+use this to adjust logger levels, risk thresholds and other runtime settings.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING
 import sys
 import site
+import copy
 
 try:  # pragma: no cover - optional dependencies
     from .unified_config_store import UnifiedConfigStore
@@ -164,12 +169,23 @@ class Config(BaseModel):
         """Return a new ``Config`` with *mapping* merged into the current data."""
 
         data = self.model_dump()
+        old = copy.deepcopy(data)
         _merge_dict(data, mapping)
-        return Config.model_validate(data)
+        cfg = Config.model_validate(data)
+        if _EVENT_BUS is not None:
+            try:  # pragma: no cover - best effort only
+                payload = {"config": data, "diff": _dict_diff(old, data)}
+                _EVENT_BUS.publish("config.reload", payload)
+            except Exception:
+                logger.exception("failed publishing config reload event")
+        return cfg
 
     @classmethod
     def from_overrides(
-        cls, overrides: Dict[str, Any], mode: str | None = None
+        cls,
+        overrides: Dict[str, Any],
+        mode: str | None = None,
+        event_bus: "EventBus" | None = None,
     ) -> "Config":
         """Load configuration and apply *overrides* for testing.
 
@@ -178,7 +194,7 @@ class Config(BaseModel):
         configuration without going through CLI parsing.
         """
 
-        return load_config(mode=mode, overrides=overrides)
+        return load_config(mode=mode, overrides=overrides, event_bus=event_bus)
 
 
 # ---------------------------------------------------------------------------
@@ -286,6 +302,7 @@ def load_config(
     mode: str | None = None,
     config_file: str | Path | None = None,
     overrides: Dict[str, Any] | None = None,
+    event_bus: "EventBus" | None = None,
 ) -> Config:
     """Load the configuration for the given *mode*.
 
@@ -300,7 +317,12 @@ def load_config(
         after the profile-specific settings.
     overrides:
         Mapping of configuration values to override using dotted keys.
+    event_bus:
+        Optional event bus for broadcasting configuration reload events.
     """
+
+    if event_bus is not None:
+        set_event_bus(event_bus)
 
     if UnifiedConfigStore is not None:  # load .env before reading files
         try:
@@ -369,13 +391,17 @@ def load_config(
     return cfg
 
 
-def get_config() -> Config:
+def get_config(event_bus: "EventBus" | None = None) -> Config:
     """Return the canonical :class:`Config` instance.
 
     The configuration is loaded lazily on first access so that callers may set
     ``_MODE``, ``_CONFIG_PATH`` or ``_OVERRIDES`` prior to loading. Subsequent
-    calls return the same object.
+    calls return the same object. When *event_bus* is provided it is stored for
+    future reload notifications.
     """
+
+    if event_bus is not None:
+        set_event_bus(event_bus)
 
     global CONFIG
     if CONFIG is None:
@@ -426,9 +452,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return args
 
 
-def reload() -> Config:
+def reload(event_bus: "EventBus" | None = None) -> Config:
     """Reload configuration from disk using stored parameters."""
     global CONFIG
+
+    if event_bus is not None:
+        set_event_bus(event_bus)
 
     old_data = CONFIG.model_dump() if CONFIG else None
     CONFIG = load_config(_MODE, _CONFIG_PATH, _OVERRIDES)
@@ -436,7 +465,7 @@ def reload() -> Config:
     if _EVENT_BUS is not None:
         try:
             payload = {"config": new_data, "diff": _dict_diff(old_data, new_data)}
-            _EVENT_BUS.publish("config:reload", payload)
+            _EVENT_BUS.publish("config.reload", payload)
         except Exception:  # pragma: no cover - best effort only
             logger.exception("failed publishing config reload event")
     return CONFIG
