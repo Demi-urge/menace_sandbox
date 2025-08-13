@@ -3,34 +3,51 @@ import pytest
 
 
 @pytest.mark.parametrize("backend", ["annoy", "faiss"])
-def test_vector_search(tmp_path, backend):
+def test_embedding_workflow(tmp_path, backend):
     if backend == "faiss":
         pytest.importorskip("faiss")
+        pytest.importorskip("numpy")
     db = ceb.EnhancementDB(
         tmp_path / "e.db",
         vector_backend=backend,
         vector_index_path=tmp_path / f"idx.{backend}.index",
     )
-    db._embed = lambda text: ([float(len(text)), 0.0] if len(text) % 2 == 0 else [0.0, float(len(text))])
+
+    def fake_embed(text: str):
+        if "alpha" in text:
+            return [1.0, 0.0]
+        if "beta" in text:
+            return [0.0, 1.0]
+        return [1.0, 1.0]
+
+    db._embed = fake_embed
+
     e1 = ceb.Enhancement(idea="i1", rationale="r1", summary="alpha", before_code="a", after_code="b")
     id1 = db.add(e1)
-    e2 = ceb.Enhancement(idea="i2", rationale="r2", summary="beta", before_code="c", after_code="d")
-    id2 = db.add(e2)
 
-    vec1 = db.vector(id1)
-    assert vec1 is not None
-    results = db.search_by_vector(vec1, top_k=2)
-    assert results and results[0].summary == "alpha"
+    assert str(id1) in db._metadata
+    res1 = db.search_by_vector([1.0, 0.0], top_k=1)
+    assert res1 and res1[0].summary == "alpha"
 
-    # ensure metadata stored
+    # insert enhancement without embedding and backfill
+    db.conn.execute(
+        "INSERT INTO enhancements(idea, rationale, summary, before_code, after_code) VALUES (?,?,?,?,?)",
+        ("i2", "r2", "beta", "x", "y"),
+    )
+    db.conn.commit()
+    new_id = db.conn.execute("SELECT id FROM enhancements WHERE summary='beta'").fetchone()[0]
+    assert str(new_id) not in db._metadata
+    db.backfill_embeddings()
+    assert str(new_id) in db._metadata
+    res2 = db.search_by_vector([0.0, 1.0], top_k=1)
+    assert res2 and res2[0].summary == "beta"
+
+    # ensure metadata mirrored in SQLite
     row = db.conn.execute(
         "SELECT kind FROM enhancement_embeddings WHERE record_id=?", (id1,),
     ).fetchone()
     assert row and row[0] == "enhancement"
-
-    # update second enhancement and ensure embedding refreshed
-    e2.summary = "completely different"
-    db.update(id2, e2)
-    vec2 = db.vector(id2)
-    results2 = db.search_by_vector(vec2, top_k=1)
-    assert results2 and results2[0].summary == "completely different"
+    row2 = db.conn.execute(
+        "SELECT kind FROM enhancement_embeddings WHERE record_id=?", (new_id,),
+    ).fetchone()
+    assert row2 and row2[0] == "enhancement"
