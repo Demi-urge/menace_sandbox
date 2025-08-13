@@ -378,11 +378,16 @@ class ErrorDB(EmbeddableDBMixin):
         """Insert a new error if not already present and return its id."""
         found = self.find_error(message)
         if found is not None:
-            self.try_add_embedding(
-                found,
-                message,
-                metadata={"kind": "error", "source_id": found},
-            )
+            try:
+                vec = self.vector(message)
+                if vec is not None:
+                    self.add_embedding(
+                        found,
+                        vec,
+                        metadata={"kind": "error", "source_id": found},
+                    )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding hook failed for %s: %s", found, exc)
             return found
         cur = self.conn.execute(
             "INSERT INTO errors(message, type, description, resolution, ts) VALUES (?,?,?,?,?)",
@@ -396,11 +401,16 @@ class ErrorDB(EmbeddableDBMixin):
         )
         self.conn.commit()
         err_id = int(cur.lastrowid)
-        self.try_add_embedding(
-            err_id,
-            message,
-            metadata={"kind": "error", "source_id": err_id},
-        )
+        try:
+            vec = self.vector(message)
+            if vec is not None:
+                self.add_embedding(
+                    err_id,
+                    vec,
+                    metadata={"kind": "error", "source_id": err_id},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", err_id, exc)
         self._publish(
             "errors:new",
             {
@@ -430,15 +440,19 @@ class ErrorDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                emb = self.vector(row["message"])
-                if not emb:
-                    continue
-                self.try_add_embedding(
-                    row["id"],
-                    row["message"],
-                    metadata={"kind": "error", "source_id": row["id"]},
-                    vector=emb,
-                )
+                try:
+                    vec = self.vector(row["message"])
+                    if vec is None:
+                        continue
+                    self.add_embedding(
+                        row["id"],
+                        vec,
+                        metadata={"kind": "error", "source_id": row["id"]},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "embedding backfill failed for %s: %s", row["id"], exc
+                    )
 
         # Backfill telemetry records
         while True:
@@ -455,16 +469,20 @@ class ErrorDB(EmbeddableDBMixin):
                 break
             for row in rows:
                 rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
-                emb = self.vector(rec)
-                if not emb:
-                    continue
-                src = row["task_id"] or row["bot_id"] or ""
-                self.try_add_embedding(
-                    row["id"],
-                    rec,
-                    metadata={"kind": "telemetry", "source_id": src},
-                    vector=emb,
-                )
+                try:
+                    vec = self.vector(rec)
+                    if vec is None:
+                        continue
+                    src = row["task_id"] or row["bot_id"] or ""
+                    self.add_embedding(
+                        row["id"],
+                        vec,
+                        metadata={"kind": "telemetry", "source_id": src},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "embedding backfill failed for %s: %s", row["id"], exc
+                    )
 
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(
@@ -551,16 +569,20 @@ class ErrorDB(EmbeddableDBMixin):
                 ),
             )
         self.conn.commit()
-        emb_vec = self.vector(event)
-        self.try_add_embedding(
-            int(cur.lastrowid),
-            event,
-            metadata={
-                "kind": "telemetry",
-                "source_id": event.task_id or event.bot_id or "",
-            },
-            vector=emb_vec,
-        )
+        rec_id = int(cur.lastrowid)
+        try:
+            vec = self.vector(event)
+            if vec is not None:
+                self.add_embedding(
+                    rec_id,
+                    vec,
+                    metadata={
+                        "kind": "telemetry",
+                        "source_id": event.task_id or event.bot_id or "",
+                    },
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", rec_id, exc)
         if self.graph:
             try:  # pragma: no cover - best effort
                 self.graph.save(self.graph.path)

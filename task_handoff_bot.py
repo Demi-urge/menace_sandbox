@@ -187,11 +187,18 @@ class WorkflowDB(EmbeddableDBMixin):
         ).fetchone()
         if row:
             rec = self._row_to_record(row)
-            self.try_add_embedding(
-                workflow_id,
-                rec,
-                metadata={"kind": "workflow", "source_id": workflow_id},
-            )
+            try:
+                vec = self.vector(rec)
+                if vec is not None:
+                    self.add_embedding(
+                        workflow_id,
+                        vec,
+                        metadata={"kind": "workflow", "source_id": workflow_id},
+                    )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception(
+                    "embedding hook failed for %s: %s", workflow_id, exc
+                )
 
     def update_statuses(self, workflow_ids: Iterable[int], status: str) -> None:
         """Bulk update workflow status and refresh embeddings."""
@@ -209,11 +216,16 @@ class WorkflowDB(EmbeddableDBMixin):
             ).fetchone()
             if row:
                 rec = self._row_to_record(row)
-                self.try_add_embedding(
-                    wid,
-                    rec,
-                    metadata={"kind": "workflow", "source_id": wid},
-                )
+                try:
+                    vec = self.vector(rec)
+                    if vec is not None:
+                        self.add_embedding(
+                            wid,
+                            vec,
+                            metadata={"kind": "workflow", "source_id": wid},
+                        )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding hook failed for %s: %s", wid, exc)
         if self.event_bus:
             try:
                 for wid in ids:
@@ -261,11 +273,16 @@ class WorkflowDB(EmbeddableDBMixin):
         self.conn.commit()
         wf.wid = cur.lastrowid
 
-        self.try_add_embedding(
-            wf.wid,
-            wf,
-            metadata={"kind": "workflow", "source_id": wf.wid},
-        )
+        try:
+            vec = self.vector(wf)
+            if vec is not None:
+                self.add_embedding(
+                    wf.wid,
+                    vec,
+                    metadata={"kind": "workflow", "source_id": wf.wid},
+                )
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", wf.wid, exc)
 
         if self.event_bus:
             try:
@@ -300,11 +317,18 @@ class WorkflowDB(EmbeddableDBMixin):
                 break
             for row in rows:
                 rec = self._row_to_record(row)
-                self.try_add_embedding(
-                    rec.wid,
-                    rec,
-                    metadata={"kind": "workflow", "source_id": rec.wid},
-                )
+                try:
+                    vec = self.vector(rec)
+                    if vec is not None:
+                        self.add_embedding(
+                            rec.wid,
+                            vec,
+                            metadata={"kind": "workflow", "source_id": rec.wid},
+                        )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception(
+                        "embedding backfill failed for %s: %s", rec.wid, exc
+                    )
 
     # --------------------------------------------------------------
     # embedding/search
