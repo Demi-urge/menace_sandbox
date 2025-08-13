@@ -312,16 +312,41 @@ class SelfCodingEngine:
             .strip()
         )
         if text:
+            self.logger.info(
+                "gpt_suggestion",
+                extra={
+                    "tags": ["fix_attempt"],
+                    "suggestion": text,
+                    "description": description,
+                    "path": str(path) if path else None,
+                },
+            )
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
 
     def patch_file(self, path: Path, description: str) -> None:
         """Append a generated helper to the given file."""
         code = self.generate_helper(description, path=path)
-        self.logger.info("patch file", extra={"path": str(path), "description": description})
+        self.logger.info(
+            "patch file",
+            extra={
+                "path": str(path),
+                "description": description,
+                "tags": ["fix_attempt"],
+            },
+        )
         with open(path, "a", encoding="utf-8") as fh:
             fh.write("\n" + code)
         self.memory_mgr.store(str(path), code, tags="code")
+        self.logger.info(
+            "patch applied",
+            extra={
+                "path": str(path),
+                "description": description,
+                "tags": ["fix_result"],
+                "success": True,
+            },
+        )
 
     def _run_ci(self, path: Path | None = None) -> bool:
         """Run formal verification, linting and tests.
@@ -395,7 +420,14 @@ class SelfCodingEngine:
 
         Returns the rowid of the stored patch if available.
         """
-        self.logger.info("apply_patch", extra={"path": str(path), "description": description})
+        self.logger.info(
+            "apply_patch",
+            extra={
+                "path": str(path),
+                "description": description,
+                "tags": ["fix_attempt"],
+            },
+        )
         try:
             self._check_permission(WRITE, requesting_bot)
         except PermissionError:
@@ -476,8 +508,18 @@ class SelfCodingEngine:
                     patch_id = None
             patch_key = str(patch_id) if patch_id is not None else description
             if patch_id is not None and self.rollback_mgr:
-                self.logger.info("patch result", extra={"path": str(path), "patch_id": patch_id, "reverted": True, "roi_delta": roi_delta})
                 self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
+            self.logger.info(
+                "patch result",
+                extra={
+                    "path": str(path),
+                    "patch_id": patch_id,
+                    "reverted": True,
+                    "roi_delta": roi_delta,
+                    "success": False,
+                    "tags": ["fix_result"],
+                },
+            )
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
@@ -592,7 +634,6 @@ class SelfCodingEngine:
                     except Exception:
                         self.logger.exception("event bus publish failed")
         elif patch_id is not None and self.rollback_mgr:
-            self.logger.info("patch result", extra={"path": str(path), "patch_id": patch_id, "reverted": reverted, "roi_delta": roi_delta})
             self.rollback_mgr.rollback(patch_key, requesting_bot=requesting_bot)
         if (
             self.patch_suggestion_db
@@ -605,6 +646,17 @@ class SelfCodingEngine:
                 )
             except Exception:
                 self.logger.exception("failed storing suggestion")
+        self.logger.info(
+            "patch result",
+            extra={
+                "path": str(path),
+                "patch_id": patch_id,
+                "reverted": reverted,
+                "roi_delta": roi_delta,
+                "success": not reverted,
+                "tags": ["fix_result"],
+            },
+        )
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
