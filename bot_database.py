@@ -64,7 +64,7 @@ class BotRecord:
     hierarchy_level: str = ""
     purpose: str = ""
     tags: list[str] = field(default_factory=list)
-    toolchain: str = ""
+    toolchain: list[str] = field(default_factory=list)
     creation_date: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     last_modification_date: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     status: str = "active"
@@ -236,12 +236,15 @@ class BotDB(EmbeddableDBMixin):
                 if emb is None:
                     remaining_emb.append((bid, text))
                     continue
-                self.try_add_embedding(
-                    bid,
-                    text,
-                    metadata={"kind": "bot", "source_id": bid},
-                    vector=emb,
-                )
+                try:
+                    self.add_embedding(
+                        bid,
+                        emb,
+                        metadata={"kind": "bot", "source_id": bid},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding retry failed for %s: %s", bid, exc)
+                    remaining_emb.append((bid, text))
             self.failed_embeddings = remaining_emb
 
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
@@ -272,7 +275,7 @@ class BotDB(EmbeddableDBMixin):
                 rec.hierarchy_level,
                 rec.purpose,
                 _serialize_list(rec.tags),
-                rec.toolchain,
+                _serialize_list(rec.toolchain),
                 rec.creation_date,
                 rec.last_modification_date,
                 rec.status,
@@ -284,19 +287,25 @@ class BotDB(EmbeddableDBMixin):
         self.conn.commit()
         emb = self.vector(rec)
         if emb:
-            self.try_add_embedding(
-                rec.bid,
-                rec,
-                metadata={"kind": "bot", "source_id": rec.bid},
-                vector=emb,
-            )
-        else:
-            self.failed_embeddings.append(
-                (
+            try:
+                self.add_embedding(
                     rec.bid,
-                    " ".join([rec.purpose, " ".join(rec.tags), rec.toolchain]).strip(),
+                    emb,
+                    metadata={"kind": "bot", "source_id": rec.bid},
                 )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.exception("embedding insert failed for %s: %s", rec.bid, exc)
+                text = " ".join(
+                    filter(None, [rec.purpose, ",".join(rec.tags), ",".join(rec.toolchain)])
+                )
+                if text:
+                    self.failed_embeddings.append((rec.bid, text))
+        else:
+            text = " ".join(
+                filter(None, [rec.purpose, ",".join(rec.tags), ",".join(rec.toolchain)])
             )
+            if text:
+                self.failed_embeddings.append((rec.bid, text))
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -315,6 +324,20 @@ class BotDB(EmbeddableDBMixin):
     def update_bot(self, bot_id: int, **fields: Any) -> None:
         if not fields:
             return
+        if "tags" in fields:
+            tags_val = fields["tags"]
+            fields["tags"] = (
+                _serialize_list(_deserialize_list(tags_val))
+                if isinstance(tags_val, str)
+                else _serialize_list(tags_val)
+            )
+        if "toolchain" in fields:
+            tc_val = fields["toolchain"]
+            fields["toolchain"] = (
+                _serialize_list(_deserialize_list(tc_val))
+                if isinstance(tc_val, str)
+                else _serialize_list(tc_val)
+            )
         fields["last_modification_date"] = datetime.utcnow().isoformat()
         sets = ", ".join(f"{k}=?" for k in fields)
         params = list(fields.values()) + [bot_id]
@@ -328,19 +351,39 @@ class BotDB(EmbeddableDBMixin):
             if row:
                 emb = self.vector(dict(row))
                 if emb:
-                    self.try_add_embedding(
-                        bot_id,
-                        dict(row),
-                        metadata={"kind": "bot", "source_id": bot_id},
-                        vector=emb,
-                    )
+                    try:
+                        self.add_embedding(
+                            bot_id,
+                            emb,
+                            metadata={"kind": "bot", "source_id": bot_id},
+                        )
+                    except Exception as exc:  # pragma: no cover - best effort
+                        logger.exception("embedding update failed for %s: %s", bot_id, exc)
+                        emb_text = " ".join(
+                            filter(
+                                None,
+                                [
+                                    row["purpose"] or "",
+                                    ",".join(_deserialize_list(row["tags"] or "")),
+                                    ",".join(_deserialize_list(row["toolchain"] or "")),
+                                ],
+                            )
+                        )
+                        if emb_text:
+                            self.failed_embeddings.append((bot_id, emb_text))
                 else:
-                    emb_text = " ".join([
-                        row["purpose"] or "",
-                        " ".join(_deserialize_list(row["tags"] or "")),
-                        row["toolchain"] or "",
-                    ]).strip()
-                    self.failed_embeddings.append((bot_id, emb_text))
+                    emb_text = " ".join(
+                        filter(
+                            None,
+                            [
+                                row["purpose"] or "",
+                                ",".join(_deserialize_list(row["tags"] or "")),
+                                ",".join(_deserialize_list(row["toolchain"] or "")),
+                            ],
+                        )
+                    )
+                    if emb_text:
+                        self.failed_embeddings.append((bot_id, emb_text))
         if self.event_bus:
             payload = {"bot_id": bot_id, **fields}
             if not publish_with_retry(self.event_bus, "bot:update", payload):
@@ -358,22 +401,31 @@ class BotDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                emb = self.vector(dict(row))
-                if not emb:
-                    emb_text = " ".join([
-                        row["purpose"] or "",
-                        " ".join(_deserialize_list(row["tags"] or "")),
-                        row["toolchain"] or "",
-                    ]).strip()
-                    if emb_text:
-                        self.failed_embeddings.append((row["id"], emb_text))
-                    continue
-                self.try_add_embedding(
-                    row["id"],
-                    dict(row),
-                    metadata={"kind": "bot", "source_id": row["id"]},
-                    vector=emb,
+                text = " ".join(
+                    filter(
+                        None,
+                        [
+                            row["purpose"] or "",
+                            ",".join(_deserialize_list(row["tags"] or "")),
+                            ",".join(_deserialize_list(row["toolchain"] or "")),
+                        ],
+                    )
                 )
+                emb = self._embed(text) if text else None
+                if not emb:
+                    if text:
+                        self.failed_embeddings.append((row["id"], text))
+                    continue
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "bot", "source_id": row["id"]},
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.exception("embedding backfill failed for %s: %s", row["id"], exc)
+                    if text:
+                        self.failed_embeddings.append((row["id"], text))
 
     # embedding --------------------------------------------------------
     def vector(self, rec: Any) -> list[float] | None:
@@ -396,8 +448,14 @@ class BotDB(EmbeddableDBMixin):
                 tags = _deserialize_list(tags_val)
             else:
                 tags = list(tags_val)
-            toolchain = rec.get("toolchain", "")
-        text = " ".join([purpose, " ".join(tags), toolchain]).strip()
+            tc_val = rec.get("toolchain", [])
+            if isinstance(tc_val, str):
+                toolchain = _deserialize_list(tc_val)
+            else:
+                toolchain = list(tc_val)
+        text = " ".join(
+            filter(None, [purpose, ",".join(tags), ",".join(toolchain)])
+        )
         return self._embed(text) if text else None
 
     def _embed(self, text: str) -> list[float] | None:

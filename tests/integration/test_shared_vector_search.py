@@ -68,8 +68,8 @@ def test_search_by_vector_shared_backend(tmp_path, shared_embedder):
         bind_embed(db, shared_embedder)
 
     # Bot database
-    bot_db.add_bot(BotRecord(name="BotA", purpose="alpha", tags=["x"], toolchain="tc1"))
-    bot_db.add_bot(BotRecord(name="BotB", purpose="beta", tags=["y"], toolchain="tc2"))
+    bot_db.add_bot(BotRecord(name="BotA", purpose="alpha", tags=["x"], toolchain=["tc1"]))
+    bot_db.add_bot(BotRecord(name="BotB", purpose="beta", tags=["y"], toolchain=["tc2"]))
     assert bot_db.search_by_vector([1.0, 0.0], top_k=1)[0]["name"] == "BotA"
     assert bot_db.search_by_vector([0.0, 1.0], top_k=1)[0]["name"] == "BotB"
 

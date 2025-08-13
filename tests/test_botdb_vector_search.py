@@ -20,8 +20,8 @@ def test_vector_search(tmp_path):
 
     db._embed = MethodType(fake_embed, db)
 
-    rec1 = BotRecord(name="A", purpose="alpha", tags=["x"], toolchain="tc1")
-    rec2 = BotRecord(name="B", purpose="beta", tags=["y"], toolchain="tc2")
+    rec1 = BotRecord(name="A", purpose="alpha", tags=["x"], toolchain=["tc1"])
+    rec2 = BotRecord(name="B", purpose="beta", tags=["y"], toolchain=["tc2"])
 
     db.add_bot(rec1)
     assert captured and "alpha" in captured[0] and "x" in captured[0] and "tc1" in captured[0]
