@@ -58,6 +58,105 @@ def obfuscation_patch() -> str:
     )
 
 
+@pytest.fixture
+def exec_patch() -> str:
+    return (
+        """diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -0,0 +1 @@
++exec('print(1)')
+"""
+    )
+
+
+@pytest.fixture
+def network_patch() -> str:
+    return (
+        """diff --git a/foo.py b/foo.py
+--- a/foo.py
++++ b/foo.py
+@@ -0,0 +2 @@
++import requests
++requests.get('http://example.com')
+"""
+    )
+
+
+@pytest.fixture
+def unsandboxed_fs_patch() -> str:
+    return (
+        """diff --git a/fs.py b/fs.py
+--- a/fs.py
++++ b/fs.py
+@@ -0,0 +1 @@
++open('/etc/passwd', 'w')
+"""
+    )
+
+
+@pytest.fixture
+def linter_patch() -> str:
+    return (
+        """diff --git a/lint.py b/lint.py
+--- a/lint.py
++++ b/lint.py
+@@ -0,0 +1 @@
++x = 1  # noqa
+"""
+    )
+
+
+@pytest.fixture
+def subprocess_patch() -> str:
+    return (
+        """diff --git a/run.py b/run.py
+--- a/run.py
++++ b/run.py
+@@ -0,0 +2 @@
++import subprocess
++subprocess.run('ls', shell=True)
+"""
+    )
+
+
+@pytest.fixture
+def missing_type_hints_patch() -> str:
+    return (
+        """diff --git a/types.py b/types.py
+--- a/types.py
++++ b/types.py
+@@ -0,0 +2 @@
++def add(a, b):
++    return a + b
+"""
+    )
+
+
+@pytest.fixture
+def high_complexity_patch() -> str:
+    return (
+        """diff --git a/complex.py b/complex.py
+--- a/complex.py
++++ b/complex.py
+@@ -0,0 +12 @@
++def complex(x):
++    if a:
++        if b:
++            if c:
++                if d:
++                    if e:
++                        if f:
++                            if g:
++                                if h:
++                                    if i:
++                                        if j:
++                                            if k:
++                                                return 1
+"""
+    )
+
+
 def test_unsafe_patch_triggers_warning(unsafe_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(unsafe_patch, {})
@@ -88,6 +187,50 @@ def test_obfuscation_triggers_opacity(obfuscation_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(obfuscation_patch, {})
     assert any("Opacity" in issue["message"] for issue in report["issues"])
+
+
+def test_exec_usage_flagged(exec_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(exec_patch, {})
+    assert any("Dynamic execution" in issue["message"] for issue in report["issues"])
+
+
+def test_network_call_flagged(network_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(network_patch, {})
+    assert any("Network call" in issue["message"] for issue in report["issues"])
+
+
+def test_unsandboxed_fs_flagged(unsandboxed_fs_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(unsandboxed_fs_patch, {})
+    assert any(
+        "Unsandboxed filesystem mutation" in issue["message"] for issue in report["issues"]
+    )
+
+
+def test_linter_suppression_flagged(linter_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(linter_patch, {})
+    assert any("Linter suppression" in issue["message"] for issue in report["issues"])
+
+
+def test_unsafe_subprocess_flagged(subprocess_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(subprocess_patch, {})
+    assert any("Unsafe subprocess" in issue["message"] for issue in report["issues"])
+
+
+def test_missing_type_hints_flagged(missing_type_hints_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(missing_type_hints_patch, {})
+    assert any("Missing type hints" in issue["message"] for issue in report["issues"])
+
+
+def test_high_complexity_flagged(high_complexity_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(high_complexity_patch, {})
+    assert any("High cyclomatic complexity" in issue["message"] for issue in report["issues"])
 
 
 def test_report_includes_score_and_tiers(unsafe_patch):
