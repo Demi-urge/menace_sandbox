@@ -31,3 +31,15 @@ def test_resistance_triggers_tone_shift(monkeypatch):
     bot._detect_resistance()
     assert bot.strategy == "assertive"
     assert len(calls) == 2
+
+
+def test_tone_shift_requires_repeated_resistance(monkeypatch):
+    monkeypatch.setattr(mq, "_default_queue", mq.MemoryQueue(), raising=False)
+    monkeypatch.setattr(ms, "_default_stack", ms.MemoryStack(), raising=False)
+    bot = cmb.ConversationManagerBot(DummyClient())
+    ns.add_message("not interested")
+    bot._detect_resistance()
+    assert bot.strategy == "neutral"
+    ns.add_message("no thanks")
+    bot._detect_resistance()
+    assert bot.strategy == "conciliatory"
