@@ -1,8 +1,31 @@
-# Human Alignment Flagger Settings
+# Human Alignment Flagging and Review
 
-The sandbox includes a lightweight checker that scans patches for potential
-alignment regressions. `SandboxSettings` exposes several knobs to configure this
-behaviour. Each setting can be overridden via environment variables.
+The sandbox ships with a lightweight checker and background review agent to
+surface potential safety regressions before changes are merged.
+
+## Components
+
+* `HumanAlignmentFlagger` scans Git diffs for removed documentation, rising
+  complexity, risky patterns and ethics violations.  It is intentionally
+  conservative and never raises, returning a structured report of issues.
+* `AlignmentReviewAgent` runs in the background and polls recent alignment
+  warnings.  Each unseen record is forwarded to `SecurityAuditor` so Security AI
+  can triage and escalate problems.
+
+## Configuring thresholds via `SandboxSettings`
+
+Alignment sensitivity is controlled through `SandboxSettings` and may be
+overridden either programmatically or with environment variables:
+
+```python
+from sandbox_settings import SandboxSettings
+
+settings = SandboxSettings(
+    enable_alignment_flagger=True,
+    alignment_warning_threshold=0.5,
+    alignment_failure_threshold=0.9,
+)
+```
 
 | Environment variable | Default | Rationale |
 | --- | --- | --- |
@@ -20,10 +43,8 @@ alerts. Adjust them as needed for stricter or more permissive reviews.
 It highlights removed docstrings or logging statements, missing tests and high
 complexity blocks and also calls auxiliary detectors for ethics violations and
 risk/reward misalignment.  The result is a structured report containing a list
-of issues with severity scores.
-
-After each commit the autonomous sandbox invokes the flagger and stores the
-report alongside the commit hash.
+of issues with severity scores.  After each commit the autonomous sandbox
+invokes the flagger and stores the report alongside the commit hash.
 
 ## Baseline comparisons
 
@@ -35,16 +56,17 @@ even when performance metrics improve, ensuring maintainability isn't traded
 for short‑term gains.  Set `ALIGNMENT_BASELINE_METRICS_PATH` to an empty string
 to skip these comparisons.
 
-## Logging and review
+## Warning logs and Security AI review
 
-Flagger results are appended to `sandbox_data/alignment_flags.jsonl` in JSON
-Lines format and published on the event bus as `alignment:flag`.  When warning
-scores reach `ALIGNMENT_WARNING_THRESHOLD` the engine emits an
-`alignment_warning` alert and records an `alignment_flag` entry via the audit
-logger.
+Each run appends the flagger report to `sandbox_data/alignment_flags.jsonl` and
+emits an `alignment:flag` event.  `violation_logger.log_violation` mirrors the
+warning to `logs/violation_log.jsonl` and stores high‑severity entries in the
+SQLite store `logs/alignment_warnings.db`.
 
-Security AI or developers should monitor the JSON log or subscribe to the event
-bus and triage any warnings.  High‑severity entries at or above
-`ALIGNMENT_FAILURE_THRESHOLD` merit immediate review and remediation before
-changes are merged.
+`AlignmentReviewAgent` periodically reads recent warnings via
+`load_recent_alignment_warnings` and hands new ones to `SecurityAuditor`.  The
+auditor persists a copy in `logs/alignment_warnings.jsonl` where Security AI or
+operators can review and escalate issues.  High‑severity entries at or above
+`ALIGNMENT_FAILURE_THRESHOLD` merit immediate remediation before changes are
+merged.
 
