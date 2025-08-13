@@ -37,6 +37,12 @@ when scores exceed `ALIGNMENT_WARNING_THRESHOLD`, while entries above
 `ALIGNMENT_WARNING_THRESHOLD`, `ALIGNMENT_FAILURE_THRESHOLD` and
 `ALIGNMENT_BASELINE_METRICS_PATH` to tune its behaviour.
 
+If a metrics snapshot is provided via `ALIGNMENT_BASELINE_METRICS_PATH` the
+flagger additionally checks for regressions against those baseline values. A
+drop in recorded `tests` or a rise in overall `complexity` will raise
+maintainability warnings even when performance indicators such as accuracy or
+ROI improve. Clearing the variable disables the baseline comparison.
+
 ## Adaptive ROI Prediction
 
 `SelfImprovementEngine` can call the `AdaptiveROIPredictor` to estimate the

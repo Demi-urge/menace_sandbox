@@ -9,7 +9,7 @@ behaviour. Each setting can be overridden via environment variables.
 | `ENABLE_ALIGNMENT_FLAGGER` | `true` | Enabled to surface potential safety issues without manual review. |
 | `ALIGNMENT_WARNING_THRESHOLD` | `0.5` | Warn at moderate risk scores while keeping noise manageable. |
 | `ALIGNMENT_FAILURE_THRESHOLD` | `0.9` | Escalate only very high scores to avoid false positives. |
-| `ALIGNMENT_BASELINE_METRICS_PATH` | `sandbox_metrics.yaml` | Use the repository's metrics snapshot for comparisons. |
+| `ALIGNMENT_BASELINE_METRICS_PATH` | `sandbox_metrics.yaml` | Path to a YAML snapshot used for baseline comparisons. |
 
 These defaults aim to flag questionable changes early while avoiding excessive
 alerts. Adjust them as needed for stricter or more permissive reviews.
@@ -24,6 +24,16 @@ of issues with severity scores.
 
 After each commit the autonomous sandbox invokes the flagger and stores the
 report alongside the commit hash.
+
+## Baseline comparisons
+
+When a baseline metrics file is supplied via `ALIGNMENT_BASELINE_METRICS_PATH`
+the flagger loads values such as `tests` and `complexity` from that snapshot.
+The current changes are compared against the baseline and warnings are emitted
+if test counts drop or overall cyclomatic complexity rises. These checks fire
+even when performance metrics improve, ensuring maintainability isn't traded
+for short‑term gains.  Set `ALIGNMENT_BASELINE_METRICS_PATH` to an empty string
+to skip these comparisons.
 
 ## Logging and review
 
