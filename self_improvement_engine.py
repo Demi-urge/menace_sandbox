@@ -1183,6 +1183,18 @@ class SelfImprovementEngine:
                     extra=log_record(patch_id=patch_id, severity=max_severity),
                 )
                 return
+            for idx, issue in enumerate(issues):
+                msg = issue.get("message", "")
+                sev = int(issue.get("severity", 1))
+                file = msg.rsplit(" in ", 1)[-1] if " in " in msg else None
+                evidence = {"file": file, "snippet": msg}
+                log_violation(
+                    f"patch_{patch_id}_{idx}",
+                    "alignment_warning",
+                    sev,
+                    evidence,
+                    alignment_warning=True,
+                )
             record = {
                 "patch_id": patch_id,
                 "commit": commit_hash,
@@ -2086,6 +2098,30 @@ class SelfImprovementEngine:
     def get_warning_summary(self) -> list[dict[str, Any]]:
         """Return summary entries for high-severity warning improvements."""
         return list(self.warning_summary)
+
+    def _log_improvement_warnings(
+        self, warnings: dict[str, list[dict[str, Any]]]
+    ) -> None:
+        """Write individual improvement warnings to the violation log."""
+        for category, entries in warnings.items():
+            for idx, warn in enumerate(entries):
+                sev = int(warn.get("severity", 1))
+                evidence: dict[str, Any] = {
+                    "category": category,
+                    "file": warn.get("file"),
+                    "issue": warn.get("issue") or warn.get("message"),
+                }
+                if "snippet" in warn:
+                    evidence["snippet"] = warn["snippet"]
+                if "snippets" in warn:
+                    evidence["snippets"] = warn["snippets"]
+                log_violation(
+                    f"improvement_{self._cycle_count}_{category}_{idx}",
+                    "alignment_warning",
+                    sev,
+                    evidence,
+                    alignment_warning=True,
+                )
 
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
@@ -4407,6 +4443,7 @@ class SelfImprovementEngine:
                     warnings = flag_improvement(actions, metrics, None, settings=settings)
                     if any(warnings.values()):
                         result.warnings = warnings
+                        self._log_improvement_warnings(warnings)
                 except Exception as exc:
                     self.logger.exception("improvement flagging failed: %s", exc)
             self.logger.info(

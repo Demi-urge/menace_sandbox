@@ -144,12 +144,14 @@ def log_violation(
         hard violation.  Warnings are also published on the event bus.
     """
     _ensure_log_dir()
+    ev = dict(evidence)
+    ev.setdefault("severity", severity)
     record = {
         "timestamp": int(time.time()),
         "entry_id": entry_id,
         "violation_type": violation_type,
         "severity": severity,
-        "evidence": evidence,
+        "evidence": ev,
         "alignment_warning": alignment_warning,
     }
     with open(LOG_PATH, "a", encoding="utf-8") as fh:
