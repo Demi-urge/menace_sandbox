@@ -18,3 +18,20 @@ def test_ttl_expiration(monkeypatch):
     mem.add_message("old", "user", timestamp=0)
     monkeypatch.setattr(time, "time", lambda: 11)
     assert mem.get_recent() == []
+
+
+def test_cta_push_pop():
+    mem = SalesConversationMemory()
+    mem.push_cta({"event": "message"})
+    mem.push_cta({"event": "reply"})
+    assert mem.pop_cta() == {"event": "reply"}
+    assert mem.pop_cta() == {"event": "message"}
+    assert mem.pop_cta() is None
+
+
+def test_cta_reset():
+    mem = SalesConversationMemory()
+    mem.push_cta({"event": "message"})
+    mem.push_cta({"event": "reply"})
+    mem.clear_cta_stack()
+    assert mem.cta_stack == []
