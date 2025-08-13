@@ -22,23 +22,26 @@ class EmbeddableDBMixin:
     an :class:`sqlite3.Connection`.
     """
 
+    
     def __init__(
         self,
         *,
         vector_backend: str = "faiss",
         index_path: str | Path = "embeddings.index",
         embedding_version: int = 1,
+        table_name: str = "embeddings",
     ) -> None:
         self.vector_backend = vector_backend if vector_backend in {"faiss", "annoy"} else "annoy"
         self.index_path = Path(index_path)
         self.embedding_version = embedding_version
+        self.embeddings_table = table_name
         self._vector_index = None
         self._vector_dim = 0
         self._id_map: List[Any] = []
         self._id_map_path = self.index_path.with_suffix(".json")
         self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS embeddings(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.embeddings_table}(
                 record_id TEXT PRIMARY KEY,
                 vector TEXT,
                 created_at TEXT,
@@ -46,10 +49,11 @@ class EmbeddableDBMixin:
                 kind TEXT,
                 source_id TEXT
             )
-            """
+            """,
         )
         self.conn.commit()
         self._load_index()
+
 
     # ------------------------------------------------------------------
     # internal helpers
@@ -79,7 +83,7 @@ class EmbeddableDBMixin:
                 return
             if self._id_map:
                 row = self.conn.execute(
-                    "SELECT vector FROM embeddings LIMIT 1"
+                    f"SELECT vector FROM {self.embeddings_table} LIMIT 1"
                 ).fetchone()
                 if row:
                     self._vector_dim = len(json.loads(row[0]))
@@ -136,7 +140,7 @@ class EmbeddableDBMixin:
         if record_id is None:
             return None
         row = self.conn.execute(
-            "SELECT vector FROM embeddings WHERE record_id=?",
+            f"SELECT vector FROM {self.embeddings_table} WHERE record_id=?",
             (str(record_id),),
         ).fetchone()
         if not row:
@@ -154,8 +158,8 @@ class EmbeddableDBMixin:
         created_at, version, kind, source_id = self._prepare_metadata(metadata)
         vec_json = json.dumps(list(vector))
         self.conn.execute(
-            """
-            INSERT OR REPLACE INTO embeddings(
+            f"""
+            INSERT OR REPLACE INTO {self.embeddings_table}(
                 record_id, vector, created_at, embedding_version, kind, source_id
             ) VALUES(?,?,?,?,?,?)
             """,
@@ -177,7 +181,7 @@ class EmbeddableDBMixin:
 
             self._vector_index = AnnoyIndex(len(vector), "angular")
             cur = self.conn.execute(
-                "SELECT record_id, vector FROM embeddings ORDER BY rowid"
+                f"SELECT record_id, vector FROM {self.embeddings_table} ORDER BY rowid"
             )
             self._id_map = []
             for i, (rid, vec_json) in enumerate(cur.fetchall()):
@@ -252,7 +256,7 @@ class EmbeddableDBMixin:
 
         version = embedding_version if embedding_version is not None else self.embedding_version
         self.conn.execute(
-            "UPDATE embeddings SET embedding_version=?, created_at=? WHERE record_id=?",
+            f"UPDATE {self.embeddings_table} SET embedding_version=?, created_at=? WHERE record_id=?",
             (int(version), datetime.utcnow().isoformat(), str(record_id)),
         )
         self.conn.commit()
@@ -265,7 +269,7 @@ class EmbeddableDBMixin:
         version = embedding_version if embedding_version is not None else self.embedding_version
         now = datetime.utcnow().isoformat()
         self.conn.executemany(
-            "UPDATE embeddings SET embedding_version=?, created_at=? WHERE record_id=?",
+            f"UPDATE {self.embeddings_table} SET embedding_version=?, created_at=? WHERE record_id=?",
             [(int(version), now, str(rid)) for rid in record_ids],
         )
         self.conn.commit()

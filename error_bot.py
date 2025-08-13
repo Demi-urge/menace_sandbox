@@ -231,6 +231,7 @@ class ErrorDB(EmbeddableDBMixin):
             vector_backend=vector_backend,
             index_path=vector_index_path,
             embedding_version=embedding_version,
+            table_name="error_embeddings",
         )
 
     def _publish(self, topic: str, payload: object) -> None:
@@ -265,9 +266,17 @@ class ErrorDB(EmbeddableDBMixin):
         if isinstance(rec, str):
             text = rec
         elif isinstance(rec, dict):
-            text = rec.get("message") or rec.get("cause") or ""
+            msg = rec.get("message") or rec.get("cause") or rec.get("root_cause") or ""
+            stack = rec.get("stack_trace") or ""
+            text = f"{msg} {stack}".strip()
         else:
-            text = getattr(rec, "message", "") or getattr(rec, "cause", "")
+            msg = (
+                getattr(rec, "message", "")
+                or getattr(rec, "cause", "")
+                or getattr(rec, "root_cause", "")
+            )
+            stack = getattr(rec, "stack_trace", "")
+            text = f"{msg} {stack}".strip()
         return self._embed(text) if text else None
 
     def add_known(self, message: str, solution: str) -> None:
@@ -415,7 +424,7 @@ class ErrorDB(EmbeddableDBMixin):
         # Backfill error records
         while True:
             rows = self.conn.execute(
-                "SELECT id, message FROM errors WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                f"SELECT id, message FROM errors WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table}) LIMIT ?",
                 (batch_size,),
             ).fetchall()
             if not rows:
@@ -434,10 +443,10 @@ class ErrorDB(EmbeddableDBMixin):
         # Backfill telemetry records
         while True:
             rows = self.conn.execute(
-                """
+                f"""
                 SELECT id, cause, stack_trace, task_id, bot_id
                 FROM telemetry
-                WHERE id NOT IN (SELECT record_id FROM embeddings)
+                WHERE id NOT IN (SELECT record_id FROM {self.embeddings_table})
                 LIMIT ?
                 """,
                 (batch_size,),
@@ -445,14 +454,14 @@ class ErrorDB(EmbeddableDBMixin):
             if not rows:
                 break
             for row in rows:
-                text = f"{row['cause']} {row['stack_trace']}".strip()
-                emb = self.vector(text)
+                rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
+                emb = self.vector(rec)
                 if not emb:
                     continue
                 src = row["task_id"] or row["bot_id"] or ""
                 self.try_add_embedding(
                     row["id"],
-                    text,
+                    rec,
                     metadata={"kind": "telemetry", "source_id": src},
                     vector=emb,
                 )
@@ -542,16 +551,15 @@ class ErrorDB(EmbeddableDBMixin):
                 ),
             )
         self.conn.commit()
-        emb_text = f"{event.root_cause} {event.stack_trace}".strip()
-        emb = self.vector(emb_text)
+        emb_vec = self.vector(event)
         self.try_add_embedding(
             int(cur.lastrowid),
-            emb_text,
+            event,
             metadata={
                 "kind": "telemetry",
                 "source_id": event.task_id or event.bot_id or "",
             },
-            vector=emb,
+            vector=emb_vec,
         )
         if self.graph:
             try:  # pragma: no cover - best effort
