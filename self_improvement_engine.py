@@ -81,7 +81,7 @@ from .human_alignment_flagger import (
     _collect_diff_data,
 )
 from .human_alignment_agent import HumanAlignmentAgent
-from .audit_logger import log_event as audit_log_event
+from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
 
@@ -2112,6 +2112,10 @@ class SelfImprovementEngine:
                     "file": warn.get("file"),
                     "issue": warn.get("issue") or warn.get("message"),
                 }
+                if "entry" in warn:
+                    evidence["entry"] = warn["entry"]
+                if "violations" in warn:
+                    evidence["violations"] = warn["violations"]
                 if "snippet" in warn:
                     evidence["snippet"] = warn["snippet"]
                 if "snippets" in warn:
@@ -4442,7 +4446,13 @@ class SelfImprovementEngine:
                     metrics = result.roi.__dict__ if result.roi else None
                     settings = SandboxSettings()
                     agent = HumanAlignmentAgent(settings=settings)
-                    warnings = agent.evaluate_changes(actions, metrics, None)
+                    logs: list[dict[str, Any]] | None = getattr(result, "logs", None)
+                    if logs is None:
+                        try:
+                            logs = get_recent_events(limit=20)
+                        except Exception:
+                            logs = None
+                    warnings = agent.evaluate_changes(actions, metrics, logs)
                     if any(warnings.values()):
                         result.warnings = warnings
                 except Exception as exc:
