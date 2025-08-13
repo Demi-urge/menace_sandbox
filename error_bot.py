@@ -395,6 +395,28 @@ class ErrorDB(EmbeddableDBMixin):
         )
         return err_id
 
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Generate embeddings for errors missing vectors."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT id, message FROM errors WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                emb = self._embed(row["message"])
+                if not emb:
+                    continue
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "error", "source_id": row["id"]},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for %s", row["id"])
+
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(
             "INSERT INTO error_model(error_id, model_id) VALUES (?, ?)",

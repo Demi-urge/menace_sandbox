@@ -386,6 +386,48 @@ class InfoDB(EmbeddableDBMixin):
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", info_id)
 
+    def backfill_embeddings(self, batch_size: int = 100) -> None:
+        """Generate embeddings for legacy research items missing vectors."""
+        while True:
+            rows = self.conn.execute(
+                "SELECT * FROM info WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                fields = {
+                    "title": row["title"] or "",
+                    "summary": row["summary"] or "",
+                    "content": row["content"] or "",
+                    "tags": row["tags"] or "",
+                    "category": row["category"] or "",
+                    "type": row["type"] or "",
+                    "associated_bots": row["associated_bots"] or "",
+                    "associated_errors": row["associated_errors"] or "",
+                    "performance_data": row["performance_data"] or "",
+                    "source_url": row["source_url"] or "",
+                    "notes": row["notes"] or "",
+                }
+                text = " ".join(f"{k}:{v}" for k, v in fields.items() if v)
+                emb = self._embed(text)
+                if emb is None:
+                    continue
+                emb_json = json.dumps(emb)
+                self.conn.execute(
+                    "UPDATE info SET embedding=? WHERE id=?",
+                    (emb_json, row["id"]),
+                )
+                self.conn.commit()
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "info", "source_id": row["id"]},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for %s", row["id"])
+
     def _embed_text(self, item: ResearchItem) -> str:
         fields = {
             "title": item.title or item.topic,
