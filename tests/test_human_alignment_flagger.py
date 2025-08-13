@@ -183,6 +183,18 @@ def test_removed_comment_flagged(comment_removal_patch):
     assert any("Comment removed" in issue["message"] for issue in report["issues"])
 
 
+def test_comment_density_threshold_override(comment_removal_patch):
+    settings = SandboxSettings(
+        alignment_rules=AlignmentRules(max_comment_density_drop=1.0)
+    )
+    flagger = haf.HumanAlignmentFlagger(settings)
+    report = flagger.flag_patch(comment_removal_patch, {})
+    assert not any(
+        "comment density decreased" in issue["message"].lower()
+        for issue in report["issues"]
+    )
+
+
 def test_obfuscation_triggers_opacity(obfuscation_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(obfuscation_patch, {})
@@ -199,6 +211,29 @@ def test_network_call_flagged(network_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(network_patch, {})
     assert any("Network call" in issue["message"] for issue in report["issues"])
+
+
+def test_network_call_threshold_override(network_patch):
+    settings = SandboxSettings(
+        alignment_rules=AlignmentRules(allowed_network_calls=1)
+    )
+    flagger = haf.HumanAlignmentFlagger(settings)
+    report = flagger.flag_patch(network_patch, {})
+    assert not any(
+        "Network call" in issue["message"] for issue in report["issues"]
+    )
+
+
+def test_network_call_severity_override(network_patch):
+    settings = SandboxSettings(
+        alignment_rules=AlignmentRules(network_call_severity=1)
+    )
+    flagger = haf.HumanAlignmentFlagger(settings)
+    report = flagger.flag_patch(network_patch, {})
+    issue = next(
+        i for i in report["issues"] if "Network call" in i["message"]
+    )
+    assert issue["tier"] == "info"
 
 
 def test_unsandboxed_fs_flagged(unsandboxed_fs_patch):
@@ -376,6 +411,23 @@ def test_flag_improvement_detects_network_call():
     )
     assert any(
         "network call" in issue.get("issue", "") for issue in warnings["maintainability"]
+    )
+
+
+def test_flag_improvement_respects_network_call_threshold():
+    code = "import requests\nrequests.get('http://example.com')"
+    settings = SandboxSettings(
+        alignment_rules=AlignmentRules(allowed_network_calls=1)
+    )
+    warnings = haf.flag_improvement(
+        workflow_changes=[{"file": "module.py", "code": code}],
+        metrics={},
+        logs=[],
+        settings=settings,
+    )
+    assert not any(
+        "network call" in issue.get("issue", "")
+        for issue in warnings["maintainability"]
     )
 
 

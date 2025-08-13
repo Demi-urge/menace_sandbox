@@ -111,6 +111,10 @@ class HumanAlignmentFlagger:
         self.settings = settings
         rules = getattr(settings, "alignment_rules", None) if settings else None
         self.max_complexity = getattr(rules, "max_complexity_score", 10)
+        self.max_comment_drop = getattr(rules, "max_comment_density_drop", 0.1)
+        self.allowed_network_calls = getattr(rules, "allowed_network_calls", 0)
+        self.comment_density_severity = getattr(rules, "comment_density_severity", 2)
+        self.network_call_severity = getattr(rules, "network_call_severity", 3)
 
     def flag_patch(self, diff: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Return a structured report for *diff* with optional *context*.
@@ -157,8 +161,9 @@ class HumanAlignmentFlagger:
             if removed_comments > 0:
                 removed_ratio = removed_comments / max(len(removed), 1)
                 added_ratio = added_comments / max(len(added), 1)
-                if added_ratio < removed_ratio:
-                    sev = 2
+                drop = removed_ratio - added_ratio
+                if drop > self.max_comment_drop:
+                    sev = self.comment_density_severity
                     issues.append(
                         {
                             "severity": sev,
@@ -167,7 +172,7 @@ class HumanAlignmentFlagger:
                         }
                     )
                 for comment in info.get("removed_comment_lines", []):
-                    sev = 2
+                    sev = self.comment_density_severity
                     issues.append(
                         {
                             "severity": sev,
@@ -231,6 +236,7 @@ class HumanAlignmentFlagger:
                     "message": f"Test assertion removed in {path}",
                 })
 
+            network_calls: List[str] = []
             for line in added:
                 stripped = line.strip()
                 if any(tok in stripped for tok in ("exec(", "eval(", "compile(")):
@@ -243,14 +249,7 @@ class HumanAlignmentFlagger:
                         }
                     )
                 if any(tok in stripped for tok in ("requests.", "urllib", "socket.")):
-                    sev = 3
-                    issues.append(
-                        {
-                            "severity": sev,
-                            "tier": _tier(sev),
-                            "message": f"Network call in {path}: {stripped}",
-                        }
-                    )
+                    network_calls.append(stripped)
                 if (
                     "subprocess.run" in stripped and "shell=True" in stripped
                 ) or "os.system(" in stripped:
@@ -299,6 +298,16 @@ class HumanAlignmentFlagger:
                                     "message": f"Missing type hints in {path}: {line.strip()}",
                                 }
                             )
+
+            if len(network_calls) > self.allowed_network_calls:
+                sev = self.network_call_severity
+                issues.append(
+                    {
+                        "severity": sev,
+                        "tier": _tier(sev),
+                        "message": f"Network calls in {path}: {', '.join(network_calls)}",
+                    }
+                )
 
             complexity = sum(line.count(tok) for line in added for tok in complexity_tokens)
             if complexity > self.max_complexity:
@@ -394,6 +403,7 @@ def flag_improvement(
 
     rules = getattr(settings, "alignment_rules", None) if settings else None
     max_complexity = getattr(rules, "max_complexity_score", 10)
+    allowed_network_calls = getattr(rules, "allowed_network_calls", 0)
 
     baseline_metrics: Dict[str, Any] = {}
     if settings is not None:
@@ -675,7 +685,7 @@ def flag_improvement(
                             "calls": exec_calls,
                         }
                     )
-                if network_calls:
+                if len(network_calls) > allowed_network_calls:
                     warnings["maintainability"].append(
                         {
                             "file": file_path,
@@ -729,6 +739,7 @@ def flag_alignment_issues(
     complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
     rules = getattr(settings, "alignment_rules", None) if settings else None
     max_complexity = getattr(rules, "max_complexity_score", 10)
+    max_comment_drop = getattr(rules, "max_comment_density_drop", 0.1)
     fs_mutation_calls = (
         "os.remove(",
         "os.unlink(",
@@ -914,7 +925,8 @@ def flag_alignment_issues(
         if removed_comments > 0:
             removed_ratio = removed_comments / max(len(removed_lines), 1)
             added_ratio = added_comments / max(len(added_lines), 1)
-            if added_ratio < removed_ratio:
+            drop = removed_ratio - added_ratio
+            if drop > max_comment_drop:
                 findings.append({
                     "category": "opacity",
                     "location": path,
