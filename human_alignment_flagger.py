@@ -78,6 +78,7 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
                     "removed": [],
                     "comments_added": 0,
                     "comments_removed": 0,
+                    "removed_comment_lines": [],
                     "single_char_added": 0,
                     "single_char_removed": 0,
                 },
@@ -95,6 +96,7 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
                 current["removed"].append(content)
                 if content.lstrip().startswith("#"):
                     current["comments_removed"] += 1
+                    current["removed_comment_lines"].append(content)
                 else:
                     current["single_char_removed"] += len(
                         single_char_re.findall(content)
@@ -146,6 +148,15 @@ class HumanAlignmentFlagger:
                             "severity": sev,
                             "tier": _tier(sev),
                             "message": f"Opacity: comment density decreased in {path}",
+                        }
+                    )
+                for comment in info.get("removed_comment_lines", []):
+                    sev = 2
+                    issues.append(
+                        {
+                            "severity": sev,
+                            "tier": _tier(sev),
+                            "message": f"Comment removed in {path}: {comment.strip()}",
                         }
                     )
 
@@ -617,7 +628,8 @@ def flag_alignment_issues(
     """
 
     findings: List[Dict[str, str]] = []
-    risky_tokens = ("eval(", "exec(")  # fallback if AST parsing fails
+    risky_tokens = ("eval(", "exec(", "compile(")  # fallback if AST parsing fails
+    dynamic_tokens = ("__import__(", "importlib.import_module(")
     complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
     rules = getattr(settings, "alignment_rules", None) if settings else None
     max_complexity = getattr(rules, "max_complexity_score", 10)
@@ -647,15 +659,28 @@ def flag_alignment_issues(
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     func_name = ""
+                    module_name = ""
                     if isinstance(node.func, ast.Name):
                         func_name = node.func.id
                     elif isinstance(node.func, ast.Attribute):
                         func_name = node.func.attr
-                    if func_name in {"exec", "eval"}:
+                        if isinstance(node.func.value, ast.Name):
+                            module_name = node.func.value.id
+                    call_path = f"{module_name}.{func_name}" if module_name else func_name
+                    if func_name in {"exec", "eval", "compile"}:
                         snippet = ast.get_source_segment(joined, node) or func_name
                         findings.append(
                             {
                                 "category": "risky_construct",
+                                "location": path,
+                                "snippet": snippet.strip(),
+                            }
+                        )
+                    elif func_name == "__import__" or call_path.startswith("importlib."):
+                        snippet = ast.get_source_segment(joined, node) or call_path
+                        findings.append(
+                            {
+                                "category": "dynamic_import",
                                 "location": path,
                                 "snippet": snippet.strip(),
                             }
@@ -668,6 +693,25 @@ def flag_alignment_issues(
                             "snippet": "bare except",
                         }
                     )
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    missing = node.returns is None or any(
+                        arg.annotation is None
+                        for arg in node.args.args + node.args.kwonlyargs
+                    )
+                    if node.args.vararg and node.args.vararg.annotation is None:
+                        missing = True
+                    if node.args.kwarg and node.args.kwarg.annotation is None:
+                        missing = True
+                    if missing:
+                        snippet = ast.get_source_segment(joined, node) or node.name
+                        first_line = snippet.strip().splitlines()[0]
+                        findings.append(
+                            {
+                                "category": "missing_type_hints",
+                                "location": path,
+                                "snippet": first_line,
+                            }
+                        )
         else:
             for line in added_lines:
                 if any(tok in line for tok in risky_tokens):
@@ -678,6 +722,26 @@ def flag_alignment_issues(
                             "snippet": line.strip(),
                         }
                     )
+                if any(tok in line for tok in dynamic_tokens):
+                    findings.append(
+                        {
+                            "category": "dynamic_import",
+                            "location": path,
+                            "snippet": line.strip(),
+                        }
+                    )
+                if line.lstrip().startswith("def "):
+                    match = re.match(r"def\s+\w+\(([^)]*)\)\s*:\s*$", line.strip())
+                    if match:
+                        params = match.group(1)
+                        if ":" not in params and "->" not in line:
+                            findings.append(
+                                {
+                                    "category": "missing_type_hints",
+                                    "location": path,
+                                    "snippet": line.strip(),
+                                }
+                            )
 
         for line in added_lines:
             # Unsafe subprocess usage

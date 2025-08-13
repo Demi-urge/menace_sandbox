@@ -78,6 +78,12 @@ def test_comment_removal_triggers_opacity(comment_removal_patch):
     assert any("Opacity" in issue["message"] for issue in report["issues"])
 
 
+def test_removed_comment_flagged(comment_removal_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(comment_removal_patch, {})
+    assert any("Comment removed" in issue["message"] for issue in report["issues"])
+
+
 def test_obfuscation_triggers_opacity(obfuscation_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(obfuscation_patch, {})
@@ -373,6 +379,25 @@ def bare_except_diff() -> dict:
     }
 
 
+@pytest.fixture
+def compile_diff() -> dict:
+    return {
+        "comp.py": {"added": ["code = compile('2+2', '<string>', 'eval')"], "removed": []}
+    }
+
+
+@pytest.fixture
+def dynamic_import_diff() -> dict:
+    return {"dyn.py": {"added": ["mod = __import__('os')"], "removed": []}}
+
+
+@pytest.fixture
+def missing_type_hints_diff() -> dict:
+    return {
+        "types.py": {"added": ["def add(a, b):", "    return a + b"], "removed": []}
+    }
+
+
 def test_flag_alignment_issues_eval(eval_diff):
     findings = haf.flag_alignment_issues(eval_diff)
     assert any(f.get("category") == "risky_construct" for f in findings)
@@ -435,6 +460,21 @@ def test_flag_alignment_issues_bare_except(bare_except_diff):
         f.get("category") == "risky_construct" and "bare except" in f.get("snippet", "")
         for f in findings
     )
+
+
+def test_flag_alignment_issues_compile(compile_diff):
+    findings = haf.flag_alignment_issues(compile_diff)
+    assert any(f.get("category") == "risky_construct" for f in findings)
+
+
+def test_flag_alignment_issues_dynamic_import(dynamic_import_diff):
+    findings = haf.flag_alignment_issues(dynamic_import_diff)
+    assert any(f.get("category") == "dynamic_import" for f in findings)
+
+
+def test_flag_alignment_issues_missing_type_hints(missing_type_hints_diff):
+    findings = haf.flag_alignment_issues(missing_type_hints_diff)
+    assert any(f.get("category") == "missing_type_hints" for f in findings)
 
 
 def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):
