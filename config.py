@@ -203,8 +203,18 @@ def load_config(
     return cfg
 
 
-# Initial global configuration instance
-CONFIG = load_config()
+def get_config() -> Config:
+    """Return the canonical :class:`Config` instance.
+
+    The configuration is loaded lazily on first access so that callers may set
+    ``_MODE``, ``_CONFIG_PATH`` or ``_OVERRIDES`` prior to loading. Subsequent
+    calls return the same object.
+    """
+
+    global CONFIG
+    if CONFIG is None:
+        CONFIG = load_config(_MODE, _CONFIG_PATH, _OVERRIDES)
+    return CONFIG
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +265,7 @@ def main(argv: list[str] | None = None) -> None:
     _MODE = args.mode
     _CONFIG_PATH = Path(args.config_file) if args.config_file else None
     _OVERRIDES = _build_overrides(args.overrides or [])
-    cfg = reload()
+    cfg = get_config()
     print(cfg.model_dump())
 
 
