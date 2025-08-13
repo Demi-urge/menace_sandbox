@@ -6,6 +6,7 @@ import json
 import os
 import time
 import logging
+import sqlite3
 from datetime import datetime
 from threading import Thread
 from typing import Any, List, Dict, Optional
@@ -20,6 +21,7 @@ except Exception:  # pragma: no cover - bus optional
 # Directory and file path for violation logs
 LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 LOG_PATH = os.path.join(LOG_DIR, "violation_log.jsonl")
+ALIGNMENT_DB_PATH = os.path.join(LOG_DIR, "alignment_warnings.db")
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,78 @@ def set_event_bus(bus: Optional[UnifiedEventBus]) -> None:
 def _ensure_log_dir() -> None:
     """Create the log directory if it doesn't exist."""
     os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def persist_alignment_warning(record: Dict[str, Any]) -> None:
+    """Persist a single alignment warning to the dedicated SQLite store."""
+
+    _ensure_log_dir()
+    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
+    patch_link = None
+    evidence = record.get("evidence") or {}
+    if isinstance(evidence, dict):
+        patch_link = evidence.get("patch_link") or evidence.get("patch_id")
+    with conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS warnings (
+                timestamp INTEGER,
+                entry_id TEXT,
+                violation_type TEXT,
+                severity INTEGER,
+                patch_link TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO warnings (timestamp, entry_id, violation_type, severity, patch_link)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (
+                record.get("timestamp"),
+                record.get("entry_id"),
+                record.get("violation_type"),
+                record.get("severity"),
+                patch_link,
+            ),
+        )
+
+
+def load_persisted_alignment_warnings(
+    limit: int = 50,
+    min_severity: int | None = None,
+    max_severity: int | None = None,
+) -> List[Dict[str, Any]]:
+    """Load alignment warnings from the SQLite store."""
+
+    if limit <= 0:
+        return []
+    if not os.path.exists(ALIGNMENT_DB_PATH):
+        return []
+    conn = sqlite3.connect(ALIGNMENT_DB_PATH)
+    query = (
+        "SELECT timestamp, entry_id, violation_type, severity, patch_link FROM warnings WHERE 1=1"
+    )
+    params: List[Any] = []
+    if min_severity is not None:
+        query += " AND severity >= ?"
+        params.append(min_severity)
+    if max_severity is not None:
+        query += " AND severity <= ?"
+        params.append(max_severity)
+    query += " ORDER BY timestamp DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [
+        {
+            "timestamp": row[0],
+            "entry_id": row[1],
+            "violation_type": row[2],
+            "severity": row[3],
+            "patch_link": row[4],
+        }
+        for row in rows
+    ]
 
 
 def log_violation(
@@ -80,6 +154,12 @@ def log_violation(
     }
     with open(LOG_PATH, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record) + "\n")
+
+    if alignment_warning:
+        try:
+            persist_alignment_warning(record)
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.error("failed persisting alignment warning: %s", exc)
 
     if alignment_warning and _event_bus is not None:
         payload = {
@@ -184,6 +264,8 @@ __all__ = [
     "log_violation",
     "load_recent_violations",
     "load_recent_alignment_warnings",
+    "persist_alignment_warning",
+    "load_persisted_alignment_warnings",
     "recent_alignment_warnings",
     "violation_summary",
     "set_event_bus",

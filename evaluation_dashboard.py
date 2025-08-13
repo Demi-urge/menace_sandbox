@@ -40,7 +40,7 @@ except Exception:  # pragma: no cover - optional
 
 from .evaluation_manager import EvaluationManager
 from .roi_tracker import ROITracker
-from .violation_logger import recent_alignment_warnings
+from .violation_logger import load_persisted_alignment_warnings
 
 
 def _build_tree(workflow_id: int) -> List[Dict[str, Any]]:
@@ -94,10 +94,21 @@ class EvaluationDashboard:
         return {n: (totals[n] / counts[n]) / max_avg for n in totals}
 
     # ------------------------------------------------------------------
-    def alignment_warning_panel(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Return recent alignment warnings for review."""
+    def alignment_warning_panel(
+        self,
+        limit: int = 50,
+        min_severity: int | None = None,
+        max_severity: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Return recent alignment warnings with optional severity filtering.
 
-        return recent_alignment_warnings(limit)
+        Each record includes a ``patch_link`` or identifier allowing
+        operators to inspect the related code patch.
+        """
+
+        return load_persisted_alignment_warnings(
+            limit=limit, min_severity=min_severity, max_severity=max_severity
+        )
 
     # ------------------------------------------------------------------
     def roi_prediction_panel(
