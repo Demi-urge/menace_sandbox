@@ -44,7 +44,6 @@ def config_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "_CONFIG_PATH", None)
     monkeypatch.setattr(config, "_OVERRIDES", {})
     monkeypatch.setattr(config, "_EVENT_BUS", None)
-    monkeypatch.setattr(config, "_WATCHER_ENABLED", False)
     return tmp_path
 
 
@@ -145,7 +144,7 @@ def test_watchdog_triggers_reload(config_env, monkeypatch):
 
     monkeypatch.setattr(config, "reload", fake_reload)
     settings = str((config_env / "settings.yaml").resolve())
-    handler = config._ConfigChangeHandler({settings})
+    handler = config._ConfigChangeHandler()
     event = type("Evt", (), {"is_directory": False, "src_path": settings})
     handler.on_modified(event)
     assert called

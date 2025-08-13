@@ -240,7 +240,6 @@ _OVERRIDES: Dict[str, Any] = {}
 _CONFIG_STORE: "UnifiedConfigStore" | None = None
 CONFIG: Config | None = None
 _EVENT_BUS: "EventBus" | None = None
-_WATCHER_ENABLED: bool = True
 _WATCHER: "Observer" | None = None
 
 
@@ -283,46 +282,34 @@ def _dict_diff(old: Dict[str, Any] | None, new: Dict[str, Any]) -> Dict[str, Any
 class _ConfigChangeHandler(FileSystemEventHandler):
     """Watchdog handler that reloads configuration on file changes."""
 
-    def __init__(self, files: set[str]) -> None:
-        self._files = files
-
     def on_modified(self, event):  # type: ignore[override]
         if getattr(event, "is_directory", False):
             return
-        if event.src_path in self._files:
-            if _EVENT_BUS is not None:
-                try:  # pragma: no cover - best effort only
-                    _EVENT_BUS.publish("config:file_change", {"path": event.src_path})
-                except Exception:
-                    logger.exception("failed publishing config change event")
+        if _EVENT_BUS is not None:
             try:  # pragma: no cover - best effort only
-                reload()
+                _EVENT_BUS.publish("config:file_change", {"path": event.src_path})
             except Exception:
-                logger.exception("failed reloading config after change")
+                logger.exception("failed publishing config change event")
+        try:  # pragma: no cover - best effort only
+            reload()
+        except Exception:
+            logger.exception("failed reloading config after change")
 
     def on_moved(self, event):  # type: ignore[override]
         if getattr(event, "is_directory", False):
             return
-        dest = getattr(event, "dest_path", None)
-        if dest and dest in self._files:
-            self.on_modified(event)
+        self.on_modified(event)
 
 
-def _start_watcher(files: list[Path]) -> None:
-    """Start a watchdog observer for *files* if supported."""
+def _start_watcher() -> None:
+    """Start a watchdog observer on the configuration directory."""
 
     global _WATCHER
-    if _WATCHER is not None or Observer is None or not _WATCHER_ENABLED:
+    if _WATCHER is not None or Observer is None:
         return
-    watched = {str(f.resolve()) for f in files}
-    handler = _ConfigChangeHandler(watched)
+    handler = _ConfigChangeHandler()
     observer = Observer()
-    scheduled: set[str] = set()
-    for f in files:
-        directory = str(f.parent.resolve())
-        if directory not in scheduled:
-            observer.schedule(handler, directory, recursive=False)
-            scheduled.add(directory)
+    observer.schedule(handler, str(CONFIG_DIR.resolve()), recursive=False)
     observer.daemon = True
     observer.start()
     _WATCHER = observer
@@ -333,6 +320,7 @@ def load_config(
     config_file: str | Path | None = None,
     overrides: Dict[str, Any] | None = None,
     event_bus: "EventBus" | None = None,
+    watch: bool = False,
 ) -> Config:
     """Load the configuration for the given *mode*.
 
@@ -349,6 +337,9 @@ def load_config(
         Mapping of configuration values to override using dotted keys.
     event_bus:
         Optional event bus for broadcasting configuration reload events.
+    watch:
+        When ``True`` a watchdog observer is started to monitor the
+        configuration directory for changes.
     """
 
     if event_bus is not None:
@@ -394,26 +385,22 @@ def load_config(
     if overrides:
         cfg = cfg.apply_overrides(overrides)
 
-    if (
-        _WATCHER_ENABLED
-        and getattr(cfg, "watch_config", True)
-        and Observer is not None
-    ):
-        paths = [DEFAULT_SETTINGS_FILE, profile_file]
-        if config_file:
-            paths.append(Path(config_file))
-        _start_watcher(paths)
+    if watch and Observer is not None:
+        _start_watcher()
 
     return cfg
 
 
-def get_config(event_bus: "EventBus" | None = None) -> Config:
+def get_config(
+    event_bus: "EventBus" | None = None, *, watch: bool = False
+) -> Config:
     """Return the canonical :class:`Config` instance.
 
     The configuration is loaded lazily on first access so that callers may set
     ``_MODE``, ``_CONFIG_PATH`` or ``_OVERRIDES`` prior to loading. Subsequent
     calls return the same object. When *event_bus* is provided it is stored for
-    future reload notifications.
+    future reload notifications. When ``watch`` is ``True`` a watcher is started
+    to monitor the configuration directory for changes.
     """
 
     if event_bus is not None:
@@ -421,7 +408,9 @@ def get_config(event_bus: "EventBus" | None = None) -> Config:
 
     global CONFIG
     if CONFIG is None:
-        CONFIG = load_config(_MODE, _CONFIG_PATH, _OVERRIDES)
+        CONFIG = load_config(_MODE, _CONFIG_PATH, _OVERRIDES, watch=watch)
+    elif watch and _WATCHER is None:
+        _start_watcher()
     return CONFIG
 
 
@@ -487,14 +476,26 @@ def reload(event_bus: "EventBus" | None = None) -> Config:
     return CONFIG
 
 
+def shutdown() -> None:
+    """Stop the configuration watcher if it is running."""
+
+    global _WATCHER
+    if _WATCHER is None:
+        return
+    try:  # pragma: no cover - best effort only
+        _WATCHER.stop()
+        _WATCHER.join()
+    finally:
+        _WATCHER = None
+
+
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    global _MODE, _CONFIG_PATH, _OVERRIDES, _WATCHER_ENABLED
+    global _MODE, _CONFIG_PATH, _OVERRIDES
     _MODE = args.mode
     _CONFIG_PATH = Path(args.config_file) if args.config_file else None
     _OVERRIDES = _build_overrides(args.overrides or [])
-    _WATCHER_ENABLED = not args.no_watch
-    cfg = get_config()
+    cfg = get_config(watch=not args.no_watch)
     print(cfg.model_dump())
 
 
