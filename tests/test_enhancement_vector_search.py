@@ -15,7 +15,9 @@ def test_vector_search(tmp_path):
     assert results and results[0].summary == "alpha"
 
     # ensure metadata stored
-    row = db.conn.execute("SELECT kind FROM embeddings WHERE record_id=?", (id1,)).fetchone()
+    row = db.conn.execute(
+        "SELECT kind FROM enhancement_embeddings WHERE record_id=?", (id1,)
+    ).fetchone()
     assert row and row[0] == "enhancement"
 
     # update second enhancement and ensure embedding refreshed
