@@ -42,6 +42,7 @@ def test_embedding_workflow(tmp_path, backend):
     res1 = db.search_by_vector([1.0, 0.0], top_k=1)
     assert res1 and res1[0]["cause"] == "alpha"
 
+
     # insert telemetry without embedding and backfill
     db.conn.execute(
         "INSERT INTO telemetry(cause, stack_trace) VALUES ('beta', 'trace2')"
@@ -53,3 +54,6 @@ def test_embedding_workflow(tmp_path, backend):
     assert str(new_id) in db._metadata
     res2 = db.search_by_vector([0.0, 1.0], top_k=1)
     assert res2 and res2[0]["cause"] == "beta"
+
+    err_id = db.add_error("gamma")
+    assert db._metadata[str(err_id)]["source_id"] == str(err_id)

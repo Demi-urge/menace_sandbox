@@ -37,6 +37,7 @@ def test_embedding_workflow(tmp_path, backend):
     id1 = db.add(rec1)
 
     assert str(id1) in db._metadata
+    assert db._metadata[str(id1)]["source_id"] == str(id1)
     assert len(captured) == 1
 
     res1 = db.search_by_vector([1.0, 0.0], top_k=1)
