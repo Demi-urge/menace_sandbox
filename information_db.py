@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Iterable, List, Sequence
+from typing import Any, Iterable, List, Sequence, Iterator
 from pathlib import Path
 import json
 import sqlite3
@@ -170,35 +170,25 @@ class InformationDB(EmbeddableDBMixin):
                 )
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for records missing vectors."""
-        offset = 0
-        while True:
-            rows = self.conn.execute(
-                "SELECT * FROM information ORDER BY info_id LIMIT ? OFFSET ?",
-                (batch_size, offset),
-            ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                rid = row["info_id"]
-                if str(rid) in getattr(self, "_metadata", {}):
-                    continue
-                try:
-                    self.add_embedding(rid, dict(row), "info", source_id=str(rid))
-                except Exception as exc:  # pragma: no cover - best effort
-                    logging.getLogger(__name__).exception(
-                        "embedding backfill failed for %s: %s", rid, exc
-                    )
-                    if RAISE_ERRORS:
-                        raise
-            offset += batch_size
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
+
+    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+        """Yield information rows for embedding backfill."""
+        cur = self.conn.execute("SELECT * FROM information")
+        for row in cur.fetchall():
+            yield row["info_id"], dict(row), "info"
 
     # ------------------------------------------------------------------
     def vector(self, rec: Any) -> List[float] | None:
         if isinstance(rec, (int, str)):
             return EmbeddableDBMixin.vector(self, rec)
         text = self._embed_text(rec)
-        return self.encode_text(text) if text else None
+        return self._embed(text) if text else None
+
+    def _embed(self, text: str) -> List[float]:
+        """Encode ``text`` to a vector (overridable for tests)."""
+        return self.encode_text(text)
 
     def search_by_vector(self, vector: Sequence[float], top_k: int = 5) -> List[dict[str, Any]]:
         matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)

@@ -10,7 +10,7 @@ import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Iterator
 
 from .override_policy import OverridePolicyManager
 
@@ -342,28 +342,14 @@ class EnhancementDB(EmbeddableDBMixin):
             logger.exception("failed to persist embedding metadata for %s", record_id)
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for existing records lacking vectors."""
-        offset = 0
-        while True:
-            rows = self.conn.execute(
-                "SELECT * FROM enhancements ORDER BY id LIMIT ? OFFSET ?",
-                (batch_size, offset),
-            ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                rid = row["id"]
-                if str(rid) in getattr(self, "_metadata", {}):
-                    continue
-                try:
-                    self.add_embedding(rid, row, "enhancement", source_id=str(rid))
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception(
-                        "embedding backfill failed for %s: %s", rid, exc
-                    )
-                    if RAISE_ERRORS:
-                        raise
-            offset += batch_size
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
+
+    def iter_records(self) -> Iterator[tuple[int, sqlite3.Row, str]]:
+        """Yield enhancement rows for embedding backfill."""
+        cur = self.conn.execute("SELECT * FROM enhancements")
+        for row in cur.fetchall():
+            yield row["id"], row, "enhancement"
 
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:

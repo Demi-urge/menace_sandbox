@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .auto_link import auto_link
-from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence
+from typing import Any, Optional, Iterable, List, TYPE_CHECKING, Sequence, Iterator
 
 from .unified_event_bus import EventBus
 from .menace_memory_manager import MenaceMemoryManager, MemoryEntry
@@ -273,7 +273,11 @@ class ErrorDB(EmbeddableDBMixin):
             )
             stack = getattr(rec, "stack_trace", "")
             text = f"{msg} {stack}".strip()
-        return self.encode_text(text) if text else None
+        return self._embed(text) if text else None
+
+    def _embed(self, text: str) -> list[float]:
+        """Encode ``text`` to a vector (overridable for tests)."""
+        return self.encode_text(text)
 
     def add_known(self, message: str, solution: str) -> None:
         self.conn.execute(
@@ -408,56 +412,20 @@ class ErrorDB(EmbeddableDBMixin):
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for records missing vectors.
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
 
-        This processes both the ``errors`` and ``telemetry`` tables so that any
-        historical data created before embedding support was added can be
-        queried via :meth:`search_by_vector`.
-        """
-
-        # Backfill error records
-        offset = 0
-        while True:
-            rows = self.conn.execute(
-                "SELECT id, message FROM errors LIMIT ? OFFSET ?",
-                (batch_size, offset),
-            ).fetchall()
-            if not rows:
-                break
-            offset += batch_size
-            for row in rows:
-                rid = row["id"]
-                if str(rid) in self._metadata:
-                    continue
-                try:
-                    self.add_embedding(rid, {"message": row["message"]}, kind="error")
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding backfill failed for %s: %s", rid, exc)
-
-        # Backfill telemetry records
-        offset = 0
-        while True:
-            rows = self.conn.execute(
-                """
-                SELECT id, cause, stack_trace, task_id, bot_id
-                FROM telemetry
-                LIMIT ? OFFSET ?
-                """,
-                (batch_size, offset),
-            ).fetchall()
-            if not rows:
-                break
-            offset += batch_size
-            for row in rows:
-                rid = row["id"]
-                if str(rid) in self._metadata:
-                    continue
-                rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
-                src = row["task_id"] or row["bot_id"] or ""
-                try:
-                    self.add_embedding(rid, rec, kind="error", source_id=src)
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception("embedding backfill failed for %s: %s", rid, exc)
+    def iter_records(self) -> Iterator[tuple[int, dict[str, Any], str]]:
+        """Yield error and telemetry rows for embedding backfill."""
+        cur = self.conn.execute("SELECT id, message FROM errors")
+        for row in cur.fetchall():
+            yield row["id"], {"message": row["message"]}, "error"
+        cur = self.conn.execute(
+            "SELECT id, cause, stack_trace FROM telemetry"
+        )
+        for row in cur.fetchall():
+            rec = {"message": row["cause"], "stack_trace": row["stack_trace"]}
+            yield row["id"], rec, "error"
 
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(

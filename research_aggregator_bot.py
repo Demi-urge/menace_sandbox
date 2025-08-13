@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 import dataclasses
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, Iterable, List, Optional, Iterator
 
 from .auto_link import auto_link
 
@@ -378,28 +378,14 @@ class InfoDB(EmbeddableDBMixin):
             logger.exception("embedding hook failed for %s: %s", info_id, exc)
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for legacy research items missing vectors."""
-        offset = 0
-        while True:
-            rows = self.conn.execute(
-                "SELECT * FROM info ORDER BY id LIMIT ? OFFSET ?",
-                (batch_size, offset),
-            ).fetchall()
-            if not rows:
-                break
-            for row in rows:
-                rid = row["id"]
-                if str(rid) in getattr(self, "_metadata", {}):
-                    continue
-                try:
-                    self.add_embedding(rid, row, "info", source_id=str(rid))
-                except Exception as exc:  # pragma: no cover - best effort
-                    logger.exception(
-                        "embedding backfill failed for %s: %s", rid, exc
-                    )
-                    if RAISE_ERRORS:
-                        raise
-            offset += batch_size
+        """Delegate to :class:`EmbeddableDBMixin` for compatibility."""
+        EmbeddableDBMixin.backfill_embeddings(self)
+
+    def iter_records(self) -> Iterator[tuple[int, sqlite3.Row, str]]:
+        """Yield research info rows for embedding backfill."""
+        cur = self.conn.execute("SELECT * FROM info")
+        for row in cur.fetchall():
+            yield row["id"], row, "info"
 
     def _flatten_fields(self, data: dict[str, Any]) -> list[str]:
         pairs: list[str] = []
@@ -451,7 +437,11 @@ class InfoDB(EmbeddableDBMixin):
             return getattr(self, "_metadata", {}).get(str(rec), {}).get("vector")
 
         text = self._embed_text(rec)
-        return self.encode_text(text) if text else None
+        return self._embed(text) if text else None
+
+    def _embed(self, text: str) -> list[float]:
+        """Encode ``text`` to a vector (overridable for tests)."""
+        return self.encode_text(text)
 
     def search_by_vector(
         self, vector: Iterable[float], top_k: int = 5
