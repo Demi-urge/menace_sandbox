@@ -13,6 +13,9 @@ import logging
 from .embeddable_db_mixin import EmbeddableDBMixin
 
 
+logger = logging.getLogger(__name__)
+
+
 def _serialize_keywords(keywords: Iterable[str]) -> str:
     return ",".join(keywords)
 
@@ -112,6 +115,16 @@ class InformationDB(EmbeddableDBMixin):
         return " ".join(self._flatten_fields(data))
 
     # ------------------------------------------------------------------
+    def _embed_record_on_write(
+        self, info_id: int, rec: InformationRecord | dict[str, Any]
+    ) -> None:
+        """Best-effort embedding hook for inserts and updates."""
+
+        try:
+            self.add_embedding(info_id, rec, "info", source_id=str(info_id))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", info_id, exc)
+
     def add(self, rec: InformationRecord) -> int:
         keywords = _serialize_keywords(rec.keywords)
         cur = self.conn.execute(
@@ -133,17 +146,7 @@ class InformationDB(EmbeddableDBMixin):
         )
         self.conn.commit()
         rec.info_id = int(cur.lastrowid)
-        try:
-            self.add_embedding(
-                rec.info_id,
-                rec,
-                "info",
-                source_id=str(rec.info_id),
-            )
-        except Exception as exc:  # pragma: no cover - best effort
-            logging.getLogger(__name__).exception(
-                "embedding hook failed for %s: %s", rec.info_id, exc
-            )
+        self._embed_record_on_write(rec.info_id, rec)
         return rec.info_id
 
     def update(self, info_id: int, **fields: Any) -> None:
@@ -157,17 +160,7 @@ class InformationDB(EmbeddableDBMixin):
             "SELECT * FROM information WHERE info_id=?", (info_id,)
         ).fetchone()
         if row:
-            try:
-                self.add_embedding(
-                    info_id,
-                    dict(row),
-                    "info",
-                    source_id=str(info_id),
-                )
-            except Exception as exc:  # pragma: no cover - best effort
-                logging.getLogger(__name__).exception(
-                    "embedding hook failed for %s: %s", info_id, exc
-                )
+            self._embed_record_on_write(info_id, dict(row))
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
         """Delegate to :class:`EmbeddableDBMixin` for compatibility."""

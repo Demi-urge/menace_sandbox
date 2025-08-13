@@ -230,6 +230,14 @@ class BotDB(EmbeddableDBMixin):
             self.failed_menace = still_pending
 
 
+    def _embed_record_on_write(self, bot_id: int, rec: BotRecord | dict[str, Any]) -> None:
+        """Best-effort embedding hook for inserts and updates."""
+
+        try:
+            self.add_embedding(bot_id, rec, "bot", source_id=str(bot_id))
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.exception("embedding hook failed for %s: %s", bot_id, exc)
+
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
     def add_bot(
         self,
@@ -268,10 +276,7 @@ class BotDB(EmbeddableDBMixin):
         )
         rec.bid = int(cur.lastrowid)
         self.conn.commit()
-        try:
-            self.add_embedding(rec.bid, rec, "bot", source_id=str(rec.bid))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding insert failed for %s: %s", rec.bid, exc)
+        self._embed_record_on_write(rec.bid, rec)
         if self.menace_db:
             try:
                 self._insert_menace(rec, models or [], workflows or [], enhancements or [])
@@ -309,14 +314,11 @@ class BotDB(EmbeddableDBMixin):
         params = list(fields.values()) + [bot_id]
         self.conn.execute(f"UPDATE bots SET {sets} WHERE id=?", params)
         self.conn.commit()
-        try:
-            row = self.conn.execute(
-                "SELECT * FROM bots WHERE id=?", (bot_id,)
-            ).fetchone()
-            if row:
-                self.add_embedding(bot_id, dict(row), "bot", source_id=str(bot_id))
-        except Exception as exc:  # pragma: no cover - best effort
-            logger.exception("embedding update failed for %s: %s", bot_id, exc)
+        row = self.conn.execute(
+            "SELECT * FROM bots WHERE id=?", (bot_id,)
+        ).fetchone()
+        if row:
+            self._embed_record_on_write(bot_id, dict(row))
         if self.event_bus:
             payload = {"bot_id": bot_id, **fields}
             if not publish_with_retry(self.event_bus, "bot:update", payload):
