@@ -396,7 +396,14 @@ class ErrorDB(EmbeddableDBMixin):
         return err_id
 
     def backfill_embeddings(self, batch_size: int = 100) -> None:
-        """Generate embeddings for errors missing vectors."""
+        """Generate embeddings for records missing vectors.
+
+        This processes both the ``errors`` and ``telemetry`` tables so that any
+        historical data created before embedding support was added can be
+        queried via :meth:`search_by_vector`.
+        """
+
+        # Backfill error records
         while True:
             rows = self.conn.execute(
                 "SELECT id, message FROM errors WHERE id NOT IN (SELECT record_id FROM embeddings) LIMIT ?",
@@ -416,6 +423,34 @@ class ErrorDB(EmbeddableDBMixin):
                     )
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("embedding store failed for %s", row["id"])
+
+        # Backfill telemetry records
+        while True:
+            rows = self.conn.execute(
+                """
+                SELECT id, cause, stack_trace, task_id, bot_id
+                FROM telemetry
+                WHERE id NOT IN (SELECT record_id FROM embeddings)
+                LIMIT ?
+                """,
+                (batch_size,),
+            ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                text = f"{row['cause']} {row['stack_trace']}".strip()
+                emb = self._embed(text)
+                if not emb:
+                    continue
+                src = row["task_id"] or row["bot_id"] or ""
+                try:
+                    self.add_embedding(
+                        row["id"],
+                        emb,
+                        metadata={"kind": "telemetry", "source_id": src},
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("embedding store failed for telemetry %s", row["id"])
 
     def link_model(self, err_id: int, model_id: int) -> None:
         self.conn.execute(
