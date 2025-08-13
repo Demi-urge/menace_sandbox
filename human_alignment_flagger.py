@@ -22,12 +22,13 @@ import difflib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import re
 
 from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
 from reward_sanity_checker import check_risk_reward_alignment
+from sandbox_settings import SandboxSettings
 
 
 def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
@@ -79,6 +80,11 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
 
 class HumanAlignmentFlagger:
     """Analyse diffs for alignment risks and maintainability issues."""
+
+    def __init__(self, settings: Optional[SandboxSettings] = None) -> None:
+        self.settings = settings
+        rules = getattr(settings, "alignment_rules", None) if settings else None
+        self.max_complexity = getattr(rules, "max_complexity_score", 10)
 
     def flag_patch(self, diff: str, context: Dict[str, Any]) -> Dict[str, Any]:
         """Return a structured report for *diff* with optional *context*.
@@ -181,10 +187,14 @@ class HumanAlignmentFlagger:
         }
 
 
-def flag_alignment_risks(patch: str, metadata: Dict[str, Any]) -> List[str]:
+def flag_alignment_risks(
+    patch: str,
+    metadata: Dict[str, Any],
+    settings: Optional[SandboxSettings] = None,
+) -> List[str]:
     """Backward compatibility wrapper returning only warning messages."""
 
-    flagger = HumanAlignmentFlagger()
+    flagger = HumanAlignmentFlagger(settings)
     report = flagger.flag_patch(patch, metadata)
     return [item["message"] for item in report.get("issues", [])]
 
@@ -193,6 +203,7 @@ def flag_improvement(
     workflow_changes: List[Dict[str, Any]] | None,
     metrics: Dict[str, Any] | None,
     logs: List[Dict[str, Any]] | None,
+    settings: Optional[SandboxSettings] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Analyse prospective workflow improvements and return warnings.
 
@@ -219,6 +230,9 @@ def flag_improvement(
         "risk_reward": [],
         "maintainability": [],
     }
+
+    rules = getattr(settings, "alignment_rules", None) if settings else None
+    max_complexity = getattr(rules, "max_complexity_score", 10)
 
     # Ethics checks -------------------------------------------------------
     for entry in logs or []:
@@ -427,7 +441,7 @@ def flag_improvement(
                 for node in tree.body:
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                         score = _compute_complexity(node)
-                        if score > 10:
+                        if score > max_complexity:
                             complex_functions.append({"name": node.name, "score": score})
                         if not _has_type_hints(node):
                             missing_hints.append(node.name)
@@ -496,7 +510,10 @@ def flag_improvement(
 
     return warnings
 
-def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Dict[str, str]]:
+def flag_alignment_issues(
+    diff_data: Dict[str, Dict[str, List[str]]],
+    settings: Optional[SandboxSettings] = None,
+) -> List[Dict[str, str]]:
     """Return a list of alignment findings for given *diff_data*.
 
     Parameters
@@ -509,6 +526,8 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
     findings: List[Dict[str, str]] = []
     risky_tokens = ("eval(", "exec(")
     complexity_tokens = ("if", "for", "while", "and", "or", "try", "except", "elif")
+    rules = getattr(settings, "alignment_rules", None) if settings else None
+    max_complexity = getattr(rules, "max_complexity_score", 10)
     fs_mutation_calls = (
         "os.remove(",
         "os.unlink(",
@@ -588,7 +607,7 @@ def flag_alignment_issues(diff_data: Dict[str, Dict[str, List[str]]]) -> List[Di
 
         # Cyclomatic complexity heuristic
         complexity = sum(line.count(tok) for line in added_lines for tok in complexity_tokens)
-        if complexity > 10:
+        if complexity > max_complexity:
             findings.append({
                 "category": "high_complexity",
                 "location": path,
