@@ -1,9 +1,12 @@
 """Application configuration loader.
 
 Loads base settings from ``config/settings.yaml`` and overlays profile-specific
-values from ``config/<mode>.yaml``. The active mode is resolved from the
-``--mode`` command-line argument or the ``IGI_MODE`` environment variable (which
-defaults to ``dev``).
+values from ``config/<mode>.yaml``. Environment variables defined in a ``.env``
+file are loaded beforehand so they can override values from those files. When a
+``VaultSecretProvider`` is available, any secrets it supplies take precedence
+over both environment variables and YAML/JSON configuration.
+
+Precedence: ``Vault`` > ``Environment variables`` > ``YAML/JSON``.
 
 The configuration schema is validated using Pydantic models to provide helpful
 error messages for missing or invalid fields.
@@ -16,6 +19,16 @@ import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING
+
+try:  # pragma: no cover - optional dependencies
+    from .unified_config_store import UnifiedConfigStore
+except Exception:  # pragma: no cover - fallback when module missing
+    UnifiedConfigStore = None  # type: ignore[misc,assignment]
+
+try:  # pragma: no cover - optional dependency
+    from .vault_secret_provider import VaultSecretProvider
+except Exception:  # pragma: no cover - fallback when module missing
+    VaultSecretProvider = None  # type: ignore[misc,assignment]
 
 import yaml
 from pydantic import (
@@ -207,6 +220,12 @@ def load_config(
         Mapping of configuration values to override using dotted keys.
     """
 
+    if UnifiedConfigStore is not None:  # load .env before reading files
+        try:
+            UnifiedConfigStore().load()
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("failed loading .env file")
+
     active_mode = mode or os.getenv("IGI_MODE", "dev")
 
     data = _load_yaml(DEFAULT_SETTINGS_FILE)
@@ -221,6 +240,35 @@ def load_config(
 
     if config_file:
         data = _merge_dict(data, _load_yaml(Path(config_file)))
+
+    # Environment variable overrides
+    env_overrides: Dict[str, Any] = {}
+    openai_env = os.getenv("OPENAI_API_KEY")
+    serp_env = os.getenv("SERP_API_KEY")
+    if openai_env or serp_env:
+        env_overrides["api_keys"] = {}
+        if openai_env:
+            env_overrides["api_keys"]["openai"] = openai_env
+        if serp_env:
+            env_overrides["api_keys"]["serp"] = serp_env
+        data = _merge_dict(data, env_overrides)
+
+    # Vault overrides have highest precedence
+    if VaultSecretProvider is not None:
+        try:
+            provider = VaultSecretProvider()
+            vault_overrides: Dict[str, Any] = {}
+            openai_vault = provider.get("OPENAI_API_KEY")
+            serp_vault = provider.get("SERP_API_KEY")
+            if openai_vault or serp_vault:
+                vault_overrides["api_keys"] = {}
+                if openai_vault:
+                    vault_overrides["api_keys"]["openai"] = openai_vault
+                if serp_vault:
+                    vault_overrides["api_keys"]["serp"] = serp_vault
+                data = _merge_dict(data, vault_overrides)
+        except Exception:  # pragma: no cover - best effort only
+            logger.exception("failed fetching secrets from vault")
 
     cfg = Config.model_validate(data)
     if overrides:

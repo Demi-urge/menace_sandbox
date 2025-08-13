@@ -525,6 +525,11 @@ configuration. The file contains keys defined in ``env_config.py`` such as
 Set ``MENACE_ENV_FILE`` to load variables from a different path or call
 ``auto_env_setup.ensure_env("custom.env")`` to generate it elsewhere.
 
+When resolving settings, the loader reads YAML/JSON files first. Variables from
+``.env`` or the process environment override these defaults, and any secrets
+available via ``VaultSecretProvider`` take precedence over both. In short,
+``vault`` > ``env vars`` > ``YAML/JSON``.
+
 ### Environment variables
 
 The deployment helpers use the following variables:
