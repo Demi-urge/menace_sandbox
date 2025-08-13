@@ -151,11 +151,7 @@ class EmbeddableDBMixin:
     ) -> None:
         """Store ``vector`` for ``record_id`` and add it to the search index."""
 
-        metadata = metadata or {}
-        created_at = metadata.get("created_at", datetime.utcnow().isoformat())
-        kind = metadata.get("kind", "")
-        source_id = metadata.get("source_id", "")
-        version = metadata.get("embedding_version", self.embedding_version)
+        created_at, version, kind, source_id = self._prepare_metadata(metadata)
         vec_json = json.dumps(list(vector))
         self.conn.execute(
             """
@@ -189,6 +185,67 @@ class EmbeddableDBMixin:
                 self._id_map.append(rid)
             self._vector_index.build(10)
             self._save_index()
+
+    def _prepare_metadata(
+        self, metadata: dict[str, Any] | None
+    ) -> tuple[str, int, str, str]:
+        """Normalise metadata for embedding storage.
+
+        Parameters
+        ----------
+        metadata:
+            Optional dictionary containing metadata fields.  Missing values are
+            populated with sensible defaults so callers do not need to
+            explicitly provide every field.
+
+        Returns
+        -------
+        tuple
+            ``(created_at, embedding_version, kind, source_id)``
+        """
+
+        meta = metadata or {}
+        created_at = meta.get("created_at", datetime.utcnow().isoformat())
+        version = meta.get("embedding_version", self.embedding_version)
+        kind = meta.get("kind", "")
+        source_id = meta.get("source_id", "")
+        return created_at, int(version), str(kind), str(source_id)
+
+    # ------------------------------------------------------------------
+    # metadata helpers
+    def update_embedding_version(
+        self, record_id: Any, *, embedding_version: int | None = None
+    ) -> None:
+        """Update ``embedding_version`` for an existing embedding.
+
+        Parameters
+        ----------
+        record_id:
+            Identifier of the record whose embedding metadata should be
+            updated.
+        embedding_version:
+            New embedding version.  Defaults to ``self.embedding_version``.
+        """
+
+        version = embedding_version if embedding_version is not None else self.embedding_version
+        self.conn.execute(
+            "UPDATE embeddings SET embedding_version=?, created_at=? WHERE record_id=?",
+            (int(version), datetime.utcnow().isoformat(), str(record_id)),
+        )
+        self.conn.commit()
+
+    def update_embedding_versions(
+        self, record_ids: Sequence[Any], *, embedding_version: int | None = None
+    ) -> None:
+        """Bulk update ``embedding_version`` for multiple embeddings."""
+
+        version = embedding_version if embedding_version is not None else self.embedding_version
+        now = datetime.utcnow().isoformat()
+        self.conn.executemany(
+            "UPDATE embeddings SET embedding_version=?, created_at=? WHERE record_id=?",
+            [(int(version), now, str(rid)) for rid in record_ids],
+        )
+        self.conn.commit()
 
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 5

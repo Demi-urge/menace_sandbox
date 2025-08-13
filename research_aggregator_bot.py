@@ -314,7 +314,11 @@ class InfoDB(EmbeddableDBMixin):
             conn.commit()
         if embedding is not None:
             try:
-                self.add_embedding(item.item_id, embedding, metadata={"kind": "info"})
+                self.add_embedding(
+                    item.item_id,
+                    embedding,
+                    metadata={"kind": "info", "source_id": item.item_id},
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", item.item_id)
 
@@ -374,7 +378,11 @@ class InfoDB(EmbeddableDBMixin):
                 )
                 conn.commit()
             try:
-                self.add_embedding(info_id, emb, metadata={"kind": "info"})
+                self.add_embedding(
+                    info_id,
+                    emb,
+                    metadata={"kind": "info", "source_id": info_id},
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", info_id)
 

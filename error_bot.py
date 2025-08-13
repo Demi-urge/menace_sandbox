@@ -358,7 +358,11 @@ class ErrorDB(EmbeddableDBMixin):
         if found is not None:
             emb = self._embed(message)
             if emb:
-                self.add_embedding(found, emb, metadata={"kind": "error"})
+                self.add_embedding(
+                    found,
+                    emb,
+                    metadata={"kind": "error", "source_id": found},
+                )
             return found
         cur = self.conn.execute(
             "INSERT INTO errors(message, type, description, resolution, ts) VALUES (?,?,?,?,?)",
@@ -374,7 +378,11 @@ class ErrorDB(EmbeddableDBMixin):
         err_id = int(cur.lastrowid)
         emb = self._embed(message)
         if emb:
-            self.add_embedding(err_id, emb, metadata={"kind": "error"})
+            self.add_embedding(
+                err_id,
+                emb,
+                metadata={"kind": "error", "source_id": err_id},
+            )
         self._publish(
             "errors:new",
             {
@@ -475,7 +483,14 @@ class ErrorDB(EmbeddableDBMixin):
         emb_text = f"{event.root_cause} {event.stack_trace}".strip()
         emb = self._embed(emb_text)
         if emb:
-            self.add_embedding(int(cur.lastrowid), emb, metadata={"kind": "telemetry"})
+            self.add_embedding(
+                int(cur.lastrowid),
+                emb,
+                metadata={
+                    "kind": "telemetry",
+                    "source_id": event.task_id or event.bot_id or "",
+                },
+            )
         if self.graph:
             try:  # pragma: no cover - best effort
                 self.graph.save(self.graph.path)

@@ -176,7 +176,11 @@ class WorkflowDB(EmbeddableDBMixin):
             emb = self._embed(self._embed_text(rec))
             if emb is not None:
                 try:
-                    self.add_embedding(workflow_id, emb, metadata={"kind": "workflow"})
+                    self.add_embedding(
+                        workflow_id,
+                        emb,
+                        metadata={"kind": "workflow", "source_id": workflow_id},
+                    )
                 except Exception:  # pragma: no cover - best effort
                     logger.exception("embedding store failed for %s", workflow_id)
 
@@ -199,7 +203,11 @@ class WorkflowDB(EmbeddableDBMixin):
                 emb = self._embed(self._embed_text(rec))
                 if emb is not None:
                     try:
-                        self.add_embedding(wid, emb, metadata={"kind": "workflow"})
+                        self.add_embedding(
+                            wid,
+                            emb,
+                            metadata={"kind": "workflow", "source_id": wid},
+                        )
                     except Exception:  # pragma: no cover - best effort
                         logger.exception("embedding store failed for %s", wid)
         if self.event_bus:
@@ -250,7 +258,11 @@ class WorkflowDB(EmbeddableDBMixin):
         emb = self._embed(self._embed_text(wf))
         if emb is not None:
             try:
-                self.add_embedding(wf.wid, emb, metadata={"kind": "workflow"})
+                self.add_embedding(
+                    wf.wid,
+                    emb,
+                    metadata={"kind": "workflow", "source_id": wf.wid},
+                )
             except Exception:  # pragma: no cover - best effort
                 logger.exception("embedding store failed for %s", wf.wid)
 
