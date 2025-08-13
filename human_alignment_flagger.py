@@ -8,6 +8,7 @@ raises an exception and only relies on lightweight heuristics.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import json
 import sys
@@ -313,18 +314,83 @@ def flag_improvement(
             stripped = code.lstrip()
             if not (stripped.startswith('"""') or stripped.startswith("'''")):
                 warnings["maintainability"].append({"file": file_path, "issue": "missing docstring"})
-            complexity = sum(
-                code.count(token)
-                for token in (" if ", " for ", " while ", " and ", " or ", " except ", " elif ")
-            )
-            if complexity > 10:
-                warnings["maintainability"].append(
-                    {
-                        "file": file_path,
-                        "issue": "high cyclomatic complexity",
-                        "score": complexity,
-                    }
-                )
+
+            try:
+                tree = ast.parse(code)
+            except SyntaxError:
+                tree = None
+
+            if tree is not None:
+                def _compute_complexity(func: ast.AST) -> int:
+                    complexity = 1
+                    for node in ast.walk(func):
+                        if isinstance(
+                            node,
+                            (
+                                ast.If,
+                                ast.For,
+                                ast.AsyncFor,
+                                ast.While,
+                                ast.With,
+                                ast.AsyncWith,
+                                ast.IfExp,
+                                ast.ListComp,
+                                ast.DictComp,
+                                ast.SetComp,
+                                ast.GeneratorExp,
+                            ),
+                        ):
+                            complexity += 1
+                        elif isinstance(node, ast.BoolOp):
+                            complexity += len(getattr(node, "values", [])) - 1
+                        elif isinstance(node, ast.Try):
+                            complexity += len(node.handlers)
+                            if node.orelse:
+                                complexity += 1
+                            if node.finalbody:
+                                complexity += 1
+                    return complexity
+
+                def _has_type_hints(func: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+                    args = (
+                        list(func.args.args)
+                        + list(getattr(func.args, "posonlyargs", []))
+                        + list(func.args.kwonlyargs)
+                    )
+                    if func.args.vararg:
+                        args.append(func.args.vararg)
+                    if func.args.kwarg:
+                        args.append(func.args.kwarg)
+                    if any(a.annotation is None for a in args):
+                        return False
+                    return func.returns is not None
+
+                complex_functions = []
+                missing_hints = []
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        score = _compute_complexity(node)
+                        if score > 10:
+                            complex_functions.append({"name": node.name, "score": score})
+                        if not _has_type_hints(node):
+                            missing_hints.append(node.name)
+
+                if complex_functions:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "high cyclomatic complexity",
+                            "functions": complex_functions,
+                        }
+                    )
+                if missing_hints:
+                    warnings["maintainability"].append(
+                        {
+                            "file": file_path,
+                            "issue": "missing type hints",
+                            "functions": missing_hints,
+                        }
+                    )
 
     if not has_tests:
         warnings["maintainability"].append({"issue": "no tests provided"})
