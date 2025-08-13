@@ -10,7 +10,13 @@ except Exception:  # pragma: no cover - fallback for pydantic<2
     from pydantic import BaseSettings  # type: ignore
     PYDANTIC_V2 = False
     SettingsConfigDict = dict  # type: ignore[misc]
-from pydantic import Field
+from pydantic import BaseModel, Field
+
+
+class AlignmentRules(BaseModel):
+    """Thresholds for human-alignment checks."""
+
+    max_complexity_score: int = 10
 
 
 class SandboxSettings(BaseSettings):
@@ -123,6 +129,11 @@ class SandboxSettings(BaseSettings):
         description="Raise an error when canonical scenarios are missing coverage.",
     )
 
+    alignment_rules: AlignmentRules = Field(
+        default_factory=AlignmentRules,
+        description="Thresholds for human-alignment checks used by flaggers.",
+    )
+
     enable_alignment_flagger: bool = Field(
         True,
         env="ENABLE_ALIGNMENT_FLAGGER",
@@ -190,4 +201,4 @@ class SandboxSettings(BaseSettings):
             extra = "ignore"
 
 
-__all__ = ["SandboxSettings"]
+__all__ = ["SandboxSettings", "AlignmentRules"]

@@ -1,5 +1,6 @@
 import menace.human_alignment_flagger as haf
 import pytest
+from sandbox_settings import AlignmentRules, SandboxSettings
 
 
 @pytest.fixture
@@ -367,3 +368,11 @@ def test_flag_alignment_issues_comment_removed(comment_removal_diff):
 def test_flag_alignment_issues_linter_suppression(linter_suppression_diff):
     findings = haf.flag_alignment_issues(linter_suppression_diff)
     assert any(f.get("category") == "linter_suppression" for f in findings)
+
+
+def test_custom_complexity_threshold_suppresses_warning(high_complexity_diff):
+    settings = SandboxSettings(
+        alignment_rules=AlignmentRules(max_complexity_score=50)
+    )
+    findings = haf.flag_alignment_issues(high_complexity_diff, settings=settings)
+    assert not any(f.get("category") == "high_complexity" for f in findings)
