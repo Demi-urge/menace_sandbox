@@ -67,11 +67,11 @@ bot:
 
     # wait until reload event is observed
     for _ in range(50):
-        if any(topic == "config:reload" for topic, _ in bus.events):
+        if any(topic == "config.reload" for topic, _ in bus.events):
             break
         time.sleep(0.1)
 
-    assert any(topic == "config:reload" for topic, _ in bus.events)
+    assert any(topic == "config.reload" for topic, _ in bus.events)
 
     # cleanup watcher
     if config._WATCHER is not None:

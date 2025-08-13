@@ -86,7 +86,7 @@ def test_event_bus_broadcast_on_reload(config_env):
     config.reload()
     assert bus.events
     topic, payload = bus.events[-1]
-    assert topic == "config:reload"
+    assert topic == "config.reload"
     assert payload["diff"]["thresholds"]["alert"] == 0.8
     config.set_event_bus(None)
 
