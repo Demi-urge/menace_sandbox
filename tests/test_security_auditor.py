@@ -1,18 +1,67 @@
-import logging
-import subprocess
-import menace.security_auditor as sa
+"""Tests for :mod:`security_auditor` utilities."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+from typing import Any, Mapping
+
+# Ensure the package root is importable when tests are executed from the
+# repository directory.
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
+import menace_sandbox.security_auditor as security_auditor
+import menace_sandbox.alignment_review_agent as alignment_review_agent
+from menace_sandbox.alignment_review_agent import AlignmentReviewAgent
 
 
-def test_audit_disabled(monkeypatch, caplog):
-    calls = []
+def test_dispatch_alignment_warning_uses_audit(monkeypatch):
+    """Ensure dispatch function forwards records to the auditor."""
 
-    def fake_run(cmd, capture_output=True, text=True, check=False):
-        calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0)
+    recorded: list[Mapping[str, Any]] = []
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    caplog.set_level(logging.INFO)
-    audit = sa.SecurityAuditor()
-    assert audit.audit()
-    assert not calls
-    assert "disabled" in caplog.text
+    class DummyAuditor:
+        def audit(self, report: Mapping[str, Any]) -> bool:  # pragma: no cover - simple
+            recorded.append(report)
+            return True
+
+    dummy = DummyAuditor()
+    monkeypatch.setattr(security_auditor, "_AUDITOR", dummy)
+
+    report = {"entry_id": "123"}
+    security_auditor.dispatch_alignment_warning(report)
+
+    assert recorded == [report]
+
+
+def test_alignment_review_agent_invokes_auditor(monkeypatch):
+    """The review agent should audit each newly seen warning."""
+
+    calls: list[Mapping[str, Any]] = []
+
+    class DummyAuditor:
+        def audit(self, report: Mapping[str, Any]) -> bool:  # pragma: no cover - simple
+            calls.append(report)
+            return True
+
+    auditor = DummyAuditor()
+
+    warn1 = {"entry_id": "1"}
+    warn2 = {"entry_id": "2"}
+    warn3 = {"entry_id": "3"}
+    sequence = [[warn1, warn2], [warn1, warn2, warn3]]
+
+    def fake_load() -> list[Mapping[str, Any]]:
+        data = sequence.pop(0)
+        if not sequence:
+            agent._stop.set()
+        return data
+
+    agent = AlignmentReviewAgent(interval=0, auditor=auditor)
+    monkeypatch.setattr(alignment_review_agent, "load_recent_alignment_warnings", fake_load)
+
+    agent._run()  # run the loop once per sequence entry
+
+    assert calls == [warn1, warn2, warn3]
+
+
