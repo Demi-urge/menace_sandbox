@@ -57,6 +57,7 @@
   and rotates the comma separated names from `ROTATE_SECRET_NAMES` at the
   interval defined by `SECRET_ROTATION_INTERVAL`
 - Automated review of flagged bots via `AutomatedReviewer`
+- Human alignment flagger with background review agent ([docs/human_alignment_flagger.md](docs/human_alignment_flagger.md))
 - Self-provisioning of missing packages through `SystemProvisioner`
 - Distributed rollback verification via `RollbackValidator`
 - ROI-driven autoscaling with `ROIScalingPolicy`
@@ -753,7 +754,10 @@ docstrings, rising complexity, unsafe patterns and ethics violations.  Any
 issues are printed as warnings and recorded as ``alignment_flag`` events in
 ``logs/audit_log.jsonl`` (mirrored to ``logs/audit_log.db``).  Reviewers consult
 these logs and either amend the patch or approve it when the warnings are
-acceptable.
+acceptable.  A background ``AlignmentReviewAgent`` forwards new warnings to the
+``SecurityAuditor`` so Security AI can triage them.  See
+[docs/human_alignment_flagger.md](docs/human_alignment_flagger.md) for
+configuration details.
 
 Example output::
 
