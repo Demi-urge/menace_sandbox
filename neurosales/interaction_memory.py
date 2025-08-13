@@ -16,6 +16,16 @@ class InteractionRecord:
     tags: List[str] = field(default_factory=list)
 
 
+@dataclass
+class CTAEvent:
+    """Metadata for a single Call-To-Action outcome."""
+
+    message: str
+    escalation_level: int = 0
+    success: bool = False
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class InteractionMemory:
     """Bounded queue storing recent interaction records.
 
@@ -26,6 +36,7 @@ class InteractionMemory:
         if not 3 <= maxlen <= 6:
             raise ValueError("maxlen must be between 3 and 6")
         self._records: Deque[InteractionRecord] = deque(maxlen=maxlen)
+        self._cta_stack: List[CTAEvent] = []
 
     def append_message(
         self,
@@ -43,6 +54,35 @@ class InteractionMemory:
             tags=list(tags) if tags is not None else [],
         )
         self._records.append(record)
+
+    def push_event(
+        self,
+        message: str,
+        escalation_level: int = 0,
+        success: bool = False,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Push a CTA event onto the internal stack."""
+
+        event = CTAEvent(
+            message=message,
+            escalation_level=escalation_level,
+            success=success,
+            timestamp=timestamp if timestamp is not None else datetime.now(timezone.utc),
+        )
+        self._cta_stack.append(event)
+
+    def pop_chain(self) -> List[CTAEvent]:
+        """Pop and return the current CTA chain."""
+
+        chain = self._cta_stack
+        self._cta_stack = []
+        return chain
+
+    def current_chain(self) -> List[CTAEvent]:
+        """Return a copy of the active CTA chain."""
+
+        return list(self._cta_stack)
 
     def recent_messages(
         self,
@@ -95,9 +135,41 @@ def recent_messages(
     )
 
 
+def push_event(
+    message: str,
+    escalation_level: int = 0,
+    success: bool = False,
+    timestamp: datetime | None = None,
+) -> None:
+    """Push a CTA event onto the default interaction memory stack."""
+
+    _default_memory.push_event(
+        message=message,
+        escalation_level=escalation_level,
+        success=success,
+        timestamp=timestamp,
+    )
+
+
+def pop_chain() -> List[CTAEvent]:
+    """Pop the current CTA chain from the default interaction memory."""
+
+    return _default_memory.pop_chain()
+
+
+def current_chain() -> List[CTAEvent]:
+    """Return the active CTA chain from the default interaction memory."""
+
+    return _default_memory.current_chain()
+
+
 __all__ = [
     "InteractionRecord",
     "InteractionMemory",
     "append_message",
     "recent_messages",
+    "CTAEvent",
+    "push_event",
+    "pop_chain",
+    "current_chain",
 ]
