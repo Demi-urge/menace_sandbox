@@ -9,12 +9,13 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from . import RAISE_ERRORS
+from .embeddable_db_mixin import EmbeddableDBMixin
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -41,6 +42,8 @@ class Enhancement:
     summary: str = ""
     score: float = 0.0
     context: str = ""
+    before_code: str = ""
+    after_code: str = ""
     timestamp: str = datetime.utcnow().isoformat()
     title: str = ""
     description: str = ""
@@ -69,28 +72,32 @@ class EnhancementHistory:
     ts: str = datetime.utcnow().isoformat()
 
 
-class EnhancementDB:
-    """SQLite storage for enhancement logs."""
+class EnhancementDB(EmbeddableDBMixin):
+    """SQLite storage for enhancement logs with vector embeddings."""
 
     def __init__(
         self,
         path: Optional[Path] = None,
         override_manager: Optional[OverridePolicyManager] = None,
+        *,
+        vector_backend: str = "annoy",
+        vector_index_path: Path | str = "enhancement_embeddings.index",
+        embedding_version: int = 1,
     ) -> None:
         self.path = Path(path) if path else DB_PATH
         self.override_manager = override_manager
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
         self._init()
+        EmbeddableDBMixin.__init__(
+            self,
+            vector_backend=vector_backend,
+            index_path=vector_index_path,
+            embedding_version=embedding_version,
+        )
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open a SQLite connection with basic error handling."""
-        try:
-            conn = sqlite3.connect(self.path)
-            return conn
-        except sqlite3.Error as exc:
-            logger.exception("failed to open database %s: %s", self.path, exc)
-            if RAISE_ERRORS:
-                raise
-            raise RuntimeError("database unavailable") from exc
+    def _connect(self) -> sqlite3.Connection:  # pragma: no cover - simple wrapper
+        return self.conn
 
     def _init(self) -> None:
         try:
@@ -225,12 +232,69 @@ class EnhancementDB:
                     ),
                 )
                 conn.commit()
-                return int(cur.lastrowid)
+                enh_id = int(cur.lastrowid)
         except sqlite3.Error as exc:
             logger.exception("failed to add enhancement: %s", exc)
             if RAISE_ERRORS:
                 raise
             return -1
+        text = self._embed_text(enh)
+        emb = self._embed(text)
+        if emb is not None:
+            try:
+                self.add_embedding(enh_id, emb, metadata={"kind": "enhancement"})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("embedding store failed for %s", enh_id)
+        return enh_id
+
+    def update(self, enhancement_id: int, enh: Enhancement) -> None:
+        tags = ",".join(enh.tags)
+        assigned = ",".join(enh.assigned_bots)
+        assoc = ",".join(enh.associated_bots)
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE enhancements SET
+                        idea=?, rationale=?, summary=?, score=?, timestamp=?, context=?,
+                        title=?, description=?, tags=?, type=?, assigned_bots=?,
+                        rejection_reason=?, cost_estimate=?, category=?, associated_bots=?,
+                        triggered_by=?
+                    WHERE id=?
+                    """,
+                    (
+                        enh.idea,
+                        enh.rationale,
+                        enh.summary,
+                        enh.score,
+                        enh.timestamp,
+                        enh.context,
+                        enh.title,
+                        enh.description,
+                        tags,
+                        enh.type_,
+                        assigned,
+                        enh.rejection_reason,
+                        enh.cost_estimate,
+                        enh.category,
+                        assoc,
+                        enh.triggered_by,
+                        enhancement_id,
+                    ),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            logger.exception("failed to update enhancement: %s", exc)
+            if RAISE_ERRORS:
+                raise
+            return
+        text = self._embed_text(enh)
+        emb = self._embed(text)
+        if emb is not None:
+            try:
+                self.add_embedding(enhancement_id, emb, metadata={"kind": "enhancement"})
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("embedding store failed for %s", enhancement_id)
 
     def link_model(self, enhancement_id: int, model_id: int) -> None:
         try:
@@ -366,6 +430,62 @@ class EnhancementDB:
             if RAISE_ERRORS:
                 raise
             return []
+
+    # --------------------------------------------------------------
+    # embedding/search helpers
+    def _embed_text(self, enh: Enhancement) -> str:
+        parts = [enh.before_code, enh.after_code, enh.summary]
+        return "\n".join(p for p in parts if p)
+
+    def _embed(self, text: str) -> list[float] | None:
+        if not hasattr(self, "_embedder"):
+            try:  # pragma: no cover - optional dependency
+                from sentence_transformers import SentenceTransformer  # type: ignore
+            except Exception:
+                self._embedder = None
+            else:
+                self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        if getattr(self, "_embedder", None):
+            try:  # pragma: no cover - runtime issues
+                return self._embedder.encode([text])[0].tolist()
+            except Exception:
+                return None
+        return None
+
+    def search_by_vector(self, vector: Iterable[float], top_k: int = 5) -> List[Enhancement]:
+        matches = EmbeddableDBMixin.search_by_vector(self, vector, top_k)
+        results: List[Enhancement] = []
+        for rec_id, dist in matches:
+            row = self.conn.execute(
+                "SELECT * FROM enhancements WHERE id=?",
+                (rec_id,),
+            ).fetchone()
+            if row:
+                enh = Enhancement(
+                    idea=row["idea"],
+                    rationale=row["rationale"],
+                    summary=row["summary"],
+                    score=row["score"],
+                    timestamp=row["timestamp"],
+                    context=row["context"],
+                    title=row["title"] or "",
+                    description=row["description"] or "",
+                    tags=row["tags"].split(",") if row["tags"] else [],
+                    type_=row["type"] or "",
+                    assigned_bots=row["assigned_bots"].split(",") if row["assigned_bots"] else [],
+                    rejection_reason=row["rejection_reason"] or "",
+                    cost_estimate=row["cost_estimate"] or 0.0,
+                    category=row["category"] or "",
+                    associated_bots=row["associated_bots"].split(",") if row["associated_bots"] else [],
+                    triggered_by=row["triggered_by"] or "",
+                    model_ids=self.models_for(rec_id),
+                    bot_ids=self.bots_for(rec_id),
+                    workflow_ids=self.workflows_for(rec_id),
+                )
+                setattr(enh, "id", rec_id)
+                setattr(enh, "_distance", dist)
+                results.append(enh)
+        return results
 
     def add_prompt_history(
         self, fingerprint: str, prompt: str, fix: str = "", success: bool = False
