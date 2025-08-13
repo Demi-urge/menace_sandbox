@@ -89,6 +89,7 @@ logger = get_logger(__name__)
 
 BACKUP_COUNT = 3
 ADAPTIVE_ROI_TRAIN_INTERVAL = 3600  # seconds between scheduled retraining
+ALIGNMENT_REVIEW_THRESHOLD = 5
 
 
 # Default synergy weight values used when no valid file is available
@@ -1160,6 +1161,19 @@ class SelfImprovementEngine:
                 "score": score,
                 "report": report,
             }
+            escalated = False
+            if score >= ALIGNMENT_REVIEW_THRESHOLD:
+                escalated = True
+                try:
+                    dispatch_alert(
+                        "alignment_review",
+                        5,
+                        "alignment score exceeded threshold",
+                        {"patch_id": patch_id, "score": score},
+                    )
+                except Exception:
+                    self.logger.exception("alignment review dispatch failed")
+            record["escalated"] = escalated
             try:
                 security_auditor.dispatch_alignment_warning(record)
             except Exception:
