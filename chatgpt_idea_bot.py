@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Iterable, Optional
+from typing import List, Dict, Iterable, Optional, Any
 from pathlib import Path
 
 OPENAI_CHAT_URL = os.environ.get(
@@ -73,15 +73,55 @@ class ChatGPTClient:
         timeout: int | None = None,
         max_retries: int | None = None,
         validate: bool = True,
+        knowledge: Any | None = None,
     ) -> Dict[str, object]:
+        memory = None
+        if knowledge is not None:
+            if hasattr(knowledge, "search_context") and hasattr(knowledge, "log_interaction"):
+                memory = knowledge
+            elif hasattr(knowledge, "GPTMemory"):
+                try:
+                    memory = knowledge.GPTMemory()
+                except Exception:
+                    memory = None
+        else:
+            try:
+                from .gpt_memory import GPTMemory  # type: ignore
+
+                memory = GPTMemory()
+            except Exception:
+                memory = None
+
+        user_prompt = messages[-1].get("content", "") if messages else ""
+        messages_for_api = messages
+        if memory and hasattr(memory, "search_context"):
+            try:
+                contexts = memory.search_context(user_prompt)
+                if contexts:
+                    ctx_parts = [
+                        f"Prompt: {c.get('prompt', '')}\nResponse: {c.get('response', '')}"
+                        for c in contexts
+                    ]
+                    context_text = "\n\n".join(ctx_parts)
+                    messages_for_api = [{"role": "system", "content": context_text}] + messages
+            except Exception:
+                logger.exception("context retrieval failed")
+
         if not self.session or requests is None:
             logger.error("HTTP session unavailable, using offline response")
-            return self._offline_response(messages)
+            result = self._offline_response(messages_for_api)
+            if memory and hasattr(memory, "log_interaction"):
+                try:
+                    text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    memory.log_interaction(user_prompt, text, [])
+                except Exception:
+                    logger.exception("failed to log interaction")
+            return result
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {"model": self.model, "messages": messages}
+        payload = {"model": self.model, "messages": messages_for_api}
 
         attempts = max_retries if max_retries is not None else self.max_retries
         t_out = timeout if timeout is not None else self.timeout
@@ -99,14 +139,28 @@ class ChatGPTClient:
                 if attempt >= attempts - 1:
                     if RAISE_ERRORS:
                         raise
-                    return self._offline_response(messages)
+                    result = self._offline_response(messages_for_api)
+                    if memory and hasattr(memory, "log_interaction"):
+                        try:
+                            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            memory.log_interaction(user_prompt, text, [])
+                        except Exception:
+                            logger.exception("failed to log interaction")
+                    return result
                 continue
             except requests.RequestException as exc:
                 logger.error("chat completion request error: %s", exc)
                 if attempt >= attempts - 1:
                     if RAISE_ERRORS:
                         raise
-                    return self._offline_response(messages)
+                    result = self._offline_response(messages_for_api)
+                    if memory and hasattr(memory, "log_interaction"):
+                        try:
+                            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            memory.log_interaction(user_prompt, text, [])
+                        except Exception:
+                            logger.exception("failed to log interaction")
+                    return result
                 continue
 
             if resp.status_code == 200:
@@ -117,19 +171,46 @@ class ChatGPTClient:
                     if attempt >= attempts - 1:
                         if RAISE_ERRORS:
                             raise
-                        return self._offline_response(messages)
+                        result = self._offline_response(messages_for_api)
+                        if memory and hasattr(memory, "log_interaction"):
+                            try:
+                                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                                memory.log_interaction(user_prompt, text, [])
+                            except Exception:
+                                logger.exception("failed to log interaction")
+                        return result
                     continue
                 if validate and not self._valid_schema(data):
                     logger.error("invalid response schema from API")
                     if attempt >= attempts - 1:
-                        return self._offline_response(messages)
+                        result = self._offline_response(messages_for_api)
+                        if memory and hasattr(memory, "log_interaction"):
+                            try:
+                                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                                memory.log_interaction(user_prompt, text, [])
+                            except Exception:
+                                logger.exception("failed to log interaction")
+                        return result
                     continue
+                if memory and hasattr(memory, "log_interaction"):
+                    try:
+                        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        memory.log_interaction(user_prompt, text, [])
+                    except Exception:
+                        logger.exception("failed to log interaction")
                 return data
             elif resp.status_code == 401 or resp.status_code == 403:
                 logger.error("authorization error with OpenAI API (status %s)", resp.status_code)
                 if RAISE_ERRORS:
                     raise RuntimeError("unauthorized")
-                return self._offline_response(messages)
+                result = self._offline_response(messages_for_api)
+                if memory and hasattr(memory, "log_interaction"):
+                    try:
+                        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        memory.log_interaction(user_prompt, text, [])
+                    except Exception:
+                        logger.exception("failed to log interaction")
+                return result
             elif resp.status_code == 429:
                 logger.warning("rate limited by OpenAI (attempt %s)", attempt + 1)
                 if attempt >= attempts - 1:
@@ -139,7 +220,14 @@ class ChatGPTClient:
                 logger.warning("unexpected status %s from API", resp.status_code)
                 if attempt >= attempts - 1:
                     break
-        return self._offline_response(messages)
+        result = self._offline_response(messages_for_api)
+        if memory and hasattr(memory, "log_interaction"):
+            try:
+                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                memory.log_interaction(user_prompt, text, [])
+            except Exception:
+                logger.exception("failed to log interaction")
+        return result
 
     def _valid_schema(self, data: Dict[str, object]) -> bool:
         try:
