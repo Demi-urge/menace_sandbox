@@ -1015,9 +1015,33 @@ def _sandbox_cycle_runner(
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     key = mod.split(":", 1)[0]
+                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
+                    if gpt_mem:
+                        try:
+                            entries = []
+                            if hasattr(gpt_mem, "search_context"):
+                                entries = gpt_mem.search_context(
+                                    key,
+                                    tags=["improvement_reasoning", "patch_applied", "patch_failed"],
+                                    limit=5,
+                                    use_embeddings=False,
+                                )
+                            elif hasattr(gpt_mem, "retrieve"):
+                                entries = gpt_mem.retrieve(key, limit=5)
+                        except Exception:
+                            entries = []
+                        if entries:
+                            snippets = [
+                                (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                for e in entries
+                            ]
+                            prompt += "\n\n### Memory\n" + "\n".join(snippets)
                     history = ctx.conversations.get(key, [])
                     resp = ctx.gpt_client.ask(
-                        history + [{"role": "user", "content": prompt}]
+                        history + [{"role": "user", "content": prompt}],
+                        memory_manager=gpt_mem,
+                        tags=["improvement_reasoning"],
+                        use_memory=False,
                     )
                     suggestion = (
                         resp.get("choices", [{}])[0]
@@ -1028,6 +1052,18 @@ def _sandbox_cycle_runner(
                     history = history + [{"role": "user", "content": prompt}]
                     if suggestion:
                         history.append({"role": "assistant", "content": suggestion})
+                        if gpt_mem:
+                            try:
+                                if hasattr(gpt_mem, "log_interaction"):
+                                    gpt_mem.log_interaction(
+                                        prompt, suggestion, tags=["improvement_reasoning"]
+                                    )
+                                elif hasattr(gpt_mem, "store"):
+                                    gpt_mem.store(
+                                        prompt, suggestion, ["improvement_reasoning"]
+                                    )
+                            except Exception:
+                                logger.exception("memory logging failed for %s", mod)
                     if len(history) > 6:
                         history = history[-6:]
                     ctx.conversations[key] = history
@@ -1047,6 +1083,19 @@ def _sandbox_cycle_runner(
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
                     )
+                    if gpt_mem:
+                        try:
+                            tag = ["patch_applied"] if patch_id else ["patch_failed"]
+                            if hasattr(gpt_mem, "log_interaction"):
+                                gpt_mem.log_interaction(
+                                    f"{prompt}:result", f"patch_id={patch_id}", tags=tag
+                                )
+                            elif hasattr(gpt_mem, "store"):
+                                gpt_mem.store(
+                                    f"{prompt}:result", f"patch_id={patch_id}", tag
+                                )
+                        except Exception:
+                            logger.exception("memory logging failed for %s", mod)
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
                     raise
@@ -1092,9 +1141,33 @@ def _sandbox_cycle_runner(
                             prior=prior if prior else None,
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                         )
+                        gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
+                        if gpt_mem:
+                            try:
+                                entries = []
+                                if hasattr(gpt_mem, "search_context"):
+                                    entries = gpt_mem.search_context(
+                                        "brainstorm",
+                                        tags=["improvement_brainstorm"],
+                                        limit=5,
+                                        use_embeddings=False,
+                                    )
+                                elif hasattr(gpt_mem, "retrieve"):
+                                    entries = gpt_mem.retrieve("brainstorm", limit=5)
+                            except Exception:
+                                entries = []
+                            if entries:
+                                snips = [
+                                    (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                    for e in entries
+                                ]
+                                prompt += "\n\n### Memory\n" + "\n".join(snips)
                         hist = ctx.conversations.get("brainstorm", [])
                         resp = ctx.gpt_client.ask(
-                            hist + [{"role": "user", "content": prompt}]
+                            hist + [{"role": "user", "content": prompt}],
+                            memory_manager=gpt_mem,
+                            tags=["improvement_brainstorm"],
+                            use_memory=False,
                         )
                         idea = (
                             resp.get("choices", [{}])[0]
@@ -1107,6 +1180,18 @@ def _sandbox_cycle_runner(
                             ctx.brainstorm_history.append(idea)
                             hist.append({"role": "assistant", "content": idea})
                             logger.info("brainstorm", extra={"idea": idea})
+                            if gpt_mem:
+                                try:
+                                    if hasattr(gpt_mem, "log_interaction"):
+                                        gpt_mem.log_interaction(
+                                            prompt, idea, tags=["improvement_brainstorm"]
+                                        )
+                                    elif hasattr(gpt_mem, "store"):
+                                        gpt_mem.store(
+                                            prompt, idea, ["improvement_brainstorm"]
+                                        )
+                                except Exception:
+                                    logger.exception("memory logging failed during stall")
                         if len(hist) > 6:
                             hist = hist[-6:]
                         ctx.conversations["brainstorm"] = hist
@@ -1149,9 +1234,33 @@ def _sandbox_cycle_runner(
                         prior=summary if summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
+                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
+                    if gpt_mem:
+                        try:
+                            entries = []
+                            if hasattr(gpt_mem, "search_context"):
+                                entries = gpt_mem.search_context(
+                                    "brainstorm",
+                                    tags=["improvement_brainstorm"],
+                                    limit=5,
+                                    use_embeddings=False,
+                                )
+                            elif hasattr(gpt_mem, "retrieve"):
+                                entries = gpt_mem.retrieve("brainstorm", limit=5)
+                        except Exception:
+                            entries = []
+                        if entries:
+                            snips = [
+                                (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                for e in entries
+                            ]
+                            prompt += "\n\n### Memory\n" + "\n".join(snips)
                     hist = ctx.conversations.get("brainstorm", [])
                     resp = ctx.gpt_client.ask(
-                        hist + [{"role": "user", "content": prompt}]
+                        hist + [{"role": "user", "content": prompt}],
+                        memory_manager=gpt_mem,
+                        tags=["improvement_brainstorm"],
+                        use_memory=False,
                     )
                     idea = (
                         resp.get("choices", [{}])[0]
@@ -1163,6 +1272,18 @@ def _sandbox_cycle_runner(
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
                         logger.info("brainstorm", extra={"idea": idea})
+                        if gpt_mem:
+                            try:
+                                if hasattr(gpt_mem, "log_interaction"):
+                                    gpt_mem.log_interaction(
+                                        prompt, idea, tags=["improvement_brainstorm"]
+                                    )
+                                elif hasattr(gpt_mem, "store"):
+                                    gpt_mem.store(
+                                        prompt, idea, ["improvement_brainstorm"]
+                                    )
+                            except Exception:
+                                logger.exception("memory logging failed")
                     if len(hist) > 6:
                         hist = hist[-6:]
                     ctx.conversations["brainstorm"] = hist
