@@ -81,15 +81,17 @@ def boost_linked_candidates(
     *,
     bot_db: Any | None = None,
     error_db: Any | None = None,
+    information_db: Any | None = None,
     multiplier: float = 1.1,
 ) -> dict[int, tuple[str, List[Any]]]:
     """Apply a score boost for items linked via bot relationships.
 
     ``scored`` is modified in-place. Any candidates that share a bot ID
-    through the ``bot_workflow``, ``bot_error`` or ``bot_enhancement``
-    tables receive the ``multiplier`` on their ``confidence`` score.  The
-    function returns a mapping of candidate index to a tuple of the
-    linkage path string and the related record ids for that candidate.
+    through the ``bot_workflow``, ``bot_error``, ``bot_enhancement`` or
+    ``information_*`` tables receive the ``multiplier`` on their
+    ``confidence`` score.  The function returns a mapping of candidate
+    index to a tuple of the linkage path string and the related record
+    ids for that candidate.
     """
 
     if multiplier <= 1.0 or not scored:
@@ -122,6 +124,26 @@ def boost_linked_candidates(
                 (int(cid),),
             ).fetchall()
             bots.update(int(r[0]) for r in rows)
+        elif typ == "information" and cid and information_db:
+            rows = information_db.conn.execute(
+                "SELECT bot_id FROM information_bots WHERE info_id=?",
+                (int(cid),),
+            ).fetchall()
+            bots.update(int(r[0]) for r in rows)
+            if bot_db:
+                try:
+                    w_rows = information_db.conn.execute(
+                        "SELECT workflow_id FROM information_workflows WHERE info_id=?",
+                        (int(cid),),
+                    ).fetchall()
+                except sqlite3.Error:
+                    w_rows = []
+                for wid in (int(r[0]) for r in w_rows):
+                    b_rows = bot_db.conn.execute(
+                        "SELECT bot_id FROM bot_workflow WHERE workflow_id=?",
+                        (wid,),
+                    ).fetchall()
+                    bots.update(int(r[0]) for r in b_rows)
         bot_sets.append(bots)
         type_map.append(typ)
 
@@ -483,6 +505,7 @@ class UniversalRetriever:
             scored,
             bot_db=self.bot_db,
             error_db=self.error_db,
+            information_db=self.information_db,
             multiplier=multiplier,
         )
         for idx, entry in enumerate(scored):
