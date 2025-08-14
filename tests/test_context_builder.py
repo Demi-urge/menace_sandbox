@@ -1,3 +1,4 @@
+import json
 import types
 import sys
 
@@ -8,7 +9,15 @@ import pytest
 sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
 sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
-sys.modules.setdefault("code_database", types.SimpleNamespace(CodeDB=object))
+_code_stub = types.ModuleType("code_database")
+_code_stub.__spec__ = types.SimpleNamespace()
+_code_stub.__file__ = "code_database_stub.py"
+_code_stub.CodeDB = object
+sys.modules.setdefault("code_database", _code_stub)
+sys.modules.setdefault("menace.code_database", _code_stub)
+sys.modules.setdefault(
+    "failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object)
+)
 
 from menace.context_builder import ContextBuilder
 
@@ -74,25 +83,34 @@ def builder(monkeypatch):
             }
         ]
     )
+    discrepancy_db = TinyVecDB(
+        [
+            {
+                "text": "alpha discrepancy",
+                "meta": {"id": 700, "message": "alpha discrepancy", "severity": 0.9},
+            }
+        ]
+    )
     mm = types.SimpleNamespace(_summarise_text=lambda text: text[:7])
     builder = ContextBuilder(
         error_db=error_db,
         bot_db=bot_db,
         workflow_db=workflow_db,
+        discrepancy_db=discrepancy_db,
         code_db=code_db,
         memory_manager=mm,
     )
     monkeypatch.setattr(builder.retriever, "_context_score", lambda kind, rec: (0.0, {}))
     monkeypatch.setattr(builder.retriever, "_related_boost", lambda scored, multiplier=1.1: {})
     return builder
-
-
 def test_build_context(builder):
-    ctx = builder.build_context("alpha", limit_per_type=2)
+    ctx_json = builder.build_context("alpha", limit_per_db=2)
+    ctx = json.loads(ctx_json)
     assert ctx["errors"][0]["id"] == 100
-    assert ctx["errors"][0]["summary"] == "alpha c"
+    assert ctx["errors"][0]["desc"] == "alpha c"
     assert pytest.approx(ctx["errors"][0]["metric"]) == 1.0 / 6.0
     assert [b["id"] for b in ctx["bots"]] == [1, 2]
     assert ctx["workflows"][0]["id"] == 10
     assert ctx["code"][0]["id"] == 42
+    assert ctx["discrepancies"][0]["id"] == 700
 
