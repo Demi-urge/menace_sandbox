@@ -90,3 +90,22 @@ def test_compaction_prunes_old_entries():
     summaries = [p for p, t in rows if "summary" in t]
     assert summaries  # summary entry exists
     mgr.close()
+
+
+def test_persistence_across_sessions(tmp_path):
+    db_file = tmp_path / "memory.db"
+
+    mgr = GPTMemoryManager(db_file)
+    mgr.log_interaction("first question", "first answer", tags=["init"])
+    mgr.close()
+
+    mgr = GPTMemoryManager(db_file)
+    mgr.log_interaction("second question", "second answer")
+    mgr.close()
+
+    mgr = GPTMemoryManager(db_file)
+    first = mgr.search_context("first")
+    second = mgr.search_context("second")
+    assert [e.response for e in first] == ["first answer"]
+    assert [e.response for e in second] == ["second answer"]
+    mgr.close()
