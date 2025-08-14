@@ -40,7 +40,11 @@ except Exception:  # pragma: no cover - missing dependency
     UniversalRetriever = None  # type: ignore
 
 
-def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int | None:
+def generate_patch(
+    module: str,
+    engine: "SelfCodingEngine" | None = None,
+    context_builder: ContextBuilder | None = None,
+) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
     Parameters
@@ -62,9 +66,14 @@ def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int
         return None
 
     context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
-    ctx_builder = ContextBuilder()
-    context_block = ctx_builder.build_context(context_meta)
-    description = "preemptive_fix\n\n" + json.dumps(context_block, indent=2)
+    builder = context_builder or ContextBuilder()
+    description = f"preemptive fix for {path.name}"
+    try:
+        context_block = builder.build_context(description)
+    except Exception:
+        context_block = {}
+    if context_block:
+        description += "\n\n" + json.dumps(context_block, indent=2)
 
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
@@ -134,6 +143,7 @@ class QuickFixEngine:
         risk_threshold: float = 0.5,
         predictor: ErrorClusterPredictor | None = None,
         retriever: "UniversalRetriever | None" = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.db = error_db
         self.manager = manager
@@ -142,6 +152,7 @@ class QuickFixEngine:
         self.risk_threshold = risk_threshold
         self.predictor = predictor
         self.retriever = retriever
+        self.context_builder = context_builder
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
@@ -182,9 +193,23 @@ class QuickFixEngine:
         if not path.exists():
             return
         context_meta = {"error_type": etype, "module": module, "bot": bot}
-        builder = ContextBuilder()
-        ctx_block = builder.build_context(context_meta)
-        desc = f"quick fix {etype}\n\n" + json.dumps(ctx_block, indent=2)
+        builder = self.context_builder
+        if builder is None:
+            try:
+                builder = ContextBuilder()
+            except Exception:
+                builder = None
+            self.context_builder = builder
+        ctx_block = {}
+        if builder is not None:
+            try:
+                query = f"{etype} in {module}"
+                ctx_block = builder.build_context(query)
+            except Exception:
+                ctx_block = {}
+        desc = f"quick fix {etype}"
+        if ctx_block:
+            desc += "\n\n" + json.dumps(ctx_block, indent=2)
         if self.retriever is not None:
             try:
                 self.retriever.retrieve_with_confidence(module, top_k=1)
@@ -192,7 +217,10 @@ class QuickFixEngine:
                 self.logger.debug("retriever lookup failed", exc_info=True)
         patch_id = None
         try:
-            result = self.manager.run_patch(path, desc, context_meta=context_meta)
+            try:
+                result = self.manager.run_patch(path, desc, context_meta=context_meta)
+            except TypeError:
+                result = self.manager.run_patch(path, desc)
             patch_id = getattr(result, "patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
@@ -242,9 +270,23 @@ class QuickFixEngine:
             if not path.exists():
                 continue
             meta = {"module": module, "reason": "preemptive_patch"}
-            builder = ContextBuilder()
-            ctx = builder.build_context(meta)
-            desc = "preemptive_patch\n\n" + json.dumps(ctx, indent=2)
+            builder = self.context_builder
+            if builder is None:
+                try:
+                    builder = ContextBuilder()
+                except Exception:
+                    builder = None
+                self.context_builder = builder
+            ctx = {}
+            if builder is not None:
+                try:
+                    query = f"preemptive patch {module}"
+                    ctx = builder.build_context(query)
+                except Exception:
+                    ctx = {}
+            desc = "preemptive_patch"
+            if ctx:
+                desc += "\n\n" + json.dumps(ctx, indent=2)
             if self.retriever is not None:
                 try:
                     self.retriever.retrieve_with_confidence(module, top_k=1)
@@ -252,12 +294,24 @@ class QuickFixEngine:
                     self.logger.debug("retriever lookup failed", exc_info=True)
             patch_id = None
             try:
-                result = self.manager.run_patch(path, desc, context_meta=meta)
+                try:
+                    result = self.manager.run_patch(path, desc, context_meta=meta)
+                except TypeError:
+                    result = self.manager.run_patch(path, desc)
                 patch_id = getattr(result, "patch_id", None)
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.error("preemptive patch failed for %s: %s", module, exc)
                 try:
-                    patch_id = generate_patch(module, getattr(self.manager, "engine", None))
+                    try:
+                        patch_id = generate_patch(
+                            module,
+                            getattr(self.manager, "engine", None),
+                            context_builder=self.context_builder,
+                        )
+                    except TypeError:
+                        patch_id = generate_patch(
+                            module, getattr(self.manager, "engine", None)
+                        )
                 except Exception:
                     patch_id = None
             try:

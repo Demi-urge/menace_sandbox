@@ -294,10 +294,6 @@ class SelfCodingEngine:
         """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
         context = "\n\n".join(s.code for s in snippets)
-        meta = metadata.copy() if metadata else {}
-        meta.setdefault("description", description)
-        if path is not None:
-            meta.setdefault("path", str(path))
         def _fallback() -> str:
             """Return a minimal helper implementation."""
             func = f"auto_{description.replace(' ', '_')}"
@@ -348,7 +344,7 @@ class SelfCodingEngine:
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         retrieval_context = {}
         try:
-            retrieval_context = self.context_builder.build_context(meta)
+            retrieval_context = self.context_builder.build_context(description)
         except Exception:
             retrieval_context = {}
         prompt = self.build_visual_agent_prompt(
@@ -426,7 +422,10 @@ class SelfCodingEngine:
 
     def patch_file(self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None) -> str:
         """Append a generated helper to the given file and return its code."""
-        code = self.generate_helper(description, path=path, metadata=context_meta)
+        try:
+            code = self.generate_helper(description, path=path, metadata=context_meta)
+        except TypeError:
+            code = self.generate_helper(description)
         self.logger.info(
             "patch file",
             extra={

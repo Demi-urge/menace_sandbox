@@ -35,6 +35,7 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
+from .context_builder import ContextBuilder
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
@@ -61,6 +62,10 @@ from . import vision_utils
 
 try:
     import yaml  # type: ignore
+    if not hasattr(yaml, "safe_dump"):
+        yaml.safe_dump = lambda data, *a, **k: json.dumps(data)  # type: ignore
+    if not hasattr(yaml, "safe_load"):
+        yaml.safe_load = lambda s, *a, **k: json.loads(s)  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     yaml = None  # type: ignore
 
@@ -223,14 +228,15 @@ class BotDevelopmentBot:
         *,
         config: BotDevConfig | None = None,
         openai_attempts: int | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.config = config or BotDevConfig()
         if openai_attempts is not None:
             self.config.openai_attempts = openai_attempts
-        if repo_base:
+        if repo_base is not None:
             self.config.repo_base = Path(repo_base)
         else:
-            self.config.repo_base = MODELS_REPO_PATH
+            self.config.repo_base = Path(self.config.repo_base)
         if es_url is not None:
             self.config.es_url = es_url
         self.config.repo_base.mkdir(exist_ok=True)
@@ -290,6 +296,7 @@ class BotDevelopmentBot:
             self.logger.warning("failed to load prompt templates: %s", exc)
             self.prompt_templates = {}
         self.template_engine = PromptTemplateEngine(self.prompt_templates)
+        self.context_builder = context_builder
         # warn about missing optional dependencies
         for dep_name, mod in {
             "requests": requests,
@@ -676,7 +683,7 @@ class BotDevelopmentBot:
             "level": spec.level,
             "timestamp": time.time(),
         }
-        if yaml:
+        if yaml and hasattr(yaml, "safe_dump"):
             self._write_with_retry(meta, yaml.safe_dump(data))
         else:
             self._write_with_retry(meta, json.dumps(data, indent=2))
@@ -922,6 +929,20 @@ class BotDevelopmentBot:
 
     def _build_prompt(self, spec: BotSpec) -> str:
         """Return the final prompt for the visual agent or Codex."""
+        builder = self.context_builder
+        if builder is None:
+            try:
+                builder = ContextBuilder()
+            except Exception:
+                builder = None
+            self.context_builder = builder
+        retrieval_context: Dict[str, Any] = {}
+        if builder is not None:
+            try:
+                query = spec.description or spec.purpose or spec.name
+                retrieval_context = builder.build_context(query)
+            except Exception:
+                retrieval_context = {}
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -986,6 +1007,8 @@ class BotDevelopmentBot:
             "Expected Output:\n"
             "Return only the complete Python code without explanations or markdown."
         )
+        if retrieval_context:
+            prompt += "\n\nContext:\n" + json.dumps(retrieval_context, indent=2)
 
         return prompt
 

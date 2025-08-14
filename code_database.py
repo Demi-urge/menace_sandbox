@@ -782,6 +782,9 @@ class PatchHistoryDB:
             )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
+        # expose connection for diagnostics and tests
+        self.conn = sqlite3.connect(self.path)
+        self.conn.execute("PRAGMA foreign_keys = ON")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
