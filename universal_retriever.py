@@ -9,7 +9,7 @@ from typing import Any, Iterable, List, Sequence
 
 
 @dataclass
-class RetrievalHit:
+class RetrievedItem:
     """Structured result returned by :class:`UniversalRetriever`.
 
     The dataclass bundles the origin of the hit, its primary key within
@@ -19,11 +19,24 @@ class RetrievalHit:
     surface richer explanations to users.
     """
 
-    source_db: str
+    origin_db: str
     record_id: Any
     metadata: dict[str, Any]
-    confidence_score: float
+    confidence: float
     reason: str
+
+    # Backwards compatibility for older attribute names
+    @property
+    def source_db(self) -> str:  # pragma: no cover - simple alias
+        return self.origin_db
+
+    @property
+    def confidence_score(self) -> float:  # pragma: no cover - simple alias
+        return self.confidence
+
+
+# Older name retained for compatibility with existing imports
+RetrievalHit = RetrievedItem
 
 
 def boost_linked_candidates(
@@ -298,7 +311,7 @@ class UniversalRetriever:
 
     def retrieve(
         self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
-    ) -> List[RetrievalHit]:
+    ) -> List[RetrievedItem]:
         """Retrieve results with confidence scores and reasons."""
 
         raw_results = self._retrieve_candidates(query, top_k)
@@ -357,7 +370,7 @@ class UniversalRetriever:
             "deploy": "widely deployed bot",
         }
 
-        hits: List[RetrievalHit] = []
+        hits: List[RetrievedItem] = []
         for idx, entry in enumerate(scored):
             item = entry["item"]
             meta = item if isinstance(item, dict) else item.__dict__
@@ -368,19 +381,21 @@ class UniversalRetriever:
             }
             top_metric = max(metrics, key=metrics.get, default=None)
             reason = reason_map.get(top_metric, "relevant match")
+            if top_metric:
+                reason += f" ({top_metric}={entry[top_metric]:.2f})"
             if idx in link_paths:
-                reason = f"{reason} (linked via {link_paths[idx]})"
+                reason += f" linked via {link_paths[idx]}"
             hits.append(
-                RetrievalHit(
-                    source_db=entry["source"],
+                RetrievedItem(
+                    origin_db=entry["source"],
                     record_id=entry["record_id"],
                     metadata=meta,
-                    confidence_score=entry["confidence"],
+                    confidence=entry["confidence"],
                     reason=reason,
                 )
             )
 
-        hits.sort(key=lambda h: h.confidence_score, reverse=True)
+        hits.sort(key=lambda h: h.confidence, reverse=True)
         return hits[:top_k]
 
     # Backwards compatibility for older callers
@@ -390,10 +405,10 @@ class UniversalRetriever:
         hits = self.retrieve(query, top_k=top_k, link_multiplier=link_multiplier)
         return [
             {
-                "source": h.source_db,
+                "source": h.origin_db,
                 "record_id": h.record_id,
                 "item": h.metadata,
-                "confidence": h.confidence_score,
+                "confidence": h.confidence,
                 "reason": h.reason,
             }
             for h in hits

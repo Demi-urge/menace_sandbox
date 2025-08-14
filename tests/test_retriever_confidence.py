@@ -1,6 +1,8 @@
 import pytest
 from types import MethodType
 
+import pytest
+
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
@@ -40,7 +42,7 @@ def test_retrieve(tmp_path):
     res = retriever.retrieve("bot", top_k=5)
     assert res
     for r in res:
-        assert r.confidence_score >= 0.0
+        assert r.confidence >= 0.0
         assert isinstance(r.reason, str)
 
 
@@ -73,11 +75,11 @@ def test_linked_boost(tmp_path):
         for r in res:
             data = r.metadata
             if kind == "bot" and data.get("id") == bot_id:
-                return r.confidence_score
+                return r.confidence
             if kind == "workflow" and data.get("wid") == wf_id:
-                return r.confidence_score
+                return r.confidence
             if kind == "error" and data.get("id") == err_id:
-                return r.confidence_score
+                return r.confidence
         return None
 
     for k in ("bot", "workflow", "error"):

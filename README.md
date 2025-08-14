@@ -1221,7 +1221,7 @@ creator.create_bots(tasks)
 ### Universal Retriever
 
 `UniversalRetriever` queries multiple embedding-backed databases and returns
-`RetrievalHit` objects with confidence scores and reasons. Scores combine error
+`RetrievedItem` objects with confidence scores and reasons. Scores combine error
 frequency, enhancement ROI, workflow usage, bot deployment counts and raw
 vector similarity. Related results that share bot relationships receive a
 boosted confidence via relation-aware linking.
@@ -1235,7 +1235,7 @@ from menace.universal_retriever import UniversalRetriever
 retriever = UniversalRetriever(bot_db=BotDB(), workflow_db=WorkflowDB(), error_db=ErrorDB())
 hits = retriever.retrieve("upload failed", top_k=3)
 for hit in hits:
-    print(f"{hit.source_db} #{hit.record_id}: {hit.reason} (confidence {hit.confidence_score:.2f})")
+    print(f"{hit.origin_db} #{hit.record_id}: {hit.reason} (confidence {hit.confidence:.2f})")
 ```
 
 The output lists the originating database, record identifier, a normalised
