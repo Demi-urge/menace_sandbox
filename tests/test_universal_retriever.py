@@ -5,7 +5,7 @@ from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
 from menace.chatgpt_enhancement_bot import EnhancementDB, Enhancement
 from menace.information_db import InformationDB, InformationRecord
-from menace.universal_retriever import UniversalRetriever, RetrievalHit
+from menace.universal_retriever import UniversalRetriever, RetrievedItem
 
 
 def test_universal_retriever_ranking_and_boosting(tmp_path):
@@ -69,13 +69,13 @@ def test_universal_retriever_ranking_and_boosting(tmp_path):
     boosted = retriever.retrieve("bot", top_k=5, link_multiplier=1.2)
 
     # structured result bundles
-    assert all(isinstance(h, RetrievalHit) for h in boosted)
+    assert all(isinstance(h, RetrievedItem) for h in boosted)
 
     # ranking reflects metrics and boosting
-    sources = [h.source_db for h in boosted]
+    sources = [h.origin_db for h in boosted]
     assert sources == ["bot", "workflow", "error", "enhancement", "information"]
 
-    reasons = {h.source_db: h.reason for h in boosted}
+    reasons = {h.origin_db: h.reason for h in boosted}
     path = "linked via bot->workflow->enhancement->error"
     assert reasons["error"].startswith("frequent error")
     assert path in reasons["error"]
@@ -88,12 +88,12 @@ def test_universal_retriever_ranking_and_boosting(tmp_path):
     assert reasons["information"] == "relevant match"
 
     # metric weighting keeps information result least confident
-    info_conf = next(h.confidence_score for h in boosted if h.source_db == "information")
-    assert all(h.confidence_score > info_conf for h in boosted if h.source_db != "information")
+    info_conf = next(h.confidence for h in boosted if h.origin_db == "information")
+    assert all(h.confidence > info_conf for h in boosted if h.origin_db != "information")
 
     # chain boosting increases confidence for linked entries
-    base_conf = {h.source_db: h.confidence_score for h in baseline}
-    boost_conf = {h.source_db: h.confidence_score for h in boosted}
+    base_conf = {h.origin_db: h.confidence for h in baseline}
+    boost_conf = {h.origin_db: h.confidence for h in boosted}
     for src in ("bot", "workflow", "error", "enhancement"):
         assert boost_conf[src] > base_conf[src]
     assert boost_conf["information"] == base_conf["information"]

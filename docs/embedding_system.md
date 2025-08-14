@@ -89,8 +89,8 @@ retriever = UniversalRetriever(
 
 hits = retriever.retrieve("upload failed", top_k=3)
 for hit in hits:
-    print(hit.source_db, hit.record_id, f"{hit.confidence_score:.2f}", hit.reason)
+    print(hit.origin_db, hit.record_id, f"{hit.confidence:.2f}", hit.reason)
 ```
 
-Each `RetrievalHit` exposes the originating database, the record identifier, a
+Each `RetrievedItem` exposes the originating database, the record identifier, a
 confidence score and a human-friendly reason derived from the dominant metric.
