@@ -44,6 +44,7 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
+from .universal_retriever import UniversalRetriever
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -162,6 +163,7 @@ class DatabaseRouter:
         self.cache_enabled = cache_seconds > 0
         self._cache: Dict[tuple, tuple[float, Any]] = {}
         self._query_encoder = _QueryEncoder()
+        self._retriever: UniversalRetriever | None = None
 
     # ------------------------------------------------------------------
     # Permission helpers
@@ -295,46 +297,50 @@ class DatabaseRouter:
         """Perform a semantic search across embeddable databases."""
 
         try:
-            query_vector = self._query_encoder.encode_text(query_text)
+            if self._retriever is None:
+                self._retriever = UniversalRetriever(
+                    bot_db=self.bot_db,
+                    workflow_db=self.workflow_db,
+                    error_db=getattr(self, "error_db", None),
+                    enhancement_db=getattr(self, "enhancement_db", None),
+                    information_db=self.info_db,
+                )
+            hits = self._retriever.retrieve_with_confidence(query_text, top_k=top_k)
         except Exception as exc:
-            logger.error("query embedding failed: %s", exc)
+            logger.error("universal retrieval failed: %s", exc)
             return []
 
         results: List[Dict[str, Any]] = []
-        dbs = [
-            ("bot", self.bot_db),
-            ("workflow", self.workflow_db),
-            ("error", getattr(self, "error_db", None)),
-            ("enhancement", getattr(self, "enhancement_db", None)),
-            ("info", self.info_db),
-        ]
-        for kind, db in dbs:
-            if not db or not hasattr(db, "search_by_vector"):
-                continue
-            try:
-                matches = db.search_by_vector(query_vector, top_k=top_k)
-            except Exception as exc:
-                logger.error("%s vector search failed: %s", kind, exc)
-                continue
-            for match in matches:
-                if isinstance(match, dict):
-                    source_id = match.get("id") or match.get("item_id")
-                    distance = match.get("_distance")
+        for h in hits:
+            item = h.get("item")
+            if isinstance(item, dict):
+                distance = item.get("_distance")
+            else:
+                distance = getattr(item, "_distance", None)
+            kind = h.get("source")
+            if kind == "information":
+                kind = "info"
+            source_id = h.get("record_id")
+            if source_id is None and item is not None:
+                if isinstance(item, dict):
+                    source_id = item.get("id") or item.get("item_id") or item.get("wid")
                 else:
                     source_id = (
-                        getattr(match, "id", None)
-                        or getattr(match, "item_id", None)
-                        or getattr(match, "wid", None)
+                        getattr(item, "id", None)
+                        or getattr(item, "item_id", None)
+                        or getattr(item, "wid", None)
                     )
-                    distance = getattr(match, "_distance", None)
-                results.append({
+            results.append(
+                {
                     "kind": kind,
                     "source_id": source_id,
                     "distance": distance,
-                    "record": match,
-                })
+                    "record": item,
+                    "confidence": h.get("confidence"),
+                    "reason": h.get("reason"),
+                }
+            )
 
-        results.sort(key=lambda r: r["distance"] if r["distance"] is not None else float("inf"))
         return results[:top_k]
 
     def execute_query(

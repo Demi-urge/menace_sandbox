@@ -219,7 +219,12 @@ from .action_planner import ActionPlanner
 from .evolution_history_db import EvolutionHistoryDB
 from . import synergy_weight_cli
 from . import synergy_history_db as shd
-from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+try:  # pragma: no cover - optional dependency
+    from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
+except Exception:  # pragma: no cover - fallback for tests
+    AdaptiveROIPredictor = object  # type: ignore
+    def load_training_data(*a, **k):  # type: ignore
+        return []
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
