@@ -28,7 +28,7 @@ class DummyKnowledge:
             self.prompt = prompt
             self.response = response
 
-    def get_similar_entries(self, query, limit=5):
+    def get_similar_entries(self, query, limit=5, use_embeddings=False):
         self.record["query"] = query
         return [(1.0, self.Entry("p1", "r1"))]
 

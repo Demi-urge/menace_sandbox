@@ -176,6 +176,47 @@ class GPTMemoryManager:
                 )
         return results[:limit]
 
+    def get_similar_entries(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        tags: Sequence[str] | None = None,
+        use_embeddings: bool | None = None,
+    ) -> List[tuple[float, MemoryEntry]]:
+        """Return scored entries most similar to ``query``.
+
+        When ``use_embeddings`` is true and an embedder is available cosine
+        similarity between embeddings is used.  Otherwise a simple keyword
+        search with a crude relevance score is performed.
+        """
+
+        use_embeddings = (
+            use_embeddings if use_embeddings is not None else self.embedder is not None
+        )
+        entries = self.search_context(
+            query,
+            limit=limit * 5 if tags and not use_embeddings else limit,
+            tags=tags,
+            use_embeddings=use_embeddings,
+        )
+
+        results: list[tuple[float, MemoryEntry]] = []
+        if use_embeddings and self.embedder is not None:
+            for e in entries:
+                results.append((e.score, e))
+            results.sort(key=lambda x: x[0], reverse=True)
+            return results[:limit]
+
+        q = query.lower()
+        for e in entries:
+            text = f"{e.prompt} {e.response}".lower()
+            count = text.count(q)
+            score = (count * len(q)) / max(len(text), 1)
+            results.append((score, e))
+        results.sort(key=lambda x: x[0], reverse=True)
+        return results[:limit]
+
     # ----------------------------------------------------------------- cleanup
     def close(self) -> None:
         try:

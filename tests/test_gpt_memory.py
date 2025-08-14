@@ -39,7 +39,7 @@ class _DummyModel:
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-from gpt_memory import GPTMemory
+from gpt_memory import GPTMemory, GPTMemoryManager
 
 
 def test_store_and_retrieve_with_tags():
@@ -58,3 +58,15 @@ def test_store_and_retrieve_with_tags():
     all_entries = mem.retrieve("add")
     assert len(all_entries) == 1
     assert all_entries[0].tags == ["improvement"]
+
+
+def test_manager_get_similar_entries_text():
+    mgr = GPTMemoryManager(db_path=":memory:")
+    mgr.log_interaction("hello world", "hi")
+    mgr.log_interaction("weather today", "sunny")
+    results = mgr.get_similar_entries("weather", limit=2, use_embeddings=False)
+    assert len(results) == 1
+    score, entry = results[0]
+    assert entry.prompt == "weather today"
+    assert score > 0
+    mgr.close()
