@@ -122,7 +122,7 @@ def builder(monkeypatch):
 
 def test_build_context_collects_and_prioritises(builder):
     # Generous token budget so all categories are represented
-    ctx_json = builder.build_context("alpha", limit_per_db=2, max_tokens=1000)
+    ctx_json = builder.build_context("alpha", top_k=2)
     ctx = json.loads(ctx_json)
 
     for key in ("errors", "bots", "workflows", "discrepancies", "code"):
@@ -134,10 +134,23 @@ def test_build_context_collects_and_prioritises(builder):
     assert ctx["code"][0]["id"] == 42
 
     # Tight token budget trims lower scoring items
-    limited = builder.build_context("alpha", limit_per_db=2, max_tokens=50)
-    assert len(limited) // 4 <= 50
-    limited_ctx = json.loads(limited)
-    assert 43 not in [c["id"] for c in limited_ctx["code"]]
+    ctx_json_limited = builder.build_context("alpha", top_k=1)
+    limited_ctx = json.loads(ctx_json_limited)
+    assert len(limited_ctx["code"]) == 1
+    assert limited_ctx["code"][0]["id"] == 42
+
+
+def test_build_context_caches(builder, monkeypatch):
+    calls = {"n": 0}
+
+    def fake(q, top_k=5):
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(builder.retriever, "retrieve", fake)
+    builder.build_context("cache test")
+    builder.build_context("cache test")
+    assert calls["n"] == 1
 
 
 def test_self_coding_engine_prompts_receive_context(builder, tmp_path, monkeypatch):
