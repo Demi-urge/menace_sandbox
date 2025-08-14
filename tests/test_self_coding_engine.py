@@ -1,6 +1,13 @@
 from pathlib import Path
+import json
 import sys
 import types
+
+sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
+sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
+sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
+sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
+sys.modules.setdefault("code_database", types.SimpleNamespace(CodeDB=object))
 
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None
@@ -177,4 +184,25 @@ def test_rollback_patch(tmp_path, monkeypatch):
     engine.rollback_patch(str(patch_id))
     assert "auto_rb" not in path.read_text()
     assert ci_stub.called == path
+
+
+def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
+    mem = mm.MenaceMemoryManager(tmp_path / "m.db")
+    engine = sce.SelfCodingEngine(cd.CodeDB(tmp_path / "c.db"), mem)
+
+    context = {"errors": [{"id": 1, "snippet": "oops", "note": "test"}]}
+    engine.context_builder = types.SimpleNamespace(build_context=lambda m: context)
+
+    class DummyClient:
+        def ask(self, messages, memory_manager=None, tags=None, use_memory=True):
+            DummyClient.prompt = messages[0]["content"]
+            return {"choices": [{"message": {"content": "def auto_test():\n    pass"}}]}
+
+    engine.llm_client = DummyClient()
+    monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
+
+    code = engine.generate_helper("test helper")
+    assert "### Retrieval context" in DummyClient.prompt
+    assert json.dumps(context, indent=2) in DummyClient.prompt
+    assert "def auto_test" in code
 
