@@ -1,119 +1,116 @@
-"""Context builder for assembling cross-database retrieval context.
+"""Compact cross-database context builder.
 
-This lightweight module exposes :class:`ContextBuilder` which relies on
-``UniversalRetriever`` to pull relevant records from the Error, Bot, Workflow
-and Code databases.  Results are summarised for token efficiency and include
-basic success/ROI style metrics when available.
-
-The public entry point :func:`ContextBuilder.build_context` accepts a free form
-query string and returns a JSON-like mapping::
-
-    {
-        "errors": [...],
-        "bots": [...],
-        "workflows": [...],
-        "code": [...]
-    }
-
-Each list contains dictionaries with at least an ``id`` and ``summary`` field
-and may optionally contain a ``metric`` representing ROI or success related
-values.
+This module exposes :class:`ContextBuilder` which aggregates relevant records
+from a number of light‑weight SQLite backed databases.  It relies on the
+existing :mod:`universal_retriever` for vector similarity and then ranks the
+results using success or ROI style metrics when available.  The final context is
+returned as a compact JSON string containing only ids, short descriptions and
+useful metrics so that downstream consumers can remain within token budgets.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from universal_retriever import ResultBundle, UniversalRetriever
 
 # Database wrappers ---------------------------------------------------------
-# They are lightweight SQLite backed helpers throughout the codebase.  Only
-# the minimal interface required by ``UniversalRetriever`` (``encode_text``,
-# ``search_by_vector`` and ``get_vector``) is used here which makes the class
-# easy to test with simple stubs.
 from error_bot import ErrorDB
 from bot_database import BotDB
 from task_handoff_bot import WorkflowDB
 from code_database import CodeDB
+from failure_learning_system import DiscrepancyDB
 
-# Optional memory manager provides a summarisation helper.  When unavailable a
-# tiny fallback summariser is used.
-try:  # pragma: no cover - optional dependency
+# Optional summariser -------------------------------------------------------
+try:  # pragma: no cover - optional heavy dependency
     from menace_memory_manager import MenaceMemoryManager, _summarise_text
-except Exception:  # pragma: no cover - fallback when full package missing
+except Exception:  # pragma: no cover - fall back to tiny helper
     MenaceMemoryManager = None  # type: ignore
 
     def _summarise_text(text: str, ratio: float = 0.3) -> str:
-        """Very small fallback summariser used during testing."""
-
         text = text.strip().replace("\n", " ")
         if len(text) <= 120:
             return text
         return text[:117] + "..."
 
 
+# Utility ------------------------------------------------------------------
+def _resolve_db(obj: Any, cls: Any) -> Any:
+    """Return a database instance given ``obj`` which may be a path or instance."""
+
+    if obj is None:
+        return cls()
+    if isinstance(obj, (str, Path)):
+        return cls(obj)
+    return obj
+
+
 @dataclass
-class RecordContext:
-    """Container for an individual record included in the context."""
-
+class Record:
     id: Any
-    summary: str
-    metric: float | None = None
-
-    def to_dict(self) -> Dict[str, Any]:  # pragma: no cover - simple helper
-        data = {"id": self.id, "summary": self.summary}
-        if self.metric is not None:
-            data["metric"] = self.metric
-        return data
+    desc: str
+    metric: float | None
+    score: float
 
 
 class ContextBuilder:
-    """Build compact context blocks from multiple databases."""
+    """Build compact JSON context blocks from multiple databases."""
 
     def __init__(
         self,
-        error_db: ErrorDB | None = None,
-        bot_db: BotDB | None = None,
-        workflow_db: WorkflowDB | None = None,
-        code_db: CodeDB | None = None,
+        *,
+        error_db: ErrorDB | str | Path | None = None,
+        bot_db: BotDB | str | Path | None = None,
+        workflow_db: WorkflowDB | str | Path | None = None,
+        discrepancy_db: DiscrepancyDB | str | Path | None = None,
+        code_db: CodeDB | str | Path | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
     ) -> None:
-        self.error_db = error_db or ErrorDB()
-        self.bot_db = bot_db or BotDB()
-        self.workflow_db = workflow_db or WorkflowDB()
-        self.code_db = code_db or CodeDB()
+        self.error_db = _resolve_db(error_db, ErrorDB)
+        self.bot_db = _resolve_db(bot_db, BotDB)
+        self.workflow_db = _resolve_db(workflow_db, WorkflowDB)
+        self.discrepancy_db = (
+            _resolve_db(discrepancy_db, DiscrepancyDB)
+            if discrepancy_db is not None
+            else None
+        )
+        self.code_db = _resolve_db(code_db, CodeDB)
         self.memory = memory_manager
 
-        # ``UniversalRetriever`` performs the heavy lifting of vector search
-        # across the configured databases.
         self.retriever = UniversalRetriever(
             bot_db=self.bot_db,
             workflow_db=self.workflow_db,
             error_db=self.error_db,
         )
 
-        # ``CodeDB`` might not always implement the embedding interface so we
-        # register it best-effort.
+        # Optional databases may not implement the embedding interface; register
+        # them on a best‑effort basis.
         try:  # pragma: no cover - defensive
             self.retriever.register_db("code", self.code_db, ("id", "cid"))
+        except Exception:
+            pass
+        try:  # pragma: no cover - defensive
+            self.retriever.register_db(
+                "discrepancy", self.discrepancy_db, ("id", "disc_id", "discrepancy_id")
+            )
         except Exception:
             pass
 
     # ------------------------------------------------------------------
     def _summarise(self, text: str) -> str:
-        """Summarise ``text`` using the memory manager if available."""
-
         if self.memory and hasattr(self.memory, "_summarise_text"):
             try:
                 return self.memory._summarise_text(text)  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - fall back on error
+            except Exception:  # pragma: no cover - fallback
                 pass
         return _summarise_text(text)
 
     # ------------------------------------------------------------------
     def _metric(self, origin: str, meta: Dict[str, Any]) -> float | None:
-        """Extract a success/ROI style metric from ``meta``."""
+        """Extract ROI/success metrics from metadata."""
 
         try:
             if origin == "error":
@@ -137,16 +134,20 @@ class ContextBuilder:
                 for key in ("patch_success", "coverage", "roi"):
                     if key in meta and meta[key] is not None:
                         return float(meta[key])
-        except Exception:  # pragma: no cover - safety
+
+            if origin == "discrepancy":
+                for key in ("severity", "roi", "impact"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+        except Exception:  # pragma: no cover - defensive
             return None
         return None
 
     # ------------------------------------------------------------------
-    def _bundle_to_record(self, bundle: ResultBundle) -> RecordContext:
-        """Convert a :class:`ResultBundle` into :class:`RecordContext`."""
-
+    def _bundle_to_record(self, bundle: ResultBundle, weight: float) -> Record:
         meta = bundle.metadata
         origin = bundle.origin_db
+
         text = ""
         if origin == "error":
             text = meta.get("message") or meta.get("description") or ""
@@ -154,40 +155,55 @@ class ContextBuilder:
             text = meta.get("name") or meta.get("purpose") or ""
         elif origin == "workflow":
             text = meta.get("title") or meta.get("description") or ""
+        elif origin == "discrepancy":
+            text = meta.get("message") or meta.get("description") or ""
         elif origin == "code":
             text = meta.get("summary") or meta.get("code") or ""
+            text = str(text)
+            if len(text) > 60:
+                text = text[:57] + "..."
+            summary = text
+            metric = self._metric(origin, meta)
+            score = bundle.score + weight * (metric or 0.0)
+            return Record(bundle.record_id, summary, metric, score)
 
         summary = self._summarise(str(text))
         metric = self._metric(origin, meta)
-        return RecordContext(id=bundle.record_id, summary=summary, metric=metric)
+        score = bundle.score + weight * (metric or 0.0)
+        return Record(bundle.record_id, summary, metric, score)
 
     # ------------------------------------------------------------------
-    def build_context(self, query: str, limit_per_type: int = 3) -> Dict[str, List[Dict[str, Any]]]:
-        """Return a mapping of summarised records for ``query``.
+    def build_context(
+        self,
+        task_desc: str,
+        limit_per_db: int = 3,
+        *,
+        max_tokens: int = 800,
+        metric_weight: float = 1.0,
+        **_: Any,
+    ) -> str:
+        """Return a compact JSON context for ``task_desc``.
 
-        Parameters
-        ----------
-        query:
-            Free form text describing the current task or error.
-        limit_per_type:
-            Maximum number of entries to return for each record type.
+        ``max_tokens`` is a soft limit; lower priority items are trimmed until
+        the output roughly fits within the specified budget.
+        ``metric_weight`` controls how strongly ROI/success metrics influence
+        ranking relative to vector similarity.
         """
 
-        # Fetch a generous number of results to allow fair distribution across
-        # the different record types, then trim down per bucket.
-        hits = self.retriever.retrieve(query, top_k=limit_per_type * 4)
+        hits = self.retriever.retrieve(task_desc, top_k=limit_per_db * 5)
 
-        context: Dict[str, List[Dict[str, Any]]] = {
+        buckets: Dict[str, List[Record]] = {
             "errors": [],
             "bots": [],
             "workflows": [],
+            "discrepancies": [],
             "code": [],
         }
-
         key_map = {
             "error": "errors",
             "bot": "bots",
             "workflow": "workflows",
+            "discrepancy": "discrepancies",
             "code": "code",
         }
 
@@ -195,12 +211,33 @@ class ContextBuilder:
             key = key_map.get(bundle.origin_db)
             if not key:
                 continue
-            bucket = context[key]
-            if len(bucket) >= limit_per_type:
-                continue
-            bucket.append(self._bundle_to_record(bundle).to_dict())
+            buckets[key].append(self._bundle_to_record(bundle, metric_weight))
 
-        return context
+        all_items: List[tuple[str, Record]] = []
+        for key, recs in buckets.items():
+            recs.sort(key=lambda r: r.score, reverse=True)
+            recs[:] = recs[:limit_per_db]
+            all_items.extend((key, r) for r in recs)
+
+        def build_dict(items: List[tuple[str, Record]]) -> Dict[str, List[Dict[str, Any]]]:
+            result: Dict[str, List[Dict[str, Any]]] = {k: [] for k in buckets}
+            for kind, r in items:
+                entry = {"id": r.id, "desc": r.desc}
+                if r.metric is not None:
+                    entry["metric"] = r.metric
+                result[kind].append(entry)
+            return result
+
+        def token_len(obj: Dict[str, Any]) -> int:
+            return len(json.dumps(obj, ensure_ascii=False)) // 4
+
+        context_dict = build_dict(all_items)
+        while all_items and token_len(context_dict) > max_tokens:
+            all_items.sort(key=lambda x: x[1].score)
+            all_items.pop(0)
+            context_dict = build_dict(all_items)
+
+        return json.dumps(context_dict, ensure_ascii=False, separators=(",", ":"))
 
 
 __all__ = ["ContextBuilder"]
