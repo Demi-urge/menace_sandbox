@@ -44,7 +44,7 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
-from .universal_retriever import UniversalRetriever
+from .universal_retriever import UniversalRetriever, RetrievedItem
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -293,7 +293,7 @@ class DatabaseRouter:
         self._log_action(requesting_bot, "query_all", {"term": term})
         return result
 
-    def semantic_search(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
+    def semantic_search(self, query_text: str, top_k: int = 10) -> List[RetrievedItem]:
         """Perform a semantic search across embeddable databases."""
 
         try:
@@ -305,40 +305,34 @@ class DatabaseRouter:
                     enhancement_db=getattr(self, "enhancement_db", None),
                     information_db=self.info_db,
                 )
-            hits = self._retriever.retrieve_with_confidence(query_text, top_k=top_k)
+            hits = self._retriever.retrieve(query_text, top_k=top_k)
         except Exception as exc:
             logger.error("universal retrieval failed: %s", exc)
             return []
 
-        results: List[Dict[str, Any]] = []
+        # Map legacy fields (kind/source_id/record) to the new dataclass
+        results: List[RetrievedItem] = []
         for h in hits:
-            item = h.get("item")
-            if isinstance(item, dict):
-                distance = item.get("_distance")
-            else:
-                distance = getattr(item, "_distance", None)
-            kind = h.get("source")
-            if kind == "information":
-                kind = "info"
-            source_id = h.get("record_id")
-            if source_id is None and item is not None:
-                if isinstance(item, dict):
-                    source_id = item.get("id") or item.get("item_id") or item.get("wid")
+            meta = h.metadata
+            rec_id = h.record_id
+            if rec_id is None and meta is not None:
+                if isinstance(meta, dict):
+                    rec_id = meta.get("id") or meta.get("item_id") or meta.get("wid")
                 else:
-                    source_id = (
-                        getattr(item, "id", None)
-                        or getattr(item, "item_id", None)
-                        or getattr(item, "wid", None)
+                    rec_id = (
+                        getattr(meta, "id", None)
+                        or getattr(meta, "item_id", None)
+                        or getattr(meta, "wid", None)
                     )
+            origin = "info" if h.origin_db == "information" else h.origin_db
             results.append(
-                {
-                    "kind": kind,
-                    "source_id": source_id,
-                    "distance": distance,
-                    "record": item,
-                    "confidence": h.get("confidence"),
-                    "reason": h.get("reason"),
-                }
+                RetrievedItem(
+                    origin_db=origin,
+                    record_id=rec_id,
+                    metadata=meta,
+                    confidence=h.confidence,
+                    reason=h.reason,
+                )
             )
 
         return results[:top_k]
