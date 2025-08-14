@@ -1,4 +1,3 @@
-import sqlite3
 import sys
 import types
 from datetime import datetime
@@ -14,10 +13,11 @@ class DummyEntry:
 
 
 class DummyManager:
-    def __init__(self):
-        self.conn = sqlite3.connect(":memory:")
+    def __init__(self, path=":memory:"):
+        import sqlite3
+        self.conn = sqlite3.connect(path)
         self.conn.execute(
-            "CREATE TABLE memory(rowid INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, data TEXT, version INTEGER, tags TEXT, ts TEXT)"
+            "CREATE TABLE IF NOT EXISTS memory(rowid INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, data TEXT, version INTEGER, tags TEXT, ts TEXT)"
         )
         self.has_fts = False
 
@@ -105,3 +105,81 @@ def test_retention_prunes_and_merges():
     cur = manager.conn.execute("SELECT COUNT(*) FROM memory")
     count = cur.fetchone()[0]
     assert count <= 3
+
+
+class DummyResp:
+    status_code = 200
+
+    def __init__(self, text):
+        self._text = text
+
+    def json(self):
+        return {"choices": [{"message": {"content": self._text}}]}
+
+
+class RecordingSession:
+    def __init__(self, texts):
+        self.texts = iter(texts)
+        self.messages = []
+
+    def post(self, url, headers=None, json=None, timeout=0):
+        self.messages.append(json["messages"])
+        return DummyResp(next(self.texts))
+
+
+class DummyClient:
+    def __init__(self, session):
+        self.session = session
+
+    def ask(self, messages, knowledge=None):
+        memory = knowledge
+        user_prompt = messages[-1]["content"]
+        messages_for_api = messages
+        if memory:
+            contexts = memory.search_context(user_prompt)
+            if contexts:
+                ctx_parts = [
+                    f"Prompt: {c.get('prompt','')}\nResponse: {c.get('response','')}"
+                    for c in contexts
+                ]
+                context_text = "\n\n".join(ctx_parts)
+                messages_for_api = [{"role": "system", "content": context_text}] + messages
+        resp = self.session.post("", json={"messages": messages_for_api})
+        text = resp.json()["choices"][0]["message"]["content"]
+        if memory:
+            memory.log_interaction(user_prompt, text, [])
+        return resp.json()
+
+
+def test_chatgptclient_context_and_logging(tmp_path):
+    session = RecordingSession(["r1", "r2"])
+    memory = GPTMemory(DummyManager(path=tmp_path / "mem.db"))
+    client = DummyClient(session)
+
+    client.ask([{"role": "user", "content": "hello"}], knowledge=memory)
+    client.ask([{"role": "user", "content": "hello"}], knowledge=memory)
+
+    assert len(session.messages) == 2
+    assert len(session.messages[0]) == 1
+    ctx = session.messages[1][0]["content"]
+    assert "Prompt: hello" in ctx
+    assert "Response: r1" in ctx
+
+
+def test_memory_persists_between_sessions(tmp_path):
+    db = tmp_path / "mem.db"
+
+    session1 = RecordingSession(["first"])
+    mem1 = GPTMemory(DummyManager(path=db))
+    client1 = DummyClient(session1)
+    client1.ask([{"role": "user", "content": "persist"}], knowledge=mem1)
+    mem1.manager.conn.close()
+
+    session2 = RecordingSession(["second"])
+    mem2 = GPTMemory(DummyManager(path=db))
+    client2 = DummyClient(session2)
+    client2.ask([{"role": "user", "content": "persist"}], knowledge=mem2)
+
+    ctx = session2.messages[0][0]["content"]
+    assert "Prompt: persist" in ctx
+    assert "Response: first" in ctx
