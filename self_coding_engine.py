@@ -104,7 +104,12 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
-        self.context_builder = context_builder or ContextBuilder()
+        if context_builder is None:
+            try:
+                context_builder = ContextBuilder()
+            except Exception:  # pragma: no cover - defensive fallback
+                context_builder = None
+        self.context_builder = context_builder
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -342,11 +347,13 @@ class SelfCodingEngine:
         if not self.llm_client:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
+        builder = self.context_builder
         retrieval_context = {}
-        try:
-            retrieval_context = self.context_builder.build_context(description)
-        except Exception:
-            retrieval_context = {}
+        if builder is not None:
+            try:
+                retrieval_context = builder.build_context(description)
+            except Exception:
+                retrieval_context = {}
         prompt = self.build_visual_agent_prompt(
             str(path) if path else None,
             description,

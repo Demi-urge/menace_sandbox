@@ -296,6 +296,11 @@ class BotDevelopmentBot:
             self.logger.warning("failed to load prompt templates: %s", exc)
             self.prompt_templates = {}
         self.template_engine = PromptTemplateEngine(self.prompt_templates)
+        if context_builder is None:
+            try:
+                context_builder = ContextBuilder()
+            except Exception:  # pragma: no cover - defensive fallback
+                context_builder = None
         self.context_builder = context_builder
         # warn about missing optional dependencies
         for dep_name, mod in {
@@ -930,12 +935,6 @@ class BotDevelopmentBot:
     def _build_prompt(self, spec: BotSpec) -> str:
         """Return the final prompt for the visual agent or Codex."""
         builder = self.context_builder
-        if builder is None:
-            try:
-                builder = ContextBuilder()
-            except Exception:
-                builder = None
-            self.context_builder = builder
         retrieval_context: Dict[str, Any] = {}
         if builder is not None:
             try:
