@@ -294,7 +294,12 @@ class GPTMemoryRecord:
 
 
 class GPTMemory:
-    """Tiny wrapper around :class:`MenaceMemoryManager` used in tests."""
+    """Tiny wrapper around :class:`MenaceMemoryManager` used in tests.
+
+    It provides a very small API for storing prompts/responses with
+    lightweight tagging.  Only a predefined set of tags is persisted so
+    tests can exercise tag filtering behaviour.
+    """
 
     ALLOWED_TAGS = {"improvement", "bugfix", "insight"}
 
@@ -306,6 +311,21 @@ class GPTMemory:
     def store(
         self, prompt: str, response: str, tags: Sequence[str] | None = None
     ) -> int:
+        """Persist a prompt/response pair.
+
+        Parameters
+        ----------
+        prompt, response:
+            The text exchanged with the model.
+        tags:
+            Optional list of labels.  Only ``improvement``, ``bugfix`` and
+            ``insight`` are stored; any other tag is silently ignored.
+
+        Returns
+        -------
+        int
+            The version number assigned by :class:`MenaceMemoryManager`.
+        """
         valid_tags = [t for t in (tags or []) if t in self.ALLOWED_TAGS]
         key = f"gpt:{datetime.utcnow().isoformat()}"
         data = json.dumps({"prompt": prompt, "response": response})
@@ -315,6 +335,18 @@ class GPTMemory:
     def retrieve(
         self, query: str, limit: int = 5, tags: Sequence[str] | None = None
     ) -> List[GPTMemoryRecord]:
+        """Return stored interactions matching ``query``.
+
+        Parameters
+        ----------
+        query:
+            Text to search for in stored prompts or responses.
+        limit:
+            Maximum number of entries to return.
+        tags:
+            Optional tag filter.  When provided only entries containing one
+            of the specified tags are returned.
+        """
         entries = self.manager.search(query, limit * 5 if tags else limit)
         wanted = set(tags or [])
         results: List[GPTMemoryRecord] = []
