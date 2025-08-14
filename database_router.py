@@ -321,6 +321,7 @@ class DatabaseRouter:
                     confidence=h.confidence,
                     metadata=h.metadata,
                     reason=h.reason,
+                    links=h.links,
                 )
             )
 

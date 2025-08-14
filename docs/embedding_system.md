@@ -71,17 +71,21 @@ UniversalRetriever(
 
 `retrieve(query, top_k=10, link_multiplier=1.1)` accepts either raw text or an
 existing record object.  It returns a list of `RetrievedItem` instances, each
-exposing the origin database, the record identifier, a metadata dictionary,
-normalised confidence score and an explanatory reason:
+exposing the origin database, the full record, a metadata dictionary,
+normalised confidence score, a primary reason and any related record ids:
 
 ```python
 @dataclass
 class RetrievedItem:
     origin_db: str
-    record_id: Any
-    metadata: dict[str, Any]
+    record: Any
     confidence: float
+    metadata: dict[str, Any]
     reason: str
+    links: list[Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        ...
 ```
 
 ### Scoring methodology
@@ -102,8 +106,9 @@ Results that share bot relationships (via `bot_workflow`, `bot_error` or
 `bot_enhancement` tables) receive a multiplier boost controlled by the
 `link_multiplier` argument.  The helper `boost_linked_candidates` performs a
 union-find over the candidate set, applies the multiplier to all members of
-linked groups and returns a linkage path such as `bot->workflow->error`.  The
-path is appended to the retrieval reason for each affected result.
+linked groups and returns both a linkage path such as `bot->workflow->error`
+and the related record ids.  The path is appended to the retrieval reason for
+each affected result and the ids are stored in the ``links`` field.
 
 ### Example
 
@@ -124,5 +129,6 @@ for hit in hits:
     print(hit.origin_db, hit.record_id, f"{hit.confidence:.2f}", hit.reason)
 ```
 
-Each `RetrievedItem` exposes the originating database, the record identifier, a
-confidence score and a human-friendly reason derived from the dominant metric.
+Each `RetrievedItem` exposes the originating database, the matching record, a
+confidence score, explanatory reason and any linked record identifiers, and can
+be easily serialised via :py:meth:`RetrievedItem.to_dict`.

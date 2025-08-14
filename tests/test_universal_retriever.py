@@ -77,15 +77,22 @@ def test_universal_retriever_ranking_and_boosting(tmp_path):
 
     reasons = {h.origin_db: h.reason for h in boosted}
     path = "linked via bot->workflow->enhancement->error"
-    assert reasons["error"].startswith("frequent error")
+    assert reasons["error"].startswith("frequent error recurrence")
     assert path in reasons["error"]
     assert reasons["enhancement"].startswith("high ROI uplift")
     assert path in reasons["enhancement"]
     assert reasons["workflow"].startswith("heavy usage")
     assert path in reasons["workflow"]
-    assert reasons["bot"].startswith("widely deployed bot")
+    assert reasons["bot"].startswith("high vector similarity")
     assert path in reasons["bot"]
-    assert reasons["information"] == "relevant match"
+    assert reasons["information"].startswith("high vector similarity")
+
+    links = {h.origin_db: h.links for h in boosted}
+    assert len(links["bot"]) == 3
+    assert len(links["workflow"]) == 3
+    assert len(links["error"]) == 3
+    assert len(links["enhancement"]) == 3
+    assert links["information"] == []
 
     # metric weighting keeps information result least confident
     info_conf = next(h.confidence for h in boosted if h.origin_db == "information")
