@@ -332,6 +332,22 @@ class MenaceMemoryManager(GPTMemoryInterface):
             data = json.dumps(data)
         entry = MemoryEntry(key, str(data), version, tags)
         self.log(entry, bot_id=bot_id, info_id=info_id)
+        if self.event_bus:
+            try:
+                payload = {
+                    "key": entry.key,
+                    "data": entry.data,
+                    "version": entry.version,
+                    "tags": entry.tags,
+                    "ts": entry.ts,
+                    "bot_id": bot_id,
+                    "info_id": info_id,
+                }
+                self.event_bus.publish("memory:new", payload)
+            except Exception:
+                logger.exception(
+                    "Failed to publish memory:new event for %s", entry.key
+                )
         return version
 
     def log(self, entry: MemoryEntry, *, bot_id: int | None = None, info_id: int | None = None) -> None:
@@ -407,20 +423,6 @@ class MenaceMemoryManager(GPTMemoryInterface):
                 logger.exception(
                     "Failed to update knowledge graph for key %s", entry.key
                 )
-        if self.event_bus:
-            try:
-                payload = {
-                    "key": entry.key,
-                    "data": entry.data,
-                    "version": entry.version,
-                    "tags": entry.tags,
-                    "ts": entry.ts,
-                    "bot_id": bot_id,
-                    "info_id": info_id,
-                }
-                self.event_bus.publish("memory:new", payload)
-            except Exception:
-                logger.exception("Failed to publish memory:new event for %s", entry.key)
         for cb in list(self.subscribers):
             try:
                 cb(entry)

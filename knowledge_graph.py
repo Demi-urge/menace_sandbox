@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Simplified knowledge graph for cross-database relationships."""
 
-from typing import Iterable, Optional, Callable, List, Dict
+from typing import Iterable, Optional, Callable, List, Dict, TYPE_CHECKING
 import logging
 from pathlib import Path
 import atexit
@@ -13,6 +13,9 @@ try:
     import networkx as nx  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
     nx = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .unified_event_bus import UnifiedEventBus
 
 try:
     import hdbscan  # type: ignore
@@ -225,6 +228,20 @@ class KnowledgeGraph:
         for e in error_categories or []:
             self.graph.add_node(f"error_category:{e}")
             self.graph.add_edge(inode, f"error_category:{e}", type="error_category")
+
+    def listen_to_memory(self, event_bus: "UnifiedEventBus", memory_mgr: object) -> None:
+        """Subscribe to memory updates and ingest GPT memory automatically."""
+
+        def _handler(_topic: str, _payload: object) -> None:
+            try:
+                self.ingest_gpt_memory(memory_mgr)
+            except Exception:
+                logger.exception("failed ingesting GPT memory on memory:new")
+
+        try:
+            event_bus.subscribe("memory:new", _handler)
+        except Exception:
+            logger.exception("failed subscribing to memory:new events")
 
     def ingest_gpt_memory(self, memory_mgr: object) -> None:
         """Load GPT insights from a memory manager or :class:`GPTMemory`.
