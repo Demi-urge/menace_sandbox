@@ -338,6 +338,14 @@ class SelfCodingEngine:
         except Exception:
             history = ""
         if history:
+            self.logger.info(
+                "patch history context",
+                extra={
+                    "description": description,
+                    "history": history,
+                    "tags": ["analysis"],
+                },
+            )
             prompt += "\n\n### Patch history\n" + history
 
         try:

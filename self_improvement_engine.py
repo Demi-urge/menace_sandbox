@@ -76,6 +76,7 @@ from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
+from .gpt_memory import GPTMemoryManager
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -608,6 +609,7 @@ class SelfImprovementEngine:
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
+        gpt_memory_manager: GPTMemoryManager | None = None,
     ) -> None:
         self.interval = interval
         self.bot_name = bot_name
@@ -724,6 +726,12 @@ class SelfImprovementEngine:
         self.auto_patch_high_risk = getattr(settings, "auto_patch_high_risk", True)
         if getattr(settings, "menace_mode", "").lower() == "autonomous":
             self.auto_patch_high_risk = True
+
+        self.gpt_memory_manager = (
+            gpt_memory_manager
+            or getattr(self_coding_engine, "gpt_memory_manager", None)
+            or GPTMemoryManager()
+        )
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -939,6 +947,45 @@ class SelfImprovementEngine:
             hist_file = Path(settings.sandbox_data_dir) / "synergy_history.db"
             self._start_synergy_trainer(hist_file, interval)
 
+    def _memory_summaries(self, key: str) -> str:
+        """Return a summary of similar past actions from memory."""
+        try:
+            entries = self.gpt_memory_manager.search_context(
+                key,
+                tags=["patch_success", "patch_failure"],
+                limit=5,
+                use_embeddings=False,
+            )
+        except Exception:
+            return ""
+        summaries: list[str] = []
+        for ent in entries:
+            tag = "patch_success" if "patch_success" in ent.tags else "patch_failure"
+            snippet = (ent.response or "").strip().splitlines()[0]
+            summaries.append(f"{tag}: {snippet}")
+        return "\n".join(summaries)
+
+    def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
+        try:
+            self.gpt_memory_manager.log_interaction(
+                f"{action}:{module}",
+                "success" if success else "failure",
+                tags=["patch_success" if success else "patch_failure"],
+            )
+        except Exception:
+            self.logger.exception("memory logging failed", extra=log_record(module=module))
+
+    def _generate_patch_with_memory(self, module: str, action: str) -> int | None:
+        history = self._memory_summaries(module)
+        if history:
+            self.logger.info(
+                "patch memory context",
+                extra=log_record(module=module, history=history, tags=["analysis"]),
+            )
+        patch_id = generate_patch(module, self.self_coding_engine)
+        self._record_memory_outcome(module, action, patch_id is not None)
+        return patch_id
+
     # ------------------------------------------------------------------
     def recent_scores(self, limit: int = 20) -> list[tuple]:
         """Return recently stored patch scores."""
@@ -1149,7 +1196,9 @@ class SelfImprovementEngine:
                                     tags=["fix_attempt"],
                                 ),
                             )
-                            patch_id = generate_patch(name, self.self_coding_engine)
+                            patch_id = self._generate_patch_with_memory(
+                                name, "scenario_patch"
+                            )
                             self.logger.info(
                                 "patch result",
                                 extra=log_record(
@@ -3914,7 +3963,9 @@ class SelfImprovementEngine:
                             tags=["fix_attempt"],
                         ),
                     )
-                    patch_id = generate_patch(mod, self.self_coding_engine)
+                    patch_id = self._generate_patch_with_memory(
+                        mod, "preventative_patch"
+                    )
                     self.logger.info(
                         "patch result",
                         extra=log_record(
@@ -4024,7 +4075,9 @@ class SelfImprovementEngine:
                                 tags=["fix_attempt"],
                             ),
                         )
-                        patch_id = generate_patch(mod, self.self_coding_engine)
+                        patch_id = self._generate_patch_with_memory(
+                            mod, "high_risk_patch"
+                        )
                         self.logger.info(
                             "patch result",
                             extra=log_record(
