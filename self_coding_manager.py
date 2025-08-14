@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 import logging
 import subprocess
+from typing import Dict, Any
 
 from .self_coding_engine import SelfCodingEngine
 from .model_automation_pipeline import ModelAutomationPipeline, AutomationResult
@@ -73,7 +74,14 @@ class SelfCodingManager:
         self._last_event_id: int | None = None
 
     # ------------------------------------------------------------------
-    def run_patch(self, path: Path, description: str, energy: int = 1) -> AutomationResult:
+    def run_patch(
+        self,
+        path: Path,
+        description: str,
+        energy: int = 1,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+    ) -> AutomationResult:
         """Patch *path* then deploy using the automation pipeline."""
         if self.approval_policy and not self.approval_policy.approve(path):
             raise RuntimeError("patch approval failed")
@@ -84,6 +92,7 @@ class SelfCodingManager:
             parent_patch_id=self._last_patch_id,
             reason=description,
             trigger=path.name,
+            context_meta=context_meta,
         )
         result = self.pipeline.run(self.bot_name, energy=energy)
         after_roi = self.data_bot.roi(self.bot_name) if self.data_bot else 0.0

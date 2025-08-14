@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List
+from typing import Iterable, Optional, Dict, List, Any
 import subprocess
 import os
 import sys
@@ -25,6 +25,7 @@ from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
+from .context_builder import ContextBuilder
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
@@ -60,6 +61,7 @@ class SelfCodingEngine:
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
         gpt_memory_manager: GPTMemoryManager | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.code_db = code_db
         self.memory_mgr = memory_mgr
@@ -98,6 +100,7 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
+        self.context_builder = context_builder or ContextBuilder()
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -269,10 +272,20 @@ class SelfCodingEngine:
 
         return body
 
-    def generate_helper(self, description: str, *, path: Path | None = None) -> str:
-        """Create helper text by asking an LLM using snippet context."""
+    def generate_helper(
+        self,
+        description: str,
+        *,
+        path: Path | None = None,
+        metadata: Dict[str, Any] | None = None,
+    ) -> str:
+        """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
         context = "\n\n".join(s.code for s in snippets)
+        meta = metadata.copy() if metadata else {}
+        meta.setdefault("description", description)
+        if path is not None:
+            meta.setdefault("path", str(path))
         def _fallback() -> str:
             """Return a minimal helper implementation."""
             func = f"auto_{description.replace(' ', '_')}"
@@ -321,12 +334,19 @@ class SelfCodingEngine:
         if not self.llm_client:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
+        retrieval_context = {}
+        try:
+            retrieval_context = self.context_builder.build_context(meta)
+        except Exception:
+            retrieval_context = {}
         prompt = self.build_visual_agent_prompt(
             str(path) if path else None,
             description,
             context,
             repo_layout=repo_layout,
         )
+        if retrieval_context:
+            prompt += "\n\n### Retrieval context\n" + json.dumps(retrieval_context, indent=2)
 
         # Incorporate past patch outcomes from memory
         history = ""
@@ -385,9 +405,9 @@ class SelfCodingEngine:
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
 
-    def patch_file(self, path: Path, description: str) -> str:
+    def patch_file(self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None) -> str:
         """Append a generated helper to the given file and return its code."""
-        code = self.generate_helper(description, path=path)
+        code = self.generate_helper(description, path=path, metadata=context_meta)
         self.logger.info(
             "patch file",
             extra={
@@ -477,6 +497,7 @@ class SelfCodingEngine:
         reason: str | None = None,
         trigger: str | None = None,
         requesting_bot: str | None = None,
+        context_meta: Dict[str, Any] | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
 
@@ -530,7 +551,7 @@ class SelfCodingEngine:
                 self.logger.error("complexity query failed: %s", exc)
                 before_complexity = 0.0
         original = path.read_text(encoding="utf-8")
-        generated_code = self.patch_file(path, description)
+        generated_code = self.patch_file(path, description, context_meta=context_meta)
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)

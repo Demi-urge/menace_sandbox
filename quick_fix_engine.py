@@ -7,7 +7,8 @@ import logging
 import subprocess
 import shutil
 import tempfile
-from typing import Tuple, Iterable
+import json
+from typing import Tuple, Iterable, Dict, Any
 
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
@@ -17,6 +18,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
+from .context_builder import ContextBuilder
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
 except Exception:  # pragma: no cover - fallback for tests
@@ -59,6 +61,11 @@ def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int
         logger.error("module not found: %s", module)
         return None
 
+    context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
+    ctx_builder = ContextBuilder()
+    context_block = ctx_builder.build_context(context_meta)
+    description = "preemptive_fix\n\n" + json.dumps(context_block, indent=2)
+
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
             from .self_coding_engine import SelfCodingEngine
@@ -80,12 +87,13 @@ def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int
             try:
                 patch_id, _, _ = engine.apply_patch(
                     path,
-                    "preemptive_fix",
+                    description,
                     reason="preemptive_fix",
                     trigger="quick_fix_engine",
+                    context_meta=context_meta,
                 )
             except AttributeError:
-                engine.patch_file(path, "preemptive_fix")
+                engine.patch_file(path, "preemptive_fix", context_meta=context_meta)
                 patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
@@ -173,7 +181,10 @@ class QuickFixEngine:
         path = Path(f"{module}.py")
         if not path.exists():
             return
-        desc = f"quick fix {etype}"
+        context_meta = {"error_type": etype, "module": module, "bot": bot}
+        builder = ContextBuilder()
+        ctx_block = builder.build_context(context_meta)
+        desc = f"quick fix {etype}\n\n" + json.dumps(ctx_block, indent=2)
         if self.retriever is not None:
             try:
                 self.retriever.retrieve_with_confidence(module, top_k=1)
@@ -181,7 +192,7 @@ class QuickFixEngine:
                 self.logger.debug("retriever lookup failed", exc_info=True)
         patch_id = None
         try:
-            result = self.manager.run_patch(path, desc)
+            result = self.manager.run_patch(path, desc, context_meta=context_meta)
             patch_id = getattr(result, "patch_id", None)
         except Exception as exc:  # pragma: no cover - runtime issues
             self.logger.error("quick fix failed for %s: %s", bot, exc)
@@ -230,6 +241,10 @@ class QuickFixEngine:
             path = Path(f"{module}.py")
             if not path.exists():
                 continue
+            meta = {"module": module, "reason": "preemptive_patch"}
+            builder = ContextBuilder()
+            ctx = builder.build_context(meta)
+            desc = "preemptive_patch\n\n" + json.dumps(ctx, indent=2)
             if self.retriever is not None:
                 try:
                     self.retriever.retrieve_with_confidence(module, top_k=1)
@@ -237,7 +252,7 @@ class QuickFixEngine:
                     self.logger.debug("retriever lookup failed", exc_info=True)
             patch_id = None
             try:
-                result = self.manager.run_patch(path, "preemptive_patch")
+                result = self.manager.run_patch(path, desc, context_meta=meta)
                 patch_id = getattr(result, "patch_id", None)
             except Exception as exc:  # pragma: no cover - runtime issues
                 self.logger.error("preemptive patch failed for %s: %s", module, exc)
