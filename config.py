@@ -148,6 +148,15 @@ class Bot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ContextBuilderConfig(BaseModel):
+    """Context builder tuning parameters."""
+
+    max_tokens: int = 800
+    db_weights: Dict[str, float] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Config(BaseModel):
     """Top-level application configuration."""
 
@@ -157,6 +166,7 @@ class Config(BaseModel):
     logging: Logging
     vector: Vector
     bot: Bot
+    context_builder: ContextBuilderConfig = ContextBuilderConfig()
     watch_config: bool = True
 
     model_config = ConfigDict(extra="forbid")

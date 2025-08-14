@@ -39,6 +39,22 @@ context_json = builder.build_context(
   `builder.retriever` (for example `link_multiplier`) to emphasise connectivity
   or adjust ranking.
 
+When `max_tokens` or per‑database weighting is not supplied, `ContextBuilder`
+looks for optional settings in the application config:
+
+```yaml
+context_builder:
+  max_tokens: 800
+  db_weights:
+    error: 1.5  # emphasise error records
+    code: 0.5   # de‑emphasise code snippets
+```
+
+The defaults keep all databases equally weighted with an 800‑token budget.
+Increasing `max_tokens` offers richer history at the cost of higher token
+usage. Raising a database weight biases ranking toward that source while lower
+weights trade recall for diversity.
+
 ## Example output
 
 ```json
