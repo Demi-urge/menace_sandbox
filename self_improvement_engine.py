@@ -76,7 +76,7 @@ from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
-from .gpt_memory import GPTMemoryManager
+from .gpt_memory import GPTMemoryManager, GPTMemory
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -609,8 +609,11 @@ class SelfImprovementEngine:
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
-        gpt_memory_manager: GPTMemoryManager | None = None,
+        gpt_memory: GPTMemoryManager | GPTMemory | None = None,
+        **kwargs: Any,
     ) -> None:
+        if gpt_memory is None:
+            gpt_memory = kwargs.get("gpt_memory_manager")
         self.interval = interval
         self.bot_name = bot_name
         self.info_db = info_db or InfoDB()
@@ -727,11 +730,13 @@ class SelfImprovementEngine:
         if getattr(settings, "menace_mode", "").lower() == "autonomous":
             self.auto_patch_high_risk = True
 
-        self.gpt_memory_manager = (
-            gpt_memory_manager
+        self.gpt_memory = (
+            gpt_memory
+            or getattr(self_coding_engine, "gpt_memory", None)
             or getattr(self_coding_engine, "gpt_memory_manager", None)
             or GPTMemoryManager()
         )
+        self.gpt_memory_manager = self.gpt_memory  # backward compatibility
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -950,28 +955,43 @@ class SelfImprovementEngine:
     def _memory_summaries(self, key: str) -> str:
         """Return a summary of similar past actions from memory."""
         try:
-            entries = self.gpt_memory_manager.search_context(
-                key,
-                tags=["patch_success", "patch_failure"],
-                limit=5,
-                use_embeddings=False,
-            )
+            entries: list[Any] = []
+            if hasattr(self.gpt_memory, "search_context"):
+                entries = self.gpt_memory.search_context(
+                    key,
+                    tags=["patch_success", "patch_failure"],
+                    limit=5,
+                    use_embeddings=False,
+                )
+            elif hasattr(self.gpt_memory, "retrieve"):
+                entries = self.gpt_memory.retrieve(key, limit=5)
         except Exception:
             return ""
         summaries: list[str] = []
         for ent in entries:
-            tag = "patch_success" if "patch_success" in ent.tags else "patch_failure"
-            snippet = (ent.response or "").strip().splitlines()[0]
+            tags = getattr(ent, "tags", []) or []
+            tag = "patch_success" if (
+                "patch_success" in tags or "improvement" in tags
+            ) else "patch_failure"
+            snippet = (getattr(ent, "response", "") or "").strip().splitlines()[0]
             summaries.append(f"{tag}: {snippet}")
         return "\n".join(summaries)
 
     def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
         try:
-            self.gpt_memory_manager.log_interaction(
-                f"{action}:{module}",
-                "success" if success else "failure",
-                tags=["patch_success" if success else "patch_failure"],
-            )
+            if hasattr(self.gpt_memory, "log_interaction"):
+                self.gpt_memory.log_interaction(
+                    f"{action}:{module}",
+                    "success" if success else "failure",
+                    tags=["patch_success" if success else "patch_failure"],
+                )
+            elif hasattr(self.gpt_memory, "store"):
+                tag = ["improvement" if success else "bugfix"]
+                self.gpt_memory.store(
+                    f"{action}:{module}",
+                    "success" if success else "failure",
+                    tag,
+                )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
 
