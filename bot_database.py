@@ -8,7 +8,7 @@ import dataclasses
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Sequence
+from typing import Any, Dict, Iterable, Optional, Sequence, TYPE_CHECKING
 from time import time
 
 from .auto_link import auto_link
@@ -23,6 +23,9 @@ except Exception:  # pragma: no cover - optional dependency
     MenaceDB = None  # type: ignore
     warnings.warn("MenaceDB unavailable, Menace integration disabled.")
 from uuid import uuid4
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from .deployment_bot import DeploymentDB
 
 
 def _serialize_list(items: Iterable[str]) -> str:
@@ -194,6 +197,19 @@ class BotDB(EmbeddableDBMixin):
             (level,),
         )
         return [dict(r) for r in cur.fetchall()]
+
+    def deployment_frequency(self, bot_id: int, dep_db: "DeploymentDB") -> int:
+        """Return number of deployment trials recorded for ``bot_id``.
+
+        The ``DeploymentDB`` maintains a ``bot_trials`` table which logs each
+        deployment attempt. This helper simply counts rows for the given bot.
+        """
+        cur = dep_db.conn.execute(
+            "SELECT COUNT(*) FROM bot_trials WHERE bot_id=?",
+            (bot_id,),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
 
     def retry_failed(self) -> None:
         """Retry any queued events or MenaceDB inserts."""

@@ -460,6 +460,19 @@ class ErrorDB(EmbeddableDBMixin):
         self.conn.commit()
         self._publish("error_code:new", {"error_id": err_id, "code_id": code_id})
 
+    def recurrence_frequency(self, err_id: int) -> int:
+        """Return recorded recurrence frequency for ``err_id``.
+
+        Uses the ``errors.frequency`` column where available; if the
+        ``err_id`` is unknown or the column is NULL, ``0`` is returned.
+        """
+        cur = self.conn.execute(
+            "SELECT frequency FROM errors WHERE id=?",
+            (err_id,),
+        )
+        row = cur.fetchone()
+        return int(row["frequency"]) if row and row["frequency"] is not None else 0
+
     def add_telemetry(self, event: "TelemetryEvent") -> None:
         """Insert a high-resolution error telemetry entry."""
         mods = event.module_counts or ({event.module: 1} if event.module else {})
