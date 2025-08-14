@@ -4,7 +4,17 @@ import hashlib
 import json
 import sqlite3
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, Iterable, List, Sequence
+
+
+@dataclass
+class RetrievalHit:
+    source_db: str
+    record_id: Any
+    metadata: dict[str, Any]
+    confidence_score: float
+    reason: str
 
 
 def boost_linked_candidates(
@@ -173,27 +183,35 @@ class UniversalRetriever:
         raise TypeError("Unsupported query type for retrieval")
 
     # ------------------------------------------------------------------
-    def retrieve(self, query: Any, top_k: int = 10) -> List[Any]:
-        """Return top results from all databases for ``query``."""
+    def _retrieve_candidates(
+        self, query: Any, top_k: int = 10
+    ) -> List[tuple[str, Any, Any]]:
+        """Return raw candidates and their sources for ``query``."""
 
         vector = self._vector_for_query(query)
-        candidates: List[Any] = []
-        for db in (
-            self.bot_db,
-            self.workflow_db,
-            self.error_db,
-            self.enhancement_db,
-            self.information_db,
-        ):
+        candidates: List[tuple[str, Any, Any]] = []
+
+        mapping = [
+            ("bot", self.bot_db, ("id", "bid")),
+            ("workflow", self.workflow_db, ("id", "wid")),
+            ("error", self.error_db, ("id",)),
+            ("enhancement", self.enhancement_db, ("id",)),
+            ("information", self.information_db, ("id", "info_id")),
+        ]
+
+        for source, db, names in mapping:
             if db is None:
                 continue
             try:
                 matches = db.search_by_vector(vector, top_k)
             except Exception:  # pragma: no cover - defensive
                 continue
-            candidates.extend(matches)
+            for m in matches:
+                rec_id = self._extract_id(m, names)
+                candidates.append((source, rec_id, m))
 
-        def _dist(item: Any) -> float:
+        def _dist(entry: tuple[str, Any, Any]) -> float:
+            item = entry[2]
             if isinstance(item, dict):
                 return float(item.get("_distance", float("inf")))
             return float(getattr(item, "_distance", float("inf")))
@@ -263,23 +281,24 @@ class UniversalRetriever:
             return float(total)
         return float(total)
 
-    def retrieve_with_confidence(
+    def retrieve(
         self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
-    ) -> List[dict[str, Any]]:
-        """Retrieve results with a combined confidence score."""
+    ) -> List[RetrievalHit]:
+        """Retrieve results with confidence scores and reasons."""
 
-        results = self.retrieve(query, top_k)
+        raw_results = self._retrieve_candidates(query, top_k)
+
         metrics_list: List[dict[str, float]] = []
-        for item in results:
+        for source, rec_id, item in raw_results:
             metrics: dict[str, float] = {}
-            if isinstance(item, dict) and "id" in item and self.error_db:
-                metrics["frequency"] = self._error_frequency(int(item["id"]))
-            if self.enhancement_db and hasattr(item, "after_code"):
+            if source == "error" and rec_id is not None:
+                metrics["frequency"] = self._error_frequency(int(rec_id))
+            if source == "enhancement":
                 metrics["roi"] = self._enhancement_roi(item)
-            if self.workflow_db and hasattr(item, "performance_data"):
+            if source == "workflow":
                 metrics["usage"] = self._workflow_usage(item)
-            if isinstance(item, dict) and "id" in item and self.bot_db and "purpose" in item:
-                metrics["deploy"] = self._bot_deploy_freq(int(item["id"]))
+            if source == "bot" and rec_id is not None:
+                metrics["deploy"] = self._bot_deploy_freq(int(rec_id))
             metrics_list.append(metrics)
 
         max_vals: dict[str, float] = {}
@@ -289,7 +308,7 @@ class UniversalRetriever:
                     max_vals[k] = v
 
         scored: List[dict[str, Any]] = []
-        for item, m in zip(results, metrics_list):
+        for (source, rec_id, item), m in zip(raw_results, metrics_list):
             comps: List[float] = []
             for k, v in m.items():
                 max_v = max_vals.get(k, 0.0)
@@ -297,7 +316,13 @@ class UniversalRetriever:
             dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
             comps.append(1.0 / (1.0 + float(dist)))
             confidence = sum(comps) / len(comps) if comps else 0.0
-            scored.append({"item": item, "confidence": confidence, **m})
+            scored.append({
+                "source": source,
+                "record_id": rec_id,
+                "item": item,
+                "confidence": confidence,
+                **m,
+            })
 
         boost_linked_candidates(
             scored,
@@ -305,4 +330,50 @@ class UniversalRetriever:
             error_db=self.error_db,
             multiplier=link_multiplier,
         )
-        return scored
+
+        reason_map = {
+            "roi": "high ROI uplift",
+            "frequency": "frequent error",
+            "usage": "heavy usage",
+            "deploy": "widely deployed bot",
+        }
+
+        hits: List[RetrievalHit] = []
+        for entry in scored:
+            item = entry["item"]
+            meta = item if isinstance(item, dict) else item.__dict__
+            metrics = {
+                k: v
+                for k, v in entry.items()
+                if k not in {"source", "record_id", "item", "confidence"}
+            }
+            top_metric = max(metrics, key=metrics.get, default=None)
+            reason = reason_map.get(top_metric, "relevant match")
+            hits.append(
+                RetrievalHit(
+                    source_db=entry["source"],
+                    record_id=entry["record_id"],
+                    metadata=meta,
+                    confidence_score=entry["confidence"],
+                    reason=reason,
+                )
+            )
+
+        hits.sort(key=lambda h: h.confidence_score, reverse=True)
+        return hits[:top_k]
+
+    # Backwards compatibility for older callers
+    def retrieve_with_confidence(
+        self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
+    ) -> List[dict[str, Any]]:
+        hits = self.retrieve(query, top_k=top_k, link_multiplier=link_multiplier)
+        return [
+            {
+                "source": h.source_db,
+                "record_id": h.record_id,
+                "item": h.metadata,
+                "confidence": h.confidence_score,
+                "reason": h.reason,
+            }
+            for h in hits
+        ]
