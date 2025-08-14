@@ -76,7 +76,7 @@ def test_metric_based_ranking(tmp_path):
     retriever = UniversalRetriever(error_db=err_db)
     hits = retriever.retrieve("anything", top_k=2)
     assert [h.record_id for h in hits] == [high_id, low_id]
-    assert hits[0].reason.startswith("frequent error")
+    assert hits[0].reason.startswith("frequent error recurrence")
     assert hits[0].confidence > hits[1].confidence
 
 
@@ -103,8 +103,10 @@ def test_link_based_boosting(tmp_path):
     ]
     paths = boost_linked_candidates(scored, bot_db=bot_db, error_db=err_db, multiplier=2.0)
 
-    assert paths == {0: "bot->workflow->error", 1: "bot->workflow->error", 2: "bot->workflow->error"}
     for idx in (0, 1, 2):
+        path, link_ids = paths[idx]
+        assert path == "bot->workflow->error"
+        assert len(link_ids) == 2
         assert scored[idx]["confidence"] == pytest.approx(2.0)
     assert scored[3]["confidence"] == pytest.approx(1.0)
     assert 3 not in paths

@@ -44,6 +44,7 @@ def test_retrieve(tmp_path):
     for r in res:
         assert r.confidence >= 0.0
         assert isinstance(r.reason, str)
+        assert isinstance(r.links, list)
 
 
 def test_linked_boost(tmp_path):

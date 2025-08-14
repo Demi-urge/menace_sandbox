@@ -24,6 +24,7 @@ class RetrievedItem:
     confidence: float
     metadata: dict[str, Any]
     reason: str
+    links: List[Any]
 
     # Backwards compatibility for older attribute names
     @property
@@ -59,6 +60,17 @@ class RetrievedItem:
                     return self.metadata[key]
         return None
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation."""
+        return {
+            "origin_db": self.origin_db,
+            "record": self.record,
+            "confidence": self.confidence,
+            "metadata": self.metadata,
+            "reason": self.reason,
+            "links": list(self.links),
+        }
+
 
 # Older name retained for compatibility with existing imports
 RetrievalHit = RetrievedItem
@@ -70,14 +82,14 @@ def boost_linked_candidates(
     bot_db: Any | None = None,
     error_db: Any | None = None,
     multiplier: float = 1.1,
-) -> dict[int, str]:
+) -> dict[int, tuple[str, List[Any]]]:
     """Apply a score boost for items linked via bot relationships.
 
     ``scored`` is modified in-place. Any candidates that share a bot ID
     through the ``bot_workflow``, ``bot_error`` or ``bot_enhancement``
     tables receive the ``multiplier`` on their ``confidence`` score.  The
-    function returns a mapping of candidate index to a textual linkage path
-    describing how results are connected (e.g. ``"bot->workflow->error"``).
+    function returns a mapping of candidate index to a tuple of the
+    linkage path string and the related record ids for that candidate.
     """
 
     if multiplier <= 1.0 or not scored:
@@ -136,7 +148,7 @@ def boost_linked_candidates(
     for idx in range(n):
         groups[find(idx)].append(idx)
 
-    link_paths: dict[int, str] = {}
+    link_info: dict[int, tuple[str, List[Any]]] = {}
     order = ["bot", "workflow", "enhancement", "error", "information"]
     for members in groups.values():
         if len(members) > 1:
@@ -154,9 +166,10 @@ def boost_linked_candidates(
             for m in members:
                 if "confidence" in scored[m]:
                     scored[m]["confidence"] *= multiplier
-                link_paths[m] = path_str
+                link_ids = [scored[n].get("record_id") for n in members if n != m]
+                link_info[m] = (path_str, link_ids)
 
-    return link_paths
+    return link_info
 
 
 class UniversalRetriever:
@@ -367,7 +380,7 @@ class UniversalRetriever:
         *,
         multiplier: float = 1.1,
         cap: float = 2.0,
-    ) -> dict[int, str]:
+    ) -> dict[int, tuple[str, List[Any]]]:
         """Boost results that are linked via the knowledge graph or tables.
 
         Parameters
@@ -385,9 +398,9 @@ class UniversalRetriever:
         Returns
         -------
         dict
-            Mapping of candidate index to a textual description of the linkage
-            path connecting related records.  The description is appended to
-            the ``reason`` field for downstream consumers.
+            Mapping of candidate index to ``(path, links)`` tuples. ``path``
+            describes the linkage chain while ``links`` lists the related
+            record identifiers.
         """
 
         if multiplier <= 1.0 or len(scored) <= 1:
@@ -434,7 +447,7 @@ class UniversalRetriever:
             for idx in range(len(scored)):
                 groups[find(idx)].append(idx)
 
-            link_paths: dict[int, str] = {}
+            link_info: dict[int, tuple[str, List[Any]]] = {}
             order = ["bot", "workflow", "enhancement", "error", "information"]
             for members in groups.values():
                 if len(members) > 1:
@@ -446,10 +459,13 @@ class UniversalRetriever:
                             scored[m]["confidence"] * multiplier,
                             base_scores[m] * cap,
                         )
-                        link_paths[m] = path
-            return link_paths
+                        link_ids = [
+                            scored[n].get("record_id") for n in members if n != m
+                        ]
+                        link_info[m] = (path, link_ids)
+            return link_info
 
-        link_paths = boost_linked_candidates(
+        link_info = boost_linked_candidates(
             scored,
             bot_db=self.bot_db,
             error_db=self.error_db,
@@ -457,7 +473,7 @@ class UniversalRetriever:
         )
         for idx, entry in enumerate(scored):
             entry["confidence"] = min(entry["confidence"], base_scores[idx] * cap)
-        return link_paths
+        return link_info
 
     # ------------------------------------------------------------------
     def _context_score(self, kind: str, record: Any) -> tuple[float, dict[str, float]]:
@@ -537,14 +553,15 @@ class UniversalRetriever:
                 **metrics,
             })
 
-        link_paths = self._related_boost(
+        link_info = self._related_boost(
             scored,
             multiplier=link_multiplier,
         )
 
         reason_map = {
+            "similarity": "high vector similarity",
             "roi": "high ROI uplift",
-            "frequency": "frequent error",
+            "frequency": "frequent error recurrence",
             "usage": "heavy usage",
             "deploy": "widely deployed bot",
         }
@@ -560,15 +577,15 @@ class UniversalRetriever:
                 if k not in {"source", "record_id", "item", "confidence"}
             }
             meta.update(metrics)
-            metrics_for_reason = {
-                k: v for k, v in metrics.items() if k not in {"similarity", "context"}
-            }
+            metrics_for_reason = {k: v for k, v in metrics.items() if k != "context"}
             top_metric = max(metrics_for_reason, key=metrics_for_reason.get, default=None)
             reason = reason_map.get(top_metric, "relevant match")
             if top_metric:
                 reason += f" ({top_metric}={metrics_for_reason[top_metric]:.2f})"
-            if idx in link_paths:
-                reason += f" linked via {link_paths[idx]}"
+            links: List[Any] = []
+            if idx in link_info:
+                path, links = link_info[idx]
+                reason += f" linked via {path}"
             hits.append(
                 RetrievedItem(
                     origin_db=entry["source"],
@@ -576,6 +593,7 @@ class UniversalRetriever:
                     confidence=entry["confidence"],
                     metadata=meta,
                     reason=reason,
+                    links=links,
                 )
             )
 
@@ -594,6 +612,7 @@ class UniversalRetriever:
                 "item": h.metadata,
                 "confidence": h.confidence,
                 "reason": h.reason,
+                "links": h.links,
             }
             for h in hits
         ]
