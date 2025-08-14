@@ -19,7 +19,7 @@ def test_process(monkeypatch):
     ]
     count = 0
 
-    def fake_ask(messages):
+    def fake_ask(messages, **kw):
         nonlocal count
         resp = responses[count]
         count += 1

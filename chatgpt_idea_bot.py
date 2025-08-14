@@ -284,9 +284,11 @@ class ChatGPTClient:
         logger.info("no cached response for %s", key)
         return {"choices": [{"message": {"content": "offline"}}]}
 
-    def build_prompt_with_memory(self, tags: list[str]) -> List[Dict[str, str]]:
-        """Construct a prompt and prepend context from ``gpt_memory`` if available."""
-        messages = build_prompt(tags)
+    def build_prompt_with_memory(
+        self, tags: list[str], prompt: str
+    ) -> List[Dict[str, str]]:
+        """Prepend memory-derived context to ``prompt`` if available."""
+        messages: List[Dict[str, str]] = [{"role": "user", "content": prompt}]
         if self.gpt_memory is not None:
             try:
                 context = self.gpt_memory.fetch_context(tags)
@@ -297,15 +299,21 @@ class ChatGPTClient:
         return messages
 
 
-def build_prompt(tags: Iterable[str], prior: str | None = None) -> List[Dict[str, str]]:
-    """Construct a prompt using tags and optional prior context."""
+def build_prompt(
+    client: ChatGPTClient, tags: Iterable[str], prior: str | None = None
+) -> List[Dict[str, str]]:
+    """Construct a prompt and fetch memory-aware messages via ``client``."""
     parts = ["Suggest five new online business models"]
     if prior:
         parts.append(f"building on {prior}")
     if tags:
         parts.append("with a focus on " + ", ".join(tags))
-    prompt = " ".join(parts) + ". Respond in JSON list format with fields name, description and tags."
-    return [{"role": "user", "content": prompt}]
+    prompt = (
+        " ".join(parts)
+        + ". Respond in JSON list format with fields name, description and tags."
+    )
+    base_tags = ["idea_generation", *tags]
+    return client.build_prompt_with_memory(base_tags, prompt)
 
 
 @dataclass
@@ -430,8 +438,8 @@ def generate_and_filter(
 ) -> List[Idea]:
     """Generate ideas and filter them for novelty."""
     logger.info("requesting ideas for tags: %s", ", ".join(tags))
-    messages = build_prompt(tags)
-    response = client.ask(messages)
+    messages = build_prompt(client, tags)
+    response = client.ask(messages, tags=["idea_generation", *tags])
     ideas = parse_ideas(response)
     novel: List[Idea] = []
     for idea in ideas:

@@ -620,11 +620,14 @@ class ChatGPTResearchBot:
 
         def _do() -> str:
             b_prompt = self._budget_prompt(prompt)
+            messages = self.client.build_prompt_with_memory(
+                ["research_insight"], b_prompt
+            )
             data = self.client.ask(
-                [{"role": "user", "content": b_prompt}],
+                messages,
                 validate=False,
                 memory_manager=self.gpt_memory,
-                tags=["research"],
+                tags=["research_insight"],
             )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))
