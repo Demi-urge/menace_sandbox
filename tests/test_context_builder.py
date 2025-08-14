@@ -14,7 +14,11 @@ from menace.context_builder import ContextBuilder
 
 
 class TinyVecDB:
-    """In-memory vector store used for testing the builder."""
+    """In-memory vector store used for testing the builder.
+
+This stub mimics the minimal interface of ErrorDB, BotDB,
+WorkflowDB and CodeDB so tests can seed sample records without
+requiring the full database implementations."""
 
     def __init__(self, entries: list[dict]):
         self.entries = []
