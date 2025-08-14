@@ -34,7 +34,7 @@ def test_universal_retriever(tmp_path):
     retriever = UniversalRetriever(bot_db=bot_db, information_db=info_db)
 
     res_text = retriever.retrieve("bot", top_k=5)
-    assert any(isinstance(r, dict) and r.get("name") == "botty" for r in res_text)
+    assert any(r.source_db == "bot" and r.metadata.get("name") == "botty" for r in res_text)
 
     res_obj = retriever.retrieve({"info_id": info_id}, top_k=5)
-    assert res_obj and isinstance(res_obj[0], dict) and res_obj[0]["info_id"] == info_id
+    assert res_obj and res_obj[0].record_id == info_id
