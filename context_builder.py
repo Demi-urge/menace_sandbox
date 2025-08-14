@@ -44,6 +44,48 @@ def _snippet(text: str, length: int = 80) -> str:
     return text if len(text) <= length else text[: length - 3] + "..."
 
 
+def _roi_from_meta(origin: str, meta: Dict[str, Any]) -> float | None:
+    """Extract a ROI-like value from ``meta`` for ``origin`` record type.
+
+    The helper inspects common profitability or success fields across the
+    various databases.  When no obvious metric exists ``None`` is returned and
+    the caller may fall back to default ranking behaviour.
+    """
+
+    try:
+        if origin == "bot":
+            val = meta.get("roi") or meta.get("estimated_profit")
+            if val is None and meta.get("successes") and meta.get("attempts"):
+                val = float(meta["successes"]) / float(meta["attempts"])
+            return float(val) if val is not None else None
+
+        if origin == "workflow":
+            val = meta.get("roi") or meta.get("estimated_profit_per_bot")
+            if val is None and meta.get("successes") and meta.get("runs"):
+                val = float(meta["successes"]) / float(meta["runs"])
+            return float(val) if val is not None else None
+
+        if origin == "error":
+            # Fewer occurrences imply a better outcome.
+            freq = meta.get("frequency")
+            if freq is not None:
+                f = float(freq)
+                return 1.0 / (1.0 + f)
+            return None
+
+        if origin == "code":
+            # Prefer simpler code or higher coverage where provided.
+            comp = meta.get("complexity_score")
+            if comp is not None:
+                c = float(comp)
+                return 1.0 / (1.0 + c)
+            cov = meta.get("coverage")
+            return float(cov) if cov is not None else None
+    except Exception:  # pragma: no cover - defensive
+        return None
+    return None
+
+
 @dataclass
 class ContextItem:
     """Lightweight representation of a retrieved record."""
@@ -104,20 +146,20 @@ class ContextBuilder:
                 pass
 
     # ------------------------------------------------------------------
-    def _ranked_items(self, hits: Iterable[ResultBundle]) -> Dict[str, List[ContextItem]]:
-        """Partition and ROI-rank retrieval ``hits`` by origin database."""
+    def _ranked_items(
+        self, hits: Iterable[ResultBundle], *, use_roi: bool = True
+    ) -> Dict[str, List[ContextItem]]:
+        """Partition and optionally ROI-rank retrieval ``hits`` by origin database."""
 
         buckets: Dict[str, List[ContextItem]] = {"error": [], "bot": [], "workflow": [], "code": []}
 
         for hit in hits:
             meta = hit.metadata
             origin = hit.origin_db
-            roi_val: float | None = None
+            roi_val = _roi_from_meta(origin, meta) if use_roi else None
             if origin == "bot":
-                roi_val = float(meta.get("estimated_profit", meta.get("roi", 0.0)) or 0.0)
                 snippet = meta.get("name") or meta.get("purpose") or "bot"
             elif origin == "workflow":
-                roi_val = float(meta.get("estimated_profit_per_bot", meta.get("roi", 0.0)) or 0.0)
                 snippet = meta.get("title") or meta.get("description") or "workflow"
             elif origin == "error":
                 snippet = meta.get("message") or meta.get("description") or "error"
@@ -125,13 +167,19 @@ class ContextBuilder:
                 snippet = meta.get("summary") or meta.get("code", "code")
             else:
                 snippet = str(meta)
-            item = ContextItem(id=hit.record_id, snippet=_snippet(str(snippet)), note=hit.reason, roi=roi_val)
+            item = ContextItem(
+                id=hit.record_id,
+                snippet=_snippet(str(snippet)),
+                note=hit.reason,
+                roi=roi_val,
+            )
             if origin in buckets:
                 buckets[origin].append(item)
 
-        # Sort by ROI when available, otherwise by score already sorted in hits
-        for key in ("bot", "workflow"):
-            buckets[key].sort(key=lambda i: i.roi or 0.0, reverse=True)
+        # Sort by ROI when requested, otherwise rely on retriever ordering
+        if use_roi:
+            for key in buckets:
+                buckets[key].sort(key=lambda i: i.roi or 0.0, reverse=True)
         return buckets
 
     # ------------------------------------------------------------------
@@ -153,12 +201,62 @@ class ContextBuilder:
         return items
 
     # ------------------------------------------------------------------
-    def build_context(self, metadata: Dict[str, Any], *, top_k: int = 5) -> Dict[str, Any]:
+    def collapse_context(
+        self, context: Dict[str, List[Dict[str, Any]]], *, max_per_section: int = 3
+    ) -> Dict[str, Any]:
+        """Return a collapsed copy of ``context`` limiting items per section.
+
+        When a section contains more than ``max_per_section`` items the result
+        includes a ``more`` field indicating how many entries were omitted.
+        This helps downstream consumers maintain token limits while retaining a
+        hint of additional available data.
+        """
+
+        collapsed: Dict[str, Any] = {}
+        for name, items in context.items():
+            if len(items) <= max_per_section:
+                collapsed[name] = items
+            else:
+                collapsed[name] = {
+                    "items": items[:max_per_section],
+                    "more": len(items) - max_per_section,
+                }
+        return collapsed
+
+    # ------------------------------------------------------------------
+    def format_collapsible(self, context: Dict[str, Any]) -> str:
+        """Return a human readable string from ``collapse_context`` output."""
+
+        lines: List[str] = []
+        for section, data in context.items():
+            if isinstance(data, dict) and "items" in data:
+                items = data["items"]
+                more = data.get("more")
+            elif isinstance(data, list):
+                items = data
+                more = None
+            else:
+                lines.append(f"{section}: {data}")
+                continue
+
+            lines.append(f"{section}:")
+            for item in items:
+                snippet = item.get("snippet", "")
+                note = item.get("note", "")
+                lines.append(f"  - {snippet} ({note})")
+            if more:
+                lines.append(f"  - ... {more} more")
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    def build_context(
+        self, metadata: Dict[str, Any], *, top_k: int = 5, use_roi: bool = True
+    ) -> Dict[str, Any]:
         """Return a compact context block derived from ``metadata``."""
 
         query = _to_query_text(metadata)
         hits = self.retriever.retrieve(query, top_k=top_k)
-        buckets = self._ranked_items(hits)
+        buckets = self._ranked_items(hits, use_roi=use_roi)
 
         context = {
             "errors": [i.to_dict() for i in buckets["error"]],
