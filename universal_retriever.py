@@ -9,71 +9,53 @@ from typing import Any, Iterable, List, Sequence
 
 
 @dataclass
-class RetrievedItem:
-    """Structured result returned by :class:`UniversalRetriever`.
+class ResultBundle:
+    """Container for retrieval results.
 
-    The dataclass bundles the origin of the hit, its primary key within
-    the source database, the raw metadata for that record and a computed
-    confidence score.  A short human readable ``reason`` explains which
-    metric most influenced the ranking so downstream components can
-    surface richer explanations to users.
+    Only lightweight, serialisable information is stored: the originating
+    database label, a metadata mapping describing the matched record,
+    the final combined score and a human readable ``reason``.  Callers can
+    inspect the metadata to learn about raw vector distances and contextual
+    metrics that contributed to the score.
     """
 
     origin_db: str
-    record: Any
-    confidence: float
     metadata: dict[str, Any]
+    score: float
     reason: str
-    links: List[Any]
 
-    # Backwards compatibility for older attribute names
+    # ------------------------------------------------------------------
+    # Backwards compatibility helpers
     @property
-    def source_db(self) -> str:  # pragma: no cover - simple alias
-        return self.origin_db
+    def confidence(self) -> float:  # pragma: no cover - simple alias
+        return self.score
 
     @property
     def confidence_score(self) -> float:  # pragma: no cover - simple alias
-        return self.confidence
+        return self.score
 
     @property
     def record_id(self) -> Any:  # pragma: no cover - compatibility shim
-        """Best-effort extraction of an identifier for ``record``.
+        """Best-effort extraction of an identifier from ``metadata``."""
 
-        Many legacy callers expect ``RetrievedItem`` to expose ``record_id``
-        even though the dataclass now stores the full ``record`` object
-        instead.  We attempt to pull a likely identifier from ``record`` or
-        ``metadata`` using common attribute names.  ``None`` is returned when
-        no obvious identifier can be found.
-        """
-
-        if isinstance(self.record, dict):
-            for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
-                if key in self.record:
-                    return self.record[key]
-        else:
-            for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
-                if hasattr(self.record, key):
-                    return getattr(self.record, key)
         if isinstance(self.metadata, dict):
             for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
                 if key in self.metadata:
                     return self.metadata[key]
         return None
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serialisable representation."""
+    def to_dict(self) -> dict[str, Any]:  # pragma: no cover - simple serialiser
         return {
             "origin_db": self.origin_db,
-            "record": self.record,
-            "confidence": self.confidence,
             "metadata": self.metadata,
+            "score": self.score,
             "reason": self.reason,
-            "links": list(self.links),
         }
 
 
-# Older name retained for compatibility with existing imports
-RetrievalHit = RetrievedItem
+# Older names retained for compatibility
+RetrievedItem = ResultBundle
+RetrievalHit = ResultBundle
 
 
 def boost_linked_candidates(
@@ -125,10 +107,13 @@ def boost_linked_candidates(
             ).fetchall()
             bots.update(int(r[0]) for r in rows)
         elif typ == "information" and cid and information_db:
-            rows = information_db.conn.execute(
-                "SELECT bot_id FROM information_bots WHERE info_id=?",
-                (int(cid),),
-            ).fetchall()
+            try:
+                rows = information_db.conn.execute(
+                    "SELECT bot_id FROM information_bots WHERE info_id=?",
+                    (int(cid),),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
             bots.update(int(r[0]) for r in rows)
             if bot_db:
                 try:
@@ -566,8 +551,13 @@ class UniversalRetriever:
 
     def retrieve(
         self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
-    ) -> List[RetrievedItem]:
-        """Retrieve results with confidence scores and reasons."""
+    ) -> List[ResultBundle]:
+        """Retrieve results with scores and reasons.
+
+        Metadata for each hit includes the raw vector distance and a mapping
+        of contextual metrics so downstream consumers can understand why a
+        particular item ranked the way it did.
+        """
 
         raw_results = self._retrieve_candidates(query, top_k)
 
@@ -585,6 +575,7 @@ class UniversalRetriever:
                 "record_id": rec_id,
                 "item": item,
                 "confidence": combined_score,
+                "distance": dist,
                 "similarity": similarity,
                 "context": ctx_score,
                 **metrics,
@@ -603,7 +594,7 @@ class UniversalRetriever:
             "deploy": "widely deployed bot",
         }
 
-        hits: List[RetrievedItem] = []
+        hits: List[ResultBundle] = []
         for idx, entry in enumerate(scored):
             item = entry["item"]
             base_meta = item if isinstance(item, dict) else item.__dict__
@@ -611,30 +602,46 @@ class UniversalRetriever:
             metrics = {
                 k: v
                 for k, v in entry.items()
-                if k not in {"source", "record_id", "item", "confidence"}
+                if k
+                not in {
+                    "source",
+                    "record_id",
+                    "item",
+                    "confidence",
+                    "distance",
+                    "similarity",
+                    "context",
+                }
             }
-            meta.update(metrics)
-            metrics_for_reason = {k: v for k, v in metrics.items() if k != "context"}
-            top_metric = max(metrics_for_reason, key=metrics_for_reason.get, default=None)
+            meta.update(
+                {
+                    "vector_distance": entry.get("distance", 0.0),
+                    "similarity": entry.get("similarity", 0.0),
+                    "context_score": entry.get("context", 0.0),
+                    "contextual_metrics": metrics,
+                }
+            )
+            metrics_for_reason = {**metrics, "similarity": entry.get("similarity", 0.0)}
+            top_metric = max(
+                metrics_for_reason, key=metrics_for_reason.get, default=None
+            )
             reason = reason_map.get(top_metric, "relevant match")
             if top_metric:
                 reason += f" ({top_metric}={metrics_for_reason[top_metric]:.2f})"
-            links: List[Any] = []
             if idx in link_info:
                 path, links = link_info[idx]
                 reason += f" linked via {path}"
+                meta["linked_records"] = links
             hits.append(
-                RetrievedItem(
+                ResultBundle(
                     origin_db=entry["source"],
-                    record=item,
-                    confidence=entry["confidence"],
                     metadata=meta,
+                    score=entry["confidence"],
                     reason=reason,
-                    links=links,
                 )
             )
 
-        hits.sort(key=lambda h: h.confidence, reverse=True)
+        hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:top_k]
 
     # Backwards compatibility for older callers
@@ -647,9 +654,8 @@ class UniversalRetriever:
                 "source": h.origin_db,
                 "record_id": h.record_id,
                 "item": h.metadata,
-                "confidence": h.confidence,
+                "confidence": h.score,
                 "reason": h.reason,
-                "links": h.links,
             }
             for h in hits
         ]
