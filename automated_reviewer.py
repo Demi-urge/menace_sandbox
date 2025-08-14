@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import json
 from typing import Optional
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
+from .context_builder import ContextBuilder
 
 
 class AutomatedReviewer:
@@ -46,7 +48,11 @@ class AutomatedReviewer:
             except Exception:
                 self.logger.exception("failed disabling bot %s", bot_id)
             try:
-                self.escalation_manager.handle(f"review for bot {bot_id}")
+                builder = ContextBuilder()
+                ctx = builder.build_context({"bot_id": bot_id, "severity": severity})
+                self.escalation_manager.handle(
+                    f"review for bot {bot_id}", attachments=[json.dumps(ctx, indent=2)]
+                )
             except Exception:
                 self.logger.exception("escalation failed")
 
