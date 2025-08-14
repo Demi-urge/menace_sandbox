@@ -436,6 +436,21 @@ class EnhancementDB(EmbeddableDBMixin):
                 raise
             return []
 
+    def roi_uplift(self, enhancement_id: int) -> float | None:
+        """Return ROI uplift score for ``enhancement_id`` from ``enhancements.score``."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT score FROM enhancements WHERE id=?",
+                    (enhancement_id,),
+                ).fetchone()
+            return float(row["score"]) if row else None
+        except sqlite3.Error as exc:
+            logger.exception("fetch roi uplift failed: %s", exc)
+            if RAISE_ERRORS:
+                raise
+            return None
+
     def fetch(self, limit: int = DEFAULT_FETCH_LIMIT) -> List[Enhancement]:
         try:
             with self._connect() as conn:

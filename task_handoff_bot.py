@@ -169,6 +169,30 @@ class WorkflowDB(EmbeddableDBMixin):
             parts.append("args: " + ", ".join(rec.argument_strings))
         return " | ".join(parts)
 
+    def usage_rate(self, workflow_id: int) -> int:
+        """Return count of bots using a workflow.
+
+        Prefers the ``assigned_bots`` list stored on the workflow record. If
+        absent, falls back to counting relationships in ``bot_workflow`` when
+        that table is present in the connected database.
+        """
+        row = self.conn.execute(
+            "SELECT assigned_bots FROM workflows WHERE id=?",
+            (workflow_id,),
+        ).fetchone()
+        if row and row["assigned_bots"]:
+            bots = [b for b in row["assigned_bots"].split(",") if b]
+            return len(bots)
+        try:
+            cur = self.conn.execute(
+                "SELECT COUNT(*) FROM bot_workflow WHERE workflow_id=?",
+                (workflow_id,),
+            )
+            count = cur.fetchone()
+            return int(count[0]) if count else 0
+        except sqlite3.Error:
+            return 0
+
     # --------------------------------------------------------------
     # status updates
     def update_status(self, workflow_id: int, status: str) -> None:
