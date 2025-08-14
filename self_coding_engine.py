@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict
+from typing import Iterable, Optional, Dict, List
 import subprocess
 import os
 import sys
@@ -20,7 +20,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory
+from .gpt_memory import GPTMemoryManager
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -59,10 +59,11 @@ class SelfCodingEngine:
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
+        gpt_memory_manager: GPTMemoryManager | None = None,
     ) -> None:
         self.code_db = code_db
         self.memory_mgr = memory_mgr
-        self.gpt_memory = GPTMemory(memory_mgr)
+        self.gpt_memory_manager = gpt_memory_manager or GPTMemoryManager()
         self.pipeline = pipeline
         self.data_bot = data_bot
         self.patch_db = patch_db
@@ -120,6 +121,26 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("event bus publish failed")
+
+    def _store_patch_memory(
+        self,
+        path: Path,
+        description: str,
+        code: str,
+        success: bool,
+        roi_delta: float,
+    ) -> None:
+        """Record the outcome of a patch operation in GPT memory."""
+        outcome = "patch_success" if success else "patch_failure"
+        summary = f"roi_delta={roi_delta:.4f}"
+        try:
+            self.gpt_memory_manager.log_interaction(
+                f"{path}:{description}",
+                f"{code.strip()}\n\n{summary}",
+                tags=[outcome],
+            )
+        except Exception:
+            self.logger.exception("memory logging failed")
 
     # --------------------------------------------------------------
     def suggest_snippets(self, description: str, limit: int = 3) -> Iterable[CodeRecord]:
@@ -297,11 +318,34 @@ class SelfCodingEngine:
             context,
             repo_layout=repo_layout,
         )
+
+        # Incorporate past patch outcomes from memory
+        history = ""
+        try:
+            entries = self.gpt_memory_manager.search_context(
+                description,
+                tags=["patch_success", "patch_failure"],
+                limit=5,
+                use_embeddings=False,
+            )
+            if entries:
+                summaries: List[str] = []
+                for ent in entries:
+                    tag = "patch_success" if "patch_success" in ent.tags else "patch_failure"
+                    snippet = (ent.response or "").strip().splitlines()[0]
+                    summaries.append(f"{tag}: {snippet}")
+                history = "\n".join(summaries)
+        except Exception:
+            history = ""
+        if history:
+            prompt += "\n\n### Patch history\n" + history
+
         try:
             data = self.llm_client.ask(
                 [{"role": "user", "content": prompt}],
-                knowledge=self.gpt_memory,
+                memory_manager=self.gpt_memory_manager,
                 tags=["code_fix"],
+                use_memory=True,
             )
         except Exception:
             data = {}
@@ -324,8 +368,8 @@ class SelfCodingEngine:
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
 
-    def patch_file(self, path: Path, description: str) -> None:
-        """Append a generated helper to the given file."""
+    def patch_file(self, path: Path, description: str) -> str:
+        """Append a generated helper to the given file and return its code."""
         code = self.generate_helper(description, path=path)
         self.logger.info(
             "patch file",
@@ -347,6 +391,7 @@ class SelfCodingEngine:
                 "success": True,
             },
         )
+        return code
 
     def _run_ci(self, path: Path | None = None) -> bool:
         """Run formal verification, linting and tests.
@@ -468,7 +513,7 @@ class SelfCodingEngine:
                 self.logger.error("complexity query failed: %s", exc)
                 before_complexity = 0.0
         original = path.read_text(encoding="utf-8")
-        self.patch_file(path, description)
+        generated_code = self.patch_file(path, description)
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
@@ -520,15 +565,18 @@ class SelfCodingEngine:
                     "tags": ["fix_result"],
                 },
             )
+            self._store_patch_memory(path, description, generated_code, False, roi_delta)
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
+            self._store_patch_memory(path, description, generated_code, False, 0.0)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
+            self._store_patch_memory(path, description, generated_code, False, 0.0)
             return None, False, 0.0
         if self.pipeline:
             try:
@@ -657,6 +705,7 @@ class SelfCodingEngine:
                 "tags": ["fix_result"],
             },
         )
+        self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
