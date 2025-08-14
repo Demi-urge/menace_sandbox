@@ -70,3 +70,23 @@ def test_manager_get_similar_entries_text():
     assert entry.prompt == "weather today"
     assert score > 0
     mgr.close()
+
+
+def test_compaction_prunes_old_entries():
+    mgr = GPTMemoryManager(db_path=":memory:")
+    for i in range(5):
+        mgr.log_interaction(f"p{i}", f"r{i}", tags=["bugfix"])
+
+    removed = mgr.compact({"bugfix": 2})
+    assert removed == 3
+
+    cur = mgr.conn.execute("SELECT prompt, tags FROM interactions ORDER BY id")
+    rows = cur.fetchall()
+    assert len(rows) == 3  # two recent entries + one summary
+
+    prompts = [p for p, t in rows if "summary" not in t]
+    assert prompts == ["p3", "p4"]
+
+    summaries = [p for p, t in rows if "summary" in t]
+    assert summaries  # summary entry exists
+    mgr.close()
