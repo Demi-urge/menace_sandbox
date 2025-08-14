@@ -133,9 +133,15 @@ class MenaceMemoryManager:
         self.info_db = info_db
         self.menace_db = menace_db
         self.graph = KnowledgeGraph()
-        self.embedder = embedder or (
-            SentenceTransformer("all-MiniLM-L6-v2") if SentenceTransformer else None
-        )
+        if embedder is not None:
+            self.embedder = embedder
+        elif SentenceTransformer:
+            try:  # instantiate a default model, falling back to ``None`` if it fails
+                self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception:  # pragma: no cover - defensive against stub models
+                self.embedder = None
+        else:
+            self.embedder = None
         self.cluster_backend = cluster_backend if cluster_backend in {"hdbscan", "faiss"} else "hdbscan"
         self.recluster_interval = max(1, recluster_interval)
         self._log_count = 0
