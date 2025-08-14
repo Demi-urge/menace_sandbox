@@ -68,8 +68,10 @@ The retriever normalises several signals before averaging them:
 
 Results that share bot relationships (via `bot_workflow`, `bot_error` or
 `bot_enhancement` tables) receive a multiplier boost. The helper
-`boost_linked_candidates` performs a union-find over the candidate set and
-applies the multiplier to all members of linked groups.
+`boost_linked_candidates` performs a union-find over the candidate set,
+applies the multiplier to all members of linked groups and returns a
+linkage path such as `bot->workflow->error`.  The path is appended to the
+retrieval reason for each affected result.
 
 ### Example
 
