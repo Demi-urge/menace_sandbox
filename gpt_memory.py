@@ -375,6 +375,24 @@ class GPTMemory:
                 summaries.append(summary)
         return "\n".join(summaries)
 
+    def summarize_and_prune(self, tag: str, limit: int = 20) -> str:
+        """Summarise and prune stored interactions for ``tag``.
+
+        This helper delegates to :meth:`MenaceMemoryManager.summarise_memory`
+        with ``condense=True`` so that older entries are removed once they have
+        been summarised.  The resulting summary is returned.
+
+        Parameters
+        ----------
+        tag:
+            Label identifying the conversation history to prune.
+        limit:
+            Maximum number of recent entries to include in the summary.
+        """
+
+        key = f"gpt:{tag}"
+        return self.manager.summarise_memory(key, limit=limit, condense=True)
+
     def retrieve(
         self, query: str, limit: int = 5, tags: Sequence[str] | None = None
     ) -> List[GPTMemoryRecord]:

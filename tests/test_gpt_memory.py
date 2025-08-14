@@ -27,6 +27,18 @@ class _StubManager:
                 res.append(e)
         return res[:limit]
 
+    def summarise_memory(self, key, limit=20, ratio=0.2, store=True, condense=False):
+        entries = [e for e in self.items if e.key == key]
+        if not entries:
+            return ""
+        text = "\n".join(e.data for e in entries[-limit:])
+        summary = stub_mm._summarise_text(text, ratio)
+        if store:
+            self.store(f"{key}:summary", summary, tags="summary")
+        if condense:
+            self.items = [e for e in self.items if e.key != key]
+        return summary
+
 stub_mm.MenaceMemoryManager = _StubManager
 stub_mm._summarise_text = lambda text, ratio=0.2: text[: max(1, int(len(text) * ratio))]
 sys.modules.setdefault("menace_memory_manager", stub_mm)
@@ -58,6 +70,22 @@ def test_store_and_retrieve_with_tags():
     all_entries = mem.retrieve("add")
     assert len(all_entries) == 1
     assert all_entries[0].tags == ["improvement"]
+
+
+def test_summarize_and_prune_removes_old_entries():
+    mem = GPTMemory()
+    for i in range(3):
+        mem.log_interaction(f"p{i}", f"r{i}")
+
+    summary = mem.summarize_and_prune("general")
+    assert summary
+
+    # Original entries should be pruned
+    assert mem.retrieve("p0") == []
+
+    # Summary entry should be stored
+    summaries = [e for e in mem.manager.search("summary") if "summary" in e.key]
+    assert len(summaries) == 1
 
 
 def test_manager_get_similar_entries_text():

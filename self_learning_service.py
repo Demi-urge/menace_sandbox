@@ -16,8 +16,11 @@ from .learning_engine import LearningEngine
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
+from .gpt_memory import GPTMemory
 
 logger = logging.getLogger(__name__)
+
+PRUNE_INTERVAL = 50
 
 
 def main(
@@ -35,6 +38,8 @@ def main(
     code_db = CodeDB(event_bus=bus)
     roi_db = ROIDB()
 
+    gpt_mem = GPTMemory(mm)
+
     le = LearningEngine(pdb, mm)
     ule = UnifiedLearningEngine(pdb, mm, code_db, roi_db)
     ale = ActionLearningEngine(pdb, roi_db, code_db, ule)
@@ -44,6 +49,22 @@ def main(
     )
     coord.start()
 
+    def _prune_task() -> None:
+        last = 0
+        tags = ["general", *GPTMemory.ALLOWED_TAGS]
+        while stop_event is None or not stop_event.is_set():
+            if mm._log_count - last >= PRUNE_INTERVAL:
+                for t in tags:
+                    try:
+                        gpt_mem.summarize_and_prune(t)
+                    except Exception:  # pragma: no cover - defensive
+                        logger.exception("scheduled prune failed for %s", t)
+                last = mm._log_count
+            time.sleep(1)
+
+    prune_thread = Thread(target=_prune_task, daemon=True)
+    prune_thread.start()
+
     try:
         while stop_event is None or not stop_event.is_set():
             time.sleep(1)
@@ -52,6 +73,7 @@ def main(
             stop_event.set()
     finally:
         coord.stop()
+        prune_thread.join(timeout=0)
         if persist_progress:
             try:
                 results = coord.evaluation_manager.evaluate_all()
