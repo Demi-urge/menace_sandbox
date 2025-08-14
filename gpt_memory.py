@@ -1,191 +1,162 @@
-"""Simple GPT memory interface backed by :class:`MenaceMemoryManager`.
+"""Lightweight GPT interaction memory manager.
 
-This module provides a thin wrapper that exposes two convenience APIs for
-logging model interactions and retrieving context for follow up prompts.
-
-Each logged entry stores the original ``prompt`` and ``response`` along with
-placeholder metadata fields that can later be populated with human or
-automatic feedback, error fixes, and suggested improvement paths.
+This module provides :class:`GPTMemoryManager` which records GPT prompt/response
+pairs in a tiny SQLite database.  The manager can optionally store sentence
+embeddings using `sentence_transformers` allowing semantic search over previous
+interactions.
 """
-
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 import json
-from datetime import datetime, timedelta
-from typing import Any, Dict, Iterable, List
 import sqlite3
+from typing import List, Optional, Sequence, Any
 
-try:  # pragma: no cover - allow use outside package context
-    from .menace_memory_manager import (
-        MenaceMemoryManager,
-        MemoryEntry,
-        _summarise_text,
-    )
-except Exception:  # pragma: no cover - fallback when run as script
-    from menace_memory_manager import (  # type: ignore
-        MenaceMemoryManager,
-        MemoryEntry,
-        _summarise_text,
-    )
+try:  # optional dependency
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - embeddings are optional
+    SentenceTransformer = None  # type: ignore
 
 
-class GPTMemory:
-    """Persist and query conversation snippets for GPT style models."""
+def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """Return the cosine similarity between two vectors."""
+    import math
+    if len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    denom = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(x * x for x in b))
+    return dot / denom if denom else 0.0
+
+
+@dataclass
+class MemoryEntry:
+    """Simple representation of a stored interaction."""
+    prompt: str
+    response: str
+    tags: List[str]
+    timestamp: str
+
+
+class GPTMemoryManager:
+    """Persist and query GPT interactions.
+
+    Parameters
+    ----------
+    path:
+        Location of the SQLite database file.  ``"gpt_memory.db"`` by default.
+    embedder:
+        Optional ``SentenceTransformer`` instance used to generate vector
+        embeddings.  When provided, :meth:`search_context` can perform semantic
+        lookups using cosine similarity.
+    """
 
     def __init__(
         self,
-        manager: MenaceMemoryManager | None = None,
+        path: str | Path = "gpt_memory.db",
         *,
-        max_entries: int | None = 1000,
-        max_age_days: int | None = None,
-        summary_threshold: int = 2000,
+        embedder: SentenceTransformer | None = None,
     ) -> None:
-        """Create a GPTMemory instance.
+        self.path = Path(path)
+        self.conn = sqlite3.connect(self.path)
+        self.embedder = embedder
+        self._ensure_schema()
 
-        Parameters
-        ----------
-        manager:
-            Optional custom :class:`MenaceMemoryManager` instance.
-        max_entries:
-            Cap the total number of stored interactions. Older entries are
-            merged and removed once the cap is exceeded.
-        max_age_days:
-            Remove entries older than this many days. ``None`` disables the
-            age based retention policy.
-        summary_threshold:
-            Character length beyond which individual interactions are
-            summarised using :func:`_summarise_text`.
-        """
-
-        self.manager = manager or MenaceMemoryManager()
-        self.max_entries = max_entries
-        self.max_age_days = max_age_days
-        self.summary_threshold = summary_threshold
-
-    # ------------------------------------------------------------------
-    def log_interaction(self, prompt: str, response: str, tags: Iterable[str]) -> None:
-        """Store a prompt/response pair with default metadata placeholders.
-
-        Parameters
-        ----------
-        prompt:
-            The user prompt supplied to the model.
-        response:
-            The model's textual response.
-        tags:
-            An iterable of tag strings associated with this interaction.
-        """
-
-        payload: Dict[str, Any] = {
-            "prompt": prompt,
-            "response": response,
-            # Metadata fields kept empty initially; they can be updated later
-            "metadata": {
-                "feedback": [],
-                "error_fixes": [],
-                "improvement_paths": [],
-            },
-        }
-
-        # Summarise overly long interactions to keep context size manageable.
-        if len(prompt) + len(response) > self.summary_threshold:
-            payload["summary"] = _summarise_text(
-                f"Prompt: {prompt}\nResponse: {response}"
+    def _ensure_schema(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt TEXT NOT NULL,
+                response TEXT NOT NULL,
+                tags TEXT,
+                ts TEXT NOT NULL,
+                embedding TEXT
             )
-
-        entry = MemoryEntry(
-            key=prompt[:100],  # use a truncated prompt as the key
-            data=json.dumps(payload),
-            version=1,
-            tags=",".join(tags),
+            """
         )
-        self.manager.log(entry)
-        self._apply_retention()
+        self.conn.commit()
 
-    # ------------------------------------------------------------------
-    def _apply_retention(self) -> None:
-        """Merge and prune old entries according to retention policy."""
-
-        cur = self.manager.conn.execute(
-            "SELECT rowid, data, ts FROM memory ORDER BY ts DESC"
-        )
-        rows = cur.fetchall()
-        if not rows:
-            return
-
-        remove_ids: List[int] = []
-
-        if self.max_entries is not None and len(rows) > self.max_entries:
-            remove_ids.extend(r[0] for r in rows[self.max_entries :])
-
-        if self.max_age_days is not None:
-            cutoff = datetime.utcnow() - timedelta(days=self.max_age_days)
-            for rowid, _data, ts in rows:
-                try:
-                    if datetime.fromisoformat(ts) < cutoff:
-                        remove_ids.append(rowid)
-                except Exception:
-                    continue
-
-        remove_ids = sorted(set(remove_ids))
-        if not remove_ids:
-            return
-
-        # Merge removed entries into a single summary to preserve context.
-        texts = [
-            data for rowid, data, _ in rows if rowid in remove_ids
-        ]
-        summary = _summarise_text("\n".join(texts))
-        if summary:
+    def log_interaction(
+        self,
+        prompt: str,
+        response: str,
+        tags: Optional[Sequence[str]] = None,
+    ) -> None:
+        """Record a GPT interaction."""
+        ts = datetime.utcnow().isoformat()
+        tag_str = ",".join(tags) if tags else ""
+        embedding: str | None = None
+        if self.embedder is not None:
             try:
-                self.manager.store("memory:summary", summary, tags="summary")
+                emb = self.embedder.encode(prompt)
+                embedding = json.dumps([float(x) for x in emb])
+            except Exception:
+                embedding = None
+        self.conn.execute(
+            "INSERT INTO interactions(prompt, response, tags, ts, embedding) VALUES (?, ?, ?, ?, ?)",
+            (prompt, response, tag_str, ts, embedding),
+        )
+        self.conn.commit()
+
+    def search_context(
+        self,
+        query: str,
+        *,
+        tags: Optional[Sequence[str]] = None,
+        limit: int = 5,
+        use_embeddings: bool = True,
+    ) -> List[MemoryEntry]:
+        """Search stored interactions.
+
+        The search will use cosine similarity over embeddings when an embedder
+        is available and ``use_embeddings`` is ``True``.  Otherwise a simple
+        LIKE based text search is performed.
+        """
+        where: List[str] = []
+        params: List[Any] = []
+        if tags:
+            for t in tags:
+                where.append("tags LIKE ?")
+                params.append(f"%{t}%")
+        base_query = "SELECT prompt, response, tags, ts, embedding FROM interactions"
+        if where:
+            base_query += " WHERE " + " AND ".join(where)
+        cur = self.conn.execute(base_query, params)
+        rows = cur.fetchall()
+        if use_embeddings and self.embedder is not None:
+            try:
+                q_emb = self.embedder.encode(query)
+                scored = []
+                for prompt, response, tag_str, ts, emb_json in rows:
+                    if not emb_json:
+                        continue
+                    try:
+                        emb = json.loads(emb_json)
+                    except Exception:
+                        continue
+                    score = _cosine_similarity(q_emb, emb)
+                    entry = MemoryEntry(prompt, response, tag_str.split(",") if tag_str else [], ts)
+                    scored.append((score, entry))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                return [e for _, e in scored[:limit]]
             except Exception:
                 pass
+        results: List[MemoryEntry] = []
+        for prompt, response, tag_str, ts, _ in rows:
+            if query.lower() in prompt.lower() or query.lower() in response.lower():
+                results.append(MemoryEntry(prompt, response, tag_str.split(",") if tag_str else [], ts))
+        return results[:limit]
 
-        placeholders = ",".join("?" for _ in remove_ids)
-        self.manager.conn.execute(
-            f"DELETE FROM memory WHERE rowid IN ({placeholders})",
-            tuple(remove_ids),
-        )
-        if getattr(self.manager, "has_fts", False):
-            self.manager.conn.execute(
-                f"DELETE FROM memory_fts WHERE rowid IN ({placeholders})",
-                tuple(remove_ids),
-            )
+    def close(self) -> None:
         try:
-            self.manager.conn.execute(
-                f"DELETE FROM memory_embeddings WHERE rowid IN ({placeholders})",
-                tuple(remove_ids),
-            )
-        except sqlite3.Error:
+            self.conn.close()
+        except Exception:
             pass
-        try:
-            self.manager.conn.execute(
-                f"DELETE FROM memory_clusters WHERE rowid IN ({placeholders})",
-                tuple(remove_ids),
-            )
-        except sqlite3.Error:
-            pass
-        self.manager.conn.commit()
 
-    # ------------------------------------------------------------------
-    def search_context(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Return stored interactions matching ``query``.
-
-        The search leverages :class:`MenaceMemoryManager`'s text search which
-        falls back to a simple ``LIKE`` lookup when FTS is unavailable.
-        Results are returned as deserialised dictionaries containing the
-        original prompt, response and metadata.
-        """
-
-        results = self.manager.search(query, limit)
-        contexts: List[Dict[str, Any]] = []
-        for entry in results:
-            try:
-                contexts.append(json.loads(entry.data))
-            except json.JSONDecodeError:
-                contexts.append({"prompt": entry.key, "response": entry.data, "metadata": {}})
-        return contexts
+    def __del__(self) -> None:  # pragma: no cover
+        self.close()
 
 
-__all__ = ["GPTMemory"]
+__all__ = ["GPTMemoryManager", "MemoryEntry"]
