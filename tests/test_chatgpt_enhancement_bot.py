@@ -20,7 +20,7 @@ def test_propose(monkeypatch, tmp_path):
         ]
     }
     client = cib.ChatGPTClient("key")
-    monkeypatch.setattr(client, "ask", lambda msgs: resp)
+    monkeypatch.setattr(client, "ask", lambda msgs, **kw: resp)
     db = ceb.EnhancementDB(tmp_path / "enh.db")
     bot = ceb.ChatGPTEnhancementBot(client, db=db)
     results = bot.propose("Improve", num_ideas=1, context="ctx")

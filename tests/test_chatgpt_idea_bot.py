@@ -7,9 +7,10 @@ import menace.chatgpt_idea_bot as cib
 
 
 def test_build_prompt():
-    msg = cib.build_prompt(["ai", "fintech"], prior="e-commerce")
-    assert "e-commerce" in msg[0]["content"]
-    assert "ai, fintech" in msg[0]["content"]
+    client = cib.ChatGPTClient("key")
+    msg = cib.build_prompt(client, ["ai", "fintech"], prior="e-commerce")
+    assert "e-commerce" in msg[-1]["content"]
+    assert "ai, fintech" in msg[-1]["content"]
 
 
 def test_parse_ideas():
@@ -35,7 +36,7 @@ def test_generate_and_filter(monkeypatch):
     }
 
     client = cib.ChatGPTClient("key")
-    monkeypatch.setattr(client, "ask", lambda msgs: fake_resp)
+    monkeypatch.setattr(client, "ask", lambda msgs, **kw: fake_resp)
     validator = cib.SocialValidator()
     monkeypatch.setattr(validator, "is_unique_online", lambda name: name == "Idea1")
     monkeypatch.setattr(cib.database_manager, "search_models", lambda name: [])

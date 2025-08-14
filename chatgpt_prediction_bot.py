@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
+from .chatgpt_idea_bot import ChatGPTClient
 
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer, util as st_util
@@ -629,6 +630,7 @@ class ChatGPTPredictionBot:
         self,
         model_path: Path | str | None = None,
         threshold: float | None = None,
+        client: ChatGPTClient | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
@@ -639,6 +641,7 @@ class ChatGPTPredictionBot:
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
+        self.client = client
         self._model_hash: str | None = None
         self._model_mtime: float | None = None
         self._feedback: List[Tuple[dict, int]] = []
@@ -787,6 +790,19 @@ class ChatGPTPredictionBot:
             + 0.5 * length_factor
         )
         value = max(-1.0, min(1.0, raw_value))
+        client = getattr(self, "client", None)
+        if client is not None:
+            try:
+                prompt = (
+                    f"Evaluate enhancement '{idea}' with rationale '{rationale}'."
+                    " Provide brief feedback."
+                )
+                messages = client.build_prompt_with_memory(
+                    ["profit_prediction"], prompt
+                )
+                client.ask(messages, tags=["profit_prediction"])
+            except Exception:
+                logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(description=idea, reason=rationale, value=value)
 
 

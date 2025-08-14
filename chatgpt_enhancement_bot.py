@@ -778,10 +778,13 @@ class ChatGPTEnhancementBot:
         )
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
+            messages = self.client.build_prompt_with_memory(
+                ["performance_improvement"], prompt
+            )
             data = self.client.ask(
-                [{"role": "user", "content": prompt}],
+                messages,
                 memory_manager=self.gpt_memory,
-                tags=["idea"],
+                tags=["performance_improvement"],
             )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)

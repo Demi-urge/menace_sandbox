@@ -25,10 +25,11 @@ class FakeMemory:
 def test_build_prompt_with_memory():
     mem = FakeMemory()
     client = cib.ChatGPTClient(gpt_memory=mem)
-    msgs = client.build_prompt_with_memory(["ai"])
+    msgs = client.build_prompt_with_memory(["ai"], "hello")
     assert msgs[0]["role"] == "system"
     assert "ctx:ai" in msgs[0]["content"]
     assert msgs[1]["role"] == "user"
+    assert msgs[1]["content"] == "hello"
 
 
 def test_ask_logs_interaction(monkeypatch):
