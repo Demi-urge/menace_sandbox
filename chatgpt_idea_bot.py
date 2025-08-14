@@ -85,7 +85,7 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
-        memory_manager: "GPTMemoryManager | GPTMemory | None" = None,
+        memory_manager: "GPTMemoryManager | None" = None,
         use_memory: bool = False,
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
@@ -114,14 +114,15 @@ class ChatGPTClient:
                 except Exception:
                     memory = None
 
-        def _log(prompt: str, response: str) -> None:
+        def _log(request: List[Dict[str, str]], response: str) -> None:
             if not memory:
                 return
             try:
+                prompt_str = request[-1].get("content", "") if request else ""
                 if hasattr(memory, "log_interaction"):
-                    memory.log_interaction(prompt, response, tags or [])
+                    memory.log_interaction(prompt_str, response, list(tags or []))
                 elif hasattr(memory, "store"):
-                    memory.store(prompt, response, tags or [])
+                    memory.store(prompt_str, response, list(tags or []))
             except Exception:
                 logger.exception("failed to log interaction")
 
@@ -185,7 +186,7 @@ class ChatGPTClient:
             logger.error("HTTP session unavailable, using offline response")
             result = self._offline_response(messages_for_api)
             text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-            _log(user_prompt, text)
+            _log(messages_for_api, text)
             return result
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -211,7 +212,7 @@ class ChatGPTClient:
                         raise
                     result = self._offline_response(messages_for_api)
                     text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    _log(user_prompt, text)
+                    _log(messages_for_api, text)
                     return result
                 continue
             except requests.RequestException as exc:
@@ -221,7 +222,7 @@ class ChatGPTClient:
                         raise
                     result = self._offline_response(messages_for_api)
                     text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    _log(user_prompt, text)
+                    _log(messages_for_api, text)
                     return result
                 continue
 
@@ -235,7 +236,7 @@ class ChatGPTClient:
                             raise
                         result = self._offline_response(messages_for_api)
                         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        _log(user_prompt, text)
+                        _log(messages_for_api, text)
                         return result
                     continue
                 if validate and not self._valid_schema(data):
@@ -243,11 +244,11 @@ class ChatGPTClient:
                     if attempt >= attempts - 1:
                         result = self._offline_response(messages_for_api)
                         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        _log(user_prompt, text)
+                        _log(messages_for_api, text)
                         return result
                     continue
                 text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                _log(user_prompt, text)
+                _log(messages_for_api, text)
                 return data
             elif resp.status_code in (401, 403):
                 logger.error("authorization error with OpenAI API (status %s)", resp.status_code)
@@ -255,7 +256,7 @@ class ChatGPTClient:
                     raise RuntimeError("unauthorized")
                 result = self._offline_response(messages_for_api)
                 text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                _log(user_prompt, text)
+                _log(messages_for_api, text)
                 return result
             elif resp.status_code == 429:
                 logger.warning("rate limited by OpenAI (attempt %s)", attempt + 1)
@@ -268,7 +269,7 @@ class ChatGPTClient:
                     break
         result = self._offline_response(messages_for_api)
         text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-        _log(user_prompt, text)
+        _log(messages_for_api, text)
         return result
 
     def _valid_schema(self, data: Dict[str, object]) -> bool:
