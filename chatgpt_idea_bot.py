@@ -141,37 +141,42 @@ class ChatGPTClient:
                             snippet = getattr(item, "summary", getattr(item, "message", str(item)))
                         ctx_parts.append(snippet)
                 if memory is not None:
-                    vector_entries: List[Any] = []
-                    keyword_entries: List[Any] = []
+                    entries: List[Any] = []
                     if hasattr(memory, "get_similar_entries"):
                         try:
-                            matches = memory.get_similar_entries(user_prompt, limit=5)
-                            vector_entries = [e for s, e in matches if s >= relevance_threshold]
+                            vec_matches = memory.get_similar_entries(
+                                user_prompt, limit=5, use_embeddings=True
+                            )
                         except Exception:
-                            vector_entries = []
-                    if hasattr(memory, "search_context"):
+                            vec_matches = []
                         try:
-                            keyword_entries = memory.search_context(user_prompt, limit=5)
+                            kw_matches = memory.get_similar_entries(
+                                user_prompt, limit=5, use_embeddings=False
+                            )
                         except Exception:
-                            keyword_entries = []
-                    elif hasattr(memory, "retrieve"):
+                            kw_matches = []
+                        seen: set[str] = set()
+                        for score, entry in vec_matches + kw_matches:
+                            if score < relevance_threshold:
+                                continue
+                            key = f"{getattr(entry, 'prompt', '')}|{getattr(entry, 'response', '')}"
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            entries.append(entry)
+                    else:
                         try:
-                            keyword_entries = memory.retrieve(user_prompt, limit=5)
+                            if hasattr(memory, "search_context"):
+                                entries = memory.search_context(user_prompt, limit=5)
+                            elif hasattr(memory, "retrieve"):
+                                entries = memory.retrieve(user_prompt, limit=5)
                         except Exception:
-                            keyword_entries = []
-                    combined: List[Any] = []
-                    seen: set[str] = set()
-                    for entry in list(vector_entries) + list(keyword_entries):
-                        key = f"{getattr(entry, 'prompt', '')}|{getattr(entry, 'response', '')}"
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        combined.append(entry)
-                    if combined:
+                            entries = []
+                    if entries:
                         ctx_parts.extend(
                             [
                                 f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
-                                for e in combined
+                                for e in entries
                             ]
                         )
                 if ctx_parts:
