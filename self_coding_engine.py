@@ -20,7 +20,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemoryManager
+from .gpt_memory import GPTMemoryManager, GPTMemory
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -60,12 +60,16 @@ class SelfCodingEngine:
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
-        gpt_memory_manager: GPTMemoryManager | None = None,
+        gpt_memory: GPTMemoryManager | GPTMemory | None = None,
         context_builder: ContextBuilder | None = None,
+        **kwargs: Any,
     ) -> None:
+        if gpt_memory is None:
+            gpt_memory = kwargs.get("gpt_memory_manager")
         self.code_db = code_db
         self.memory_mgr = memory_mgr
-        self.gpt_memory_manager = gpt_memory_manager or GPTMemoryManager()
+        self.gpt_memory = gpt_memory or GPTMemoryManager()
+        self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.pipeline = pipeline
         self.data_bot = data_bot
         self.patch_db = patch_db
@@ -76,7 +80,7 @@ class SelfCodingEngine:
             llm_client = ChatGPTClient(os.getenv("OPENAI_API_KEY", ""))
         self.llm_client = llm_client
         if self.llm_client:
-            self.llm_client.gpt_memory = self.gpt_memory_manager
+            self.llm_client.gpt_memory = self.gpt_memory
         self.rollback_mgr = rollback_mgr
         if formal_verifier is None:
             try:
@@ -140,17 +144,25 @@ class SelfCodingEngine:
         summary = f"roi_delta={roi_delta:.4f}"
         try:
             # Store the GPT-generated code for context in future runs
-            self.gpt_memory_manager.log_interaction(
-                f"{path}:{description}",
-                code.strip(),
-                tags=[outcome],
-            )
-            # Store the result summary so we can learn from success or failure
-            self.gpt_memory_manager.log_interaction(
-                f"{path}:{description}:result",
-                summary,
-                tags=[outcome],
-            )
+            if hasattr(self.gpt_memory, "log_interaction"):
+                self.gpt_memory.log_interaction(
+                    f"{path}:{description}",
+                    code.strip(),
+                    tags=[outcome],
+                )
+                self.gpt_memory.log_interaction(
+                    f"{path}:{description}:result",
+                    summary,
+                    tags=[outcome],
+                )
+            elif hasattr(self.gpt_memory, "store"):
+                tag = ["improvement" if success else "bugfix"]
+                self.gpt_memory.store(
+                    f"{path}:{description}", code.strip(), tag
+                )
+                self.gpt_memory.store(
+                    f"{path}:{description}:result", summary, tag
+                )
         except Exception:
             self.logger.exception("memory logging failed")
 
@@ -351,17 +363,24 @@ class SelfCodingEngine:
         # Incorporate past patch outcomes from memory
         history = ""
         try:
-            entries = self.gpt_memory_manager.search_context(
-                description,
-                tags=["patch_success", "patch_failure"],
-                limit=5,
-                use_embeddings=False,
-            )
+            entries: List[Any] = []
+            if hasattr(self.gpt_memory, "search_context"):
+                entries = self.gpt_memory.search_context(
+                    description,
+                    tags=["patch_success", "patch_failure"],
+                    limit=5,
+                    use_embeddings=False,
+                )
+            elif hasattr(self.gpt_memory, "retrieve"):
+                entries = self.gpt_memory.retrieve(description, limit=5)
             if entries:
                 summaries: List[str] = []
                 for ent in entries:
-                    tag = "patch_success" if "patch_success" in ent.tags else "patch_failure"
-                    snippet = (ent.response or "").strip().splitlines()[0]
+                    tags = getattr(ent, "tags", []) or []
+                    tag = "patch_success" if (
+                        "patch_success" in tags or "improvement" in tags
+                    ) else "patch_failure"
+                    snippet = (getattr(ent, "response", "") or "").strip().splitlines()[0]
                     summaries.append(f"{tag}: {snippet}")
                 history = "\n".join(summaries)
         except Exception:
@@ -380,7 +399,7 @@ class SelfCodingEngine:
         try:
             data = self.llm_client.ask(
                 [{"role": "user", "content": prompt}],
-                memory_manager=self.gpt_memory_manager,
+                memory_manager=self.gpt_memory,
                 tags=["code_fix"],
                 use_memory=True,
             )
