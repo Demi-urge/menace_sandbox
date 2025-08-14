@@ -193,22 +193,33 @@ class UniversalRetriever:
         self.graph = knowledge_graph
         self._deploy_conn: sqlite3.Connection | None = None
 
-        self._encoder = next(
-            (
-                db
-                for db in (
-                    bot_db,
-                    workflow_db,
-                    error_db,
-                    enhancement_db,
-                    information_db,
-                )
-                if db is not None
-            ),
-            None,
-        )
+        # registry of embeddable databases keyed by origin label
+        self._dbs: dict[str, Any] = {}
+        self._id_fields: dict[str, tuple[str, ...]] = {}
+        self._encoder: Any | None = None
+
+        # register known database types.  The first registration provides the
+        # encoder used for free-form text queries.
+        self.register_db("bot", bot_db, ("id", "bid"))
+        self.register_db("workflow", workflow_db, ("id", "wid"))
+        self.register_db("error", error_db, ("id",))
+        self.register_db("enhancement", enhancement_db, ("id",))
+        self.register_db("information", information_db, ("id", "info_id", "item_id"))
+
         if self._encoder is None:
             raise ValueError("At least one database instance is required")
+
+    def register_db(
+        self, name: str, db: Any | None, id_fields: Sequence[str]
+    ) -> None:
+        """Register an embeddable database for inclusion in retrieval."""
+
+        if db is None:
+            return
+        self._dbs[name] = db
+        self._id_fields[name] = tuple(id_fields)
+        if self._encoder is None:
+            self._encoder = db
 
     # ------------------------------------------------------------------
     def _extract_id(self, obj: Any, names: Sequence[str]) -> Any | None:
@@ -245,17 +256,7 @@ class UniversalRetriever:
             except Exception:  # pragma: no cover - defensive
                 pass
 
-        mapping = [
-            (self.bot_db, ("id", "bid")),
-            (self.workflow_db, ("id", "wid")),
-            (self.error_db, ("id",)),
-            (self.enhancement_db, ("id",)),
-            (self.information_db, ("id", "info_id", "item_id")),
-        ]
-
-        for db, names in mapping:
-            if db is None:
-                continue
+        for name, db in self._dbs.items():
             # Try direct vectorisation of the record instance
             try:
                 vec = db.vector(query)
@@ -264,7 +265,7 @@ class UniversalRetriever:
             except Exception:
                 pass
             # Fallback to stored vector via identifier lookup
-            rec_id = self._extract_id(query, names)
+            rec_id = self._extract_id(query, self._id_fields[name])
             if rec_id is not None:
                 try:
                     vec = db.get_vector(rec_id)
@@ -284,23 +285,13 @@ class UniversalRetriever:
         vector = self._to_vector(query)
         candidates: List[tuple[str, Any, Any]] = []
 
-        mapping = [
-            ("bot", self.bot_db, ("id", "bid")),
-            ("workflow", self.workflow_db, ("id", "wid")),
-            ("error", self.error_db, ("id",)),
-            ("enhancement", self.enhancement_db, ("id",)),
-            ("information", self.information_db, ("id", "info_id")),
-        ]
-
-        for source, db, names in mapping:
-            if db is None:
-                continue
+        for source, db in self._dbs.items():
             try:
                 matches = db.search_by_vector(vector, top_k)
             except Exception:  # pragma: no cover - defensive
                 continue
             for m in matches:
-                rec_id = self._extract_id(m, names)
+                rec_id = self._extract_id(m, self._id_fields[source])
                 candidates.append((source, rec_id, m))
 
         def _dist(entry: tuple[str, Any, Any]) -> float:

@@ -48,8 +48,14 @@ class EmbeddableDBMixin:
         embedding_version: int = 1,
         backend: str = "annoy",
     ) -> None:
-        self.index_path = Path(index_path)
-        self.metadata_path = Path(metadata_path)
+        index_path = Path(index_path)
+        metadata_path = Path(metadata_path)
+        if metadata_path.name == "embeddings.json" and index_path.name != "embeddings.ann":
+            # Derive metadata file alongside the provided index path to avoid
+            # cross-database interference when tests supply unique index files
+            metadata_path = index_path.with_suffix(".json")
+        self.index_path = index_path
+        self.metadata_path = metadata_path
         self.model_name = model_name
         self.embedding_version = embedding_version
         self.backend = backend
