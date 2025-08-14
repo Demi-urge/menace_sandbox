@@ -85,34 +85,13 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
-        memory_manager: "GPTMemoryManager | None" = None,
-        use_memory: bool = False,
+        memory_manager: "GPTMemoryManager | GPTMemory | None" = None,
+        use_memory: bool | None = None,
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
     ) -> Dict[str, object]:
-        memory = memory_manager or self.gpt_memory
-        if memory is None:
-            if knowledge is not None:
-                if (
-                    hasattr(knowledge, "log_interaction")
-                    and (
-                        hasattr(knowledge, "search_context")
-                        or hasattr(knowledge, "get_similar_entries")
-                    )
-                ):
-                    memory = knowledge
-                elif hasattr(knowledge, "GPTMemory"):
-                    try:
-                        memory = knowledge.GPTMemory()
-                    except Exception:
-                        memory = None
-            else:
-                try:
-                    from .gpt_memory import GPTMemoryManager as _GPTMemory  # type: ignore
-
-                    memory = _GPTMemory()
-                except Exception:
-                    memory = None
+        memory: Any | None = memory_manager or self.gpt_memory or knowledge
+        use_mem = use_memory if use_memory is not None else memory is not None
 
         def _log(request: List[Dict[str, str]], response: str) -> None:
             if not memory:
@@ -128,7 +107,7 @@ class ChatGPTClient:
 
         user_prompt = messages[-1].get("content", "") if messages else ""
         messages_for_api = messages
-        if use_memory:
+        if use_mem:
             try:
                 ctx_parts: List[str] = []
                 if retriever is not None:

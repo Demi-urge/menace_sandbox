@@ -60,7 +60,7 @@ class ConversationManagerBot:
         self._notifications: List[str] = []
         self.report_bot = report_bot or ReportGenerationBot()
         self.strategy = "neutral"
-        self.gpt_memory = gpt_memory or GPTMemory()
+        self.gpt_memory = gpt_memory
         self._objection_keywords = {"no", "not", "don't", "cant", "can't", "won't"}
         self.resistance_handler: Callable[[List[MessageEntry], CTAChain | None], None] | None = None
 
@@ -122,7 +122,7 @@ class ConversationManagerBot:
         try:
             data = self.client.ask(
                 [{"role": "user", "content": prompt}],
-                knowledge=self.gpt_memory,
+                memory_manager=self.gpt_memory,
                 tags=["idea"],
             )
         except TypeError:
