@@ -34,7 +34,7 @@ from . import database_manager, RAISE_ERRORS
 from .database_management_bot import DatabaseManagementBot
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
-    from .gpt_memory import GPTMemoryManager, GPTMemory
+    from .gpt_memory import GPTMemory
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
@@ -55,7 +55,7 @@ class ChatGPTClient:
     offline_cache_path: str | None = field(default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE"))
     timeout: int = field(default_factory=lambda: int(os.getenv("OPENAI_TIMEOUT", "30")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("OPENAI_RETRIES", "1")))
-    gpt_memory: "GPTMemoryManager | GPTMemory | None" = None
+    gpt_memory: "GPTMemory | None" = None
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -85,7 +85,7 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
-        memory_manager: "GPTMemoryManager | GPTMemory | None" = None,
+        memory_manager: "GPTMemory | None" = None,
         use_memory: bool | None = None,
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
@@ -94,14 +94,16 @@ class ChatGPTClient:
         use_mem = use_memory if use_memory is not None else memory is not None
 
         def _log(request: List[Dict[str, str]], response: str) -> None:
-            if not memory:
-                return
+            prompt_str = request[-1].get("content", "") if request else ""
+            log_tags = list(tags or ["idea", "enhancement"])
             try:
-                prompt_str = request[-1].get("content", "") if request else ""
-                if hasattr(memory, "log_interaction"):
-                    memory.log_interaction(prompt_str, response, list(tags or []))
-                elif hasattr(memory, "store"):
-                    memory.store(prompt_str, response, list(tags or []))
+                if memory:
+                    if hasattr(memory, "log_interaction"):
+                        memory.log_interaction(prompt_str, response, log_tags)
+                    elif hasattr(memory, "store"):
+                        memory.store(prompt_str, response, log_tags)
+                if self.gpt_memory and self.gpt_memory is not memory:
+                    self.gpt_memory.log_interaction(prompt_str, response, log_tags)
             except Exception:
                 logger.exception("failed to log interaction")
 
@@ -281,6 +283,18 @@ class ChatGPTClient:
             return cached
         logger.info("no cached response for %s", key)
         return {"choices": [{"message": {"content": "offline"}}]}
+
+    def build_prompt_with_memory(self, tags: list[str]) -> List[Dict[str, str]]:
+        """Construct a prompt and prepend context from ``gpt_memory`` if available."""
+        messages = build_prompt(tags)
+        if self.gpt_memory is not None:
+            try:
+                context = self.gpt_memory.fetch_context(tags)
+                if context:
+                    messages = [{"role": "system", "content": context}] + messages
+            except Exception:
+                logger.exception("failed to fetch memory context")
+        return messages
 
 
 def build_prompt(tags: Iterable[str], prior: str | None = None) -> List[Dict[str, str]]:
