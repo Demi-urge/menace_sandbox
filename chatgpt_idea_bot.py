@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Iterable, Optional, Any
+from typing import List, Dict, Iterable, Optional, Any, TYPE_CHECKING
 from pathlib import Path
 
 OPENAI_CHAT_URL = os.environ.get(
@@ -32,6 +32,9 @@ except Exception:  # pragma: no cover - optional dependency
 
 from . import database_manager, RAISE_ERRORS
 from .database_management_bot import DatabaseManagementBot
+
+if TYPE_CHECKING:  # pragma: no cover - only for type hints
+    from .gpt_memory import GPTMemoryManager
 
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB)))
@@ -75,23 +78,32 @@ class ChatGPTClient:
         validate: bool = True,
         knowledge: Any | None = None,
         tags: Iterable[str] | None = None,
+        memory_manager: "GPTMemoryManager" | None = None,
     ) -> Dict[str, object]:
-        memory = None
-        if knowledge is not None:
-            if hasattr(knowledge, "search_context") and hasattr(knowledge, "log_interaction"):
-                memory = knowledge
-            elif hasattr(knowledge, "GPTMemory"):
+        memory = memory_manager
+        if memory is None:
+            if knowledge is not None:
+                if hasattr(knowledge, "search_context") and hasattr(knowledge, "log_interaction"):
+                    memory = knowledge
+                elif hasattr(knowledge, "GPTMemory"):
+                    try:
+                        memory = knowledge.GPTMemory()
+                    except Exception:
+                        memory = None
+            else:
                 try:
-                    memory = knowledge.GPTMemory()
+                    from .gpt_memory import GPTMemoryManager as _GPTMemory  # type: ignore
+
+                    memory = _GPTMemory()
                 except Exception:
                     memory = None
-        else:
-            try:
-                from .gpt_memory import GPTMemory  # type: ignore
 
-                memory = GPTMemory()
-            except Exception:
-                memory = None
+        def _log(prompt: str, response: str) -> None:
+            if memory and hasattr(memory, "log_interaction"):
+                try:
+                    memory.log_interaction(prompt, response, tags or [])
+                except Exception:
+                    logger.exception("failed to log interaction")
 
         user_prompt = messages[-1].get("content", "") if messages else ""
         messages_for_api = messages
@@ -111,12 +123,8 @@ class ChatGPTClient:
         if not self.session or requests is None:
             logger.error("HTTP session unavailable, using offline response")
             result = self._offline_response(messages_for_api)
-            if memory and hasattr(memory, "log_interaction"):
-                try:
-                    text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    memory.log_interaction(user_prompt, text, tags or [])
-                except Exception:
-                    logger.exception("failed to log interaction")
+            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            _log(user_prompt, text)
             return result
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -141,12 +149,8 @@ class ChatGPTClient:
                     if RAISE_ERRORS:
                         raise
                     result = self._offline_response(messages_for_api)
-                    if memory and hasattr(memory, "log_interaction"):
-                        try:
-                            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            memory.log_interaction(user_prompt, text, tags or [])
-                        except Exception:
-                            logger.exception("failed to log interaction")
+                    text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    _log(user_prompt, text)
                     return result
                 continue
             except requests.RequestException as exc:
@@ -155,12 +159,8 @@ class ChatGPTClient:
                     if RAISE_ERRORS:
                         raise
                     result = self._offline_response(messages_for_api)
-                    if memory and hasattr(memory, "log_interaction"):
-                        try:
-                            text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                            memory.log_interaction(user_prompt, text, tags or [])
-                        except Exception:
-                            logger.exception("failed to log interaction")
+                    text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    _log(user_prompt, text)
                     return result
                 continue
 
@@ -173,44 +173,28 @@ class ChatGPTClient:
                         if RAISE_ERRORS:
                             raise
                         result = self._offline_response(messages_for_api)
-                        if memory and hasattr(memory, "log_interaction"):
-                            try:
-                                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                memory.log_interaction(user_prompt, text, tags or [])
-                            except Exception:
-                                logger.exception("failed to log interaction")
+                        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        _log(user_prompt, text)
                         return result
                     continue
                 if validate and not self._valid_schema(data):
                     logger.error("invalid response schema from API")
                     if attempt >= attempts - 1:
                         result = self._offline_response(messages_for_api)
-                        if memory and hasattr(memory, "log_interaction"):
-                            try:
-                                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                                memory.log_interaction(user_prompt, text, tags or [])
-                            except Exception:
-                                logger.exception("failed to log interaction")
+                        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                        _log(user_prompt, text)
                         return result
                     continue
-                if memory and hasattr(memory, "log_interaction"):
-                    try:
-                        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        memory.log_interaction(user_prompt, text, tags or [])
-                    except Exception:
-                        logger.exception("failed to log interaction")
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                _log(user_prompt, text)
                 return data
-            elif resp.status_code == 401 or resp.status_code == 403:
+            elif resp.status_code in (401, 403):
                 logger.error("authorization error with OpenAI API (status %s)", resp.status_code)
                 if RAISE_ERRORS:
                     raise RuntimeError("unauthorized")
                 result = self._offline_response(messages_for_api)
-                if memory and hasattr(memory, "log_interaction"):
-                    try:
-                        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        memory.log_interaction(user_prompt, text, tags or [])
-                    except Exception:
-                        logger.exception("failed to log interaction")
+                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                _log(user_prompt, text)
                 return result
             elif resp.status_code == 429:
                 logger.warning("rate limited by OpenAI (attempt %s)", attempt + 1)
@@ -222,12 +206,8 @@ class ChatGPTClient:
                 if attempt >= attempts - 1:
                     break
         result = self._offline_response(messages_for_api)
-        if memory and hasattr(memory, "log_interaction"):
-            try:
-                text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                memory.log_interaction(user_prompt, text, tags or [])
-            except Exception:
-                logger.exception("failed to log interaction")
+        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        _log(user_prompt, text)
         return result
 
     def _valid_schema(self, data: Dict[str, object]) -> bool:
