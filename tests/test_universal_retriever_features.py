@@ -149,8 +149,9 @@ def test_link_based_boosting(tmp_path):
     bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
     wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_index_path=tmp_path / "wf.idx")
     err_db = ErrorDB(path=tmp_path / "err.db", vector_index_path=tmp_path / "err.idx")
+    info_db = InformationDB(path=tmp_path / "info.db", vector_index_path=tmp_path / "info.idx")
 
-    for db in (bot_db, wf_db, err_db):
+    for db in (bot_db, wf_db, err_db, info_db):
         db.encode_text = MethodType(_constant_encoder, db)
 
     bot_id = bot_db.add_bot(BotRecord(name="alpha", purpose="bot"))
@@ -159,18 +160,31 @@ def test_link_based_boosting(tmp_path):
     err_id = err_db.add_error("boom")
     err_db.conn.execute("INSERT INTO bot_error(bot_id, error_id) VALUES (?, ?)", (bot_id, err_id))
 
+    info_db.conn.execute(
+        "CREATE TABLE information_bots(info_id INTEGER, bot_id INTEGER)"
+    )
+    info_id = info_db.add(InformationRecord(data_type="info", summary="i"))
+    info_db.conn.execute(
+        "INSERT INTO information_bots(info_id, bot_id) VALUES (?, ?)",
+        (info_id, bot_id),
+    )
+
     scored = [
         {"source": "bot", "record_id": bot_id, "confidence": 1.0},
         {"source": "workflow", "record_id": wf_id, "confidence": 1.0},
         {"source": "error", "record_id": err_id, "confidence": 1.0},
-        {"source": "information", "record_id": 99, "confidence": 1.0},
+        {"source": "information", "record_id": info_id, "confidence": 1.0},
     ]
-    paths = boost_linked_candidates(scored, bot_db=bot_db, error_db=err_db, multiplier=2.0)
+    paths = boost_linked_candidates(
+        scored,
+        bot_db=bot_db,
+        error_db=err_db,
+        information_db=info_db,
+        multiplier=2.0,
+    )
 
-    for idx in (0, 1, 2):
+    for idx in (0, 1, 2, 3):
         path, link_ids = paths[idx]
-        assert path == "bot->workflow->error"
-        assert len(link_ids) == 2
+        assert path == "bot->workflow->error->information"
+        assert len(link_ids) == 3
         assert scored[idx]["confidence"] == pytest.approx(2.0)
-    assert scored[3]["confidence"] == pytest.approx(1.0)
-    assert 3 not in paths

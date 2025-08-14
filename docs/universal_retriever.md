@@ -41,10 +41,14 @@ considered are:
 The resulting average produces a `confidence` score in the range ``0..1``.
 
 Candidates that share bot relationships are further adjusted by
-`boost_linked_candidates`, which performs a union-find over the candidate set
-and multiplies the confidence of linked groups by ``link_multiplier`` (capped to
-prevent runaway amplification). The linkage path and related record identifiers
-are included in the returned :class:`RetrievedItem` for downstream inspection.
+`boost_linked_candidates`. This helper inspects the cross reference tables
+``bot_workflow``, ``bot_enhancement``, ``error_bot`` and the
+``information_*`` tables to detect connectivity between results. Connected
+groups have each member's confidence multiplied by ``link_multiplier``
+(``final = base * link_multiplier``). The multiplier is applied once per
+retrieval and capped internally to keep scores reproducible. The linkage
+path and related record identifiers are returned with each
+:class:`RetrievedItem` for downstream inspection.
 
 ## Integration steps
 
@@ -54,8 +58,8 @@ are included in the returned :class:`RetrievedItem` for downstream inspection.
    databases.
 3. Call `retrieve()` with either a text query or an existing record to obtain
    cross-database matches.
-4. Adjust ``link_multiplier`` to emphasise connectivity between bots, workflows
-   and errors when desired.
+4. Adjust ``link_multiplier`` to emphasise connectivity between bots, workflows,
+   enhancements, errors and information records when desired.
 
 The helper provides a unified interface over the various vector stores while
 maintaining rich scoring explanations for ranking and troubleshooting.
