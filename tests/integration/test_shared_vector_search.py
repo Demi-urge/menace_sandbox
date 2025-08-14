@@ -35,6 +35,7 @@ from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
 from menace.error_logger import TelemetryEvent
+from menace.universal_retriever import UniversalRetriever
 import menace.chatgpt_enhancement_bot as ceb
 import menace.research_aggregator_bot as rab
 
@@ -54,7 +55,7 @@ def shared_embedder() -> DummyEmbedder:
 
 
 def bind_embed(db, embedder: DummyEmbedder) -> None:
-    db._embed = MethodType(lambda self, text: embedder(text), db)
+    db.encode_text = MethodType(lambda self, text: embedder(text), db)
 
 
 def test_search_by_vector_shared_backend(tmp_path, shared_embedder):
@@ -96,6 +97,17 @@ def test_search_by_vector_shared_backend(tmp_path, shared_embedder):
     info_db.add(rab.ResearchItem(topic="T2", content="beta", tags=["t2"], associated_bots=["b2"], timestamp=time.time()))
     assert info_db.search_by_vector([1.0, 0.0], top_k=1)[0].content == "alpha"
     assert info_db.search_by_vector([0.0, 1.0], top_k=1)[0].content == "beta"
+
+    # Universal retriever pulls from all databases via a shared interface
+    retriever = UniversalRetriever(
+        bot_db=bot_db,
+        workflow_db=workflow_db,
+        error_db=error_db,
+        enhancement_db=enhancement_db,
+        information_db=info_db,
+    )
+    hits = retriever.retrieve("alpha", top_k=5)
+    assert {h.origin_db for h in hits} == {"bot", "workflow", "error", "enhancement", "information"}
 
     # ensure shared embedder was used across databases
     assert len(shared_embedder.calls) >= 10
