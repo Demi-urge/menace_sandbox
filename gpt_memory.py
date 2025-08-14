@@ -18,7 +18,8 @@ from datetime import datetime
 from pathlib import Path
 import json
 import sqlite3
-from typing import Any, List, Sequence
+import argparse
+from typing import Any, List, Sequence, Mapping, Dict
 
 try:  # Optional dependency used for semantic embeddings
     from sentence_transformers import SentenceTransformer
@@ -26,9 +27,13 @@ except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
 try:  # Optional dependency used by the light wrapper ``GPTMemory``
-    from menace_memory_manager import MenaceMemoryManager  # type: ignore
+    from menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
 except Exception:  # pragma: no cover - tests stub this module
     MenaceMemoryManager = None  # type: ignore
+
+    def _summarise_text(text: str, ratio: float = 0.2) -> str:  # pragma: no cover - fallback
+        """Fallback summariser used when menace_memory_manager is unavailable."""
+        return text[: max(1, int(len(text) * ratio))]
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -217,6 +222,57 @@ class GPTMemoryManager:
         results.sort(key=lambda x: x[0], reverse=True)
         return results[:limit]
 
+    # -------------------------------------------------------------- compaction
+    def compact(self, retention: Mapping[str, int] | int) -> int:
+        """Summarise and prune old entries based on a retention policy.
+
+        Parameters
+        ----------
+        retention:
+            Either an ``int`` applied uniformly to all tags or a mapping of
+            ``tag -> number of raw entries`` to keep.  Older entries are
+            summarised using :func:`_summarise_text` and replaced by a single
+            summary entry.  Returns the number of rows removed.
+        """
+
+        if isinstance(retention, int):
+            cur = self.conn.execute("SELECT tags FROM interactions WHERE tags != ''")
+            tags = set()
+            for (tag_str,) in cur.fetchall():
+                tags.update(t for t in tag_str.split(',') if t)
+            retention_map: Dict[str, int] = {t: retention for t in tags}
+        else:
+            retention_map = dict(retention)
+
+        removed = 0
+        for tag, keep in retention_map.items():
+            cur = self.conn.execute(
+                "SELECT id, prompt, response FROM interactions WHERE tags LIKE ? ORDER BY ts",
+                (f"%{tag}%",),
+            )
+            rows = cur.fetchall()
+            if len(rows) <= keep:
+                continue
+
+            old_rows = rows[:-keep]
+            text = "\n".join(f"{p} {r}" for _, p, r in old_rows)
+            summary = _summarise_text(text)
+            ts = datetime.utcnow().isoformat()
+            self.conn.execute(
+                "INSERT INTO interactions(prompt, response, tags, ts, embedding) VALUES (?, ?, ?, ?, NULL)",
+                (f"summary:{tag}", summary, f"{tag},summary", ts),
+            )
+            ids = [str(r[0]) for r in old_rows]
+            placeholders = ",".join("?" for _ in ids)
+            self.conn.execute(
+                f"DELETE FROM interactions WHERE id IN ({placeholders})",
+                ids,
+            )
+            removed += len(ids)
+
+        self.conn.commit()
+        return removed
+
     # ----------------------------------------------------------------- cleanup
     def close(self) -> None:
         try:
@@ -283,10 +339,41 @@ class GPTMemory:
         return results
 
 
+def main(argv: Sequence[str] | None = None) -> None:
+    """Simple CLI hook to trigger compaction/pruning tasks."""
+
+    parser = argparse.ArgumentParser(description="Maintain GPT memory store")
+    parser.add_argument("--db", default="gpt_memory.db", help="Path to the memory DB")
+    parser.add_argument(
+        "--keep",
+        action="append",
+        default=[],
+        metavar="TAG=N",
+        help="Retention rule; may be supplied multiple times",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    retention: Dict[str, int] = {}
+    for item in args.keep:
+        tag, _, num = item.partition("=")
+        try:
+            retention[tag] = int(num)
+        except ValueError:
+            continue
+
+    mgr = GPTMemoryManager(args.db)
+    mgr.compact(retention)
+    mgr.close()
+
+
 __all__ = [
     "GPTMemoryManager",
     "GPTMemory",
     "MemoryEntry",
     "GPTMemoryRecord",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    main()
 
