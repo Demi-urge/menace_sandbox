@@ -29,6 +29,24 @@ Key configuration options when instantiating the manager:
 These settings let the sandbox retain useful context for future GPT calls while
 controlling database size.
 
+Example usage enabling persistence across sessions:
+
+```python
+from gpt_memory import GPTMemoryManager
+
+# first run
+mgr = GPTMemoryManager("sandbox_memory.db")
+mgr.log_interaction("user question", "assistant reply", tags=["note"])
+mgr.close()
+
+# subsequent run
+mgr = GPTMemoryManager("sandbox_memory.db")
+context = mgr.search_context("user question")
+```
+
+Using `db_path=":memory:"` instead of a file path disables persistence and
+keeps interactions only for the current process.
+
 ## Multi-environment Setup
 
 `_run_sandbox` copies the repository into a new directory and overrides environment variables such as `DATABASE_URL`, `BOT_DB_PATH`, `BOT_PERFORMANCE_DB` and `MAINTENANCE_DB`. Each cycle runs under these temporary paths and the original values are restored afterwards. The optional `SANDBOX_RESOURCE_DB` variable points to a `ROIHistoryDB` used for resource-aware forecasts.
