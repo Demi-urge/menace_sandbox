@@ -8,6 +8,27 @@ The sandbox uses the existing repository defined by `SANDBOX_REPO_PATH`. This is
 expected to be a checkout of `https://github.com/Demi-urge/menace_sandbox` and
 is modified and evaluated directly.
 
+## GPT Memory Persistence
+
+`sandbox_runner` and associated bots can persist previous GPT interactions using
+`gpt_memory.GPTMemoryManager`. To enable memory across sessions, create a
+`GPTMemoryManager` with a file path and pass it to bots via the `knowledge`
+parameter when asking the model. The default database file is `gpt_memory.db` in
+the working directory. Supplying a different path allows memories to be shared
+between runs, while using `:memory:` keeps the history ephemeral.
+
+Key configuration options when instantiating the manager:
+
+- `path` – SQLite file used for storage.
+- `embedder` – optional `SentenceTransformer` model enabling semantic search.
+- `compact_every` – number of logged interactions before automatic compaction
+  (default `100`).
+- `default_retention` – number of raw entries retained per tag during
+  compaction (default `50`).
+
+These settings let the sandbox retain useful context for future GPT calls while
+controlling database size.
+
 ## Multi-environment Setup
 
 `_run_sandbox` copies the repository into a new directory and overrides environment variables such as `DATABASE_URL`, `BOT_DB_PATH`, `BOT_PERFORMANCE_DB` and `MAINTENANCE_DB`. Each cycle runs under these temporary paths and the original values are restored afterwards. The optional `SANDBOX_RESOURCE_DB` variable points to a `ROIHistoryDB` used for resource-aware forecasts.
