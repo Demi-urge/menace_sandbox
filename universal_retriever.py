@@ -361,6 +361,105 @@ class UniversalRetriever:
         return 0.0
 
     # ------------------------------------------------------------------
+    def _related_boost(
+        self,
+        scored: List[dict[str, Any]],
+        *,
+        multiplier: float = 1.1,
+        cap: float = 2.0,
+    ) -> dict[int, str]:
+        """Boost results that are linked via the knowledge graph or tables.
+
+        Parameters
+        ----------
+        scored:
+            Candidate entries accumulated during retrieval.  Each element is
+            a mapping containing ``source`` and ``record_id`` keys alongside a
+            ``confidence`` score.
+        multiplier:
+            Factor applied to confidence scores for related records.
+        cap:
+            Maximum multiple of the original score after all boosting.  This
+            prevents runaway amplification when several relationships exist.
+
+        Returns
+        -------
+        dict
+            Mapping of candidate index to a textual description of the linkage
+            path connecting related records.  The description is appended to
+            the ``reason`` field for downstream consumers.
+        """
+
+        if multiplier <= 1.0 or len(scored) <= 1:
+            return {}
+
+        base_scores = [entry.get("confidence", 0.0) for entry in scored]
+
+        # When a KnowledgeGraph is supplied we use its edges to discover
+        # relationships.  Otherwise we fall back to the legacy link-table
+        # boosting.
+        if self.graph and getattr(self.graph, "graph", None):
+            G = self.graph.graph
+            nodes: List[str] = []
+            type_map: List[str | None] = []
+            node_to_idx: dict[str, int] = {}
+            for idx, entry in enumerate(scored):
+                node = f"{entry.get('source')}:{entry.get('record_id')}"
+                nodes.append(node)
+                type_map.append(entry.get("source"))
+                node_to_idx[node] = idx
+
+            parent = list(range(len(scored)))
+
+            def find(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            def union(a: int, b: int) -> None:
+                ra, rb = find(a), find(b)
+                if ra != rb:
+                    parent[rb] = ra
+
+            for i, node in enumerate(nodes):
+                if node not in G:
+                    continue
+                for nbr in G.neighbors(node):
+                    j = node_to_idx.get(nbr)
+                    if j is not None:
+                        union(i, j)
+
+            groups: dict[int, List[int]] = defaultdict(list)
+            for idx in range(len(scored)):
+                groups[find(idx)].append(idx)
+
+            link_paths: dict[int, str] = {}
+            order = ["bot", "workflow", "enhancement", "error", "information"]
+            for members in groups.values():
+                if len(members) > 1:
+                    types = {type_map[m] for m in members if type_map[m]}
+                    path_types = [t for t in order if t in types]
+                    path = "->".join(path_types)
+                    for m in members:
+                        scored[m]["confidence"] = min(
+                            scored[m]["confidence"] * multiplier,
+                            base_scores[m] * cap,
+                        )
+                        link_paths[m] = path
+            return link_paths
+
+        link_paths = boost_linked_candidates(
+            scored,
+            bot_db=self.bot_db,
+            error_db=self.error_db,
+            multiplier=multiplier,
+        )
+        for idx, entry in enumerate(scored):
+            entry["confidence"] = min(entry["confidence"], base_scores[idx] * cap)
+        return link_paths
+
+    # ------------------------------------------------------------------
     def _context_score(self, kind: str, record: Any) -> tuple[float, dict[str, float]]:
         """Compute contextual score and raw metrics for a record.
 
@@ -397,7 +496,12 @@ class UniversalRetriever:
             usage = self._workflow_usage(record)
             metrics["usage"] = usage
             lu = math.log1p(usage)
-            score = lu / (1.0 + lu)
+            # Large usage numbers can otherwise dominate the combined score
+            # and overshadow direct similarity.  We therefore dampen the
+            # contribution by blending with a constant denominator so that
+            # extremely heavy workflows do not automatically eclipse the
+            # originating bot.
+            score = lu / (5.0 + lu)
         elif kind == "bot":
             bid = self._extract_id(record, ("id", "bid"))
             if bid is not None:
@@ -433,10 +537,8 @@ class UniversalRetriever:
                 **metrics,
             })
 
-        link_paths = boost_linked_candidates(
+        link_paths = self._related_boost(
             scored,
-            bot_db=self.bot_db,
-            error_db=self.error_db,
             multiplier=link_multiplier,
         )
 
