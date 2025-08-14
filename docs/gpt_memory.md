@@ -4,6 +4,14 @@
 store prompts and responses with tags, optionally embed each prompt for semantic
 search and compact old records into concise summaries.
 
+## Unified interface
+
+All memory backends now implement `GPTMemoryInterface` providing four core
+operations: `store`, `retrieve`, `log_interaction` and `search_context`.  The
+SQLite manager, the shared `MenaceMemoryManager` and `MemoryBot` all adhere to
+this protocol so higher level components can depend on the interface rather than
+concrete implementations.
+
 ## GPTMemoryManager
 
 ```python
@@ -25,10 +33,10 @@ ensure the connection is cleanly closed.
 
 ## GPTMemory wrapper
 
-`GPTMemory` is a thin adapter around `MenaceMemoryManager`.  It exposes
-`log_interaction()`, `fetch_context()`, `summarize_and_prune()` and `retrieve()`
-so existing components can store GPT conversations without depending on the
-SQLite backend.
+`GPTMemory` is a thin adapter around `MenaceMemoryManager`.  It is now
+deprecated in favour of using any backend that implements
+`GPTMemoryInterface` (typically `GPTMemoryManager`).  Existing code should
+migrate to the interface and remove uses of this wrapper.
 
 ## Example integrations
 
@@ -38,6 +46,8 @@ SQLite backend.
 - **Learning & Self-Learning engines** – `GPTMemory` wraps the shared
   `MenaceMemoryManager`.  The self-learning service periodically prunes GPT
   logs while the learning engines retrain incrementally on `memory:new` events.
+  Existing integrations should migrate to `GPTMemoryManager` or another
+  `GPTMemoryInterface` implementation.
 
 Use an in-memory database (`db_path=":memory:"`) for ephemeral runs or supply a
 preloaded `SentenceTransformer` as `embedder` to enable semantic similarity

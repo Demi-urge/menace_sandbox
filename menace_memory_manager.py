@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional, Sequence, Any
 import logging
 
 try:
@@ -83,6 +83,7 @@ else:  # pragma: no cover
 
 from .unified_event_bus import UnifiedEventBus
 from .knowledge_graph import KnowledgeGraph
+from gpt_memory_interface import GPTMemoryInterface
 
 try:
     from .chatgpt_enhancement_bot import summarise_text as _summarise_text
@@ -107,7 +108,7 @@ class MemoryEntry:
     ts: str = datetime.utcnow().isoformat()
 
 
-class MenaceMemoryManager:
+class MenaceMemoryManager(GPTMemoryInterface):
     """SQLite-backed manager that stores versioned data with tags."""
 
     def __init__(
@@ -814,6 +815,43 @@ class MenaceMemoryManager:
         result = [MemoryEntry(*r) for r in rows]
         result.sort(key=lambda e: e.ts, reverse=True)
         return result[:limit]
+
+    # ------------------------------------------------------- unified interface
+    def log_interaction(
+        self, prompt: str, response: str, tags: Sequence[str] | None = None
+    ) -> int:
+        """Record a prompt/response pair using the generic store method."""
+
+        payload = json.dumps({"prompt": prompt, "response": response})
+        tag_str = ",".join(tags or [])
+        return self.store(prompt, payload, tags=tag_str)
+
+    def search_context(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        tags: Sequence[str] | None = None,
+        **_: Any,
+    ) -> List[MemoryEntry]:
+        """Return memory entries matching ``query`` and optional ``tags``."""
+
+        entries = self.search(query, limit * 5 if tags else limit)
+        if tags:
+            wanted = set(tags)
+            entries = [
+                e
+                for e in entries
+                if not wanted.isdisjoint(t for t in e.tags.split(",") if t)
+            ]
+        return entries[:limit]
+
+    def retrieve(
+        self, query: str, limit: int = 5, tags: Sequence[str] | None = None
+    ) -> List[MemoryEntry]:
+        """Alias for :meth:`search_context` for interface compatibility."""
+
+        return self.search_context(query, limit=limit, tags=tags)
 
 __all__ = [
     "MemoryEntry",
