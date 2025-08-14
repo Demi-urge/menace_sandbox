@@ -1,4 +1,5 @@
 from types import MethodType
+import os
 
 import pytest
 
@@ -8,6 +9,7 @@ from menace.error_bot import ErrorDB
 from menace.chatgpt_enhancement_bot import EnhancementDB, Enhancement
 from menace.information_db import InformationDB, InformationRecord
 from menace.universal_retriever import UniversalRetriever, boost_linked_candidates
+from menace.deployment_bot import DeploymentDB
 
 
 def _fake_encoder(self, text: str):
@@ -77,6 +79,68 @@ def test_metric_based_ranking(tmp_path):
     hits = retriever.retrieve("anything", top_k=2)
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
+    assert hits[0].confidence > hits[1].confidence
+
+
+def test_enhancement_roi_metric(tmp_path):
+    """Enhancement ROI influences ranking when similarity ties."""
+    enh_db = EnhancementDB(path=tmp_path / "e.db", vector_index_path=tmp_path / "e.idx")
+    enh_db.encode_text = MethodType(_constant_encoder, enh_db)
+    high = Enhancement(idea="x", rationale="y", summary="s", score=10.0, cost_estimate=2.0)
+    low = Enhancement(idea="x", rationale="y", summary="s", score=4.0, cost_estimate=3.0)
+    high_id = enh_db.add(high)
+    low_id = enh_db.add(low)
+
+    retriever = UniversalRetriever(enhancement_db=enh_db)
+    hits = retriever.retrieve("anything", top_k=2)
+    assert [h.record_id for h in hits] == [str(high_id), str(low_id)]
+    assert hits[0].reason.startswith("high ROI uplift")
+    assert hits[0].confidence > hits[1].confidence
+
+
+def test_workflow_usage_metric(tmp_path):
+    """Workflow usage counts affect ranking."""
+    wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_index_path=tmp_path / "wf.idx")
+    wf_db.encode_text = MethodType(_constant_encoder, wf_db)
+    high_id = wf_db.add(WorkflowRecord(workflow=["a"], title="x", assigned_bots=["1","2","3"]))
+    low_id = wf_db.add(WorkflowRecord(workflow=["a"], title="y", assigned_bots=["1"]))
+
+    retriever = UniversalRetriever(workflow_db=wf_db)
+    hits = retriever.retrieve("anything", top_k=2)
+    assert [h.record_id for h in hits] == [high_id, low_id]
+    assert hits[0].reason.startswith("heavy usage")
+    assert hits[0].confidence > hits[1].confidence
+
+
+def test_bot_deploy_frequency_metric(tmp_path):
+    """Bots with more deployments rank higher."""
+    bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
+    bot_db.encode_text = MethodType(_constant_encoder, bot_db)
+    high_id = bot_db.add_bot(BotRecord(name="a", purpose="b"))
+    low_id = bot_db.add_bot(BotRecord(name="c", purpose="d"))
+
+    cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        dep_db = DeploymentDB(path="deployment.db")
+        for _ in range(3):
+            dep_db.conn.execute(
+                "INSERT INTO bot_trials(bot_id, deploy_id, status, ts) VALUES (?,?,?,?)",
+                (high_id, 1, "ok", "now"),
+            )
+        dep_db.conn.execute(
+            "INSERT INTO bot_trials(bot_id, deploy_id, status, ts) VALUES (?,?,?,?)",
+            (low_id, 1, "ok", "now"),
+        )
+        dep_db.conn.commit()
+
+        retriever = UniversalRetriever(bot_db=bot_db)
+        hits = retriever.retrieve("anything", top_k=2)
+    finally:
+        os.chdir(cwd)
+
+    assert [h.record_id for h in hits] == [high_id, low_id]
+    assert hits[0].reason.startswith("widely deployed bot")
     assert hits[0].confidence > hits[1].confidence
 
 

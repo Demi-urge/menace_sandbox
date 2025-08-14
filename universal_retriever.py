@@ -191,7 +191,8 @@ class UniversalRetriever:
         self.enhancement_db = enhancement_db
         self.information_db = information_db
         self.graph = knowledge_graph
-        self._deploy_conn: sqlite3.Connection | None = None
+        # lazy-instantiated DeploymentDB connection for bot deployment stats
+        self._deploy_db: Any | None = None
 
         # registry of embeddable databases keyed by origin label
         self._dbs: dict[str, Any] = {}
@@ -321,17 +322,35 @@ class UniversalRetriever:
         return 0.0
 
     def _enhancement_roi(self, enh: Any) -> float:
-        """Return ROI uplift score for an enhancement record."""
+        """Return ROI uplift score for an enhancement record.
+
+        Uses ``score`` and ``cost_estimate`` fields when available.  Missing
+        values are treated as ``0`` so callers only need to provide the fields
+        they track.
+        """
 
         if not self.enhancement_db:
             return 0.0
         try:
-            return float(getattr(enh, "score", 0.0))
+            score = float(getattr(enh, "score", 0.0) or 0.0)
+            cost = float(getattr(enh, "cost_estimate", 0.0) or 0.0)
+            return score - cost
         except Exception:
             return 0.0
 
     def _workflow_usage(self, wf: Any) -> float:
         """Return approximate usage count for a workflow record."""
+
+        # Prefer explicit usage counters when the WorkflowDB exposes them
+        if self.workflow_db:
+            wid = self._extract_id(wf, ("id", "wid"))
+            if wid is not None:
+                try:
+                    usage = float(self.workflow_db.usage_rate(int(wid)))
+                    if usage:
+                        return usage
+                except Exception:
+                    pass
 
         try:
             data = json.loads(getattr(wf, "performance_data", "") or "{}")
@@ -348,13 +367,17 @@ class UniversalRetriever:
 
         if not self.bot_db:
             return 0.0
-        if getattr(self, "_deploy_conn", None) is None:
+        if self._deploy_db is None:
             try:
-                self._deploy_conn = sqlite3.connect("deployment.db")
-            except sqlite3.Error:
-                return 0.0
+                from .deployment_bot import DeploymentDB  # lazy import
+
+                self._deploy_db = DeploymentDB("deployment.db")
+            except Exception:
+                self._deploy_db = None
+        if not self._deploy_db:
+            return 0.0
         try:
-            cur = self._deploy_conn.execute(
+            cur = self._deploy_db.conn.execute(
                 "SELECT COUNT(*) FROM bot_trials WHERE bot_id=?",
                 (bot_id,),
             ).fetchone()
