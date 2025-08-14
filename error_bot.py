@@ -36,7 +36,7 @@ from .knowledge_graph import KnowledgeGraph
 from .database_router import DatabaseRouter
 from .admin_bot_base import AdminBotBase
 from .metrics_exporter import error_bot_exceptions
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 
 if TYPE_CHECKING:  # pragma: no cover - type hints only
     from .prediction_manager_bot import PredictionManager

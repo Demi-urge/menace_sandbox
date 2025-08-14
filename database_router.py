@@ -43,7 +43,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
