@@ -39,6 +39,7 @@ import menace.chatgpt_enhancement_bot as ceb
 import menace.research_aggregator_bot as rab
 from menace.database_router import DatabaseRouter
 from menace.embeddable_db_mixin import EmbeddableDBMixin
+from menace.universal_retriever import RetrievedItem
 
 
 class DummyEmbedder:
@@ -88,6 +89,7 @@ def test_semantic_search_router(tmp_path, shared_embedder):
     )
 
     results = router.semantic_search("alpha")
-    kinds = {r["kind"] for r in results}
+    assert all(isinstance(r, RetrievedItem) for r in results)
+    kinds = {r.origin_db for r in results}
     assert kinds == {"bot", "workflow", "error", "enhancement", "info"}
-    assert all(r["source_id"] is not None for r in results)
+    assert all(r.record_id is not None for r in results)
