@@ -145,12 +145,22 @@ class KnowledgeGraph:
         try:
             row = bot_db.find_by_name(name)
             if row:
-                tasks = row.get("tasks", "").split(",") if row.get("tasks") else []
-                deps = (
-                    row.get("dependencies", "").split(",")
-                    if row.get("dependencies")
-                    else []
-                )
+                import json
+
+                try:
+                    tasks = json.loads(row.get("tasks", "[]"))
+                except Exception:
+                    tasks = (
+                        row.get("tasks", "").split(",") if row.get("tasks") else []
+                    )
+                try:
+                    deps = json.loads(row.get("dependencies", "[]"))
+                except Exception:
+                    deps = (
+                        row.get("dependencies", "").split(",")
+                        if row.get("dependencies")
+                        else []
+                    )
         except Exception as exc:  # noqa: BLE001
             logger.warning("failed fetching bot info for %s: %s", name, exc)
             if not add_partial:
@@ -177,6 +187,85 @@ class KnowledgeGraph:
         for t in tags or []:
             self.graph.add_node(f"tag:{t}")
             self.graph.add_edge(f"tag:{t}", f"memory:{key}", type="tag")
+
+    def add_gpt_insight(
+        self,
+        key: str,
+        *,
+        bots: Iterable[str] | None = None,
+        code_paths: Iterable[str] | None = None,
+        error_categories: Iterable[str] | None = None,
+    ) -> None:
+        """Record a stored GPT insight and link to related entities.
+
+        Parameters
+        ----------
+        key:
+            Identifier for the insight. Typically the prompt or a summary
+            from :class:`GPTMemory`.
+        bots:
+            Bot names involved in the insight.
+        code_paths:
+            Code summaries or paths referenced by the insight.
+        error_categories:
+            Error categories connected to the insight.
+        """
+
+        if self.graph is None:
+            return
+
+        inode = f"insight:{key}"
+        self.graph.add_node(inode)
+        for b in bots or []:
+            self.graph.add_node(f"bot:{b}")
+            self.graph.add_edge(inode, f"bot:{b}", type="bot")
+        for c in code_paths or []:
+            self.graph.add_node(f"code:{c}")
+            self.graph.add_edge(inode, f"code:{c}", type="code")
+        for e in error_categories or []:
+            self.graph.add_node(f"error_category:{e}")
+            self.graph.add_edge(inode, f"error_category:{e}", type="error_category")
+
+    def ingest_gpt_memory(self, memory_mgr: object) -> None:
+        """Load GPT insights from a memory manager or :class:`GPTMemory`.
+
+        The ``memory_mgr`` can either expose a ``conn`` attribute directly or
+        provide a ``manager`` attribute with the underlying connection.  Tags in
+        the memory table that start with ``bot:``, ``code:`` or ``error:`` are
+        converted into edges pointing at the corresponding nodes so the insights
+        become discoverable through graph traversal.
+        """
+
+        if self.graph is None:
+            return
+
+        # Accept either GPTMemory (which exposes ``manager``) or the manager
+        # itself which must have a ``conn`` attribute.
+        conn = getattr(getattr(memory_mgr, "manager", memory_mgr), "conn", None)
+        if conn is None:
+            return
+        try:
+            rows = conn.execute("SELECT key, tags FROM memory").fetchall()
+        except Exception:
+            return
+
+        for key, tags in rows:
+            tag_list = [t.strip() for t in str(tags).replace(",", " ").split() if t.strip()]
+            bots: List[str] = []
+            codes: List[str] = []
+            errs: List[str] = []
+            for t in tag_list:
+                if t.startswith("bot:"):
+                    bots.append(t.split(":", 1)[1])
+                elif t.startswith("code:"):
+                    codes.append(t.split(":", 1)[1])
+                elif t.startswith("error:") or t.startswith("error_category:"):
+                    errs.append(t.split(":", 1)[1])
+            if bots or codes or errs:
+                self.add_gpt_insight(key, bots=bots, code_paths=codes, error_categories=errs)
+            else:
+                # fallback to generic memory node linkage
+                self.add_memory_entry(key, tag_list)
 
     def add_code_snippet(self, summary: str, bots: Iterable[str] | None = None) -> None:
         if self.graph is None:
@@ -254,6 +343,10 @@ class KnowledgeGraph:
                 self.graph.add_node(f"memory:{actions}")
                 self.graph.add_edge(
                     f"pathway:{actions}", f"memory:{actions}", type="memory"
+                )
+                # allow traversal from memory back to pathway
+                self.graph.add_edge(
+                    f"memory:{actions}", f"pathway:{actions}", type="pathway"
                 )
 
     # ------------------------------------------------------------------
