@@ -36,12 +36,11 @@ sys.modules["menace.knowledge_graph"] = kg_mod
 from menace.menace_memory_manager import MenaceMemoryManager
 
 
-def test_summarise_memory(tmp_path):
-    mm = MenaceMemoryManager(tmp_path / "m.db", embedder=None)
-    mm.store("k", "Sentence one. Sentence two. Sentence three.")
-    mm.store("k", "Another sentence.")
-    summary = mm.summarise_memory("k", limit=2)
-    assert summary
-    assert "Sentence" in summary
-    entry = mm.query("k:summary", limit=1)[0]
-    assert "refs=1-2" in entry.tags
+def test_periodic_summary(tmp_path):
+    mm = MenaceMemoryManager(tmp_path / "m.db", embedder=None, summary_interval=2)
+    mm.store("k", "First.")
+    mm.store("k", "Second.")  # triggers summarisation
+    assert not mm.query("k", limit=5)
+    summary_entries = mm.query("k:summary", limit=5)
+    assert summary_entries
+    assert "refs=1-2" in summary_entries[0].tags

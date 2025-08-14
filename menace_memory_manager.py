@@ -123,6 +123,7 @@ class MenaceMemoryManager:
         recluster_interval: int = 100,
         vector_backend: str | None = None,
         vector_index_path: Path | str | None = None,
+        summary_interval: int = 50,
     ) -> None:
         # allow connections to be shared across threads
         self.conn = sqlite3.connect(path, check_same_thread=False)
@@ -144,6 +145,7 @@ class MenaceMemoryManager:
         self._vector_index = None
         self._vector_dim = 0
         self.has_fts = False
+        self.summary_interval = max(0, summary_interval)
         self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS memory(
@@ -420,6 +422,16 @@ class MenaceMemoryManager:
                     "Subscriber callback failed for key %s", entry.key
                 )
 
+        if (
+            self.summary_interval
+            and not entry.key.endswith(":summary")
+            and entry.version % self.summary_interval == 0
+        ):
+            try:
+                self.summarise_memory(entry.key, limit=self.summary_interval, condense=True)
+            except Exception:
+                logger.exception("automatic summarise failed for %s", entry.key)
+
         self._log_count += 1
         if self.cluster_backend == "faiss" and self._log_count % self.recluster_interval == 0:
             try:
@@ -590,19 +602,67 @@ class MenaceMemoryManager:
 
     # --------------------------------------------------------------
     def summarise_memory(
-        self, key: str, limit: int = 20, *, ratio: float = 0.2, store: bool = True
+        self,
+        key: str,
+        limit: int = 20,
+        *,
+        ratio: float = 0.2,
+        store: bool = True,
+        condense: bool = False,
     ) -> str:
         """Summarise recent entries for *key* using simple heuristics."""
-        entries = list(reversed(self.query(key, limit)))
-        if not entries:
+        cur = self.conn.execute(
+            "SELECT rowid, data, version FROM memory WHERE key=? ORDER BY version DESC LIMIT ?",
+            (key, limit),
+        )
+        rows = cur.fetchall()
+        if not rows:
             return ""
-        text = "\n".join(e.data for e in entries)
+        rows.reverse()
+        text = "\n".join(r[1] for r in rows)
         summary = _summarise_text(text, ratio=ratio)
+        refs = f"{rows[0][2]}-{rows[-1][2]}"
+        stored = False
         if store and summary:
             try:
-                self.store(f"{key}:summary", summary, tags="summary")
+                self.store(f"{key}:summary", summary, tags=f"summary refs={refs}")
+                stored = True
             except Exception:
                 logger.exception("Failed to store summary for %s", key)
+        if condense and stored:
+            rowids = [r[0] for r in rows]
+            placeholders = ",".join("?" for _ in rowids)
+            self.conn.execute(
+                f"DELETE FROM memory WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            self.conn.execute(
+                f"DELETE FROM memory_embeddings WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            self.conn.execute(
+                f"DELETE FROM memory_clusters WHERE rowid IN ({placeholders})",
+                rowids,
+            )
+            if getattr(self, "has_fts", False):
+                try:
+                    self.conn.execute(
+                        f"DELETE FROM memory_fts WHERE rowid IN ({placeholders})",
+                        rowids,
+                    )
+                except sqlite3.OperationalError:
+                    self.has_fts = False
+            self.conn.commit()
+            if self.vector_backend:
+                try:
+                    self._vector_index = None
+                    self.migrate_embeddings_to_index()
+                except Exception:
+                    logger.exception("Failed to rebuild vector index after condense")
+            try:
+                self.cluster_embeddings()
+            except Exception:
+                logger.exception("clustering embeddings failed after condense")
         return summary
 
     # ------------------------------------------------------------------
