@@ -24,9 +24,9 @@
   for configuration details and backfilling instructions.
 - Unified cross-database search through `UniversalRetriever`.  The
   `retrieve(query, top_k=10, link_multiplier=1.1)` API returns
-  `RetrievedItem` objects with `origin_db`, `record_id`, metadata and a
-  confidence backed by normalised metrics (error frequency, ROI uplift,
-  workflow usage and bot deployment) with optional relation-based boosting.
+  `ResultBundle` objects with `origin_db`, record metadata, a final score and a
+  reason backed by normalised metrics (error frequency, ROI uplift, workflow
+  usage and bot deployment) with optional relation-based boosting.
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
@@ -1223,10 +1223,10 @@ creator.create_bots(tasks)
 ### Universal Retriever
 
 `UniversalRetriever` queries multiple embedding-backed databases and returns
-`RetrievedItem` objects with confidence scores and reasons. Scores combine error
+`ResultBundle` objects with final scores and reasons. Scores combine error
 frequency, enhancement ROI, workflow usage, bot deployment counts and raw
 vector similarity. Related results that share bot relationships receive a
-boosted confidence via relation-aware linking.
+boosted score via relation-aware linking.
 
 ```python
 from menace.bot_database import BotDB

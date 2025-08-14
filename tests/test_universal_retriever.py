@@ -5,7 +5,7 @@ from types import MethodType
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
-from menace.universal_retriever import UniversalRetriever, RetrievedItem
+from menace.universal_retriever import UniversalRetriever, ResultBundle
 
 
 def _keyword_encoder(self, text: str):
@@ -61,7 +61,7 @@ def test_metric_weighting_prioritises_frequent_errors(tmp_path):
 
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
-    assert hits[0].confidence > hits[1].confidence
+    assert hits[0].score > hits[1].score
 
 
 def test_connectivity_boosting_between_bot_and_workflow(tmp_path):
@@ -90,11 +90,11 @@ def test_connectivity_boosting_between_bot_and_workflow(tmp_path):
     baseline = retriever.retrieve("bot", top_k=3, link_multiplier=1.0)
     boosted = retriever.retrieve("bot", top_k=3, link_multiplier=1.5)
 
-    assert all(isinstance(h, RetrievedItem) for h in boosted)
+    assert all(isinstance(h, ResultBundle) for h in boosted)
     assert {h.origin_db for h in boosted} == {"bot", "workflow", "error"}
 
-    base = {h.origin_db: h.confidence for h in baseline}
-    boost = {h.origin_db: h.confidence for h in boosted}
+    base = {h.origin_db: h.score for h in baseline}
+    boost = {h.origin_db: h.score for h in boosted}
     for src in ("bot", "workflow", "error"):
         assert boost[src] > base[src]
 
@@ -103,7 +103,7 @@ def test_connectivity_boosting_between_bot_and_workflow(tmp_path):
     assert path in reasons["workflow"]
     assert path in reasons["error"]
 
-    links = {h.origin_db: h.links for h in boosted}
+    links = {h.origin_db: h.metadata.get("linked_records", []) for h in boosted}
     assert len(links["bot"]) == 2
     assert len(links["workflow"]) == 2
     assert len(links["error"]) == 2

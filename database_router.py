@@ -44,7 +44,7 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
-from .universal_retriever import UniversalRetriever, RetrievedItem
+from .universal_retriever import UniversalRetriever, ResultBundle
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -299,7 +299,7 @@ class DatabaseRouter:
         self._log_action(requesting_bot, "query_all", {"term": term})
         return result
 
-    def universal_search(self, query: Any, top_k: int = 10) -> List[RetrievedItem]:
+    def universal_search(self, query: Any, top_k: int = 10) -> List[ResultBundle]:
         """Search across configured databases using the shared retriever."""
 
         try:
@@ -310,23 +310,22 @@ class DatabaseRouter:
 
         return hits[:top_k]
 
-    def semantic_search(self, query_text: str, top_k: int = 10) -> List[RetrievedItem]:
+    def semantic_search(self, query_text: str, top_k: int = 10) -> List[ResultBundle]:
         """Backward compatible wrapper around :meth:`universal_search`."""
 
         hits = self.universal_search(query_text, top_k=top_k)
 
         # Map legacy fields (kind/source_id/record) to the new dataclass
-        results: List[RetrievedItem] = []
+        results: List[ResultBundle] = []
         for h in hits:
             origin = "info" if h.origin_db == "information" else h.origin_db
+            meta = dict(h.metadata)
             results.append(
-                RetrievedItem(
+                ResultBundle(
                     origin_db=origin,
-                    record=h.record,
-                    confidence=h.confidence,
-                    metadata=h.metadata,
+                    metadata=meta,
+                    score=h.score,
                     reason=h.reason,
-                    links=h.links,
                 )
             )
 

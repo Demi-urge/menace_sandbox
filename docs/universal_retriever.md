@@ -22,9 +22,8 @@ hits = retriever.retrieve("upload failed", top_k=5, link_multiplier=1.2)
 ```
 
 `retrieve()` accepts a raw string, a record instance or an explicit vector. It
-returns a list of :class:`RetrievedItem` objects containing the origin
-database, full record, confidence score, explanation and any linked record
-identifiers.
+returns a list of :class:`ResultBundle` objects containing the origin database,
+metadata for the matched record, final score and an explanatory reason.
 
 ## Scoring formula
 
@@ -47,8 +46,8 @@ Candidates that share bot relationships are further adjusted by
 groups have each member's confidence multiplied by ``link_multiplier``
 (``final = base * link_multiplier``). The multiplier is applied once per
 retrieval and capped internally to keep scores reproducible. The linkage
-path and related record identifiers are returned with each
-:class:`RetrievedItem` for downstream inspection.
+path and related record identifiers are returned in each result's metadata for
+downstream inspection.
 
 ## Integration steps
 
