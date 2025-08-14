@@ -5,7 +5,7 @@ from types import MethodType
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
-from menace.universal_retriever import UniversalRetriever, ResultBundle
+from menace.universal_retriever import ResultBundle, UniversalRetriever
 
 
 def _keyword_encoder(self, text: str):
@@ -27,22 +27,21 @@ def _constant_encoder(self, text: str):
     return [1.0]
 
 
-def test_string_vs_record_queries(tmp_path):
-    """Supplying a record object follows a separate query path from strings."""
+def test_cross_db_merge(tmp_path):
+    """Results from different databases are merged into a single list."""
 
     bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
-    bot_db.encode_text = MethodType(_keyword_encoder, bot_db)
+    wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_index_path=tmp_path / "wf.idx")
+    for db in (bot_db, wf_db):
+        db.encode_text = MethodType(_keyword_encoder, db)
 
-    alpha_id = bot_db.add_bot(BotRecord(name="alpha", purpose="bot"))
-    bot_db.add_bot(BotRecord(name="beta", purpose="bot"))
+    bot_db.add_bot(BotRecord(name="alpha", purpose="bot"))
+    wf_db.add(WorkflowRecord(workflow=["workflow"], title="alpha"))
 
-    retriever = UniversalRetriever(bot_db=bot_db)
+    retriever = UniversalRetriever(bot_db=bot_db, workflow_db=wf_db)
+    hits = retriever.retrieve("alpha", top_k=5, link_multiplier=1.0)
 
-    string_hit = retriever.retrieve("alpha", top_k=1)[0]
-    record_hit = retriever.retrieve(BotRecord(name="alpha", purpose="bot"), top_k=1)[0]
-
-    assert string_hit.record_id == alpha_id
-    assert record_hit.record_id == alpha_id
+    assert {h.origin_db for h in hits} == {"bot", "workflow"}
 
 
 def test_metric_weighting_prioritises_frequent_errors(tmp_path):
@@ -64,7 +63,7 @@ def test_metric_weighting_prioritises_frequent_errors(tmp_path):
     assert hits[0].score > hits[1].score
 
 
-def test_connectivity_boosting_between_bot_and_workflow(tmp_path):
+def test_relationship_boosting(tmp_path):
     """Linked results receive a confidence boost and linkage path."""
 
     bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")

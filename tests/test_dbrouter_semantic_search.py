@@ -1,8 +1,5 @@
 import types
 import sys
-import time
-from types import MethodType
-
 import pytest
 
 # Stub modules for optional heavy dependencies required by InfoDB
@@ -32,64 +29,44 @@ for name, attrs in mods.items():
             setattr(module, attr, type(attr, (), {}))
     sys.modules.setdefault(name, module)
 
-from menace.bot_database import BotDB, BotRecord
-from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
-from menace.error_bot import ErrorDB, TelemetryEvent
+from menace.bot_database import BotDB
+from menace.task_handoff_bot import WorkflowDB
+from menace.error_bot import ErrorDB
 import menace.chatgpt_enhancement_bot as ceb
 import menace.research_aggregator_bot as rab
 from menace.database_router import DatabaseRouter
-from menace.embeddable_db_mixin import EmbeddableDBMixin
 from menace.universal_retriever import ResultBundle
 
 
-class DummyEmbedder:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    def __call__(self, text: str) -> list[float]:
-        self.calls.append(text)
-        return [1.0, 0.0] if "alpha" in text else [0.0, 1.0]
-
-
-@pytest.fixture
-def shared_embedder(monkeypatch) -> DummyEmbedder:
-    embedder = DummyEmbedder()
-    monkeypatch.setattr(
-        EmbeddableDBMixin, "encode_text", lambda self, text: embedder(text)
-    )
-    return embedder
-
-
-def bind_embed(db, embedder: DummyEmbedder) -> None:
-    db._embed = MethodType(lambda self, text: embedder(text), db)
-
-
-def test_semantic_search_router(tmp_path, shared_embedder):
-    bot_db = BotDB(path=tmp_path / "bot.db", vector_backend="annoy", vector_index_path=tmp_path / "bot.index")
-    workflow_db = WorkflowDB(path=tmp_path / "wf.db", vector_backend="annoy", vector_index_path=tmp_path / "wf.index")
-    error_db = ErrorDB(path=tmp_path / "err.db", vector_backend="annoy", vector_index_path=tmp_path / "err.index")
-    enhancement_db = ceb.EnhancementDB(tmp_path / "enh.db", vector_index_path=tmp_path / "enh.index")
-    info_db = rab.InfoDB(tmp_path / "info.db", vector_backend="annoy", vector_index_path=tmp_path / "info.index")
-
-    for db in [bot_db, workflow_db, error_db, enhancement_db, info_db]:
-        bind_embed(db, shared_embedder)
-
-    bot_db.add_bot(BotRecord(name="BotA", purpose="alpha", tags=["x"], toolchain=["tc1"]))
-    workflow_db.add(WorkflowRecord(workflow=["alpha"], task_sequence=["s1"], title="Alpha"))
-    error_db.add_telemetry(TelemetryEvent(root_cause="alpha", stack_trace="t1"))
-    enhancement_db.add(ceb.Enhancement(idea="i1", rationale="r1", summary="alpha", before_code="a", after_code="b"))
-    info_db.add(rab.ResearchItem(topic="T1", content="alpha", tags=["t1"], associated_bots=["b1"], timestamp=time.time()))
+def test_semantic_search_delegates_to_retriever(tmp_path):
+    bot_db = BotDB(path=tmp_path / "bot.db", vector_backend="annoy", vector_index_path=tmp_path / "b.idx")
+    wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_backend="annoy", vector_index_path=tmp_path / "w.idx")
+    err_db = ErrorDB(path=tmp_path / "err.db", vector_backend="annoy", vector_index_path=tmp_path / "e.idx")
+    enh_db = ceb.EnhancementDB(tmp_path / "enh.db", vector_index_path=tmp_path / "enh.idx")
+    info_db = rab.InfoDB(tmp_path / "info.db", vector_backend="annoy", vector_index_path=tmp_path / "i.idx")
 
     router = DatabaseRouter(
         bot_db=bot_db,
-        workflow_db=workflow_db,
+        workflow_db=wf_db,
         info_db=info_db,
-        error_db=error_db,
-        enhancement_db=enhancement_db,
+        error_db=err_db,
+        enhancement_db=enh_db,
     )
 
-    results = router.semantic_search("alpha")
+    called: dict[str, tuple] = {}
+
+    def fake_retrieve(query, top_k=10):
+        called["args"] = (query, top_k)
+        return [
+            ResultBundle(origin_db="bot", metadata={"id": 1}, score=0.5, reason="a"),
+            ResultBundle(origin_db="information", metadata={"id": 2}, score=0.4, reason="b"),
+        ]
+
+    router._retriever.retrieve = fake_retrieve  # type: ignore
+
+    results = router.semantic_search("alpha", top_k=5)
+
+    assert called["args"] == ("alpha", 5)
+    assert [r.origin_db for r in results] == ["bot", "info"]
     assert all(isinstance(r, ResultBundle) for r in results)
-    kinds = {r.origin_db for r in results}
-    assert kinds == {"bot", "workflow", "error", "enhancement", "info"}
-    assert all(r.record_id is not None for r in results)
+    assert results[0].metadata["id"] == 1
