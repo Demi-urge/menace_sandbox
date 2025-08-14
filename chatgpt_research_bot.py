@@ -597,7 +597,7 @@ class ChatGPTResearchBot:
         self.db_steward = db_steward
         self.summary_config = summary_config or SummaryConfig()
         self.settings = settings or ResearchBotSettings()
-        self.gpt_memory = gpt_memory or GPTMemory()
+        self.gpt_memory = gpt_memory
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit
@@ -623,7 +623,7 @@ class ChatGPTResearchBot:
             data = self.client.ask(
                 [{"role": "user", "content": b_prompt}],
                 validate=False,
-                knowledge=self.gpt_memory,
+                memory_manager=self.gpt_memory,
                 tags=["research"],
             )
             if not isinstance(data, dict):

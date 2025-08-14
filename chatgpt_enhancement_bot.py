@@ -760,7 +760,7 @@ class ChatGPTEnhancementBot:
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
-        self.gpt_memory = gpt_memory or GPTMemory()
+        self.gpt_memory = gpt_memory
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT
@@ -780,7 +780,7 @@ class ChatGPTEnhancementBot:
         try:
             data = self.client.ask(
                 [{"role": "user", "content": prompt}],
-                knowledge=self.gpt_memory,
+                memory_manager=self.gpt_memory,
                 tags=["idea"],
             )
         except Exception as exc:
