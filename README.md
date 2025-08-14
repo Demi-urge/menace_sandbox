@@ -1244,6 +1244,16 @@ The output lists the originating database, record identifier, a normalised
 confidence score and a short reason derived from the highest contributing
 metric, making it easy to interpret why a candidate was returned.
 
+The router's `semantic_search` method delegates to the same retriever, offering
+cross-database search through a single entry point:
+
+```python
+from menace.database_router import DatabaseRouter
+
+router = DatabaseRouter(bot_db=BotDB(), workflow_db=WorkflowDB(), error_db=ErrorDB())
+results = router.semantic_search("upload failed")
+```
+
 ### Safe mode and overrides
 
 `SelfServiceOverride` now only logs warnings when ROI or error metrics exceed

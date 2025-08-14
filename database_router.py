@@ -311,9 +311,13 @@ class DatabaseRouter:
         return hits[:top_k]
 
     def semantic_search(self, query_text: str, top_k: int = 10) -> List[ResultBundle]:
-        """Backward compatible wrapper around :meth:`universal_search`."""
+        """Perform a semantic search via :class:`UniversalRetriever`."""
 
-        hits = self.universal_search(query_text, top_k=top_k)
+        try:
+            hits = self._retriever.retrieve(query_text, top_k=top_k)
+        except Exception as exc:
+            logger.error("semantic retrieval failed: %s", exc)
+            return []
 
         # Map legacy fields (kind/source_id/record) to the new dataclass
         results: List[ResultBundle] = []

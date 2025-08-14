@@ -56,3 +56,9 @@ and assigns a confidence score to every match.
 
 See [universal_retriever.md](universal_retriever.md) for the full API, scoring
 formula and integration guide.
+
+`DatabaseRouter.semantic_search` now delegates to the retriever so callers can
+perform a single query across bots, workflows, errors, enhancements and
+research items without dealing with individual databases. Each result includes
+the originating database label, combined score and a short reason describing the
+highest contributing metric.
