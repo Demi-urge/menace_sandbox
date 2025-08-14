@@ -163,7 +163,13 @@ class DatabaseRouter:
         self.cache_enabled = cache_seconds > 0
         self._cache: Dict[tuple, tuple[float, Any]] = {}
         self._query_encoder = _QueryEncoder()
-        self._retriever: UniversalRetriever | None = None
+        self._retriever = UniversalRetriever(
+            bot_db=self.bot_db,
+            workflow_db=self.workflow_db,
+            error_db=self.error_db,
+            enhancement_db=self.enhancement_db,
+            information_db=self.info_db,
+        )
 
     # ------------------------------------------------------------------
     # Permission helpers
@@ -293,22 +299,21 @@ class DatabaseRouter:
         self._log_action(requesting_bot, "query_all", {"term": term})
         return result
 
-    def semantic_search(self, query_text: str, top_k: int = 10) -> List[RetrievedItem]:
-        """Perform a semantic search across embeddable databases."""
+    def universal_search(self, query: Any, top_k: int = 10) -> List[RetrievedItem]:
+        """Search across configured databases using the shared retriever."""
 
         try:
-            if self._retriever is None:
-                self._retriever = UniversalRetriever(
-                    bot_db=self.bot_db,
-                    workflow_db=self.workflow_db,
-                    error_db=getattr(self, "error_db", None),
-                    enhancement_db=getattr(self, "enhancement_db", None),
-                    information_db=self.info_db,
-                )
-            hits = self._retriever.retrieve(query_text, top_k=top_k)
+            hits = self._retriever.retrieve(query, top_k=top_k)
         except Exception as exc:
             logger.error("universal retrieval failed: %s", exc)
             return []
+
+        return hits[:top_k]
+
+    def semantic_search(self, query_text: str, top_k: int = 10) -> List[RetrievedItem]:
+        """Backward compatible wrapper around :meth:`universal_search`."""
+
+        hits = self.universal_search(query_text, top_k=top_k)
 
         # Map legacy fields (kind/source_id/record) to the new dataclass
         results: List[RetrievedItem] = []
