@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Sequence, Tuple
 import json
+import logging
 
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
@@ -186,6 +187,62 @@ class EmbeddableDBMixin:
         }
         self._rebuild_index()
         self.save_index()
+
+    def get_vector(self, record_id: Any) -> List[float] | None:
+        """Return the stored embedding vector for ``record_id`` if present."""
+
+        meta = self._metadata.get(str(record_id))
+        if meta:
+            return list(meta["vector"])
+        return None
+
+    def try_add_embedding(
+        self,
+        record_id: Any,
+        record: Any,
+        kind: str,
+        *,
+        source_id: str = "",
+    ) -> None:
+        """Best-effort variant of :meth:`add_embedding`."""
+
+        try:
+            self.add_embedding(record_id, record, kind, source_id=source_id)
+        except Exception:  # pragma: no cover - best effort
+            logging.exception("embedding hook failed for %s", record_id)
+
+    def update_embedding_version(
+        self, record_id: Any, *, embedding_version: int | None = None
+    ) -> None:
+        """Update ``embedding_version`` metadata for ``record_id``."""
+
+        rid = str(record_id)
+        if rid not in self._metadata:
+            return
+        version = (
+            embedding_version if embedding_version is not None else self.embedding_version
+        )
+        self._metadata[rid]["embedding_version"] = int(version)
+        self._metadata[rid]["created_at"] = datetime.utcnow().isoformat()
+        self.save_index()
+
+    def update_embedding_versions(
+        self, record_ids: Sequence[Any], *, embedding_version: int | None = None
+    ) -> None:
+        """Bulk update ``embedding_version`` for multiple records."""
+
+        version = (
+            embedding_version if embedding_version is not None else self.embedding_version
+        )
+        now = datetime.utcnow().isoformat()
+        updated = False
+        for rid in map(str, record_ids):
+            if rid in self._metadata:
+                self._metadata[rid]["embedding_version"] = int(version)
+                self._metadata[rid]["created_at"] = now
+                updated = True
+        if updated:
+            self.save_index()
 
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 10

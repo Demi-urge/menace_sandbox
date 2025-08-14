@@ -10,7 +10,7 @@ import json
 import sqlite3
 import logging
 
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 
 
 logger = logging.getLogger(__name__)

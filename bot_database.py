@@ -15,7 +15,7 @@ from .auto_link import auto_link
 
 from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 import warnings
 try:
     from .menace_db import MenaceDB

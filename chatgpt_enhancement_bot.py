@@ -17,7 +17,7 @@ from .override_policy import OverridePolicyManager
 from .chatgpt_idea_bot import ChatGPTClient
 from .gpt_memory import GPTMemory
 from . import RAISE_ERRORS
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)

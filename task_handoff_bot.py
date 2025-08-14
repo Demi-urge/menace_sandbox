@@ -12,7 +12,7 @@ import logging
 
 import sqlite3
 from .unified_event_bus import UnifiedEventBus
-from .embeddable_db_mixin import EmbeddableDBMixin
+from menace.embeddable_db_mixin import EmbeddableDBMixin
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
