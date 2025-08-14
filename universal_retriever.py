@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import sqlite3
 from typing import Any, Iterable, List, Sequence
 
 
@@ -99,3 +102,100 @@ class UniversalRetriever:
 
         candidates.sort(key=_dist)
         return candidates[:top_k]
+
+    # ------------------------------------------------------------------
+    def _error_frequency(self, error_id: int) -> float:
+        if not self.error_db:
+            return 0.0
+        try:
+            cur = self.error_db.conn.execute(
+                "SELECT frequency FROM telemetry WHERE id=?", (error_id,)
+            ).fetchone()
+            if cur and cur[0] is not None:
+                return float(cur[0])
+            cur = self.error_db.conn.execute(
+                "SELECT frequency FROM errors WHERE id=?", (error_id,)
+            ).fetchone()
+            if cur and cur[0] is not None:
+                return float(cur[0])
+        except sqlite3.Error:
+            return 0.0
+        return 0.0
+
+    def _enhancement_roi(self, enh: Any) -> float:
+        if not self.enhancement_db:
+            return 0.0
+        try:
+            h = hashlib.sha1((getattr(enh, "after_code", "") or "").encode()).hexdigest()
+            cur = self.enhancement_db.conn.execute(
+                "SELECT metric_delta FROM enhancement_history WHERE enhanced_hash=? ORDER BY id DESC LIMIT 1",
+                (h,),
+            ).fetchone()
+            if cur and cur[0] is not None:
+                return float(cur[0])
+        except sqlite3.Error:
+            return 0.0
+        return float(getattr(enh, "score", 0.0))
+
+    def _workflow_usage(self, wf: Any) -> float:
+        try:
+            data = json.loads(getattr(wf, "performance_data", "") or "{}")
+            for key in ("runs", "executions", "usage", "count"):
+                if key in data:
+                    return float(data[key])
+        except Exception:
+            pass
+        assigned = getattr(wf, "assigned_bots", []) or []
+        return float(len(assigned))
+
+    def _bot_deploy_freq(self, bot_id: int) -> float:
+        if not self.bot_db:
+            return 0.0
+        total = 0
+        try:
+            cur = self.bot_db.conn.execute(
+                "SELECT COUNT(*) FROM bot_workflow WHERE bot_id=?", (bot_id,)
+            ).fetchone()
+            total += int(cur[0]) if cur else 0
+            cur = self.bot_db.conn.execute(
+                "SELECT COUNT(*) FROM bot_enhancement WHERE bot_id=?", (bot_id,)
+            ).fetchone()
+            total += int(cur[0]) if cur else 0
+        except sqlite3.Error:
+            return float(total)
+        return float(total)
+
+    def retrieve_with_confidence(self, query: Any, top_k: int = 10) -> List[dict[str, Any]]:
+        """Retrieve results with a combined confidence score."""
+
+        results = self.retrieve(query, top_k)
+        metrics_list: List[dict[str, float]] = []
+        for item in results:
+            metrics: dict[str, float] = {}
+            if isinstance(item, dict) and "id" in item and self.error_db:
+                metrics["frequency"] = self._error_frequency(int(item["id"]))
+            if self.enhancement_db and hasattr(item, "after_code"):
+                metrics["roi"] = self._enhancement_roi(item)
+            if self.workflow_db and hasattr(item, "performance_data"):
+                metrics["usage"] = self._workflow_usage(item)
+            if isinstance(item, dict) and "id" in item and self.bot_db and "purpose" in item:
+                metrics["deploy"] = self._bot_deploy_freq(int(item["id"]))
+            metrics_list.append(metrics)
+
+        max_vals: dict[str, float] = {}
+        for m in metrics_list:
+            for k, v in m.items():
+                if v > max_vals.get(k, 0.0):
+                    max_vals[k] = v
+
+        scored: List[dict[str, Any]] = []
+        for item, m in zip(results, metrics_list):
+            comps: List[float] = []
+            for k, v in m.items():
+                max_v = max_vals.get(k, 0.0)
+                comps.append(v / max_v if max_v else 0.0)
+            dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
+            comps.append(1.0 / (1.0 + float(dist)))
+            confidence = sum(comps) / len(comps) if comps else 0.0
+            scored.append({"item": item, "confidence": confidence, **m})
+        return scored
