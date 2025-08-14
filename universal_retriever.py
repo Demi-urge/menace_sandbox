@@ -10,6 +10,15 @@ from typing import Any, Iterable, List, Sequence
 
 @dataclass
 class RetrievalHit:
+    """Structured result returned by :class:`UniversalRetriever`.
+
+    The dataclass bundles the origin of the hit, its primary key within
+    the source database, the raw metadata for that record and a computed
+    confidence score.  A short human readable ``reason`` explains which
+    metric most influenced the ranking so downstream components can
+    surface richer explanations to users.
+    """
+
     source_db: str
     record_id: Any
     metadata: dict[str, Any]
@@ -162,6 +171,14 @@ class UniversalRetriever:
         return None
 
     def _vector_for_query(self, query: Any) -> List[float]:
+        """Return an embedding vector for ``query``.
+
+        ``query`` may be raw text or a database record.  Text queries are
+        embedded using :meth:`EmbeddableDBMixin.encode_text` from whichever
+        database instance was provided on construction.  For record objects
+        we look up the stored vector via :meth:`EmbeddableDBMixin.get_vector`.
+        """
+
         if isinstance(query, str):
             return self._encoder.encode_text(query)
 
@@ -314,13 +331,17 @@ class UniversalRetriever:
                 max_v = max_vals.get(k, 0.0)
                 comps.append(v / max_v if max_v else 0.0)
             dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
+            # ``search_by_vector`` returns a distance where smaller means more similar.
+            # Convert it into a normalised similarity component before combining with
+            # any metric based signals gathered above.
             comps.append(1.0 / (1.0 + float(dist)))
-            confidence = sum(comps) / len(comps) if comps else 0.0
+            combined_score = sum(comps) / len(comps) if comps else 0.0
             scored.append({
                 "source": source,
                 "record_id": rec_id,
                 "item": item,
-                "confidence": confidence,
+                # keep key name ``confidence`` for backwards compatibility
+                "confidence": combined_score,
                 **m,
             })
 
