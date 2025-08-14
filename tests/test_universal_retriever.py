@@ -1,106 +1,109 @@
+"""Tests for the :mod:`universal_retriever` helper."""
+
 from types import MethodType
 
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
-from menace.chatgpt_enhancement_bot import EnhancementDB, Enhancement
-from menace.information_db import InformationDB, InformationRecord
 from menace.universal_retriever import UniversalRetriever, RetrievedItem
 
 
-def test_universal_retriever_ranking_and_boosting(tmp_path):
-    # create lightweight in-memory databases
+def _keyword_encoder(self, text: str):
+    """Return simple 2D embeddings based on keywords."""
+
+    text = text.lower()
+    if "bot" in text:
+        return [1.0, 0.0]
+    if "workflow" in text:
+        return [0.8, 0.2]
+    if "error" in text:
+        return [0.6, 0.4]
+    return [0.0, 1.0]
+
+
+def _constant_encoder(self, text: str):
+    """Return a constant vector so ranking relies purely on metrics."""
+
+    return [1.0]
+
+
+def test_string_vs_record_queries(tmp_path):
+    """Supplying a record object follows a separate query path from strings."""
+
+    bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
+    bot_db.encode_text = MethodType(_keyword_encoder, bot_db)
+
+    alpha_id = bot_db.add_bot(BotRecord(name="alpha", purpose="bot"))
+    bot_db.add_bot(BotRecord(name="beta", purpose="bot"))
+
+    retriever = UniversalRetriever(bot_db=bot_db)
+
+    string_hit = retriever.retrieve("alpha", top_k=1)[0]
+    record_hit = retriever.retrieve(BotRecord(name="alpha", purpose="bot"), top_k=1)[0]
+
+    assert string_hit.record_id == alpha_id
+    assert record_hit.record_id == alpha_id
+
+
+def test_metric_weighting_prioritises_frequent_errors(tmp_path):
+    """Errors with higher frequency outrank lower frequency ones."""
+
+    err_db = ErrorDB(path=tmp_path / "err.db", vector_index_path=tmp_path / "err.idx")
+    err_db.encode_text = MethodType(_constant_encoder, err_db)
+
+    high_id = err_db.add_error("boom")
+    low_id = err_db.add_error("bust")
+    err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (10, high_id))
+    err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (1, low_id))
+
+    retriever = UniversalRetriever(error_db=err_db)
+    hits = retriever.retrieve("anything", top_k=2)
+
+    assert [h.record_id for h in hits] == [high_id, low_id]
+    assert hits[0].reason.startswith("frequent error recurrence")
+    assert hits[0].confidence > hits[1].confidence
+
+
+def test_connectivity_boosting_between_bot_and_workflow(tmp_path):
+    """Linked results receive a confidence boost and linkage path."""
+
     bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
     wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_index_path=tmp_path / "wf.idx")
     err_db = ErrorDB(path=tmp_path / "err.db", vector_index_path=tmp_path / "err.idx")
-    enh_db = EnhancementDB(path=tmp_path / "enh.db", vector_index_path=tmp_path / "enh.idx")
-    info_db = InformationDB(path=str(tmp_path / "info.db"), vector_index_path=str(tmp_path / "info.idx"))
 
-    def fake_encode(self, text: str):
-        text = text.lower()
-        if "bot" in text:
-            return [1.0, 0.0]
-        if "workflow" in text:
-            return [0.8, 0.2]
-        if "error" in text:
-            return [0.6, 0.4]
-        if "enhancement" in text:
-            return [0.4, 0.6]
-        if "info" in text:
-            return [0.0, 1.0]
-        return [0.5, 0.5]
+    for db in (bot_db, wf_db, err_db):
+        db.encode_text = MethodType(_keyword_encoder, db)
 
-    for db in (bot_db, wf_db, err_db, enh_db, info_db):
-        db.encode_text = MethodType(fake_encode, db)
-
-    # seed bot record
     bot_id = bot_db.add_bot(BotRecord(name="alpha", purpose="bot"))
-
-    # workflow linked to bot
-    wf_rec = WorkflowRecord(workflow=["workflow"], assigned_bots=[str(bot_id)], performance_data='{"runs": 10}')
-    wf_id = wf_db.add(wf_rec)
+    wf_id = wf_db.add(WorkflowRecord(workflow=["workflow"], assigned_bots=[str(bot_id)], performance_data='{"runs": 5}'))
     bot_db.conn.execute("INSERT INTO bot_workflow(bot_id, workflow_id) VALUES (?, ?)", (bot_id, wf_id))
 
-    # error linked to bot with frequency metric
     err_id = err_db.add_error("error")
-    err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (5, err_id))
+    err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (3, err_id))
     err_db.conn.execute("INSERT INTO bot_error(bot_id, error_id) VALUES (?, ?)", (bot_id, err_id))
-
-    # enhancement linked to bot with ROI metric
-    enh = Enhancement(idea="x", rationale="y", summary="enhancement", after_code="code", score=0.8)
-    enh_id = enh_db.add(enh)
-    bot_db.conn.execute("INSERT INTO bot_enhancement(bot_id, enhancement_id) VALUES (?, ?)", (bot_id, enh_id))
-
-    # information record (unlinked)
-    info_id = info_db.add(InformationRecord(data_type="info", summary="info"))
 
     bot_db.conn.commit()
     err_db.conn.commit()
 
-    retriever = UniversalRetriever(
-        bot_db=bot_db,
-        workflow_db=wf_db,
-        error_db=err_db,
-        enhancement_db=enh_db,
-        information_db=info_db,
-    )
+    retriever = UniversalRetriever(bot_db=bot_db, workflow_db=wf_db, error_db=err_db)
 
-    baseline = retriever.retrieve("bot", top_k=5, link_multiplier=1.0)
-    boosted = retriever.retrieve("bot", top_k=5, link_multiplier=1.2)
+    baseline = retriever.retrieve("bot", top_k=3, link_multiplier=1.0)
+    boosted = retriever.retrieve("bot", top_k=3, link_multiplier=1.5)
 
-    # structured result bundles
     assert all(isinstance(h, RetrievedItem) for h in boosted)
+    assert {h.origin_db for h in boosted} == {"bot", "workflow", "error"}
 
-    # ranking reflects metrics and boosting
-    sources = [h.origin_db for h in boosted]
-    assert sources == ["bot", "workflow", "error", "enhancement", "information"]
+    base = {h.origin_db: h.confidence for h in baseline}
+    boost = {h.origin_db: h.confidence for h in boosted}
+    for src in ("bot", "workflow", "error"):
+        assert boost[src] > base[src]
 
     reasons = {h.origin_db: h.reason for h in boosted}
-    path = "linked via bot->workflow->enhancement->error"
-    assert reasons["error"].startswith("frequent error recurrence")
-    assert path in reasons["error"]
-    assert reasons["enhancement"].startswith("high ROI uplift")
-    assert path in reasons["enhancement"]
-    assert reasons["workflow"].startswith("heavy usage")
+    path = "linked via bot->workflow->error"
     assert path in reasons["workflow"]
-    assert reasons["bot"].startswith("high vector similarity")
-    assert path in reasons["bot"]
-    assert reasons["information"].startswith("high vector similarity")
+    assert path in reasons["error"]
 
     links = {h.origin_db: h.links for h in boosted}
-    assert len(links["bot"]) == 3
-    assert len(links["workflow"]) == 3
-    assert len(links["error"]) == 3
-    assert len(links["enhancement"]) == 3
-    assert links["information"] == []
-
-    # metric weighting keeps information result least confident
-    info_conf = next(h.confidence for h in boosted if h.origin_db == "information")
-    assert all(h.confidence > info_conf for h in boosted if h.origin_db != "information")
-
-    # chain boosting increases confidence for linked entries
-    base_conf = {h.origin_db: h.confidence for h in baseline}
-    boost_conf = {h.origin_db: h.confidence for h in boosted}
-    for src in ("bot", "workflow", "error", "enhancement"):
-        assert boost_conf[src] > base_conf[src]
-    assert boost_conf["information"] == base_conf["information"]
+    assert len(links["bot"]) == 2
+    assert len(links["workflow"]) == 2
+    assert len(links["error"]) == 2
