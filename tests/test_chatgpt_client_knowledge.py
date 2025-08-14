@@ -23,9 +23,14 @@ class DummyKnowledge:
         self.record = record
         self.logged = None
 
-    def search_context(self, query, limit=5):
+    class Entry:
+        def __init__(self, prompt: str, response: str) -> None:
+            self.prompt = prompt
+            self.response = response
+
+    def get_similar_entries(self, query, limit=5):
         self.record["query"] = query
-        return [{"prompt": "p1", "response": "r1"}]
+        return [(1.0, self.Entry("p1", "r1"))]
 
     def log_interaction(self, prompt, response, tags):
         self.logged = (prompt, response, list(tags))
@@ -40,12 +45,19 @@ def test_ask_injects_context_and_logs(monkeypatch):
     client = cib.ChatGPTClient(api_key="key", session=session)
     knowledge = DummyKnowledge(record)
 
-    resp = client.ask([{"role": "user", "content": "hello"}], knowledge=knowledge)
+    resp = client.ask(
+        [{"role": "user", "content": "hello"}],
+        knowledge=knowledge,
+        use_memory=True,
+        relevance_threshold=0.5,
+        max_summary_length=20,
+    )
 
     assert record["query"] == "hello"
     msgs = record["messages"]
     assert msgs[0]["role"] == "system"
     assert "Prompt: p1" in msgs[0]["content"]
+    assert len(msgs[0]["content"]) <= 20
     assert msgs[1]["content"] == "hello"
     assert knowledge.logged == ("hello", "ok", [])
     assert resp["choices"][0]["message"]["content"] == "ok"

@@ -37,6 +37,7 @@ class MemoryEntry:
     response: str
     tags: List[str]
     timestamp: str
+    score: float = 0.0
 
 
 class GPTMemoryManager:
@@ -99,6 +100,84 @@ class GPTMemoryManager:
             (prompt, response, tag_str, ts, embedding),
         )
         self.conn.commit()
+
+    def get_similar_entries(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        method: str = "auto",
+        tags: Optional[Sequence[str]] = None,
+    ) -> List[tuple[float, MemoryEntry]]:
+        """Retrieve top-N similar memory entries.
+
+        Parameters
+        ----------
+        query:
+            Text used for similarity search.
+        limit:
+            Maximum number of entries to return.
+        method:
+            ``"vector"`` to force embedding search, ``"text"`` for substring
+            matching, or ``"auto"`` (default) which prefers embeddings when
+            available.
+        tags:
+            Optional list of tags to filter the search.
+
+        Returns
+        -------
+        List of ``(score, MemoryEntry)`` tuples sorted by descending score.
+        """
+
+        where: List[str] = []
+        params: List[Any] = []
+        if tags:
+            for t in tags:
+                where.append("tags LIKE ?")
+                params.append(f"%{t}%")
+        base_query = "SELECT prompt, response, tags, ts, embedding FROM interactions"
+        if where:
+            base_query += " WHERE " + " AND ".join(where)
+        cur = self.conn.execute(base_query, params)
+        rows = cur.fetchall()
+
+        scored: List[tuple[float, MemoryEntry]] = []
+        use_vector = method in ("vector", "auto") and self.embedder is not None
+        q_emb: Sequence[float] | None = None
+        if use_vector:
+            try:
+                q_emb = self.embedder.encode(query)
+            except Exception:
+                use_vector = False
+
+        if use_vector and q_emb is not None:
+            for prompt, response, tag_str, ts, emb_json in rows:
+                if not emb_json:
+                    continue
+                try:
+                    emb = json.loads(emb_json)
+                except Exception:
+                    continue
+                score = _cosine_similarity(q_emb, emb)
+                entry = MemoryEntry(
+                    prompt, response, tag_str.split(",") if tag_str else [], ts, score
+                )
+                scored.append((score, entry))
+        else:
+            import difflib
+
+            for prompt, response, tag_str, ts, _ in rows:
+                text = f"{prompt} {response}"
+                score = difflib.SequenceMatcher(
+                    None, query.lower(), text.lower()
+                ).ratio()
+                entry = MemoryEntry(
+                    prompt, response, tag_str.split(",") if tag_str else [], ts, score
+                )
+                scored.append((score, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return scored[:limit]
 
     def search_context(
         self,

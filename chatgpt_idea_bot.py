@@ -79,11 +79,20 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         tags: Iterable[str] | None = None,
         memory_manager: "GPTMemoryManager" | None = None,
+        use_memory: bool = False,
+        relevance_threshold: float = 0.0,
+        max_summary_length: int = 500,
     ) -> Dict[str, object]:
         memory = memory_manager
         if memory is None:
             if knowledge is not None:
-                if hasattr(knowledge, "search_context") and hasattr(knowledge, "log_interaction"):
+                if (
+                    hasattr(knowledge, "log_interaction")
+                    and (
+                        hasattr(knowledge, "search_context")
+                        or hasattr(knowledge, "get_similar_entries")
+                    )
+                ):
                     memory = knowledge
                 elif hasattr(knowledge, "GPTMemory"):
                     try:
@@ -107,15 +116,23 @@ class ChatGPTClient:
 
         user_prompt = messages[-1].get("content", "") if messages else ""
         messages_for_api = messages
-        if memory and hasattr(memory, "search_context"):
+        if use_memory and memory is not None:
             try:
-                contexts = memory.search_context(user_prompt)
-                if contexts:
+                if hasattr(memory, "get_similar_entries"):
+                    matches = memory.get_similar_entries(user_prompt, limit=5)
+                    relevant = [e for s, e in matches if s >= relevance_threshold]
+                elif hasattr(memory, "search_context"):
+                    relevant = memory.search_context(user_prompt)
+                else:
+                    relevant = []
+                if relevant:
                     ctx_parts = [
-                        f"Prompt: {c.get('prompt', '')}\nResponse: {c.get('response', '')}"
-                        for c in contexts
+                        f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
+                        for e in relevant
                     ]
                     context_text = "\n\n".join(ctx_parts)
+                    if len(context_text) > max_summary_length:
+                        context_text = context_text[:max_summary_length]
                     messages_for_api = [{"role": "system", "content": context_text}] + messages
             except Exception:
                 logger.exception("context retrieval failed")
