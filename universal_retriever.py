@@ -32,66 +32,48 @@ def boost_linked_candidates(
     bot_db: Any | None = None,
     error_db: Any | None = None,
     multiplier: float = 1.1,
-) -> None:
+) -> dict[int, str]:
     """Apply a score boost for items linked via bot relationships.
 
     ``scored`` is modified in-place. Any candidates that share a bot ID
     through the ``bot_workflow``, ``bot_error`` or ``bot_enhancement``
-    tables receive the ``multiplier`` on their ``confidence`` score.
+    tables receive the ``multiplier`` on their ``confidence`` score.  The
+    function returns a mapping of candidate index to a textual linkage path
+    describing how results are connected (e.g. ``"bot->workflow->error"``).
     """
 
     if multiplier <= 1.0 or not scored:
-        return
+        return {}
 
     bot_sets: List[set[int]] = []
+    type_map: List[str | None] = []
     for entry in scored:
-        item = entry.get("item")
         bots: set[int] = set()
-        if item is None:
-            bot_sets.append(bots)
-            continue
-        typ: str | None = None
-        cid: int | None = None
-        if isinstance(item, dict):
-            if "purpose" in item:
-                typ, cid = "bot", int(item.get("id") or item.get("bid", 0))
-            elif "workflow" in item or "assigned_bots" in item:
-                typ, cid = "workflow", int(item.get("id") or item.get("wid", 0))
-            elif "after_code" in item or "idea" in item:
-                typ, cid = "enhancement", int(item.get("id", 0))
-            elif "message" in item or "description" in item:
-                typ, cid = "error", int(item.get("id", 0))
-        else:
-            if hasattr(item, "purpose"):
-                typ, cid = "bot", int(getattr(item, "id", getattr(item, "bid", 0)))
-            elif hasattr(item, "workflow") or hasattr(item, "assigned_bots"):
-                typ, cid = "workflow", int(getattr(item, "wid", getattr(item, "id", 0)))
-            elif hasattr(item, "after_code") or hasattr(item, "idea"):
-                typ, cid = "enhancement", int(getattr(item, "id", 0))
-            elif hasattr(item, "message") or hasattr(item, "description"):
-                typ, cid = "error", int(getattr(item, "id", 0))
+        typ = entry.get("source")
+        cid = entry.get("record_id")
 
         if typ == "bot" and cid:
-            bots.add(cid)
+            bots.add(int(cid))
         elif typ == "workflow" and cid and bot_db:
             rows = bot_db.conn.execute(
                 "SELECT bot_id FROM bot_workflow WHERE workflow_id=?",
-                (cid,),
+                (int(cid),),
             ).fetchall()
             bots.update(int(r[0]) for r in rows)
         elif typ == "error" and cid and error_db:
             rows = error_db.conn.execute(
                 "SELECT bot_id FROM bot_error WHERE error_id=?",
-                (cid,),
+                (int(cid),),
             ).fetchall()
             bots.update(int(r[0]) for r in rows)
         elif typ == "enhancement" and cid and bot_db:
             rows = bot_db.conn.execute(
                 "SELECT bot_id FROM bot_enhancement WHERE enhancement_id=?",
-                (cid,),
+                (int(cid),),
             ).fetchall()
             bots.update(int(r[0]) for r in rows)
         bot_sets.append(bots)
+        type_map.append(typ)
 
     n = len(scored)
     parent = list(range(n))
@@ -116,11 +98,27 @@ def boost_linked_candidates(
     for idx in range(n):
         groups[find(idx)].append(idx)
 
+    link_paths: dict[int, str] = {}
+    order = ["bot", "workflow", "enhancement", "error", "information"]
     for members in groups.values():
         if len(members) > 1:
+            types = {type_map[m] for m in members if type_map[m]}
+            if "bot" in types:
+                path_types = ["bot"] + [t for t in order[1:] if t in types]
+            else:
+                others = [t for t in order if t in types]
+                if others:
+                    first, rest = others[0], others[1:]
+                    path_types = [first, "bot"] + rest
+                else:
+                    path_types = ["bot"]
+            path_str = "->".join(path_types)
             for m in members:
                 if "confidence" in scored[m]:
                     scored[m]["confidence"] *= multiplier
+                link_paths[m] = path_str
+
+    return link_paths
 
 
 class UniversalRetriever:
@@ -345,7 +343,7 @@ class UniversalRetriever:
                 **m,
             })
 
-        boost_linked_candidates(
+        link_paths = boost_linked_candidates(
             scored,
             bot_db=self.bot_db,
             error_db=self.error_db,
@@ -360,7 +358,7 @@ class UniversalRetriever:
         }
 
         hits: List[RetrievalHit] = []
-        for entry in scored:
+        for idx, entry in enumerate(scored):
             item = entry["item"]
             meta = item if isinstance(item, dict) else item.__dict__
             metrics = {
@@ -370,6 +368,8 @@ class UniversalRetriever:
             }
             top_metric = max(metrics, key=metrics.get, default=None)
             reason = reason_map.get(top_metric, "relevant match")
+            if idx in link_paths:
+                reason = f"{reason} (linked via {link_paths[idx]})"
             hits.append(
                 RetrievalHit(
                     source_db=entry["source"],
