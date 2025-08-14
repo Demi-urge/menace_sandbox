@@ -740,11 +740,12 @@ class ChatGPTEnhancementBot:
         client: ChatGPTClient,
         db: Optional[EnhancementDB] = None,
         override_manager: Optional[OverridePolicyManager] = None,
+        gpt_memory: GPTMemory | None = None,
     ) -> None:
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
-        self.gpt_memory = GPTMemory()
+        self.gpt_memory = gpt_memory or GPTMemory()
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT

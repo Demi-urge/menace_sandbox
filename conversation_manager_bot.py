@@ -51,6 +51,7 @@ class ConversationManagerBot:
         client: ChatGPTClient,
         stage7_bots: Optional[Dict[str, Callable[[str], str]]] = None,
         report_bot: ReportGenerationBot | None = None,
+        gpt_memory: GPTMemory | None = None,
     ) -> None:
         self.client = client
         self.stage7_bots = stage7_bots or {}
@@ -59,7 +60,7 @@ class ConversationManagerBot:
         self._notifications: List[str] = []
         self.report_bot = report_bot or ReportGenerationBot()
         self.strategy = "neutral"
-        self.gpt_memory = GPTMemory()
+        self.gpt_memory = gpt_memory or GPTMemory()
         self._objection_keywords = {"no", "not", "don't", "cant", "can't", "won't"}
         self.resistance_handler: Callable[[List[MessageEntry], CTAChain | None], None] | None = None
 

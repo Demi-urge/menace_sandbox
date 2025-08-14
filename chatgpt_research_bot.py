@@ -586,6 +586,7 @@ class ChatGPTResearchBot:
         summary_config: SummaryConfig | None = None,
         *,
         settings: ResearchBotSettings | None = None,
+        gpt_memory: GPTMemory | None = None,
     ) -> None:
         if not isinstance(client, ChatGPTClient):
             raise TypeError("client must be ChatGPTClient")
@@ -596,7 +597,7 @@ class ChatGPTResearchBot:
         self.db_steward = db_steward
         self.summary_config = summary_config or SummaryConfig()
         self.settings = settings or ResearchBotSettings()
-        self.gpt_memory = GPTMemory()
+        self.gpt_memory = gpt_memory or GPTMemory()
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit

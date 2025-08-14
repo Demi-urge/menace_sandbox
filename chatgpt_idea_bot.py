@@ -34,7 +34,7 @@ from . import database_manager, RAISE_ERRORS
 from .database_management_bot import DatabaseManagementBot
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
-    from .gpt_memory import GPTMemoryManager
+    from .gpt_memory import GPTMemoryManager, GPTMemory
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
@@ -55,6 +55,7 @@ class ChatGPTClient:
     offline_cache_path: str | None = field(default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE"))
     timeout: int = field(default_factory=lambda: int(os.getenv("OPENAI_TIMEOUT", "30")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("OPENAI_RETRIES", "1")))
+    gpt_memory: "GPTMemoryManager | GPTMemory | None" = None
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -84,12 +85,12 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
-        memory_manager: "GPTMemoryManager" | None = None,
+        memory_manager: "GPTMemoryManager | GPTMemory | None" = None,
         use_memory: bool = False,
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
     ) -> Dict[str, object]:
-        memory = memory_manager
+        memory = memory_manager or self.gpt_memory
         if memory is None:
             if knowledge is not None:
                 if (
@@ -114,11 +115,15 @@ class ChatGPTClient:
                     memory = None
 
         def _log(prompt: str, response: str) -> None:
-            if memory and hasattr(memory, "log_interaction"):
-                try:
+            if not memory:
+                return
+            try:
+                if hasattr(memory, "log_interaction"):
                     memory.log_interaction(prompt, response, tags or [])
-                except Exception:
-                    logger.exception("failed to log interaction")
+                elif hasattr(memory, "store"):
+                    memory.store(prompt, response, tags or [])
+            except Exception:
+                logger.exception("failed to log interaction")
 
         user_prompt = messages[-1].get("content", "") if messages else ""
         messages_for_api = messages
@@ -134,19 +139,38 @@ class ChatGPTClient:
                         else:
                             snippet = getattr(item, "summary", getattr(item, "message", str(item)))
                         ctx_parts.append(snippet)
-                if not ctx_parts and memory is not None:
+                if memory is not None:
+                    vector_entries: List[Any] = []
+                    keyword_entries: List[Any] = []
                     if hasattr(memory, "get_similar_entries"):
-                        matches = memory.get_similar_entries(user_prompt, limit=5)
-                        relevant = [e for s, e in matches if s >= relevance_threshold]
-                    elif hasattr(memory, "search_context"):
-                        relevant = memory.search_context(user_prompt)
-                    else:
-                        relevant = []
-                    if relevant:
+                        try:
+                            matches = memory.get_similar_entries(user_prompt, limit=5)
+                            vector_entries = [e for s, e in matches if s >= relevance_threshold]
+                        except Exception:
+                            vector_entries = []
+                    if hasattr(memory, "search_context"):
+                        try:
+                            keyword_entries = memory.search_context(user_prompt, limit=5)
+                        except Exception:
+                            keyword_entries = []
+                    elif hasattr(memory, "retrieve"):
+                        try:
+                            keyword_entries = memory.retrieve(user_prompt, limit=5)
+                        except Exception:
+                            keyword_entries = []
+                    combined: List[Any] = []
+                    seen: set[str] = set()
+                    for entry in list(vector_entries) + list(keyword_entries):
+                        key = f"{getattr(entry, 'prompt', '')}|{getattr(entry, 'response', '')}"
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        combined.append(entry)
+                    if combined:
                         ctx_parts.extend(
                             [
                                 f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
-                                for e in relevant
+                                for e in combined
                             ]
                         )
                 if ctx_parts:
