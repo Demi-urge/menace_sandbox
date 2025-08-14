@@ -20,9 +20,9 @@ class RetrievedItem:
     """
 
     origin_db: str
-    record_id: Any
-    metadata: dict[str, Any]
+    record: Any
     confidence: float
+    metadata: dict[str, Any]
     reason: str
 
     # Backwards compatibility for older attribute names
@@ -33,6 +33,31 @@ class RetrievedItem:
     @property
     def confidence_score(self) -> float:  # pragma: no cover - simple alias
         return self.confidence
+
+    @property
+    def record_id(self) -> Any:  # pragma: no cover - compatibility shim
+        """Best-effort extraction of an identifier for ``record``.
+
+        Many legacy callers expect ``RetrievedItem`` to expose ``record_id``
+        even though the dataclass now stores the full ``record`` object
+        instead.  We attempt to pull a likely identifier from ``record`` or
+        ``metadata`` using common attribute names.  ``None`` is returned when
+        no obvious identifier can be found.
+        """
+
+        if isinstance(self.record, dict):
+            for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
+                if key in self.record:
+                    return self.record[key]
+        else:
+            for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
+                if hasattr(self.record, key):
+                    return getattr(self.record, key)
+        if isinstance(self.metadata, dict):
+            for key in ("id", "wid", "bid", "record_id", "info_id", "item_id"):
+                if key in self.metadata:
+                    return self.metadata[key]
+        return None
 
 
 # Older name retained for compatibility with existing imports
@@ -145,12 +170,14 @@ class UniversalRetriever:
         error_db: Any | None = None,
         enhancement_db: Any | None = None,
         information_db: Any | None = None,
+        knowledge_graph: Any | None = None,
     ) -> None:
         self.bot_db = bot_db
         self.workflow_db = workflow_db
         self.error_db = error_db
         self.enhancement_db = enhancement_db
         self.information_db = information_db
+        self.graph = knowledge_graph
 
         self._encoder = next(
             (
@@ -181,33 +208,57 @@ class UniversalRetriever:
                 return getattr(obj, name)
         return None
 
-    def _vector_for_query(self, query: Any) -> List[float]:
-        """Return an embedding vector for ``query``.
+    def _to_vector(self, query: Any) -> List[float]:
+        """Convert ``query`` into an embedding vector.
 
-        ``query`` may be raw text or a database record.  Text queries are
-        embedded using :meth:`EmbeddableDBMixin.encode_text` from whichever
-        database instance was provided on construction.  For record objects
-        we look up the stored vector via :meth:`EmbeddableDBMixin.get_vector`.
+        Parameters
+        ----------
+        query:
+            Either raw text, a record/record ID from one of the configured
+            databases or an explicit numeric vector.  Strings are encoded
+            using the first available database's ``encode_text`` method.  For
+            record objects we first try the database's ``vector`` method and
+            fall back to ``get_vector`` using common identifier fields.  If
+            ``query`` is already a sequence of numbers it is returned as-is.
         """
 
         if isinstance(query, str):
             return self._encoder.encode_text(query)
+
+        if isinstance(query, Sequence) and not isinstance(query, (bytes, bytearray)):
+            try:
+                return [float(x) for x in query]
+            except Exception:  # pragma: no cover - defensive
+                pass
 
         mapping = [
             (self.bot_db, ("id", "bid")),
             (self.workflow_db, ("id", "wid")),
             (self.error_db, ("id",)),
             (self.enhancement_db, ("id",)),
-            (self.information_db, ("id", "info_id")),
+            (self.information_db, ("id", "info_id", "item_id")),
         ]
+
         for db, names in mapping:
             if db is None:
                 continue
+            # Try direct vectorisation of the record instance
+            try:
+                vec = db.vector(query)
+                if vec is not None:
+                    return list(vec)
+            except Exception:
+                pass
+            # Fallback to stored vector via identifier lookup
             rec_id = self._extract_id(query, names)
             if rec_id is not None:
-                vec = db.get_vector(rec_id)
-                if vec is not None:
-                    return vec
+                try:
+                    vec = db.get_vector(rec_id)
+                    if vec is not None:
+                        return list(vec)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+
         raise TypeError("Unsupported query type for retrieval")
 
     # ------------------------------------------------------------------
@@ -216,7 +267,7 @@ class UniversalRetriever:
     ) -> List[tuple[str, Any, Any]]:
         """Return raw candidates and their sources for ``query``."""
 
-        vector = self._vector_for_query(query)
+        vector = self._to_vector(query)
         candidates: List[tuple[str, Any, Any]] = []
 
         mapping = [
@@ -388,9 +439,9 @@ class UniversalRetriever:
             hits.append(
                 RetrievedItem(
                     origin_db=entry["source"],
-                    record_id=entry["record_id"],
-                    metadata=meta,
+                    record=item,
                     confidence=entry["confidence"],
+                    metadata=meta,
                     reason=reason,
                 )
             )
