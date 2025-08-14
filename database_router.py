@@ -313,24 +313,13 @@ class DatabaseRouter:
         # Map legacy fields (kind/source_id/record) to the new dataclass
         results: List[RetrievedItem] = []
         for h in hits:
-            meta = h.metadata
-            rec_id = h.record_id
-            if rec_id is None and meta is not None:
-                if isinstance(meta, dict):
-                    rec_id = meta.get("id") or meta.get("item_id") or meta.get("wid")
-                else:
-                    rec_id = (
-                        getattr(meta, "id", None)
-                        or getattr(meta, "item_id", None)
-                        or getattr(meta, "wid", None)
-                    )
             origin = "info" if h.origin_db == "information" else h.origin_db
             results.append(
                 RetrievedItem(
                     origin_db=origin,
-                    record_id=rec_id,
-                    metadata=meta,
+                    record=h.record,
                     confidence=h.confidence,
+                    metadata=h.metadata,
                     reason=h.reason,
                 )
             )
