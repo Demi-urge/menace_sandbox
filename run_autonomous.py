@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Callable, List
 import math
 from scipy.stats import t
+from gpt_memory import GPTMemoryManager
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -197,6 +198,8 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
     sandbox_runner = sys.modules["sandbox_runner"] = sr_mod
 
 logger = get_logger(__name__)
+
+GPT_MEMORY_MANAGER: GPTMemoryManager | None = None
 
 
 def _port_available(port: int, host: str = "0.0.0.0") -> bool:
@@ -902,6 +905,11 @@ def main(argv: List[str] | None = None) -> None:
     parser.add_argument("--max-iterations", type=int, help="maximum iterations")
     parser.add_argument("--sandbox-data-dir", help="override sandbox data directory")
     parser.add_argument(
+        "--memory-db",
+        dest="memory_db",
+        help="path to GPT memory database (overrides GPT_MEMORY_DB)",
+    )
+    parser.add_argument(
         "--runs",
         type=int,
         default=1,
@@ -1121,6 +1129,11 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
+
+    mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+    global GPT_MEMORY_MANAGER
+    GPT_MEMORY_MANAGER = GPTMemoryManager(mem_db)
+    sandbox_runner.GPT_MEMORY_MANAGER = GPT_MEMORY_MANAGER
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
@@ -1801,6 +1814,12 @@ def main(argv: List[str] | None = None) -> None:
 
     if history_conn is not None:
         history_conn.close()
+
+    if GPT_MEMORY_MANAGER is not None:
+        try:
+            GPT_MEMORY_MANAGER.close()
+        except Exception:
+            logger.exception("failed to close GPT memory")
 
     logger.info("run_autonomous exiting")
 

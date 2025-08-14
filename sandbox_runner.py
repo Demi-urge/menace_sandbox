@@ -133,6 +133,8 @@ if TYPE_CHECKING:  # pragma: no cover
 __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
 logger = get_logger(__name__)
 
+GPT_MEMORY_MANAGER = None
+
 ROOT = Path(__file__).resolve().parent
 
 from sandbox_runner.config import SANDBOX_REPO_URL, SANDBOX_REPO_PATH
@@ -731,6 +733,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             score_backend = backend_from_url(backend_url)
         except Exception:
             logger.exception("patch score backend init failed")
+    gpt_memory = GPT_MEMORY_MANAGER
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
         module_index=module_index,
@@ -738,6 +741,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         policy=policy,
         score_backend=score_backend,
         auto_refresh_map=bool(getattr(args, "refresh_module_map", False)),
+        gpt_memory=gpt_memory,
     )
     meta_log.module_index = improver.module_index
 
@@ -804,6 +808,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         MenaceMemoryManager(),
         llm_client=va_client,
         patch_suggestion_db=suggestion_db,
+        gpt_memory=gpt_memory,
     )
     from menace.self_coding_manager import SelfCodingManager
     from menace.model_automation_pipeline import ModelAutomationPipeline
