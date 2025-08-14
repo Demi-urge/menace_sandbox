@@ -16,6 +16,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from universal_retriever import ResultBundle, UniversalRetriever
+try:  # pragma: no cover - support package and standalone usage
+    from config import get_config  # type: ignore
+except Exception:  # pragma: no cover - fallback to package import
+    from menace.config import get_config  # type: ignore
 
 # Database wrappers ---------------------------------------------------------
 from error_bot import ErrorDB
@@ -178,17 +182,32 @@ class ContextBuilder:
         task_desc: str,
         limit_per_db: int = 3,
         *,
-        max_tokens: int = 800,
+        max_tokens: int | None = None,
         metric_weight: float = 1.0,
+        db_weights: Dict[str, float] | None = None,
         **_: Any,
     ) -> str:
         """Return a compact JSON context for ``task_desc``.
 
         ``max_tokens`` is a soft limit; lower priority items are trimmed until
-        the output roughly fits within the specified budget.
+        the output roughly fits within the specified budget. When ``None`` the
+        value is read from ``config.context_builder.max_tokens`` or defaults to
+        800.
         ``metric_weight`` controls how strongly ROI/success metrics influence
-        ranking relative to vector similarity.
+        ranking relative to vector similarity. ``db_weights`` may bias metric
+        contributions for individual databases.
         """
+
+        cfg = None
+        try:  # pragma: no cover - best effort
+            cfg = get_config().context_builder  # type: ignore[attr-defined]
+        except Exception:
+            cfg = None
+
+        if max_tokens is None:
+            max_tokens = getattr(cfg, "max_tokens", 800)
+        if db_weights is None:
+            db_weights = dict(getattr(cfg, "db_weights", {}))
 
         hits = self.retriever.retrieve(task_desc, top_k=limit_per_db * 5)
 
@@ -211,7 +230,8 @@ class ContextBuilder:
             key = key_map.get(bundle.origin_db)
             if not key:
                 continue
-            buckets[key].append(self._bundle_to_record(bundle, metric_weight))
+            weight = metric_weight * db_weights.get(bundle.origin_db, 1.0)
+            buckets[key].append(self._bundle_to_record(bundle, weight))
 
         all_items: List[tuple[str, Record]] = []
         for key, recs in buckets.items():
