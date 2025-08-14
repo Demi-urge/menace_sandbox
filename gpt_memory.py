@@ -12,7 +12,20 @@ from datetime import datetime
 from pathlib import Path
 import json
 import sqlite3
-from typing import List, Optional, Sequence, Any
+from typing import Any, List, Optional, Sequence
+
+try:
+    from menace_memory_manager import _summarise_text  # type: ignore
+except Exception:  # pragma: no cover - fallback summariser
+    def _summarise_text(text: str, ratio: float = 0.2) -> str:
+        text = text.strip()
+        if not text:
+            return ""
+        sentences = [s.strip() for s in text.replace("\n", " ").split(".") if s.strip()]
+        if len(sentences) <= 1:
+            return text
+        count = max(1, int(len(sentences) * ratio))
+        return ". ".join(sentences[:count]) + "."
 
 try:  # optional dependency
     from sentence_transformers import SentenceTransformer
@@ -58,11 +71,18 @@ class GPTMemoryManager:
         path: str | Path = "gpt_memory.db",
         *,
         embedder: SentenceTransformer | None = None,
+        compact_every: int | None = 100,
+        retention_policy: dict[str, int] | None = None,
+        default_retention: int = 50,
     ) -> None:
         self.path = Path(path)
         self.conn = sqlite3.connect(self.path)
         self.embedder = embedder
         self._ensure_schema()
+        self.compact_every = max(1, compact_every) if compact_every else 0
+        self._log_counter = 0
+        self.retention_policy = retention_policy or {}
+        self.default_retention = max(0, default_retention)
 
     def _ensure_schema(self) -> None:
         self.conn.execute(
@@ -99,6 +119,49 @@ class GPTMemoryManager:
             "INSERT INTO interactions(prompt, response, tags, ts, embedding) VALUES (?, ?, ?, ?, ?)",
             (prompt, response, tag_str, ts, embedding),
         )
+        self.conn.commit()
+        self._log_counter += 1
+        if self.compact_every and self._log_counter % self.compact_every == 0:
+            self.compact()
+
+    def compact(
+        self,
+        *,
+        retention_policy: dict[str, int] | None = None,
+        default_keep: int | None = None,
+    ) -> None:
+        """Summarise old entries per tag and prune them."""
+        policy = retention_policy or self.retention_policy
+        keep_default = self.default_retention if default_keep is None else max(0, default_keep)
+        cur = self.conn.execute("SELECT DISTINCT tags FROM interactions")
+        tags = set()
+        for (tag_str,) in cur.fetchall():
+            if not tag_str:
+                tags.add("")
+            else:
+                for t in tag_str.split(","):
+                    tags.add(t.strip())
+        for tag in tags:
+            keep = policy.get(tag, keep_default)
+            if tag:
+                q = "SELECT id, prompt, response FROM interactions WHERE ',' || tags || ',' LIKE ? ORDER BY ts DESC"
+                rows = self.conn.execute(q, (f'%,{tag},%',)).fetchall()
+            else:
+                q = "SELECT id, prompt, response FROM interactions WHERE tags = '' OR tags IS NULL ORDER BY ts DESC"
+                rows = self.conn.execute(q).fetchall()
+            if len(rows) <= keep:
+                continue
+            to_summarise = rows[keep:]
+            text = "\n".join(f"Q: {p}\nA: {r}" for _, p, r in to_summarise)
+            summary = _summarise_text(text)
+            ids = [rid for rid, _, _ in to_summarise]
+            placeholders = ",".join("?" for _ in ids)
+            self.conn.execute(f"DELETE FROM interactions WHERE id IN ({placeholders})", ids)
+            tag_str = ",".join(filter(None, [tag, "summary"]))
+            self.conn.execute(
+                "INSERT INTO interactions(prompt, response, tags, ts, embedding) VALUES (?, ?, ?, ?, NULL)",
+                (f"Summary of {tag}" if tag else "Summary", summary, tag_str, datetime.utcnow().isoformat()),
+            )
         self.conn.commit()
 
     def get_similar_entries(
@@ -237,5 +300,45 @@ class GPTMemoryManager:
     def __del__(self) -> None:  # pragma: no cover
         self.close()
 
+def cli(argv: Sequence[str] | None = None) -> int:
+    """Simple command line interface for maintenance tasks."""
+    import argparse
 
-__all__ = ["GPTMemoryManager", "MemoryEntry"]
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_prune = sub.add_parser("prune", help="Compact/prune old memory entries")
+    p_prune.add_argument("--db", default="gpt_memory.db", help="Database file")
+    p_prune.add_argument(
+        "--keep", type=int, default=50, help="Default number of raw entries to keep per tag"
+    )
+    p_prune.add_argument(
+        "--policy",
+        action="append",
+        default=[],
+        metavar="TAG=N",
+        help="Per-tag retention policy",
+    )
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "prune":
+        policy: dict[str, int] = {}
+        for item in args.policy:
+            if "=" in item:
+                tag, val = item.split("=", 1)
+                try:
+                    policy[tag] = int(val)
+                except ValueError:
+                    continue
+        mgr = GPTMemoryManager(args.db)
+        mgr.compact(retention_policy=policy or None, default_keep=args.keep)
+        mgr.close()
+        return 0
+    return 1
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    raise SystemExit(cli())
+
+
+__all__ = ["GPTMemoryManager", "MemoryEntry", "cli"]
