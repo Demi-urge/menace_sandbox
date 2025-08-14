@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Sequence
@@ -178,6 +178,7 @@ class UniversalRetriever:
         self.enhancement_db = enhancement_db
         self.information_db = information_db
         self.graph = knowledge_graph
+        self._deploy_conn: sqlite3.Connection | None = None
 
         self._encoder = next(
             (
@@ -300,16 +301,14 @@ class UniversalRetriever:
 
     # ------------------------------------------------------------------
     def _error_frequency(self, error_id: int) -> float:
+        """Return raw error frequency from ``ErrorDB``."""
+
         if not self.error_db:
             return 0.0
         try:
             cur = self.error_db.conn.execute(
-                "SELECT frequency FROM telemetry WHERE id=?", (error_id,)
-            ).fetchone()
-            if cur and cur[0] is not None:
-                return float(cur[0])
-            cur = self.error_db.conn.execute(
-                "SELECT frequency FROM errors WHERE id=?", (error_id,)
+                "SELECT frequency FROM errors WHERE id=?",
+                (error_id,),
             ).fetchone()
             if cur and cur[0] is not None:
                 return float(cur[0])
@@ -318,21 +317,18 @@ class UniversalRetriever:
         return 0.0
 
     def _enhancement_roi(self, enh: Any) -> float:
+        """Return ROI uplift score for an enhancement record."""
+
         if not self.enhancement_db:
             return 0.0
         try:
-            h = hashlib.sha1((getattr(enh, "after_code", "") or "").encode()).hexdigest()
-            cur = self.enhancement_db.conn.execute(
-                "SELECT metric_delta FROM enhancement_history WHERE enhanced_hash=? ORDER BY id DESC LIMIT 1",
-                (h,),
-            ).fetchone()
-            if cur and cur[0] is not None:
-                return float(cur[0])
-        except sqlite3.Error:
+            return float(getattr(enh, "score", 0.0))
+        except Exception:
             return 0.0
-        return float(getattr(enh, "score", 0.0))
 
     def _workflow_usage(self, wf: Any) -> float:
+        """Return approximate usage count for a workflow record."""
+
         try:
             data = json.loads(getattr(wf, "performance_data", "") or "{}")
             for key in ("runs", "executions", "usage", "count"):
@@ -344,21 +340,72 @@ class UniversalRetriever:
         return float(len(assigned))
 
     def _bot_deploy_freq(self, bot_id: int) -> float:
+        """Return deployment count for a bot from deployment logs."""
+
         if not self.bot_db:
             return 0.0
-        total = 0
+        if getattr(self, "_deploy_conn", None) is None:
+            try:
+                self._deploy_conn = sqlite3.connect("deployment.db")
+            except sqlite3.Error:
+                return 0.0
         try:
-            cur = self.bot_db.conn.execute(
-                "SELECT COUNT(*) FROM bot_workflow WHERE bot_id=?", (bot_id,)
+            cur = self._deploy_conn.execute(
+                "SELECT COUNT(*) FROM bot_trials WHERE bot_id=?",
+                (bot_id,),
             ).fetchone()
-            total += int(cur[0]) if cur else 0
-            cur = self.bot_db.conn.execute(
-                "SELECT COUNT(*) FROM bot_enhancement WHERE bot_id=?", (bot_id,)
-            ).fetchone()
-            total += int(cur[0]) if cur else 0
+            if cur and cur[0] is not None:
+                return float(cur[0])
         except sqlite3.Error:
-            return float(total)
-        return float(total)
+            return 0.0
+        return 0.0
+
+    # ------------------------------------------------------------------
+    def _context_score(self, kind: str, record: Any) -> tuple[float, dict[str, float]]:
+        """Compute contextual score and raw metrics for a record.
+
+        Parameters
+        ----------
+        kind:
+            Source type such as ``"error"`` or ``"workflow"``.
+        record:
+            The record object returned from the respective database.
+
+        Returns
+        -------
+        tuple
+            A ``(score, metrics)`` pair where ``score`` is a normalised
+            value between 0 and 1 and ``metrics`` contains the raw metric
+            values used.
+        """
+
+        metrics: dict[str, float] = {}
+        score = 0.0
+        if kind == "error":
+            err_id = self._extract_id(record, ("id",))
+            if err_id is not None:
+                freq = self._error_frequency(int(err_id))
+                metrics["frequency"] = freq
+                lf = math.log1p(freq)
+                score = lf / (1.0 + lf)
+        elif kind == "enhancement":
+            roi = self._enhancement_roi(record)
+            metrics["roi"] = roi
+            roi_pos = max(roi, 0.0)
+            score = roi_pos / (1.0 + roi_pos)
+        elif kind == "workflow":
+            usage = self._workflow_usage(record)
+            metrics["usage"] = usage
+            lu = math.log1p(usage)
+            score = lu / (1.0 + lu)
+        elif kind == "bot":
+            bid = self._extract_id(record, ("id", "bid"))
+            if bid is not None:
+                freq = self._bot_deploy_freq(int(bid))
+                metrics["deploy"] = freq
+                lf = math.log1p(freq)
+                score = lf / (1.0 + lf)
+        return score, metrics
 
     def retrieve(
         self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
@@ -367,44 +414,23 @@ class UniversalRetriever:
 
         raw_results = self._retrieve_candidates(query, top_k)
 
-        metrics_list: List[dict[str, float]] = []
-        for source, rec_id, item in raw_results:
-            metrics: dict[str, float] = {}
-            if source == "error" and rec_id is not None:
-                metrics["frequency"] = self._error_frequency(int(rec_id))
-            if source == "enhancement":
-                metrics["roi"] = self._enhancement_roi(item)
-            if source == "workflow":
-                metrics["usage"] = self._workflow_usage(item)
-            if source == "bot" and rec_id is not None:
-                metrics["deploy"] = self._bot_deploy_freq(int(rec_id))
-            metrics_list.append(metrics)
-
-        max_vals: dict[str, float] = {}
-        for m in metrics_list:
-            for k, v in m.items():
-                if v > max_vals.get(k, 0.0):
-                    max_vals[k] = v
+        SIM_WEIGHT = 0.7
+        CTX_WEIGHT = 0.3
 
         scored: List[dict[str, Any]] = []
-        for (source, rec_id, item), m in zip(raw_results, metrics_list):
-            comps: List[float] = []
-            for k, v in m.items():
-                max_v = max_vals.get(k, 0.0)
-                comps.append(v / max_v if max_v else 0.0)
+        for source, rec_id, item in raw_results:
             dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
-            # ``search_by_vector`` returns a distance where smaller means more similar.
-            # Convert it into a normalised similarity component before combining with
-            # any metric based signals gathered above.
-            comps.append(1.0 / (1.0 + float(dist)))
-            combined_score = sum(comps) / len(comps) if comps else 0.0
+            similarity = 1.0 / (1.0 + float(dist))
+            ctx_score, metrics = self._context_score(source, item)
+            combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
             scored.append({
                 "source": source,
                 "record_id": rec_id,
                 "item": item,
-                # keep key name ``confidence`` for backwards compatibility
                 "confidence": combined_score,
-                **m,
+                "similarity": similarity,
+                "context": ctx_score,
+                **metrics,
             })
 
         link_paths = boost_linked_candidates(
@@ -424,16 +450,21 @@ class UniversalRetriever:
         hits: List[RetrievedItem] = []
         for idx, entry in enumerate(scored):
             item = entry["item"]
-            meta = item if isinstance(item, dict) else item.__dict__
+            base_meta = item if isinstance(item, dict) else item.__dict__
+            meta = dict(base_meta)
             metrics = {
                 k: v
                 for k, v in entry.items()
                 if k not in {"source", "record_id", "item", "confidence"}
             }
-            top_metric = max(metrics, key=metrics.get, default=None)
+            meta.update(metrics)
+            metrics_for_reason = {
+                k: v for k, v in metrics.items() if k not in {"similarity", "context"}
+            }
+            top_metric = max(metrics_for_reason, key=metrics_for_reason.get, default=None)
             reason = reason_map.get(top_metric, "relevant match")
             if top_metric:
-                reason += f" ({top_metric}={entry[top_metric]:.2f})"
+                reason += f" ({top_metric}={metrics_for_reason[top_metric]:.2f})"
             if idx in link_paths:
                 reason += f" linked via {link_paths[idx]}"
             hits.append(
