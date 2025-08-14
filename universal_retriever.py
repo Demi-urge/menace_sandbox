@@ -3,7 +3,105 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections import defaultdict
 from typing import Any, Iterable, List, Sequence
+
+
+def boost_linked_candidates(
+    scored: List[dict[str, Any]],
+    *,
+    bot_db: Any | None = None,
+    error_db: Any | None = None,
+    multiplier: float = 1.1,
+) -> None:
+    """Apply a score boost for items linked via bot relationships.
+
+    ``scored`` is modified in-place. Any candidates that share a bot ID
+    through the ``bot_workflow``, ``bot_error`` or ``bot_enhancement``
+    tables receive the ``multiplier`` on their ``confidence`` score.
+    """
+
+    if multiplier <= 1.0 or not scored:
+        return
+
+    bot_sets: List[set[int]] = []
+    for entry in scored:
+        item = entry.get("item")
+        bots: set[int] = set()
+        if item is None:
+            bot_sets.append(bots)
+            continue
+        typ: str | None = None
+        cid: int | None = None
+        if isinstance(item, dict):
+            if "purpose" in item:
+                typ, cid = "bot", int(item.get("id") or item.get("bid", 0))
+            elif "workflow" in item or "assigned_bots" in item:
+                typ, cid = "workflow", int(item.get("id") or item.get("wid", 0))
+            elif "after_code" in item or "idea" in item:
+                typ, cid = "enhancement", int(item.get("id", 0))
+            elif "message" in item or "description" in item:
+                typ, cid = "error", int(item.get("id", 0))
+        else:
+            if hasattr(item, "purpose"):
+                typ, cid = "bot", int(getattr(item, "id", getattr(item, "bid", 0)))
+            elif hasattr(item, "workflow") or hasattr(item, "assigned_bots"):
+                typ, cid = "workflow", int(getattr(item, "wid", getattr(item, "id", 0)))
+            elif hasattr(item, "after_code") or hasattr(item, "idea"):
+                typ, cid = "enhancement", int(getattr(item, "id", 0))
+            elif hasattr(item, "message") or hasattr(item, "description"):
+                typ, cid = "error", int(getattr(item, "id", 0))
+
+        if typ == "bot" and cid:
+            bots.add(cid)
+        elif typ == "workflow" and cid and bot_db:
+            rows = bot_db.conn.execute(
+                "SELECT bot_id FROM bot_workflow WHERE workflow_id=?",
+                (cid,),
+            ).fetchall()
+            bots.update(int(r[0]) for r in rows)
+        elif typ == "error" and cid and error_db:
+            rows = error_db.conn.execute(
+                "SELECT bot_id FROM bot_error WHERE error_id=?",
+                (cid,),
+            ).fetchall()
+            bots.update(int(r[0]) for r in rows)
+        elif typ == "enhancement" and cid and bot_db:
+            rows = bot_db.conn.execute(
+                "SELECT bot_id FROM bot_enhancement WHERE enhancement_id=?",
+                (cid,),
+            ).fetchall()
+            bots.update(int(r[0]) for r in rows)
+        bot_sets.append(bots)
+
+    n = len(scored)
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if bot_sets[i] and bot_sets[j] and bot_sets[i].intersection(bot_sets[j]):
+                union(i, j)
+
+    groups: dict[int, List[int]] = defaultdict(list)
+    for idx in range(n):
+        groups[find(idx)].append(idx)
+
+    for members in groups.values():
+        if len(members) > 1:
+            for m in members:
+                if "confidence" in scored[m]:
+                    scored[m]["confidence"] *= multiplier
 
 
 class UniversalRetriever:
@@ -165,7 +263,9 @@ class UniversalRetriever:
             return float(total)
         return float(total)
 
-    def retrieve_with_confidence(self, query: Any, top_k: int = 10) -> List[dict[str, Any]]:
+    def retrieve_with_confidence(
+        self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
+    ) -> List[dict[str, Any]]:
         """Retrieve results with a combined confidence score."""
 
         results = self.retrieve(query, top_k)
@@ -198,4 +298,11 @@ class UniversalRetriever:
             comps.append(1.0 / (1.0 + float(dist)))
             confidence = sum(comps) / len(comps) if comps else 0.0
             scored.append({"item": item, "confidence": confidence, **m})
+
+        boost_linked_candidates(
+            scored,
+            bot_db=self.bot_db,
+            error_db=self.error_db,
+            multiplier=link_multiplier,
+        )
         return scored
