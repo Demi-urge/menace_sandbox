@@ -77,6 +77,10 @@ from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .gpt_memory import GPTMemoryManager, GPTMemory
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -957,7 +961,7 @@ class SelfImprovementEngine:
         try:
             entries = self.gpt_memory.search_context(
                 key,
-                tags=["patch_success", "patch_failure"],
+                tags=[FEEDBACK],
                 limit=5,
                 use_embeddings=False,
             )
@@ -965,11 +969,9 @@ class SelfImprovementEngine:
             return ""
         summaries: list[str] = []
         for ent in entries:
-            tags = getattr(ent, "tags", []) or []
-            tag = "patch_success" if (
-                "patch_success" in tags or "improvement" in tags
-            ) else "patch_failure"
-            snippet = (getattr(ent, "response", "") or "").strip().splitlines()[0]
+            resp = (getattr(ent, "response", "") or "").strip()
+            tag = "success" if "success" in resp.lower() else "failure"
+            snippet = resp.splitlines()[0]
             summaries.append(f"{tag}: {snippet}")
         return "\n".join(summaries)
 
@@ -978,7 +980,7 @@ class SelfImprovementEngine:
             self.gpt_memory.log_interaction(
                 f"{action}:{module}",
                 "success" if success else "failure",
-                tags=["patch_success" if success else "patch_failure"],
+                tags=[FEEDBACK],
             )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
@@ -988,7 +990,7 @@ class SelfImprovementEngine:
         if history:
             self.logger.info(
                 "patch memory context",
-                extra=log_record(module=module, history=history, tags=["analysis"]),
+                extra=log_record(module=module, history=history, tags=[INSIGHT]),
             )
         prompt = f"{action}:{module}"
         if history:
@@ -996,7 +998,7 @@ class SelfImprovementEngine:
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
             self.gpt_memory.log_interaction(
-                prompt, f"patch_id={patch_id}", tags=["improvement_reasoning"]
+                prompt, f"patch_id={patch_id}", tags=[IMPROVEMENT_PATH]
             )
         except Exception:
             self.logger.exception(
@@ -1212,14 +1214,14 @@ class SelfImprovementEngine:
                                 extra=log_record(
                                     module=name,
                                     suggestion="scenario_patch",
-                                    tags=["fix_attempt"],
+                                    tags=[ERROR_FIX],
                                 ),
                             )
                             try:
                                 self.gpt_memory.log_interaction(
                                     f"scenario_patch:{name}",
                                     "suggested",
-                                    tags=["improvement_reasoning"],
+                                    tags=[IMPROVEMENT_PATH],
                                 )
                             except Exception:
                                 self.logger.exception(
@@ -3989,14 +3991,14 @@ class SelfImprovementEngine:
                         extra=log_record(
                             module=mod,
                             suggestion="preventative_patch",
-                            tags=["fix_attempt"],
+                            tags=[ERROR_FIX],
                         ),
                     )
                     try:
                         self.gpt_memory.log_interaction(
                             f"preventative_patch:{mod}",
                             "suggested",
-                            tags=["improvement_reasoning"],
+                            tags=[IMPROVEMENT_PATH],
                         )
                     except Exception:
                         self.logger.exception(
@@ -4111,14 +4113,14 @@ class SelfImprovementEngine:
                             extra=log_record(
                                 module=mod,
                                 suggestion="high_risk_patch",
-                                tags=["fix_attempt"],
+                                tags=[ERROR_FIX],
                             ),
                         )
                         try:
                             self.gpt_memory.log_interaction(
                                 f"high_risk_patch:{mod}",
                                 "suggested",
-                                tags=["improvement_reasoning"],
+                                tags=[IMPROVEMENT_PATH],
                             )
                         except Exception:
                             self.logger.exception(
