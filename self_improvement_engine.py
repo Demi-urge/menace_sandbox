@@ -955,16 +955,12 @@ class SelfImprovementEngine:
     def _memory_summaries(self, key: str) -> str:
         """Return a summary of similar past actions from memory."""
         try:
-            entries: list[Any] = []
-            if hasattr(self.gpt_memory, "search_context"):
-                entries = self.gpt_memory.search_context(
-                    key,
-                    tags=["patch_success", "patch_failure"],
-                    limit=5,
-                    use_embeddings=False,
-                )
-            elif hasattr(self.gpt_memory, "retrieve"):
-                entries = self.gpt_memory.retrieve(key, limit=5)
+            entries = self.gpt_memory.search_context(
+                key,
+                tags=["patch_success", "patch_failure"],
+                limit=5,
+                use_embeddings=False,
+            )
         except Exception:
             return ""
         summaries: list[str] = []
@@ -979,19 +975,11 @@ class SelfImprovementEngine:
 
     def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
         try:
-            if hasattr(self.gpt_memory, "log_interaction"):
-                self.gpt_memory.log_interaction(
-                    f"{action}:{module}",
-                    "success" if success else "failure",
-                    tags=["patch_success" if success else "patch_failure"],
-                )
-            elif hasattr(self.gpt_memory, "store"):
-                tag = ["improvement" if success else "bugfix"]
-                self.gpt_memory.store(
-                    f"{action}:{module}",
-                    "success" if success else "failure",
-                    tag,
-                )
+            self.gpt_memory.log_interaction(
+                f"{action}:{module}",
+                "success" if success else "failure",
+                tags=["patch_success" if success else "patch_failure"],
+            )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
 
@@ -1007,14 +995,9 @@ class SelfImprovementEngine:
             prompt += "\n" + history
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
-            if hasattr(self.gpt_memory, "log_interaction"):
-                self.gpt_memory.log_interaction(
-                    prompt, f"patch_id={patch_id}", tags=["improvement_reasoning"]
-                )
-            elif hasattr(self.gpt_memory, "store"):
-                self.gpt_memory.store(
-                    prompt, f"patch_id={patch_id}", ["improvement_reasoning"]
-                )
+            self.gpt_memory.log_interaction(
+                prompt, f"patch_id={patch_id}", tags=["improvement_reasoning"]
+            )
         except Exception:
             self.logger.exception(
                 "memory logging failed", extra=log_record(module=module)
@@ -1233,18 +1216,11 @@ class SelfImprovementEngine:
                                 ),
                             )
                             try:
-                                if hasattr(self.gpt_memory, "log_interaction"):
-                                    self.gpt_memory.log_interaction(
-                                        f"scenario_patch:{name}",
-                                        "suggested",
-                                        tags=["improvement_reasoning"],
-                                    )
-                                elif hasattr(self.gpt_memory, "store"):
-                                    self.gpt_memory.store(
-                                        f"scenario_patch:{name}",
-                                        "suggested",
-                                        ["improvement_reasoning"],
-                                    )
+                                self.gpt_memory.log_interaction(
+                                    f"scenario_patch:{name}",
+                                    "suggested",
+                                    tags=["improvement_reasoning"],
+                                )
                             except Exception:
                                 self.logger.exception(
                                     "memory logging failed", extra=log_record(module=name)
@@ -4017,18 +3993,11 @@ class SelfImprovementEngine:
                         ),
                     )
                     try:
-                        if hasattr(self.gpt_memory, "log_interaction"):
-                            self.gpt_memory.log_interaction(
-                                f"preventative_patch:{mod}",
-                                "suggested",
-                                tags=["improvement_reasoning"],
-                            )
-                        elif hasattr(self.gpt_memory, "store"):
-                            self.gpt_memory.store(
-                                f"preventative_patch:{mod}",
-                                "suggested",
-                                ["improvement_reasoning"],
-                            )
+                        self.gpt_memory.log_interaction(
+                            f"preventative_patch:{mod}",
+                            "suggested",
+                            tags=["improvement_reasoning"],
+                        )
                     except Exception:
                         self.logger.exception(
                             "memory logging failed", extra=log_record(module=mod)
@@ -4146,18 +4115,11 @@ class SelfImprovementEngine:
                             ),
                         )
                         try:
-                            if hasattr(self.gpt_memory, "log_interaction"):
-                                self.gpt_memory.log_interaction(
-                                    f"high_risk_patch:{mod}",
-                                    "suggested",
-                                    tags=["improvement_reasoning"],
-                                )
-                            elif hasattr(self.gpt_memory, "store"):
-                                self.gpt_memory.store(
-                                    f"high_risk_patch:{mod}",
-                                    "suggested",
-                                    ["improvement_reasoning"],
-                                )
+                            self.gpt_memory.log_interaction(
+                                f"high_risk_patch:{mod}",
+                                "suggested",
+                                tags=["improvement_reasoning"],
+                            )
                         except Exception:
                             self.logger.exception(
                                 "memory logging failed", extra=log_record(module=mod)

@@ -7,7 +7,9 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
+
+from gpt_memory_interface import GPTMemoryInterface
 
 try:  # optional dependency for embeddings
     from sentence_transformers import SentenceTransformer
@@ -119,7 +121,7 @@ class VectorMemoryStorage(MemoryStorage):
         return results
 
 
-class MemoryBot:
+class MemoryBot(GPTMemoryInterface):
     """Bot that stores conversations and provides search with caching."""
 
     def __init__(self, storage: MemoryStorage | None = None) -> None:
@@ -141,6 +143,43 @@ class MemoryBot:
     def prime(self) -> None:
         """Prepare the bot for heavy usage by clearing cache."""
         self.cache.clear()
+
+    # ------------------------------------------------------- unified interface
+    def log_interaction(
+        self, prompt: str, response: str, tags: Sequence[str] | None = None
+    ) -> None:
+        meta = {"tags": list(tags or [])} if tags else None
+        self.log("user", prompt, meta)
+        self.log("assistant", response, meta)
+
+    def store(
+        self, key: str, data: str, tags: Sequence[str] | None = None
+    ) -> int | None:
+        self.log_interaction(key, data, tags)
+        return None
+
+    def retrieve(
+        self, query: str, limit: int = 5, tags: Sequence[str] | None = None
+    ) -> List[MemoryRecord]:
+        results = self.search(query, limit)
+        if tags:
+            wanted = set(tags)
+            results = [
+                r
+                for r in results
+                if not wanted.isdisjoint(r.meta.get("tags", []) if r.meta else [])
+            ]
+        return results
+
+    def search_context(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        tags: Sequence[str] | None = None,
+        **_: Any,
+    ) -> List[MemoryRecord]:
+        return self.retrieve(query, limit=limit, tags=tags)
 
 
 __all__ = ["MemoryRecord", "MemoryStorage", "VectorMemoryStorage", "MemoryBot"]

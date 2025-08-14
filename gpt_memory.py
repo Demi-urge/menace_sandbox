@@ -19,7 +19,10 @@ from pathlib import Path
 import json
 import sqlite3
 import argparse
+import warnings
 from typing import Any, List, Sequence, Mapping, Dict
+
+from gpt_memory_interface import GPTMemoryInterface
 
 try:  # Optional dependency used for semantic embeddings
     from sentence_transformers import SentenceTransformer
@@ -59,7 +62,7 @@ class MemoryEntry:
     score: float = 0.0
 
 
-class GPTMemoryManager:
+class GPTMemoryManager(GPTMemoryInterface):
     """Persist and query GPT interactions using SQLite.
 
     Parameters
@@ -222,6 +225,24 @@ class GPTMemoryManager:
         results.sort(key=lambda x: x[0], reverse=True)
         return results[:limit]
 
+    # ------------------------------------------------------- unified interface
+    def store(
+        self, key: str, data: str, tags: Sequence[str] | None = None
+    ) -> int | None:
+        """Persist ``data`` under ``key``.
+
+        The SQLite backend does not expose versions so ``None`` is returned."""
+
+        self.log_interaction(key, data, tags)
+        return None
+
+    def retrieve(
+        self, query: str, limit: int = 5, tags: Sequence[str] | None = None
+    ) -> List[MemoryEntry]:
+        """Return stored interactions matching ``query``."""
+
+        return self.search_context(query, limit=limit, tags=tags)
+
     # -------------------------------------------------------------- compaction
     def compact(self, retention: Mapping[str, int] | int) -> int:
         """Summarise and prune old entries based on a retention policy.
@@ -293,8 +314,11 @@ class GPTMemoryRecord:
     ts: str
 
 
-class GPTMemory:
+class GPTMemory(GPTMemoryInterface):
     """Tiny wrapper around :class:`MenaceMemoryManager` used in tests.
+
+    .. deprecated:: 0.1
+       Use :class:`GPTMemoryManager` which implements :class:`GPTMemoryInterface`.
 
     It provides a very small API for storing prompts/responses with
     lightweight tagging.  Only a predefined set of tags is persisted so
@@ -306,6 +330,11 @@ class GPTMemory:
     def __init__(self, manager: MenaceMemoryManager | None = None) -> None:
         if MenaceMemoryManager is None and manager is None:
             raise RuntimeError("MenaceMemoryManager is required")
+        warnings.warn(
+            "GPTMemory is deprecated; use GPTMemoryManager instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.manager = manager or MenaceMemoryManager()
 
     # ------------------------------------------------------------------ logging
@@ -430,6 +459,18 @@ class GPTMemory:
             if len(results) >= limit:
                 break
         return results
+
+    def search_context(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        tags: Sequence[str] | None = None,
+        **_: Any,
+    ) -> List[GPTMemoryRecord]:
+        """Alias for :meth:`retrieve` to satisfy :class:`GPTMemoryInterface`."""
+
+        return self.retrieve(query, limit=limit, tags=tags)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

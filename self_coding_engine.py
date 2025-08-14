@@ -143,26 +143,12 @@ class SelfCodingEngine:
         outcome = "patch_success" if success else "patch_failure"
         summary = f"roi_delta={roi_delta:.4f}"
         try:
-            # Store the GPT-generated code for context in future runs
-            if hasattr(self.gpt_memory, "log_interaction"):
-                self.gpt_memory.log_interaction(
-                    f"{path}:{description}",
-                    code.strip(),
-                    tags=[outcome],
-                )
-                self.gpt_memory.log_interaction(
-                    f"{path}:{description}:result",
-                    summary,
-                    tags=[outcome],
-                )
-            elif hasattr(self.gpt_memory, "store"):
-                tag = ["improvement" if success else "bugfix"]
-                self.gpt_memory.store(
-                    f"{path}:{description}", code.strip(), tag
-                )
-                self.gpt_memory.store(
-                    f"{path}:{description}:result", summary, tag
-                )
+            self.gpt_memory.log_interaction(
+                f"{path}:{description}", code.strip(), tags=[outcome]
+            )
+            self.gpt_memory.log_interaction(
+                f"{path}:{description}:result", summary, tags=[outcome]
+            )
         except Exception:
             self.logger.exception("memory logging failed")
 
@@ -359,16 +345,12 @@ class SelfCodingEngine:
         # Incorporate past patch outcomes from memory
         history = ""
         try:
-            entries: List[Any] = []
-            if hasattr(self.gpt_memory, "search_context"):
-                entries = self.gpt_memory.search_context(
-                    description,
-                    tags=["patch_success", "patch_failure"],
-                    limit=5,
-                    use_embeddings=False,
-                )
-            elif hasattr(self.gpt_memory, "retrieve"):
-                entries = self.gpt_memory.retrieve(description, limit=5)
+            entries = self.gpt_memory.search_context(
+                description,
+                tags=["patch_success", "patch_failure"],
+                limit=5,
+                use_embeddings=False,
+            )
             if entries:
                 summaries: List[str] = []
                 for ent in entries:
@@ -409,10 +391,7 @@ class SelfCodingEngine:
         )
         if text:
             try:
-                if hasattr(self.gpt_memory, "log_interaction"):
-                    self.gpt_memory.log_interaction(prompt, text, tags=["code_fix"])
-                elif hasattr(self.gpt_memory, "store"):
-                    self.gpt_memory.store(prompt, text, ["code_fix"])
+                self.gpt_memory.log_interaction(prompt, text, tags=["code_fix"])
             except Exception:
                 self.logger.exception("memory logging failed")
             self.logger.info(
