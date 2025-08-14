@@ -15,8 +15,9 @@ import sqlite3
 from typing import Any, List, Optional, Sequence
 
 try:
-    from menace_memory_manager import _summarise_text  # type: ignore
+    from menace_memory_manager import MenaceMemoryManager, _summarise_text  # type: ignore
 except Exception:  # pragma: no cover - fallback summariser
+    MenaceMemoryManager = None  # type: ignore
     def _summarise_text(text: str, ratio: float = 0.2) -> str:
         text = text.strip()
         if not text:
@@ -300,6 +301,48 @@ class GPTMemoryManager:
     def __del__(self) -> None:  # pragma: no cover
         self.close()
 
+@dataclass
+class GPTMemoryRecord:
+    prompt: str
+    response: str
+    tags: List[str]
+    ts: str
+
+
+class GPTMemory:
+    """Wrapper around MenaceMemoryManager for simple store/retrieve."""
+
+    ALLOWED_TAGS = {"improvement", "bugfix", "insight"}
+
+    def __init__(self, manager: MenaceMemoryManager | None = None) -> None:
+        if MenaceMemoryManager is None and manager is None:
+            raise RuntimeError("MenaceMemoryManager is required")
+        self.manager = manager or MenaceMemoryManager()
+
+    def store(self, prompt: str, response: str, tags: Sequence[str] | None = None) -> int:
+        tag_list = [t for t in (tags or []) if t in self.ALLOWED_TAGS]
+        key = f"gpt:{datetime.utcnow().isoformat()}"
+        data = json.dumps({"prompt": prompt, "response": response})
+        tag_str = ",".join(tag_list)
+        return self.manager.store(key, data, tags=tag_str)
+
+    def retrieve(self, query: str, limit: int = 5, tags: Sequence[str] | None = None) -> List[GPTMemoryRecord]:
+        entries = self.manager.search(query, limit * 5 if tags else limit)
+        wanted = set(tags or [])
+        results: List[GPTMemoryRecord] = []
+        for e in entries:
+            entry_tags = [t for t in e.tags.split(",") if t]
+            if wanted and wanted.isdisjoint(entry_tags):
+                continue
+            try:
+                data = json.loads(e.data)
+            except Exception:
+                continue
+            results.append(GPTMemoryRecord(data.get("prompt", ""), data.get("response", ""), entry_tags, e.ts))
+            if len(results) >= limit:
+                break
+        return results
+
 def cli(argv: Sequence[str] | None = None) -> int:
     """Simple command line interface for maintenance tasks."""
     import argparse
@@ -341,4 +384,4 @@ if __name__ == "__main__":  # pragma: no cover - CLI entry point
     raise SystemExit(cli())
 
 
-__all__ = ["GPTMemoryManager", "MemoryEntry", "cli"]
+__all__ = ["GPTMemoryManager", "MemoryEntry", "GPTMemory", "GPTMemoryRecord", "cli"]
