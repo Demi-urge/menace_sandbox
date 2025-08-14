@@ -73,6 +73,8 @@ class SelfCodingEngine:
         if llm_client is None and os.getenv("OPENAI_API_KEY"):
             llm_client = ChatGPTClient(os.getenv("OPENAI_API_KEY", ""))
         self.llm_client = llm_client
+        if self.llm_client:
+            self.llm_client.gpt_memory = self.gpt_memory_manager
         self.rollback_mgr = rollback_mgr
         if formal_verifier is None:
             try:
@@ -130,13 +132,20 @@ class SelfCodingEngine:
         success: bool,
         roi_delta: float,
     ) -> None:
-        """Record the outcome of a patch operation in GPT memory."""
+        """Record GPT output and its outcome for later retrieval."""
         outcome = "patch_success" if success else "patch_failure"
         summary = f"roi_delta={roi_delta:.4f}"
         try:
+            # Store the GPT-generated code for context in future runs
             self.gpt_memory_manager.log_interaction(
                 f"{path}:{description}",
-                f"{code.strip()}\n\n{summary}",
+                code.strip(),
+                tags=[outcome],
+            )
+            # Store the result summary so we can learn from success or failure
+            self.gpt_memory_manager.log_interaction(
+                f"{path}:{description}:result",
+                summary,
                 tags=[outcome],
             )
         except Exception:
