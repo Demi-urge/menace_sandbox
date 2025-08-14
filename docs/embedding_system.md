@@ -54,9 +54,41 @@ backend and `--batch-size` controls how many records are processed at once.
 multiple mixin-backed stores. It collects the top candidates from each database
 and assigns a confidence score to every match.
 
-### Scoring metrics
+### API
 
-The retriever normalises several signals before averaging them:
+At least one database instance must be supplied when initialising the
+retriever.  Any combination of the supported databases can be provided:
+
+```python
+UniversalRetriever(
+    bot_db: BotDB | None = None,
+    workflow_db: WorkflowDB | None = None,
+    error_db: ErrorDB | None = None,
+    enhancement_db: EnhancementDB | None = None,
+    information_db: InformationDB | None = None,
+)
+```
+
+`retrieve(query, top_k=10, link_multiplier=1.1)` accepts either raw text or an
+existing record object.  It returns a list of `RetrievedItem` instances, each
+exposing the origin database, the record identifier, a metadata dictionary,
+normalised confidence score and an explanatory reason:
+
+```python
+@dataclass
+class RetrievedItem:
+    origin_db: str
+    record_id: Any
+    metadata: dict[str, Any]
+    confidence: float
+    reason: str
+```
+
+### Scoring methodology
+
+For every candidate the retriever gathers available metric signals, normalises
+each against the maximum observed value and averages them with the converted
+vector similarity component `1 / (1 + distance)`:
 
 - **Error frequency** – how often an error has been observed.
 - **Enhancement ROI** – uplift from the most recent enhancement deployment.
@@ -67,11 +99,11 @@ The retriever normalises several signals before averaging them:
 ### Relation boosting
 
 Results that share bot relationships (via `bot_workflow`, `bot_error` or
-`bot_enhancement` tables) receive a multiplier boost. The helper
-`boost_linked_candidates` performs a union-find over the candidate set,
-applies the multiplier to all members of linked groups and returns a
-linkage path such as `bot->workflow->error`.  The path is appended to the
-retrieval reason for each affected result.
+`bot_enhancement` tables) receive a multiplier boost controlled by the
+`link_multiplier` argument.  The helper `boost_linked_candidates` performs a
+union-find over the candidate set, applies the multiplier to all members of
+linked groups and returns a linkage path such as `bot->workflow->error`.  The
+path is appended to the retrieval reason for each affected result.
 
 ### Example
 

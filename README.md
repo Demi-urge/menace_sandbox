@@ -22,9 +22,11 @@
   embedding fields and can use either a FAISS or Annoy backend for
   similarity queries. See [docs/embedding_system.md](docs/embedding_system.md)
   for configuration details and backfilling instructions.
-- Unified cross-database search through `UniversalRetriever` which ranks
-  matches using normalised metrics (error frequency, ROI uplift, workflow
-  usage and bot deployment) and boosts scores for related records.
+- Unified cross-database search through `UniversalRetriever`.  The
+  `retrieve(query, top_k=10, link_multiplier=1.1)` API returns
+  `RetrievedItem` objects with `origin_db`, `record_id`, metadata and a
+  confidence backed by normalised metrics (error frequency, ROI uplift,
+  workflow usage and bot deployment) with optional relation-based boosting.
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
