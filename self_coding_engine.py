@@ -21,6 +21,10 @@ from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
 from .gpt_memory import GPTMemoryManager, GPTMemory
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, ERROR_FIX, INSIGHT  # type: ignore
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -145,14 +149,14 @@ class SelfCodingEngine:
         roi_delta: float,
     ) -> None:
         """Record GPT output and its outcome for later retrieval."""
-        outcome = "patch_success" if success else "patch_failure"
-        summary = f"roi_delta={roi_delta:.4f}"
+        status = "success" if success else "failure"
+        summary = f"status={status},roi_delta={roi_delta:.4f}"
         try:
             self.gpt_memory.log_interaction(
-                f"{path}:{description}", code.strip(), tags=[outcome]
+                f"{path}:{description}", code.strip(), tags=[ERROR_FIX]
             )
             self.gpt_memory.log_interaction(
-                f"{path}:{description}:result", summary, tags=[outcome]
+                f"{path}:{description}:result", summary, tags=[FEEDBACK]
             )
         except Exception:
             self.logger.exception("memory logging failed")
@@ -354,18 +358,16 @@ class SelfCodingEngine:
         try:
             entries = self.gpt_memory.search_context(
                 description,
-                tags=["patch_success", "patch_failure"],
+                tags=[FEEDBACK],
                 limit=5,
                 use_embeddings=False,
             )
             if entries:
                 summaries: List[str] = []
                 for ent in entries:
-                    tags = getattr(ent, "tags", []) or []
-                    tag = "patch_success" if (
-                        "patch_success" in tags or "improvement" in tags
-                    ) else "patch_failure"
-                    snippet = (getattr(ent, "response", "") or "").strip().splitlines()[0]
+                    resp = (getattr(ent, "response", "") or "").strip()
+                    tag = "success" if "status=success" in resp else "failure"
+                    snippet = resp.splitlines()[0]
                     summaries.append(f"{tag}: {snippet}")
                 history = "\n".join(summaries)
         except Exception:
@@ -376,7 +378,7 @@ class SelfCodingEngine:
                 extra={
                     "description": description,
                     "history": history,
-                    "tags": ["analysis"],
+                    "tags": [INSIGHT],
                 },
             )
             prompt += "\n\n### Patch history\n" + history
@@ -385,7 +387,7 @@ class SelfCodingEngine:
             data = self.llm_client.ask(
                 [{"role": "user", "content": prompt}],
                 memory_manager=self.gpt_memory,
-                tags=["code_fix"],
+                tags=[ERROR_FIX],
                 use_memory=True,
             )
         except Exception:
@@ -398,13 +400,13 @@ class SelfCodingEngine:
         )
         if text:
             try:
-                self.gpt_memory.log_interaction(prompt, text, tags=["code_fix"])
+                self.gpt_memory.log_interaction(prompt, text, tags=[ERROR_FIX])
             except Exception:
                 self.logger.exception("memory logging failed")
             self.logger.info(
                 "gpt_suggestion",
                 extra={
-                    "tags": ["fix_attempt"],
+                    "tags": [ERROR_FIX],
                     "suggestion": text,
                     "description": description,
                     "path": str(path) if path else None,
@@ -424,7 +426,7 @@ class SelfCodingEngine:
             extra={
                 "path": str(path),
                 "description": description,
-                "tags": ["fix_attempt"],
+                "tags": [ERROR_FIX],
             },
         )
         with open(path, "a", encoding="utf-8") as fh:
@@ -435,7 +437,7 @@ class SelfCodingEngine:
             extra={
                 "path": str(path),
                 "description": description,
-                "tags": ["fix_result"],
+                "tags": [FEEDBACK],
                 "success": True,
             },
         )
@@ -519,7 +521,7 @@ class SelfCodingEngine:
             extra={
                 "path": str(path),
                 "description": description,
-                "tags": ["fix_attempt"],
+                "tags": [ERROR_FIX],
             },
         )
         try:
@@ -611,7 +613,7 @@ class SelfCodingEngine:
                     "reverted": True,
                     "roi_delta": roi_delta,
                     "success": False,
-                    "tags": ["fix_result"],
+                    "tags": [FEEDBACK],
                 },
             )
             self._store_patch_memory(path, description, generated_code, False, roi_delta)
@@ -751,7 +753,7 @@ class SelfCodingEngine:
                 "reverted": reverted,
                 "roi_delta": roi_delta,
                 "success": not reverted,
-                "tags": ["fix_result"],
+                "tags": [FEEDBACK],
             },
         )
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
