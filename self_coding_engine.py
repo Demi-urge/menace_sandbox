@@ -408,6 +408,13 @@ class SelfCodingEngine:
             .strip()
         )
         if text:
+            try:
+                if hasattr(self.gpt_memory, "log_interaction"):
+                    self.gpt_memory.log_interaction(prompt, text, tags=["code_fix"])
+                elif hasattr(self.gpt_memory, "store"):
+                    self.gpt_memory.store(prompt, text, ["code_fix"])
+            except Exception:
+                self.logger.exception("memory logging failed")
             self.logger.info(
                 "gpt_suggestion",
                 extra={
