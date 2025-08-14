@@ -27,6 +27,9 @@
   `ResultBundle` objects with `origin_db`, record metadata, a final score and a
   reason backed by normalised metrics (error frequency, ROI uplift, workflow
   usage and bot deployment) with optional relation-based boosting.
+- Compact context assembly via `ContextBuilder` which summarises error, bot,
+  workflow and code records for code-generation modules
+  ([docs/context_builder.md](docs/context_builder.md))
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
