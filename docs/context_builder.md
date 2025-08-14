@@ -1,45 +1,72 @@
 # Context Builder
 
-`ContextBuilder` composes a compact context block by querying multiple databases through [`UniversalRetriever`](universal_retriever.md). It summarises records from the error, bot, workflow and code databases so language-model helpers receive the most relevant background.
+`ContextBuilder` assembles a compact cross‑database context so language‑model
+helpers see only the most relevant history.  It queries the local error, bot,
+workflow, discrepancy and code databases through
+[`UniversalRetriever`](universal_retriever.md) and returns a condensed JSON
+block that fits within strict token budgets.
 
-## Usage
+## Goals
+
+- Gather related records from multiple sources for a given free‑form query.
+- Rank results by vector similarity and ROI or success metrics.
+- Emit a minimal structure that downstream tools can slot straight into LLM
+  prompts.
+
+## Configuration
 
 ```python
 from menace.context_builder import ContextBuilder
-from menace.error_bot import ErrorDB
-from menace.bot_database import BotDB
-from menace.task_handoff_bot import WorkflowDB
-from menace.code_database import CodeDB
-
-err_db = ErrorDB()
-bot_db = BotDB()
-wf_db = WorkflowDB()
-code_db = CodeDB()
 
 builder = ContextBuilder(
-    error_db=err_db,
-    bot_db=bot_db,
-    workflow_db=wf_db,
-    code_db=code_db,
+    error_db="errors.db",
+    bot_db="bots.db",
+    workflow_db="workflows.db",
+    code_db="code.db",
 )
-context = builder.build_context("upload failed", limit_per_type=5)
+
+context_json = builder.build_context(
+    "upload failed",
+    limit_per_db=5,
+    max_tokens=600,
+)
 ```
 
-`build_context()` accepts a free-form query and returns a mapping:
+- `limit_per_db` caps how many entries are returned for each origin.
+- `max_tokens` trims the lowest‑scoring items until the output roughly fits the
+  requested budget.
+- Scoring weights come from the underlying retriever; tweak parameters on
+  `builder.retriever` (for example `link_multiplier`) to emphasise connectivity
+  or adjust ranking.
+
+## Example output
 
 ```json
 {
-  "errors": [{"id": 1, "summary": "...", "metric": 0.8}],
-  "bots":   [{"id": 2, "summary": "..."}],
-  "workflows": [{"id": 3, "summary": "..."}],
-  "code":   [{"id": 4, "summary": "..."}]
+  "errors": [{"id": 1, "desc": "...", "metric": 0.8}],
+  "bots": [{"id": 2, "desc": "..."}],
+  "workflows": [{"id": 3, "desc": "..."}],
+  "code": [{"id": 4, "desc": "..."}]
 }
 ```
 
-Each entry includes an identifier, a condensed summary and an optional metric such as ROI or resolution success.
+## Token‑efficiency strategies
+
+- Summaries are shortened via an optional `MenaceMemoryManager`; otherwise a
+  small offline helper truncates text.
+- Per‑type limits and `max_tokens` prevent runaway context growth.
+- Metrics bias the ranking so only high‑value records reach the final JSON.
+
+## Offline operation
+
+All databases are light‑weight SQLite files and the retriever works entirely on
+local data, allowing the builder to run without network access.  The fallback
+summariser also operates offline, so even without the optional memory manager
+`ContextBuilder` produces a fully local context block.
 
 ## Integration
 
-Code-generation helpers including `SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot` and `AutomatedReviewer` instantiate `ContextBuilder` automatically to enrich prompts with related history.
+`SelfCodingEngine`, `QuickFixEngine`, `BotDevelopmentBot` and
+`AutomatedReviewer` instantiate `ContextBuilder` automatically when available to
+enrich their prompts with historical context.
 
-Control how many records are returned per type via the `limit_per_type` argument. Scoring weights come from the underlying `UniversalRetriever`; adjust parameters on `builder.retriever` (for example `link_multiplier`) to emphasise connectivity or tweak ranking.

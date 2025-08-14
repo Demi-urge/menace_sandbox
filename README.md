@@ -27,8 +27,10 @@
   `ResultBundle` objects with `origin_db`, record metadata, a final score and a
   reason backed by normalised metrics (error frequency, ROI uplift, workflow
   usage and bot deployment) with optional relation-based boosting.
-- Compact context assembly via `ContextBuilder` which summarises error, bot,
-  workflow and code records for code-generation modules
+- Compact, offline context assembly via `ContextBuilder` which summarises error,
+  bot, workflow and code records for code-generation modules. Enable it in the
+  self-improving sandbox by passing `context_builder=ContextBuilder()` to
+  `SelfCodingEngine` or `QuickFixEngine`
   ([docs/context_builder.md](docs/context_builder.md))
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
