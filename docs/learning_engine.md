@@ -70,6 +70,27 @@ start()
 stop()
 ```
 
+## GPTMemory Integration
+
+The self-learning service wraps the shared `MenaceMemoryManager` with
+`gpt_memory.GPTMemory` so conversations with language models can be persisted
+and summarised. Each call to `log_interaction()` stores a prompt/response pair
+under tagged keys and publishes a `memory:new` event.
+
+```python
+from gpt_memory import GPTMemory
+from menace.menace_memory_manager import MenaceMemoryManager
+
+mm = MenaceMemoryManager("mem.db")
+gpt_mem = GPTMemory(mm)
+gpt_mem.log_interaction("idea?", "try a new helper", tags=["improvement"])
+context = gpt_mem.fetch_context(["improvement"])
+```
+
+`SelfLearningCoordinator` listens for these events and retrains the learning
+engines incrementally. See [gpt_memory.md](gpt_memory.md) for configuration
+options and additional examples.
+
 ## Evaluating Models
 
 Call `evaluate()` on a learning engine to run cross-validation and a small
