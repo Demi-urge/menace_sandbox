@@ -9,14 +9,33 @@ import shutil
 import tempfile
 from typing import Tuple, Iterable
 
-from .error_cluster_predictor import ErrorClusterPredictor
+try:  # pragma: no cover - optional dependency
+    from .error_cluster_predictor import ErrorClusterPredictor
+except Exception:  # pragma: no cover - optional dependency
+    ErrorClusterPredictor = object  # type: ignore
 
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from .human_alignment_flagger import _collect_diff_data
-from .human_alignment_agent import HumanAlignmentAgent
-from .violation_logger import log_violation
+try:  # pragma: no cover - optional dependency
+    from .human_alignment_flagger import _collect_diff_data
+except Exception:  # pragma: no cover - fallback for tests
+    def _collect_diff_data(*a, **k):
+        return {}
+try:  # pragma: no cover - optional dependency
+    from .human_alignment_agent import HumanAlignmentAgent
+except Exception:  # pragma: no cover - fallback for tests
+    HumanAlignmentAgent = object  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from .violation_logger import log_violation
+except Exception:  # pragma: no cover - fallback for tests
+    def log_violation(*a, **k):
+        return None
+
+try:  # pragma: no cover - optional dependency
+    from .universal_retriever import UniversalRetriever
+except Exception:  # pragma: no cover - missing dependency
+    UniversalRetriever = None  # type: ignore
 
 
 def generate_patch(module: str, engine: "SelfCodingEngine" | None = None) -> int | None:
@@ -106,6 +125,7 @@ class QuickFixEngine:
         graph: KnowledgeGraph | None = None,
         risk_threshold: float = 0.5,
         predictor: ErrorClusterPredictor | None = None,
+        retriever: "UniversalRetriever | None" = None,
     ) -> None:
         self.db = error_db
         self.manager = manager
@@ -113,6 +133,7 @@ class QuickFixEngine:
         self.graph = graph or KnowledgeGraph()
         self.risk_threshold = risk_threshold
         self.predictor = predictor
+        self.retriever = retriever
         self.logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
@@ -153,6 +174,11 @@ class QuickFixEngine:
         if not path.exists():
             return
         desc = f"quick fix {etype}"
+        if self.retriever is not None:
+            try:
+                self.retriever.retrieve_with_confidence(module, top_k=1)
+            except Exception:
+                self.logger.debug("retriever lookup failed", exc_info=True)
         patch_id = None
         try:
             result = self.manager.run_patch(path, desc)
@@ -204,6 +230,11 @@ class QuickFixEngine:
             path = Path(f"{module}.py")
             if not path.exists():
                 continue
+            if self.retriever is not None:
+                try:
+                    self.retriever.retrieve_with_confidence(module, top_k=1)
+                except Exception:
+                    self.logger.debug("retriever lookup failed", exc_info=True)
             patch_id = None
             try:
                 result = self.manager.run_patch(path, "preemptive_patch")

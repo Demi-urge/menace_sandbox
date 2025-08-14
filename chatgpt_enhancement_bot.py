@@ -15,7 +15,10 @@ from typing import Any, Iterable, List, Optional, Iterator
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory
+try:  # pragma: no cover - optional dependency
+    from .gpt_memory import GPTMemory
+except Exception:  # pragma: no cover - fallback for tests
+    GPTMemory = object  # type: ignore
 from . import RAISE_ERRORS
 from menace.embeddable_db_mixin import EmbeddableDBMixin
 

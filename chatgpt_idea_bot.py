@@ -36,6 +36,11 @@ from .database_management_bot import DatabaseManagementBot
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .gpt_memory import GPTMemoryManager
 
+# Optional dependency for advanced retrieval
+try:  # pragma: no cover - optional
+    from .universal_retriever import UniversalRetriever
+except Exception:  # pragma: no cover - missing dependency
+    UniversalRetriever = None  # type: ignore
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB)))
 
@@ -77,6 +82,7 @@ class ChatGPTClient:
         max_retries: int | None = None,
         validate: bool = True,
         knowledge: Any | None = None,
+        retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
         memory_manager: "GPTMemoryManager" | None = None,
         use_memory: bool = False,
@@ -116,20 +122,34 @@ class ChatGPTClient:
 
         user_prompt = messages[-1].get("content", "") if messages else ""
         messages_for_api = messages
-        if use_memory and memory is not None:
+        if use_memory:
             try:
-                if hasattr(memory, "get_similar_entries"):
-                    matches = memory.get_similar_entries(user_prompt, limit=5)
-                    relevant = [e for s, e in matches if s >= relevance_threshold]
-                elif hasattr(memory, "search_context"):
-                    relevant = memory.search_context(user_prompt)
-                else:
-                    relevant = []
-                if relevant:
-                    ctx_parts = [
-                        f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
-                        for e in relevant
-                    ]
+                ctx_parts: List[str] = []
+                if retriever is not None:
+                    hits = retriever.retrieve_with_confidence(user_prompt, top_k=5)
+                    for h in hits:
+                        item = h.get("item")
+                        if isinstance(item, dict):
+                            snippet = item.get("summary") or item.get("message") or str(item)
+                        else:
+                            snippet = getattr(item, "summary", getattr(item, "message", str(item)))
+                        ctx_parts.append(snippet)
+                if not ctx_parts and memory is not None:
+                    if hasattr(memory, "get_similar_entries"):
+                        matches = memory.get_similar_entries(user_prompt, limit=5)
+                        relevant = [e for s, e in matches if s >= relevance_threshold]
+                    elif hasattr(memory, "search_context"):
+                        relevant = memory.search_context(user_prompt)
+                    else:
+                        relevant = []
+                    if relevant:
+                        ctx_parts.extend(
+                            [
+                                f"Prompt: {getattr(e, 'prompt', '')}\nResponse: {getattr(e, 'response', '')}"
+                                for e in relevant
+                            ]
+                        )
+                if ctx_parts:
                     context_text = "\n\n".join(ctx_parts)
                     if len(context_text) > max_summary_length:
                         context_text = context_text[:max_summary_length]
