@@ -22,6 +22,9 @@
   embedding fields and can use either a FAISS or Annoy backend for
   similarity queries. See [docs/embedding_system.md](docs/embedding_system.md)
   for configuration details and backfilling instructions.
+- Unified cross-database search through `UniversalRetriever` which ranks
+  matches using normalised metrics (error frequency, ROI uplift, workflow
+  usage and bot deployment) and boosts scores for related records.
 - Optional RabbitMQ integration via `UnifiedEventBus(rabbitmq_host=...)`
 - Schema migrations managed through Alembic
 - Long-term metrics dashboards with Prometheus ([docs/metrics_dashboard.md](docs/metrics_dashboard.md))
@@ -1214,6 +1217,30 @@ creator = BotCreationBot(
 # tasks is a list of PlanningTask objects
 creator.create_bots(tasks)
 ```
+
+### Universal Retriever
+
+`UniversalRetriever` queries multiple embedding-backed databases and returns
+`RetrievalHit` objects with confidence scores and reasons. Scores combine error
+frequency, enhancement ROI, workflow usage, bot deployment counts and raw
+vector similarity. Related results that share bot relationships receive a
+boosted confidence via relation-aware linking.
+
+```python
+from menace.bot_database import BotDB
+from menace.task_handoff_bot import WorkflowDB
+from menace.error_bot import ErrorDB
+from menace.universal_retriever import UniversalRetriever
+
+retriever = UniversalRetriever(bot_db=BotDB(), workflow_db=WorkflowDB(), error_db=ErrorDB())
+hits = retriever.retrieve("upload failed", top_k=3)
+for hit in hits:
+    print(f"{hit.source_db} #{hit.record_id}: {hit.reason} (confidence {hit.confidence_score:.2f})")
+```
+
+The output lists the originating database, record identifier, a normalised
+confidence score and a short reason derived from the highest contributing
+metric, making it easy to interpret why a candidate was returned.
 
 ### Safe mode and overrides
 
