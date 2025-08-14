@@ -125,6 +125,7 @@ class QueryBot:
         fetcher: DataFetcher | None = None,
         store: ContextStore | None = None,
         nlu: SimpleNLU | None = None,
+        gpt_memory: GPTMemory | None = None,
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai
@@ -133,7 +134,7 @@ class QueryBot:
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
-        self.gpt_memory = GPTMemory()
+        self.gpt_memory = gpt_memory or GPTMemory()
 
     def process(self, query: str, context_id: str) -> QueryResult:
         parsed = self.nlu.parse(query)
