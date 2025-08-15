@@ -19,15 +19,40 @@ between runs, while using `:memory:` keeps the history ephemeral.
 
 Key configuration options when instantiating the manager:
 
-- `path` – SQLite file used for storage.
+- `db_path` – SQLite file used for storage.
 - `embedder` – optional `SentenceTransformer` model enabling semantic search.
-- `compact_every` – number of logged interactions before automatic compaction
-  (default `100`).
-- `default_retention` – number of raw entries retained per tag during
-  compaction (default `50`).
+- `event_bus` – optional `UnifiedEventBus` publishing a `"memory:new"` event for
+  each logged interaction.
 
-These settings let the sandbox retain useful context for future GPT calls while
-controlling database size.
+Interactions should include the canonical tag set from `log_tags.py` so other
+services can reason about the stored context:
+
+```python
+from log_tags import INSIGHT
+
+mgr.log_interaction("user question", "assistant reply", tags=[INSIGHT])
+```
+
+When an event bus is supplied the sandbox can stream new memories into the
+knowledge graph:
+
+```python
+from unified_event_bus import UnifiedEventBus
+from knowledge_graph import KnowledgeGraph
+
+bus = UnifiedEventBus()
+mgr = GPTMemoryManager("sandbox_memory.db", event_bus=bus)
+kg = KnowledgeGraph("kg.gpickle")
+kg.listen_to_memory(bus, mgr)
+```
+
+Configure retention by setting `GPT_MEMORY_RETENTION` and optionally
+`GPT_MEMORY_COMPACT_INTERVAL` to control how often `compact()` runs:
+
+```bash
+export GPT_MEMORY_RETENTION="insight=40,error_fix=20"
+export GPT_MEMORY_COMPACT_INTERVAL=1800  # seconds
+```
 
 Example usage enabling persistence across sessions:
 
@@ -42,6 +67,26 @@ mgr.close()
 # subsequent run
 mgr = GPTMemoryManager("sandbox_memory.db")
 context = mgr.search_context("user question")
+```
+
+Equivalent shell commands showing persistence:
+
+```bash
+# first run
+python - <<'PY'
+from gpt_memory import GPTMemoryManager
+from log_tags import FEEDBACK
+mgr = GPTMemoryManager("sandbox_memory.db")
+mgr.log_interaction("Is it working?", "Yes", tags=[FEEDBACK])
+mgr.close()
+PY
+
+# second run
+python - <<'PY'
+from gpt_memory import GPTMemoryManager
+mgr = GPTMemoryManager("sandbox_memory.db")
+print([e.response for e in mgr.search_context("working")])
+PY
 ```
 
 Using `db_path=":memory:"` instead of a file path disables persistence and
