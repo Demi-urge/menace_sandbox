@@ -86,6 +86,31 @@ def test_compaction_prunes_old_entries():
     mgr.close()
 
 
+def test_prune_old_entries_limits_per_tag():
+    mgr = GPTMemoryManager(db_path=":memory:")
+    for i in range(4):
+        mgr.log_interaction(f"p{i}", f"r{i}", tags=["foo"])
+
+    removed = mgr.prune_old_entries(2)
+    assert removed == 2
+
+    cur = mgr.conn.execute("SELECT prompt, tags FROM interactions ORDER BY id")
+    rows = cur.fetchall()
+    assert len(rows) == 3
+    prompts = [p for p, t in rows if "summary" not in t]
+    assert prompts == ["p2", "p3"]
+    mgr.close()
+
+
+def test_deduplication_skips_duplicate_entries():
+    mgr = GPTMemoryManager(db_path=":memory:")
+    mgr.log_interaction("same", "resp")
+    mgr.log_interaction("same", "resp")
+    cur = mgr.conn.execute("SELECT COUNT(*) FROM interactions")
+    assert cur.fetchone()[0] == 1
+    mgr.close()
+
+
 def test_persistence_across_sessions(tmp_path):
     db_file = tmp_path / "memory.db"
 
