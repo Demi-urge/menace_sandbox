@@ -1053,6 +1053,23 @@ def _sandbox_cycle_runner(
                             ]
                             prompt += "\n\n### Memory\n" + "\n".join(snippets)
                     history = ctx.conversations.get(key, [])
+                    lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
+                    if lkm:
+                        try:
+                            entries = lkm.memory.search_context(
+                                "",
+                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                limit=5,
+                                use_embeddings=False,
+                            )
+                        except Exception:
+                            entries = []
+                        if entries:
+                            snips = [
+                                (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                for e in entries
+                            ]
+                            prompt = "\n".join(snips) + "\n\n" + prompt
                     resp = ctx.gpt_client.ask(
                         history + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
@@ -1073,6 +1090,15 @@ def _sandbox_cycle_runner(
                                 log_with_tags(gpt_mem, prompt, suggestion, tags=[key, INSIGHT])
                             except Exception:
                                 logger.exception("memory logging failed for %s", mod)
+                        if lkm:
+                            try:
+                                lkm.log(
+                                    prompt,
+                                    suggestion,
+                                    tags=[key, FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                )
+                            except Exception:
+                                logger.exception("local knowledge logging failed for %s", mod)
                     if len(history) > 6:
                         history = history[-6:]
                     ctx.conversations[key] = history
@@ -1186,6 +1212,23 @@ def _sandbox_cycle_runner(
                                 ]
                                 prompt += "\n\n### Memory\n" + "\n".join(snips)
                         hist = ctx.conversations.get("brainstorm", [])
+                        lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
+                        if lkm:
+                            try:
+                                entries = lkm.memory.search_context(
+                                    "",
+                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                    limit=5,
+                                    use_embeddings=False,
+                                )
+                            except Exception:
+                                entries = []
+                            if entries:
+                                snips = [
+                                    (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                    for e in entries
+                                ]
+                                prompt = "\n".join(snips) + "\n\n" + prompt
                         resp = ctx.gpt_client.ask(
                             hist + [{"role": "user", "content": prompt}],
                             memory_manager=gpt_mem,
@@ -1203,6 +1246,15 @@ def _sandbox_cycle_runner(
                             ctx.brainstorm_history.append(idea)
                             hist.append({"role": "assistant", "content": idea})
                             logger.info("brainstorm", extra={"idea": idea})
+                            if lkm:
+                                try:
+                                    lkm.log(
+                                        prompt,
+                                        idea,
+                                        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                    )
+                                except Exception:
+                                    logger.exception("local knowledge logging failed")
                             if gpt_mem:
                                 try:
                                     log_with_tags(
@@ -1275,13 +1327,30 @@ def _sandbox_cycle_runner(
                                 entries = gpt_mem.retrieve("brainstorm", limit=5)
                         except Exception:
                             entries = []
+                    if entries:
+                        snips = [
+                            (getattr(e, "response", "") or "").strip().splitlines()[0]
+                            for e in entries
+                        ]
+                        prompt += "\n\n### Memory\n" + "\n".join(snips)
+                    hist = ctx.conversations.get("brainstorm", [])
+                    lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
+                    if lkm:
+                        try:
+                            entries = lkm.memory.search_context(
+                                "",
+                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                limit=5,
+                                use_embeddings=False,
+                            )
+                        except Exception:
+                            entries = []
                         if entries:
-                            snips = [
+                            snips2 = [
                                 (getattr(e, "response", "") or "").strip().splitlines()[0]
                                 for e in entries
                             ]
-                            prompt += "\n\n### Memory\n" + "\n".join(snips)
-                    hist = ctx.conversations.get("brainstorm", [])
+                            prompt = "\n".join(snips2) + "\n\n" + prompt
                     resp = ctx.gpt_client.ask(
                         hist + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
@@ -1298,6 +1367,15 @@ def _sandbox_cycle_runner(
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
                         logger.info("brainstorm", extra={"idea": idea})
+                        if lkm:
+                            try:
+                                lkm.log(
+                                    prompt,
+                                    idea,
+                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                )
+                            except Exception:
+                                logger.exception("local knowledge logging failed")
                     if gpt_mem:
                         try:
                             log_with_tags(

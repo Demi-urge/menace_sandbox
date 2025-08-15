@@ -8,7 +8,7 @@ import sys
 import signal
 from typing import TYPE_CHECKING
 
-from log_tags import INSIGHT, IMPROVEMENT_PATH
+from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -1426,6 +1426,22 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     hist = ctx.conversations.get("brainstorm", [])
+                    if LOCAL_KNOWLEDGE_MODULE:
+                        try:
+                            entries = LOCAL_KNOWLEDGE_MODULE.memory.search_context(
+                                "",
+                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                limit=5,
+                                use_embeddings=False,
+                            )
+                        except Exception:
+                            entries = []
+                        if entries:
+                            snips = [
+                                (getattr(e, "response", "") or "").strip().splitlines()[0]
+                                for e in entries
+                            ]
+                            prompt = "\n".join(snips) + "\n\n" + prompt
                     resp = ctx.gpt_client.ask(
                         hist + [{"role": "user", "content": prompt}],
                         tags=[INSIGHT, IMPROVEMENT_PATH],
@@ -1441,6 +1457,15 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
                         logger.info("brainstorm", extra=log_record(idea=idea))
+                        if LOCAL_KNOWLEDGE_MODULE:
+                            try:
+                                LOCAL_KNOWLEDGE_MODULE.log(
+                                    prompt,
+                                    idea,
+                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                )
+                            except Exception:
+                                logger.exception("local knowledge logging failed")
                     if len(hist) > 6:
                         hist = hist[-6:]
                     ctx.conversations["brainstorm"] = hist
