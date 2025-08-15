@@ -228,6 +228,48 @@ class KnowledgeGraph:
         for e in error_categories or []:
             self.graph.add_node(f"error_category:{e}")
             self.graph.add_edge(inode, f"error_category:{e}", type="error_category")
+        # persist immediately so historical relationships survive restarts
+        try:
+            self.save(self.path)
+        except Exception:  # pragma: no cover - best effort persistence
+            logger.debug("failed to persist knowledge graph on add_gpt_insight")
+
+    def find_insights(
+        self,
+        *,
+        bot: str | None = None,
+        code_path: str | None = None,
+        error_category: str | None = None,
+    ) -> List[str]:
+        """Query insights linked to the provided criteria."""
+
+        if self.graph is None:
+            return []
+        insights = [n for n in self.graph.nodes if str(n).startswith("insight:")]
+        results: List[str] = []
+        for inode in insights:
+            neighbors = set(self.graph.successors(inode))
+            if bot and f"bot:{bot}" not in neighbors:
+                continue
+            if code_path and f"code:{code_path}" not in neighbors:
+                continue
+            if error_category and f"error_category:{error_category}" not in neighbors:
+                continue
+            results.append(inode.split(":", 1)[1])
+        return results
+
+    def top_insights(self, limit: int = 5) -> List[tuple[str, List[str]]]:
+        """Return ``limit`` insights with the most outgoing edges."""
+
+        if self.graph is None:
+            return []
+        insights = [n for n in self.graph.nodes if str(n).startswith("insight:")]
+        insights.sort(key=lambda n: self.graph.degree(n), reverse=True)
+        top: List[tuple[str, List[str]]] = []
+        for inode in insights[:limit]:
+            neighbors = [n for n in self.graph.successors(inode)]
+            top.append((inode.split(":", 1)[1], neighbors))
+        return top
 
     def listen_to_memory(self, event_bus: "UnifiedEventBus", memory_mgr: object) -> None:
         """Subscribe to memory updates and ingest GPT memory automatically."""

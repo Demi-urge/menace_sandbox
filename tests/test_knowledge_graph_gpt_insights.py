@@ -1,5 +1,7 @@
 import sys
 import types
+import sqlite3
+import pytest
 
 sys.modules.setdefault(
     "menace.automated_reviewer", types.SimpleNamespace(AutomatedReviewer=object)
@@ -8,7 +10,6 @@ sys.modules.setdefault(
 from menace.knowledge_graph import KnowledgeGraph
 from menace.menace_memory_manager import MenaceMemoryManager
 from menace.unified_event_bus import UnifiedEventBus
-import sqlite3
 
 
 def test_ingest_gpt_insights_links_entities():
@@ -26,6 +27,26 @@ def test_ingest_gpt_insights_links_entities():
     assert ("insight:idea1", "bot:alpha") in kg.graph.edges
     assert ("insight:idea1", "code:module.py") in kg.graph.edges
     assert ("insight:idea1", "error_category:ValueError") in kg.graph.edges
+
+
+def test_bugfix_logging_creates_insight(tmp_path):
+    pytest.importorskip("networkx")
+    kg = KnowledgeGraph(tmp_path / "kg.gpickle")
+    mgr = MenaceMemoryManager(path=tmp_path / "m.db")
+    mgr.graph = kg
+    mgr.store(
+        "fix1",
+        "data",
+        tags="bugfix bot:alpha code:module.py error:ValueError",
+    )
+    inode = "insight:fix1"
+    assert inode in kg.graph
+    assert ("insight:fix1", "bot:alpha") in kg.graph.edges
+    kg2 = KnowledgeGraph(tmp_path / "kg.gpickle")
+    assert inode in kg2.graph
+    assert kg2.find_insights(bot="alpha") == ["fix1"]
+    top = kg2.top_insights()
+    assert top and top[0][0] == "fix1"
 
 
 def test_memory_new_event_triggers_ingest():
