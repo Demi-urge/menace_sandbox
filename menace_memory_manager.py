@@ -418,7 +418,22 @@ class MenaceMemoryManager(GPTMemoryInterface):
         self.conn.commit()
         if self.graph:
             try:
-                self.graph.add_memory_entry(entry.key, entry.tags.split())
+                tag_list = [t.strip() for t in entry.tags.replace(",", " ").split() if t.strip()]
+                self.graph.add_memory_entry(entry.key, tag_list)
+                if any(t in {"improvement", "bugfix"} for t in tag_list):
+                    bots = [t.split(":", 1)[1] for t in tag_list if t.startswith("bot:")]
+                    codes = [t.split(":", 1)[1] for t in tag_list if t.startswith("code:")]
+                    errs = [
+                        t.split(":", 1)[1]
+                        for t in tag_list
+                        if t.startswith("error:") or t.startswith("error_category:")
+                    ]
+                    self.graph.add_gpt_insight(
+                        entry.key,
+                        bots=bots or None,
+                        code_paths=codes or None,
+                        error_categories=errs or None,
+                    )
             except Exception:
                 logger.exception(
                     "Failed to update knowledge graph for key %s", entry.key
