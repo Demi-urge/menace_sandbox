@@ -305,9 +305,12 @@ embedding_tokens_total = Gauge(
 embedding_wall_time_seconds = Gauge(
     "embedding_wall_time_seconds", "Wall time spent generating embeddings",
 )
-vector_store_latency_seconds = Gauge(
-    "vector_store_latency_seconds", "Latency of vector store operations",
+# Backwards compatibility: previous name was vector_store_latency_seconds
+embedding_store_latency_seconds = Gauge(
+    "embedding_store_latency_seconds",
+    "Latency of embedding storage operations",
 )
+vector_store_latency_seconds = embedding_store_latency_seconds
 embedding_stale_cost_seconds = Gauge(
     "embedding_stale_cost_seconds", "Age in seconds of retrieved embedding", ["origin_db"],
 )
