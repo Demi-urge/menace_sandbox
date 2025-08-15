@@ -115,7 +115,7 @@ class DummyRetriever:
         return results
 
 
-def make_builder(monkeypatch, db_weights=None):
+def make_builder(monkeypatch, db_weights=None, max_tokens=800):
     bot_data = [
         {"id": 2, "name": "beta", "roi": 5},
         {"id": 1, "name": "alpha", "roi": 10},
@@ -141,6 +141,7 @@ def make_builder(monkeypatch, db_weights=None):
         error_db=MemDB(error_data),
         code_db=MemDB(code_data),
         db_weights=db_weights,
+        max_tokens=max_tokens,
     )
 
     expected = {
@@ -220,3 +221,12 @@ def test_weighted_ordering(monkeypatch):
         s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
     ]
     assert weighted_ids == [100, 10, 1]
+
+
+def test_truncates_when_tokens_small(monkeypatch):
+    builder, _ = make_builder(monkeypatch, max_tokens=40)
+    ctx = builder.build_context("alpha issue", top_k=2)
+    data = json.loads(ctx)
+    total_items = sum(len(v) for v in data.values())
+    assert total_items < 8
+    assert len(ctx) // 4 <= builder.max_tokens

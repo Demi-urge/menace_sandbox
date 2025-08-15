@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from universal_retriever import ResultBundle, UniversalRetriever
 
+from .config import ContextBuilderConfig
+
 # Database wrappers ---------------------------------------------------------
 try:
     from .error_bot import ErrorDB  # type: ignore
@@ -83,6 +85,7 @@ class ContextBuilder:
         discrepancy_db: DiscrepancyDB | str | Path | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
         db_weights: Dict[str, float] | None = None,
+        max_tokens: int = ContextBuilderConfig().max_tokens,
     ) -> None:
         self.bot_db = _resolve_db(bot_db, BotDB)
         self.workflow_db = _resolve_db(workflow_db, WorkflowDB)
@@ -97,6 +100,7 @@ class ContextBuilder:
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
+        self.max_tokens = max_tokens
 
         # Assemble the universal retriever
         self.retriever = UniversalRetriever(
@@ -235,6 +239,27 @@ class ContextBuilder:
         for key, items in buckets.items():
             items.sort(key=lambda s: s.score, reverse=True)
             result[key] = [s.entry for s in items[:top_k]]
+
+        # Enforce global token limit with a rough estimate (characters / 4)
+        def _estimate(data: Dict[str, List[Dict[str, Any]]]) -> int:
+            return len(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            ) // 4
+
+        token_estimate = _estimate(result)
+        if token_estimate > self.max_tokens:
+            keys = list(result.keys())
+            while token_estimate > self.max_tokens and any(result.values()):
+                changed = False
+                for key in keys:
+                    if result[key]:
+                        result[key].pop()
+                        changed = True
+                        token_estimate = _estimate(result)
+                        if token_estimate <= self.max_tokens:
+                            break
+                if not changed:
+                    break
 
         compact = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         self._cache[cache_key] = compact

@@ -24,6 +24,7 @@ builder = ContextBuilder(
     workflow_db="workflows.db",
     code_db="code.db",
     db_weights={"error": 1.5, "code": 0.5},  # optional biasing
+    max_tokens=800,  # overall budget
 )
 
 context_json = builder.build_context("upload failed", top_k=5)
@@ -35,19 +36,20 @@ context_json = builder.build_context("upload failed", top_k=5)
   or adjust ranking.  Per-database weights can be supplied via ``db_weights`` or
   configuration to bias towards certain sources.
 
-`ContextBuilder` can bias ranking toward specific sources via optional
-configuration in the application config:
+`ContextBuilder` can bias ranking toward specific sources and adjust the
+overall token budget via optional configuration:
 
 ```yaml
 context_builder:
+  max_tokens: 800
   db_weights:
     error: 1.5  # emphasise error records
     code: 0.5   # de‑emphasise code snippets
 ```
 
-The defaults keep all databases equally weighted.  Raising a database weight
-biases ranking toward that source while lower weights trade recall for
-diversity.
+The defaults keep all databases equally weighted and limit the context to
+approximately 800 tokens. Raising a database weight biases ranking toward that
+source while lower weights trade recall for diversity.
 
 ## Example output
 
@@ -64,7 +66,8 @@ diversity.
 
 - Summaries are shortened via an optional `MenaceMemoryManager`; otherwise a
   small offline helper truncates text.
-- Per‑type limits and `max_tokens` prevent runaway context growth.
+- Per‑type limits and `max_tokens` prevent runaway context growth; lists are
+  trimmed round‑robin until the estimate fits within the budget.
 - Metrics bias the ranking so only high‑value records reach the final JSON.
 
 ## Offline operation
