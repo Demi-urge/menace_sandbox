@@ -2394,6 +2394,41 @@ class ROITracker:
         return report
 
     # ------------------------------------------------------------------
+    def best_db_performance(self) -> Dict[str, Dict[str, float]]:
+        """Return databases with highest win-rate and lowest regret.
+
+        The returned mapping contains two entries: ``"highest_win_rate"`` and
+        ``"lowest_regret"``.  Each entry provides the originating database name
+        along with its win-rate, regret-rate and cumulative ROI contribution.
+        When no metrics have been recorded an empty dictionary is returned.
+        """
+
+        if not self.db_roi_metrics:
+            return {}
+        best_win = max(
+            self.db_roi_metrics.items(),
+            key=lambda kv: float(kv[1].get("win_rate", 0.0)),
+        )
+        lowest_regret = min(
+            self.db_roi_metrics.items(),
+            key=lambda kv: float(kv[1].get("regret_rate", float("inf"))),
+        )
+        return {
+            "highest_win_rate": {
+                "origin_db": best_win[0],
+                "win_rate": float(best_win[1].get("win_rate", 0.0)),
+                "regret_rate": float(best_win[1].get("regret_rate", 0.0)),
+                "roi": float(best_win[1].get("roi", 0.0)),
+            },
+            "lowest_regret": {
+                "origin_db": lowest_regret[0],
+                "win_rate": float(lowest_regret[1].get("win_rate", 0.0)),
+                "regret_rate": float(lowest_regret[1].get("regret_rate", 0.0)),
+                "roi": float(lowest_regret[1].get("roi", 0.0)),
+            },
+        }
+
+    # ------------------------------------------------------------------
     def export_origin_db_roi_csv(self, path: str) -> None:
         """Write ROI contribution report per ``origin_db`` to ``path`` as CSV."""
 
