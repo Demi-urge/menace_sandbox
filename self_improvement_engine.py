@@ -95,6 +95,10 @@ try:  # pragma: no cover - allow flat imports
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # pragma: no cover - allow flat imports
+    from .local_knowledge_module import LocalKnowledgeModule
+except Exception:  # pragma: no cover - fallback for flat layout
+    from local_knowledge_module import LocalKnowledgeModule  # type: ignore
+try:  # pragma: no cover - allow flat imports
     from .knowledge_retriever import (
         get_feedback,
         get_error_fixes,
@@ -771,7 +775,10 @@ class SelfImprovementEngine:
             or GPTMemoryManager(event_bus=event_bus)
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
-        self.knowledge_service = knowledge_service
+        self.local_knowledge = LocalKnowledgeModule(
+            manager=self.gpt_memory, service=knowledge_service
+        )
+        self.knowledge_service = self.local_knowledge.knowledge
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -1053,7 +1060,7 @@ class SelfImprovementEngine:
                     client,
                     f"self_improvement_engine.{action}:{module}",
                     f"{action}:{module}",
-                    memory=self.gpt_memory,
+                    memory=self.local_knowledge,
                     tags=[ERROR_FIX, IMPROVEMENT_PATH],
                 )
                 text = (

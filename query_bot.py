@@ -40,6 +40,20 @@ try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .local_knowledge_module import LocalKnowledgeModule
+except Exception:  # pragma: no cover - fallback for flat layout
+    from local_knowledge_module import LocalKnowledgeModule  # type: ignore
+try:
+    from .run_autonomous import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
+except Exception:
+    try:
+        from .sandbox_runner import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
+    except Exception:  # pragma: no cover - fallback
+        _LOCAL_KNOWLEDGE = None
+if _LOCAL_KNOWLEDGE is None:
+    _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
+LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
 
 
 @dataclass
@@ -138,6 +152,7 @@ class QueryBot:
         store: ContextStore | None = None,
         nlu: SimpleNLU | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
+        knowledge: LocalKnowledgeModule | None = LOCAL_KNOWLEDGE_MODULE,
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai
@@ -147,6 +162,7 @@ class QueryBot:
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
         self.gpt_memory = gpt_memory
+        self.local_knowledge = knowledge or LocalKnowledgeModule(manager=self.gpt_memory)
         if getattr(self.client, "gpt_memory", None) is None:
             try:
                 self.client.gpt_memory = self.gpt_memory
@@ -163,7 +179,7 @@ class QueryBot:
             self.client,
             "query_bot.process",
             prompt,
-            memory=self.gpt_memory,
+            memory=self.local_knowledge,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         text = (

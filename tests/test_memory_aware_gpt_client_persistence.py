@@ -9,9 +9,9 @@ from knowledge_retriever import (
     recent_error_fix,
     recent_improvement_path,
 )
-from gpt_knowledge_service import GPTKnowledgeService
 from memory_aware_gpt_client import ask_with_memory
-from log_tags import FEEDBACK
+from local_knowledge_module import LocalKnowledgeModule
+from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH
 
 
 class DummyModel:
@@ -38,13 +38,14 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
 
     client = DummyClient()
     mgr = GPTMemoryManager(db_path=str(db), embedder=embedder)
+    module = LocalKnowledgeModule(manager=mgr)
 
     client.next_response = "Great success"
     ask_with_memory(
         client,
         "lost credentials",
         "reset my password",
-        memory=mgr,
+        memory=module,
         tags=[FEEDBACK],
     )
 
@@ -53,8 +54,8 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
         client,
         "lost credentials",
         "credential bug encountered",
-        memory=mgr,
-        tags=["bogus"],
+        memory=module,
+        tags=[ERROR_FIX],
     )
 
     client.next_response = "An improvement is to apply a patch."
@@ -62,27 +63,37 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
         client,
         "lost credentials",
         "any improvement suggestions?",
-        memory=mgr,
+        memory=module,
+        tags=[IMPROVEMENT_PATH],
     )
     mgr.close()
 
     mgr2 = GPTMemoryManager(db_path=str(db), embedder=embedder)
+    module2 = LocalKnowledgeModule(manager=mgr2)
 
     assert mgr2.search_context(
         "lost credentials", tags=[FEEDBACK], use_embeddings=False
     ) == []
 
-    fb = get_feedback(mgr2, "lost credentials")
-    fixes = get_error_fixes(mgr2, "lost credentials")
-    improvs = get_improvement_paths(mgr2, "lost credentials")
+    fb = [e.response for e in get_feedback(mgr2, "lost credentials") if "insight" not in e.tags]
+    fixes = [
+        e.response
+        for e in get_error_fixes(mgr2, "lost credentials")
+        if "insight" not in e.tags
+    ]
+    improvs = [
+        e.response
+        for e in get_improvement_paths(mgr2, "lost credentials")
+        if "insight" not in e.tags
+    ]
 
-    assert [e.response for e in fb] == ["Great success"]
-    assert [e.response for e in fixes] == ["This fixes the error."]
-    assert [e.response for e in improvs] == ["An improvement is to apply a patch."]
+    assert fb == ["Great success"]
+    assert fixes == ["This fixes the error."]
+    assert improvs == ["An improvement is to apply a patch."]
 
     client2 = DummyClient()
     client2.next_response = "final"
-    ask_with_memory(client2, "lost credentials", "what next?", memory=mgr2)
+    ask_with_memory(client2, "lost credentials", "what next?", memory=module2)
     sent_prompt = client2.messages[0]["content"]
     assert "Great success" in sent_prompt
     assert "This fixes the error." in sent_prompt
@@ -90,7 +101,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
 
     assert mgr2.search_context("what next?", limit=1)
 
-    service = GPTKnowledgeService(mgr2, max_per_tag=5)
+    service = module2.knowledge
     assert recent_feedback(service)
     assert recent_error_fix(service)
     assert recent_improvement_path(service)
