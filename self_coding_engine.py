@@ -455,10 +455,15 @@ class SelfCodingEngine:
             )
             prompt += "\n\n### Patch history\n" + combined_history
 
+        key = (
+            f"self_coding_engine.generate_helper:{path}"
+            if path
+            else f"self_coding_engine.generate_helper:{description}"
+        )
         try:
             data = ask_with_memory(
                 self.llm_client,
-                "self_coding_engine.generate_helper",
+                key,
                 prompt,
                 memory=self.gpt_memory,
                 tags=[ERROR_FIX, IMPROVEMENT_PATH],
