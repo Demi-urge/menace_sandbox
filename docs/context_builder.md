@@ -23,6 +23,7 @@ builder = ContextBuilder(
     bot_db="bots.db",
     workflow_db="workflows.db",
     code_db="code.db",
+    db_weights={"error": 1.5, "code": 0.5},  # optional biasing
 )
 
 context_json = builder.build_context("upload failed", top_k=5)
@@ -31,7 +32,8 @@ context_json = builder.build_context("upload failed", top_k=5)
 - `top_k` caps how many entries are returned for each origin.
 - Scoring weights come from the underlying retriever; tweak parameters on
   `builder.retriever` (for example `link_multiplier`) to emphasise connectivity
-  or adjust ranking.
+  or adjust ranking.  Per-database weights can be supplied via ``db_weights`` or
+  configuration to bias towards certain sources.
 
 `ContextBuilder` can bias ranking toward specific sources via optional
 configuration in the application config:
