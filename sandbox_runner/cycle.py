@@ -1012,15 +1012,16 @@ def _sandbox_cycle_runner(
                 if section and mod != section:
                     continue
                 try:
-                    key = mod.split(":", 1)[0]
+                    module_name = mod.split(":", 1)[0]
+                    memory_key = mod
                     insight = ""
                     if knowledge_service:
                         try:
-                            insight = knowledge_service.get_recent_insights(key)
+                            insight = knowledge_service.get_recent_insights(module_name)
                         except Exception:
                             insight = ""
                     text = snippet or ""
-                    path = ctx.repo / key
+                    path = ctx.repo / module_name
                     if path.exists():
                         text = path.read_text(encoding="utf-8")[:500]
                     prompt = build_section_prompt(
@@ -1038,13 +1039,13 @@ def _sandbox_cycle_runner(
                             entries = []
                             if hasattr(gpt_mem, "search_context"):
                                 entries = gpt_mem.search_context(
-                                    key,
+                                    memory_key,
                                     tags=[INSIGHT, FEEDBACK, IMPROVEMENT_PATH],
                                     limit=5,
                                     use_embeddings=False,
                                 )
                             elif hasattr(gpt_mem, "retrieve"):
-                                entries = gpt_mem.retrieve(key, limit=5)
+                                entries = gpt_mem.retrieve(memory_key, limit=5)
                         except Exception:
                             entries = []
                         if entries:
@@ -1053,7 +1054,7 @@ def _sandbox_cycle_runner(
                                 for e in entries
                             ]
                             prompt += "\n\n### Memory\n" + "\n".join(snippets)
-                    history = ctx.conversations.get(key, [])
+                    history = ctx.conversations.get(memory_key, [])
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
                     if lkm:
                         try:
@@ -1079,7 +1080,7 @@ def _sandbox_cycle_runner(
                     )
                     resp = ask_with_memory(
                         ctx.gpt_client,
-                        key,
+                        memory_key,
                         prompt_text,
                         memory=gpt_mem,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1098,13 +1099,13 @@ def _sandbox_cycle_runner(
                                 lkm.log(
                                     prompt,
                                     suggestion,
-                                    tags=[key, FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                    tags=[memory_key, FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 logger.exception("local knowledge logging failed for %s", mod)
                     if len(history) > 6:
                         history = history[-6:]
-                    ctx.conversations[key] = history
+                    ctx.conversations[memory_key] = history
                 except Exception:
                     logger.exception("gpt suggestion failed for %s", mod)
                     continue
@@ -1126,13 +1127,13 @@ def _sandbox_cycle_runner(
                             result_text = "success" if patch_id else "failure"
                             log_with_tags(
                                 gpt_mem,
-                                f"sandbox_runner.cycle.{key}.patch_id",
+                                f"sandbox_runner.cycle.{memory_key}.patch_id",
                                 str(patch_id),
                                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                             log_with_tags(
                                 gpt_mem,
-                                f"sandbox_runner.cycle.{key}.result",
+                                f"sandbox_runner.cycle.{memory_key}.result",
                                 result_text,
                                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
