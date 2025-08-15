@@ -169,3 +169,12 @@ export GPT_MEMORY_RETENTION="error_fix=50,feedback=20"
 The compaction interval defaults to one hour and can be customised via
 `GPT_MEMORY_COMPACT_INTERVAL` (seconds). If no retention rules are provided the
 maintenance thread is disabled.
+
+## Automatic insight refresh
+
+When using :func:`memory_logging.log_with_tags` with a
+`LocalKnowledgeModule`, each successful log triggers a background refresh of
+stored insights.  This keeps summarised feedback, fixes and improvement paths
+up to date without blocking the caller.  Set the `GPT_AUTO_REFRESH_INSIGHTS`
+environment variable to `0`/`false` to disable this behaviour if periodic
+updates are not required.

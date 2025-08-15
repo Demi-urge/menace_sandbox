@@ -4,12 +4,56 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 import logging
+import os
 import re
+import threading
+import time
 
 from gpt_memory import STANDARD_TAGS
 
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------- refresh opts
+_AUTO_REFRESH = os.getenv("GPT_AUTO_REFRESH_INSIGHTS", "1").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+_REFRESH_INTERVAL = 5.0  # seconds
+_refresh_lock = threading.Lock()
+_last_refresh = 0.0
+
+
+def _schedule_refresh(knowledge: Any) -> None:
+    """Run ``knowledge.update_insights`` in the background."""
+
+    def _run() -> None:
+        try:
+            knowledge.update_insights()
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("failed to refresh insights")
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+
+def _maybe_refresh(memory: Any) -> None:
+    """Refresh insights if the environment and cooldown permit."""
+
+    if not _AUTO_REFRESH:
+        return
+    knowledge = getattr(memory, "knowledge", None)
+    update = getattr(knowledge, "update_insights", None)
+    if not callable(update):
+        return
+    global _last_refresh
+    now = time.monotonic()
+    with _refresh_lock:
+        if now - _last_refresh < _REFRESH_INTERVAL:
+            return
+        _last_refresh = now
+    _schedule_refresh(knowledge)
 
 # Simple regex based heuristics for inferring canonical tags from responses.
 _TAG_PATTERNS = {
@@ -75,8 +119,12 @@ def log_with_tags(
     """
 
     clean = _normalise_tags(tags, response)
+    result: Any = None
     if hasattr(memory, "log_interaction"):
-        return memory.log_interaction(prompt, response, clean)
-    if hasattr(memory, "store"):
-        return memory.store(prompt, response, clean)
-    return None
+        result = memory.log_interaction(prompt, response, clean)
+    elif hasattr(memory, "store"):
+        result = memory.store(prompt, response, clean)
+    else:
+        return None
+    _maybe_refresh(memory)
+    return result
