@@ -35,6 +35,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     gensim = None  # type: ignore
 
+try:  # canonical tag constant for logging
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
+
 DB_PATH = Path(__file__).parent / "news.db"
 
 
@@ -253,7 +258,11 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
             "content": f"Suggest monetisation strategies for this event: {event.title} - {event.summary}",
         }
     ]
-    data = client.ask(messages)
+    data = client.ask(
+        messages,
+        tags=[INSIGHT],
+        memory_manager=getattr(client, "gpt_memory", None),
+    )
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
