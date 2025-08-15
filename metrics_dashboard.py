@@ -3,6 +3,7 @@ from __future__ import annotations
 """Simple monitoring dashboard using Flask."""
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import List
 
@@ -100,6 +101,21 @@ class MetricsDashboard:
                 gauge = getattr(sat, name, None)
                 if gauge is not None:
                     metrics[name] = _get_value(gauge)
+        except Exception:
+            pass
+
+        try:
+            with sqlite3.connect("metrics.db") as conn:
+                rows = conn.execute(
+                    """
+            SELECT origin_db, roi FROM retriever_kpi
+            WHERE (origin_db, ts) IN (
+                SELECT origin_db, max(ts) FROM retriever_kpi GROUP BY origin_db
+            )
+            ORDER BY roi DESC
+            """
+                ).fetchall()
+            metrics["roi_rankings"] = rows
         except Exception:
             pass
 
