@@ -823,7 +823,11 @@ class ChatGPTPredictionBot:
                     " Provide brief feedback."
                 )
                 messages = client.build_prompt_with_memory([INSIGHT], prompt)
-                client.ask(messages, tags=[FEEDBACK, INSIGHT])
+                client.ask(
+                    messages,
+                    tags=[FEEDBACK, INSIGHT],
+                    memory_manager=self.gpt_memory,
+                )
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(description=idea, reason=rationale, value=value)
