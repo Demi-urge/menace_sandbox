@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+"""Build training data for the retrieval ranker.
+
+This utility inspects ``vector_metrics.db`` and companion databases to assemble
+feature rows per ``(session_id, vector_id)`` pair. The dataset includes
+similarity, record age, execution frequency, ROI delta and historical hit
+counts and can be written to CSV or returned as a NumPy array.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+import sqlite3
+from typing import Any, Iterable
+import argparse
+
+import pandas as pd
+
+from ..vector_metrics_db import VectorMetricsDB  # type: ignore
+from ..error_bot import ErrorDB  # type: ignore
+from ..task_handoff_bot import WorkflowDB  # type: ignore
+from ..bot_database import BotDB  # type: ignore
+from ..universal_retriever import UniversalRetriever  # type: ignore
+from ..code_database import PatchHistoryDB  # type: ignore
+
+
+# ---------------------------------------------------------------------------
+@dataclass
+class FeatureRow:
+    session_id: str
+    vector_id: str
+    origin_db: str
+    similarity: float
+    age: float
+    exec_freq: float
+    roi_delta: float
+    prior_hits: int
+
+
+# ---------------------------------------------------------------------------
+def _record_age(db_name: str, vec_id: str, *, now: datetime) -> float:
+    """Return age in seconds for a record in ``db_name``."""
+
+    mapping = {
+        "error": ("errors.db", "errors", "ts"),
+        "workflow": ("workflows.db", "workflows", "timestamp"),
+        "bot": ("bots.db", "bots", "creation_date"),
+    }
+    path, table, col = mapping.get(db_name, (None, None, None))
+    if not path or not Path(path).exists():
+        return 0.0
+    try:
+        conn = sqlite3.connect(path)
+        cur = conn.execute(f"SELECT {col} FROM {table} WHERE id=?", (vec_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            ts = datetime.fromisoformat(str(row[0]))
+            return (now - ts).total_seconds()
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+def _exec_metric(
+    retriever: UniversalRetriever,
+    db_name: str,
+    vec_id: str,
+    wf_db: WorkflowDB,
+) -> float:
+    """Return execution frequency/usage metric for ``vec_id``."""
+
+    try:
+        vid = int(vec_id)
+    except Exception:
+        vid = 0
+    if db_name == "error":
+        return retriever._error_frequency(vid)
+    if db_name == "workflow":
+        try:
+            row = wf_db.conn.execute("SELECT * FROM workflows WHERE id=?", (vid,)).fetchone()
+            if row is not None:
+                rec = wf_db._row_to_record(row)
+                return retriever._workflow_usage(rec)
+        except Exception:
+            return 0.0
+        return 0.0
+    if db_name == "bot":
+        return retriever._bot_deploy_freq(vid)
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+def _roi_delta(patch_db: PatchHistoryDB, patch_id: Any) -> float:
+    if not patch_id:
+        return 0.0
+    try:
+        pid = int(patch_id)
+    except Exception:
+        return 0.0
+    try:
+        rec = patch_db.get(pid)
+        if rec is not None:
+            return float(getattr(rec, "roi_delta", 0.0) or 0.0)
+    except Exception:
+        return 0.0
+    return 0.0
+
+
+# ---------------------------------------------------------------------------
+def build_dataset(
+    *,
+    vec_db_path: str | Path = "vector_metrics.db",
+    output_csv: str | Path | None = None,
+    as_numpy: bool = False,
+) -> pd.DataFrame | Any:
+    """Construct the retrieval ranking dataset.
+
+    Parameters
+    ----------
+    vec_db_path:
+        Location of ``vector_metrics.db``.
+    output_csv:
+        Optional path to write the dataset as CSV.
+    as_numpy:
+        Return a NumPy array instead of a :class:`pandas.DataFrame`.
+    """
+
+    vmdb = VectorMetricsDB(vec_db_path)
+    error_db = ErrorDB("errors.db")
+    wf_db = WorkflowDB("workflows.db")
+    bot_db = BotDB("bots.db")
+    retriever = UniversalRetriever(
+        error_db=error_db, workflow_db=wf_db, bot_db=bot_db
+    )
+    patch_db = PatchHistoryDB(path="patch_history.db")
+
+    now = datetime.utcnow()
+    cur = vmdb.conn.execute(
+        """
+        SELECT session_id, vector_id, db, contribution, ts, patch_id, hit
+          FROM vector_metrics
+         WHERE event_type='retrieval'
+         ORDER BY ts
+        """
+    )
+
+    rows: list[FeatureRow] = []
+    hit_counts: dict[str, int] = {}
+    for session_id, vec_id, origin, contrib, ts, patch_id, hit in cur.fetchall():
+        prior = hit_counts.get(str(vec_id), 0)
+        if hit:
+            hit_counts[str(vec_id)] = prior + 1
+        age = _record_age(str(origin), str(vec_id), now=now)
+        freq = _exec_metric(retriever, str(origin), str(vec_id), wf_db)
+        roi = _roi_delta(patch_db, patch_id)
+        rows.append(
+            FeatureRow(
+                session_id=str(session_id),
+                vector_id=str(vec_id),
+                origin_db=str(origin),
+                similarity=float(contrib or 0.0),
+                age=float(age),
+                exec_freq=float(freq),
+                roi_delta=float(roi),
+                prior_hits=int(prior),
+            )
+        )
+
+    df = pd.DataFrame([r.__dict__ for r in rows])
+    if output_csv is not None:
+        df.to_csv(output_csv, index=False)
+    if as_numpy:
+        return df.to_numpy()
+    return df
+
+
+# ---------------------------------------------------------------------------
+def main(argv: Iterable[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Build retrieval ranker dataset")
+    p.add_argument("--vec-db", default="vector_metrics.db")
+    p.add_argument("--output-csv", default=None)
+    p.add_argument("--as-numpy", action="store_true", help="Return numpy array")
+    args = p.parse_args(list(argv) if argv is not None else None)
+    data = build_dataset(
+        vec_db_path=args.vec_db, output_csv=args.output_csv, as_numpy=args.as_numpy
+    )
+    if args.as_numpy:
+        print(getattr(data, "shape", None))
+    else:
+        print(data.head())
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
