@@ -31,30 +31,37 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Raw interaction retrieval helpers
 
-def get_feedback(manager: GPTMemoryManager, key: str, *, limit: int = 5):
+def get_feedback(
+    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+):
     """Return past feedback entries related to ``key``.
 
-    This searches the memory for interactions tagged with ``FEEDBACK``.
+    This searches the memory for interactions tagged with ``FEEDBACK``.  When
+    ``use_embeddings`` is ``True`` semantic search is employed.
     """
 
     return manager.search_context(
-        key, tags=[FEEDBACK], limit=limit, use_embeddings=False
+        key, tags=[FEEDBACK], limit=limit, use_embeddings=use_embeddings
     )
 
 
-def get_error_fixes(manager: GPTMemoryManager, key: str, *, limit: int = 5):
+def get_error_fixes(
+    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+):
     """Return past error fix suggestions related to ``key``."""
 
     return manager.search_context(
-        key, tags=[ERROR_FIX], limit=limit, use_embeddings=False
+        key, tags=[ERROR_FIX], limit=limit, use_embeddings=use_embeddings
     )
 
 
-def get_improvement_paths(manager: GPTMemoryManager, key: str, *, limit: int = 5):
+def get_improvement_paths(
+    manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
+):
     """Return previous improvement path suggestions for ``key``."""
 
     return manager.search_context(
-        key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=False
+        key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=use_embeddings
     )
 
 

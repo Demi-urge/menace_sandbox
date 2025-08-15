@@ -95,7 +95,9 @@ class GPTMemoryManager(GPTMemoryInterface):
         Location of the SQLite database.  ``"gpt_memory.db"`` by default.
     embedder:
         Optional :class:`SentenceTransformer` instance.  When provided each
-        prompt is embedded and semantic search can be performed.
+        prompt is embedded and semantic search can be performed.  Supplying an
+        embedder allows callers to share a pre-initialised model across
+        components rather than constructing one internally.
     event_bus:
         Optional :class:`UnifiedEventBus`.  When supplied, each call to
         :meth:`log_interaction` publishes a ``"memory:new"`` event containing
