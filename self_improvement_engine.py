@@ -1044,7 +1044,7 @@ class SelfImprovementEngine:
                 self.gpt_memory,
                 f"{action}:{module}",
                 "success" if success else "failure",
-                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                tags=[f"self_improvement_engine.{action}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
@@ -1061,7 +1061,7 @@ class SelfImprovementEngine:
             try:
                 data = ask_with_memory(
                     client,
-                    f"self_improvement_engine.{action}:{module}",
+                    f"self_improvement_engine.{action}",
                     f"{action}:{module}",
                     memory=self.local_knowledge,
                     tags=[ERROR_FIX, IMPROVEMENT_PATH],
@@ -1089,7 +1089,7 @@ class SelfImprovementEngine:
                 self.gpt_memory,
                 f"{action}:{module}",
                 f"patch_id={patch_id}",
-                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                tags=[f"self_improvement_engine.{action}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
         except Exception:
             self.logger.exception(
@@ -1313,7 +1313,7 @@ class SelfImprovementEngine:
                                     self.gpt_memory,
                                     f"scenario_patch:{name}",
                                     "suggested",
-                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                    tags=[f"self_improvement_engine.scenario_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 self.logger.exception(
@@ -4091,7 +4091,7 @@ class SelfImprovementEngine:
                             self.gpt_memory,
                             f"preventative_patch:{mod}",
                             "suggested",
-                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                            tags=[f"self_improvement_engine.preventative_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                         )
                     except Exception:
                         self.logger.exception(
@@ -4214,7 +4214,7 @@ class SelfImprovementEngine:
                                 self.gpt_memory,
                                 f"high_risk_patch:{mod}",
                                 "suggested",
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                tags=[f"self_improvement_engine.high_risk_patch", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                         except Exception:
                             self.logger.exception(

@@ -89,6 +89,12 @@ def _normalise_tags(tags: Sequence[str] | None, response: str | None = None) -> 
     clean: list[str] = []
     invalid: list[str] = []
     for tag in tags or []:
+        # Preserve key-style tags such as ``module:name`` or ``module.action``
+        # verbatim to allow free-form categorisation.
+        if ":" in tag or "." in tag:
+            if tag not in clean:
+                clean.append(tag)
+            continue
         normalised = tag.lower()
         if normalised in STANDARD_TAGS:
             if normalised not in clean:
@@ -101,6 +107,29 @@ def _normalise_tags(tags: Sequence[str] | None, response: str | None = None) -> 
         inferred = _infer_tags(response.lower())
         if inferred:
             clean.extend(inferred)
+    return clean
+
+
+def ensure_tags(key: str, tags: Sequence[str] | None = None) -> list[str]:
+    """Return ``tags`` augmented with ``module`` and ``action`` markers.
+
+    ``key`` is expected to follow ``"module.action"`` format. The returned list
+    includes ``module:{module}`` and ``action:{action}`` entries. When the key is
+    malformed a warning is emitted and the original ``tags`` are simply
+    normalised.
+    """
+
+    clean = _normalise_tags(tags)
+    if "." not in key:
+        logger.warning("key '%s' missing module.action format", key)
+        return clean
+    module, action = key.split(".", 1)
+    mod_tag = f"module:{module}"
+    act_tag = f"action:{action}"
+    if mod_tag not in clean:
+        clean.append(mod_tag)
+    if act_tag not in clean:
+        clean.append(act_tag)
     return clean
 
 
@@ -119,6 +148,8 @@ def log_with_tags(
     """
 
     clean = _normalise_tags(tags, response)
+    if not any(":" in t or "." in t for t in clean):
+        logger.warning("missing module/action tags: %s", tags)
     result: Any = None
     if hasattr(memory, "log_interaction"):
         result = memory.log_interaction(prompt, response, clean)

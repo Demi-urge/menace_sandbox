@@ -1080,7 +1080,7 @@ def _sandbox_cycle_runner(
                     )
                     resp = ask_with_memory(
                         ctx.gpt_client,
-                        memory_key,
+                        f"sandbox_runner.cycle.{memory_key}",
                         prompt_text,
                         memory=gpt_mem,
                         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
@@ -1099,7 +1099,7 @@ def _sandbox_cycle_runner(
                                 lkm.log(
                                     prompt,
                                     suggestion,
-                                    tags=[memory_key, FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                    tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 logger.exception("local knowledge logging failed for %s", mod)
@@ -1129,13 +1129,13 @@ def _sandbox_cycle_runner(
                                 gpt_mem,
                                 f"sandbox_runner.cycle.{memory_key}.patch_id",
                                 str(patch_id),
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                             log_with_tags(
                                 gpt_mem,
                                 f"sandbox_runner.cycle.{memory_key}.result",
                                 result_text,
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                                tags=[f"sandbox_runner.cycle.{memory_key}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                         except Exception:
                             logger.exception("memory logging failed for %s", mod)

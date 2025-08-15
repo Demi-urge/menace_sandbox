@@ -9,6 +9,7 @@ The collected context is prepended to the prompt before delegating to
 """
 
 from typing import Sequence, Any
+from memory_logging import ensure_tags
 
 try:  # pragma: no cover - allow flat imports
     from .local_knowledge_module import LocalKnowledgeModule
@@ -53,14 +54,17 @@ def ask_with_memory(
     full_prompt = f"{ctx}\n\n{prompt}" if ctx else prompt
 
     messages = [{"role": "user", "content": full_prompt}]
-    data = client.ask(messages, use_memory=False, memory_manager=None, tags=tags)
+    full_tags = ensure_tags(key, tags)
+    data = client.ask(
+        messages, use_memory=False, memory_manager=None, tags=full_tags
+    )
     text = (
         data.get("choices", [{}])[0]
         .get("message", {})
         .get("content", "")
     )
     try:
-        memory.log(full_prompt, text, tags)
+        memory.log(full_prompt, text, full_tags)
     except Exception:
         pass
     return data
