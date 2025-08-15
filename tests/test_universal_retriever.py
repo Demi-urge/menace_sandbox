@@ -1,6 +1,7 @@
 """Tests for the :mod:`universal_retriever` helper."""
 
 from types import MethodType
+import pytest
 
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
@@ -61,6 +62,8 @@ def test_metric_weighting_prioritises_frequent_errors(tmp_path):
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
     assert hits[0].score > hits[1].score
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert metrics["model_score"] == pytest.approx(1.0)
 
 
 def test_relationship_boosting(tmp_path):
