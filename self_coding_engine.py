@@ -854,9 +854,17 @@ class SelfCodingEngine:
             if self.data_bot and self.patch_db and patch_id is not None:
                 rec = self.patch_db.get(patch_id)
                 success = False
+                rev_flag = False
                 if rec:
                     success = not rec.reverted and rec.roi_delta > 0
-                self.data_bot.db.log_patch_outcome(str(patch_id), success, vectors)
+                    rev_flag = bool(rec.reverted)
+                self.data_bot.db.log_patch_outcome(
+                    str(patch_id),
+                    success,
+                    vectors,
+                    session_id=session_id,
+                    reverted=rev_flag,
+                )
         except Exception:
             self.logger.exception("failed to log patch outcome")
         return patch_id, reverted, roi_delta

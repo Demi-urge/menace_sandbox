@@ -177,6 +177,7 @@ class MetricsDB:
             CREATE TABLE IF NOT EXISTS patch_outcomes(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 patch_id TEXT,
+                session_id TEXT,
                 origin_db TEXT,
                 vector_id TEXT,
                 success INTEGER,
@@ -295,6 +296,10 @@ class MetricsDB:
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(patch_outcomes)").fetchall()
             ]
+            if "session_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_outcomes ADD COLUMN session_id TEXT"
+                )
             if "origin_db" not in cols:
                 conn.execute(
                     "ALTER TABLE patch_outcomes ADD COLUMN origin_db TEXT"
@@ -648,6 +653,7 @@ class MetricsDB:
         success: bool,
         vectors: Iterable[tuple[str, str]] | None = None,
         *,
+        session_id: str = "",
         reverted: bool = False,
     ) -> None:
         """Record the outcome of a patch deployment and associated vectors."""
@@ -658,11 +664,12 @@ class MetricsDB:
                 for origin_db, vec_id in entries:
                     conn.execute(
                         """
-                    INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, reverted, ts)
-                    VALUES(?,?,?,?,?,?)
+                    INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, ts)
+                    VALUES(?,?,?,?,?,?,?)
                     """,
                         (
                             patch_id,
+                            session_id,
                             origin_db,
                             vec_id,
                             1 if success else 0,
@@ -683,11 +690,12 @@ class MetricsDB:
             else:
                 conn.execute(
                     """
-                INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, reverted, ts)
-                VALUES(?,?,?,?,?,?)
+                INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, ts)
+                VALUES(?,?,?,?,?,?,?)
                 """,
                     (
                         patch_id,
+                        session_id,
                         None,
                         None,
                         1 if success else 0,

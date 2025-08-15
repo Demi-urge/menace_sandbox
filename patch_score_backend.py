@@ -71,8 +71,15 @@ def _log_outcome(record: Dict[str, object]) -> None:
     result_str = str(result).lower()
     success = result_str == "ok"
     reverted = result_str == "reverted"
+    session_id = record.get("retrieval_session_id") or ""
     try:  # pragma: no cover - best effort
-        MetricsDB().log_patch_outcome(str(patch_id), success, vectors, reverted=reverted)
+        MetricsDB().log_patch_outcome(
+            str(patch_id),
+            success,
+            vectors,
+            session_id=str(session_id),
+            reverted=reverted,
+        )
     except Exception:
         logger.exception("failed to log patch outcome")
 
