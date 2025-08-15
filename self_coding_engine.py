@@ -20,6 +20,10 @@ from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
+try:  # pragma: no cover - allow flat imports
+    from .memory_aware_gpt_client import ask_with_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -452,11 +456,12 @@ class SelfCodingEngine:
             prompt += "\n\n### Patch history\n" + combined_history
 
         try:
-            data = self.llm_client.ask(
-                [{"role": "user", "content": prompt}],
-                memory_manager=self.gpt_memory,
-                tags=[ERROR_FIX],
-                use_memory=True,
+            data = ask_with_memory(
+                self.llm_client,
+                "self_coding_engine.generate_helper",
+                prompt,
+                memory=self.gpt_memory,
+                tags=[ERROR_FIX, IMPROVEMENT_PATH],
             )
         except Exception:
             data = {}
@@ -467,12 +472,6 @@ class SelfCodingEngine:
             .strip()
         )
         if text:
-            try:
-                self.gpt_memory.log_interaction(
-                    prompt, text, tags=[ERROR_FIX, IMPROVEMENT_PATH]
-                )
-            except Exception:
-                self.logger.exception("memory logging failed")
             self.logger.info(
                 "gpt_suggestion",
                 extra={

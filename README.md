@@ -10,6 +10,9 @@
 - Central Menace orchestrator coordinating all stages and hierarchical oversight
 - Self improvement engine automatically runs the workflow on the Menace model when metrics degrade
 - Self-coding manager applies patches then deploys via the automation pipeline
+- Memory-aware GPT wrapper injects prior feedback and fixes into prompts when
+  calling ChatGPT. Callers pass a module/action key so retrieved context and the
+  resulting interaction are logged with appropriate tags.
 - Evolution orchestrator coordinating self improvement and structural evolution
 - System evolution manager runs GA-driven structural updates ([docs/system_evolution_manager.md](docs/system_evolution_manager.md))
 - Experiment manager for automated A/B testing of bot variants
@@ -162,6 +165,21 @@
 See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching the sandbox.
 Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.
 Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md).
+
+### Memory-aware GPT wrapper
+
+Use `memory_aware_gpt_client.ask_with_memory` to automatically prepend past
+feedback, improvement paths and error fixes to a new prompt.  Callers must
+provide a ``key`` identifying the module and action so related interactions can
+be retrieved and logged.  Example:
+
+```python
+from memory_aware_gpt_client import ask_with_memory
+from log_tags import ERROR_FIX
+
+result = ask_with_memory(client, "self_coding_engine.generate_helper", "Write tests",
+                         memory=gpt_memory, tags=[ERROR_FIX])
+```
 
 ### Embedding lifecycle
 

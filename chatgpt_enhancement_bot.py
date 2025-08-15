@@ -16,6 +16,10 @@ from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
+try:  # pragma: no cover - allow flat imports
+    from .memory_aware_gpt_client import ask_with_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 from . import RAISE_ERRORS
 try:  # canonical tag constants
     from .log_tags import IMPROVEMENT_PATH, INSIGHT
@@ -788,12 +792,11 @@ class ChatGPTEnhancementBot:
         )
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
-            messages = self.client.build_prompt_with_memory(
-                [IMPROVEMENT_PATH], prompt
-            )
-            data = self.client.ask(
-                messages,
-                memory_manager=self.gpt_memory,
+            data = ask_with_memory(
+                self.client,
+                "chatgpt_enhancement_bot.propose",
+                prompt,
+                memory=self.gpt_memory,
                 tags=[IMPROVEMENT_PATH, INSIGHT],
             )
         except Exception as exc:
