@@ -886,6 +886,18 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
+    def get(self, patch_id: int) -> PatchRecord | None:
+        """Return patch record for ``patch_id`` if present."""
+
+        def op(conn: sqlite3.Connection) -> PatchRecord | None:
+            row = conn.execute(
+                "SELECT filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE id=?",
+                (patch_id,),
+            ).fetchone()
+            return PatchRecord(*row) if row else None
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
     def top_patches(self, limit: int = 5) -> List[PatchRecord]:
         """Return the highest ROI patches."""
         with self._connect() as conn:
