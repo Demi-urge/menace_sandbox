@@ -15,6 +15,7 @@ import inspect
 from typing import Any, Dict, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
+from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
@@ -1022,7 +1023,7 @@ def _sandbox_cycle_runner(
                             if hasattr(gpt_mem, "search_context"):
                                 entries = gpt_mem.search_context(
                                     key,
-                                    tags=["improvement_reasoning", "patch_applied", "patch_failed"],
+                                    tags=[INSIGHT, FEEDBACK, IMPROVEMENT_PATH],
                                     limit=5,
                                     use_embeddings=False,
                                 )
@@ -1040,7 +1041,7 @@ def _sandbox_cycle_runner(
                     resp = ctx.gpt_client.ask(
                         history + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
-                        tags=["improvement_reasoning"],
+                        tags=[INSIGHT],
                         use_memory=False,
                     )
                     suggestion = (
@@ -1056,11 +1057,11 @@ def _sandbox_cycle_runner(
                             try:
                                 if hasattr(gpt_mem, "log_interaction"):
                                     gpt_mem.log_interaction(
-                                        prompt, suggestion, tags=["improvement_reasoning"]
+                                        prompt, suggestion, tags=[INSIGHT]
                                     )
                                 elif hasattr(gpt_mem, "store"):
                                     gpt_mem.store(
-                                        prompt, suggestion, ["improvement_reasoning"]
+                                        prompt, suggestion, [INSIGHT]
                                     )
                             except Exception:
                                 logger.exception("memory logging failed for %s", mod)
@@ -1085,14 +1086,20 @@ def _sandbox_cycle_runner(
                     )
                     if gpt_mem:
                         try:
-                            tag = ["patch_applied"] if patch_id else ["patch_failed"]
+                            result_text = "success" if patch_id else "failure"
                             if hasattr(gpt_mem, "log_interaction"):
                                 gpt_mem.log_interaction(
-                                    f"{prompt}:result", f"patch_id={patch_id}", tags=tag
+                                    f"{prompt}:patch_id", str(patch_id), tags=[IMPROVEMENT_PATH]
+                                )
+                                gpt_mem.log_interaction(
+                                    f"{prompt}:result", result_text, tags=[FEEDBACK]
                                 )
                             elif hasattr(gpt_mem, "store"):
                                 gpt_mem.store(
-                                    f"{prompt}:result", f"patch_id={patch_id}", tag
+                                    f"{prompt}:patch_id", str(patch_id), [IMPROVEMENT_PATH]
+                                )
+                                gpt_mem.store(
+                                    f"{prompt}:result", result_text, [FEEDBACK]
                                 )
                         except Exception:
                             logger.exception("memory logging failed for %s", mod)
