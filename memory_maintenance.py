@@ -1,8 +1,15 @@
+"""Background maintenance utilities for :mod:`gpt_memory`."""
+
+from __future__ import annotations
+
 import os
 import threading
-from typing import Dict, Mapping
+from typing import Dict, Mapping, TYPE_CHECKING
 
 from gpt_memory import GPTMemoryManager
+
+if TYPE_CHECKING:  # pragma: no cover - only for type hints
+    from gpt_knowledge_service import GPTKnowledgeService
 from logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -45,12 +52,14 @@ class MemoryMaintenance:
         *,
         interval: float | None = None,
         retention: Mapping[str, int] | None = None,
+        knowledge_service: GPTKnowledgeService | None = None,
     ) -> None:
         self.manager = manager
         self.interval = float(interval or DEFAULT_INTERVAL)
         self.retention: Dict[str, int] = (
             dict(retention) if retention is not None else _load_retention_rules()
         )
+        self.knowledge_service = knowledge_service
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
@@ -73,3 +82,9 @@ class MemoryMaintenance:
                 logger.debug("memory maintenance removed %d rows", removed)
             except Exception:
                 logger.exception("memory maintenance failed during compaction")
+
+            if self.knowledge_service is not None:
+                try:
+                    self.knowledge_service.update_insights()
+                except Exception:
+                    logger.exception("knowledge service update failed")
