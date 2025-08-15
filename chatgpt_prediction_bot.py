@@ -43,6 +43,7 @@ from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
 from .chatgpt_idea_bot import ChatGPTClient
+from .gpt_memory import GPTMemory, GPTMemoryManager
 try:  # canonical tag constants
     from .log_tags import INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -635,6 +636,7 @@ class ChatGPTPredictionBot:
         model_path: Path | str | None = None,
         threshold: float | None = None,
         client: ChatGPTClient | None = None,
+        gpt_memory: GPTMemory | GPTMemoryManager | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
@@ -645,7 +647,22 @@ class ChatGPTPredictionBot:
 
         self.model_path = Path(model_path) if model_path else CFG.model_path
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
-        self.client = client
+        self.gpt_memory = gpt_memory
+        if client is not None:
+            if gpt_memory is not None and getattr(client, "gpt_memory", None) is None:
+                try:
+                    client.gpt_memory = gpt_memory
+                except Exception:
+                    logger.debug("failed to attach gpt_memory to client", exc_info=True)
+            self.client = client
+        elif gpt_memory is not None:
+            try:
+                self.client = ChatGPTClient(gpt_memory=gpt_memory)
+            except Exception:  # pragma: no cover - optional dependency
+                logger.debug("failed to initialize ChatGPTClient", exc_info=True)
+                self.client = None
+        else:
+            self.client = None
         self._model_hash: str | None = None
         self._model_mtime: float | None = None
         self._feedback: List[Tuple[dict, int]] = []

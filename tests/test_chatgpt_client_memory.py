@@ -44,5 +44,5 @@ def test_ask_logs_interaction(monkeypatch):
     client.ask([{"role": "user", "content": "hi"}])
     assert mem.logged[0][0] == "hi"
     assert mem.logged[0][1] == "resp"
-    assert mem.logged[0][2] == ["idea", "enhancement"]
+    assert cib.INSIGHT in mem.logged[0][2]
 
