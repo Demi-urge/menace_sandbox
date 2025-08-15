@@ -29,9 +29,25 @@ try:  # canonical tag constants
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT  # type: ignore
 try:  # pragma: no cover - allow flat imports
-    from .knowledge_retriever import get_feedback, get_error_fixes
+    from .gpt_knowledge_service import GPTKnowledgeService
 except Exception:  # pragma: no cover - fallback for flat layout
-    from knowledge_retriever import get_feedback, get_error_fixes  # type: ignore
+    from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .knowledge_retriever import (
+        get_feedback,
+        get_error_fixes,
+        recent_feedback,
+        recent_error_fix,
+        recent_improvement_path,
+    )
+except Exception:  # pragma: no cover - fallback for flat layout
+    from knowledge_retriever import (  # type: ignore
+        get_feedback,
+        get_error_fixes,
+        recent_feedback,
+        recent_error_fix,
+        recent_improvement_path,
+    )
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -77,6 +93,7 @@ class SelfCodingEngine:
         event_bus: UnifiedEventBus | None = None,
         gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         context_builder: ContextBuilder | None = None,
+        knowledge_service: GPTKnowledgeService | None = None,
         **kwargs: Any,
     ) -> None:
         self.code_db = code_db
@@ -123,6 +140,7 @@ class SelfCodingEngine:
         # when the dependency is unavailable.  No automatic initialisation is
         # attempted to keep operations fully offline.
         self.context_builder = context_builder
+        self.knowledge_service = knowledge_service
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
         if not requesting_bot:
@@ -397,6 +415,31 @@ class SelfCodingEngine:
         except Exception:
             fix_history = ""
         combined_history = "\n".join([p for p in (history, fix_history) if p])
+        insight_lines: List[str] = []
+        if self.knowledge_service:
+            try:
+                insight = recent_feedback(self.knowledge_service)
+                if insight:
+                    insight_lines.append(f"{FEEDBACK} insight: {insight}")
+            except Exception:
+                pass
+            try:
+                insight = recent_improvement_path(self.knowledge_service)
+                if insight:
+                    insight_lines.append(f"{IMPROVEMENT_PATH} insight: {insight}")
+            except Exception:
+                pass
+            try:
+                insight = recent_error_fix(self.knowledge_service)
+                if insight:
+                    insight_lines.append(f"{ERROR_FIX} insight: {insight}")
+            except Exception:
+                pass
+        if insight_lines:
+            insight_block = "\n".join(insight_lines)
+            combined_history = "\n".join(
+                [p for p in (combined_history, insight_block) if p]
+            )
         if combined_history:
             self.logger.info(
                 "patch history context",
