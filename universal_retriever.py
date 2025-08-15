@@ -4,6 +4,7 @@ import json
 import sqlite3
 import math
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
@@ -39,29 +40,36 @@ try:  # pragma: no cover - lightweight dependency
 except Exception:  # pragma: no cover - fallback when module unavailable
     MetricsDB = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - fallback when module unavailable
+    VectorMetricsDB = None  # type: ignore
+
+_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+
 try:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
 except Exception:  # pragma: no cover - fallback when tracker unavailable
     ROITracker = None  # type: ignore
 
 _RETRIEVAL_RANK = _me.Gauge(
-    "retrieval_result_rank",
+    "retrieval_rank",
     "Rank position for retrieval results",
     ["origin_db"],
 )
-_RETRIEVAL_HIT = _me.Gauge(
-    "retrieval_result_hit",
-    "Whether retrieval result included in final prompt",
+_RETRIEVAL_HITS_TOTAL = _me.Gauge(
+    "retrieval_hits_total",
+    "Total retrieval hits included in final prompts",
     ["origin_db"],
 )
-_RETRIEVAL_TOKENS = _me.Gauge(
-    "retrieval_result_tokens",
-    "Tokens contributed by retrieval result",
+_RETRIEVAL_PROMPT_TOKENS_TOTAL = _me.Gauge(
+    "retrieval_prompt_tokens_total",
+    "Total tokens from retrieval results injected into prompts",
     ["origin_db"],
 )
 _RETRIEVAL_SCORE = _me.Gauge(
-    "retrieval_result_score",
-    "Combined score for retrieval result",
+    "retrieval_similarity_score",
+    "Similarity score for retrieval result",
     ["origin_db"],
 )
 
@@ -90,22 +98,32 @@ def log_retrieval_metrics(
     rank: int,
     hit: bool,
     tokens: int,
-    score: float,
+    similarity: float,
+    *,
+    session_id: str,
 ) -> None:
-    """Log retrieval statistics to Prometheus and SQLite."""
+    """Log retrieval statistics to Prometheus and VectorMetricsDB."""
 
     try:
         _RETRIEVAL_RANK.labels(origin_db=origin_db).set(rank)
-        _RETRIEVAL_HIT.labels(origin_db=origin_db).set(1 if hit else 0)
-        _RETRIEVAL_TOKENS.labels(origin_db=origin_db).set(tokens)
-        _RETRIEVAL_SCORE.labels(origin_db=origin_db).set(score)
+        if hit:
+            _RETRIEVAL_HITS_TOTAL.labels(origin_db=origin_db).inc()
+            _RETRIEVAL_PROMPT_TOKENS_TOTAL.labels(origin_db=origin_db).inc(tokens)
+        _RETRIEVAL_SCORE.labels(origin_db=origin_db).set(similarity)
     except Exception:
         pass  # best effort metrics
 
-    if MetricsDB is not None:
+    if _VEC_METRICS is not None:
         try:
-            MetricsDB().log_retrieval_metrics(
-                origin_db, str(record_id), rank, hit, tokens, score
+            _VEC_METRICS.log_retrieval(
+                db=origin_db,
+                tokens=tokens,
+                wall_time_ms=0.0,
+                hit=hit,
+                rank=rank,
+                contribution=similarity,
+                prompt_tokens=tokens if hit else 0,
+                patch_id=session_id,
             )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to persist retrieval metrics")
@@ -728,6 +746,7 @@ class UniversalRetriever:
         """
 
         start_time = time.perf_counter()
+        session_id = uuid.uuid4().hex
         raw_results = self._retrieve_candidates(query, top_k)
         db_times = getattr(self, "_last_db_times", {})
         bias_map: Dict[str, float] = {}
@@ -846,8 +865,15 @@ class UniversalRetriever:
         for rank, bundle in enumerate(hits, start=1):
             tokens = len(json.dumps(bundle.metadata, ensure_ascii=False)) // 4
             included = rank <= top_k
+            similarity = float(bundle.metadata.get("similarity", 0.0))
             log_retrieval_metrics(
-                bundle.origin_db, bundle.record_id, rank, included, tokens, bundle.score
+                bundle.origin_db,
+                bundle.record_id,
+                rank,
+                included,
+                tokens,
+                similarity,
+                session_id=session_id,
             )
             logger.info(
                 "retrieval result rank=%d db=%s tokens=%d",
@@ -862,7 +888,8 @@ class UniversalRetriever:
                     "rank": rank,
                     "hit": included,
                     "tokens": tokens,
-                    "score": bundle.score,
+                    "similarity": similarity,
+                    "prompt_tokens": tokens if included else 0,
                 }
             )
 
