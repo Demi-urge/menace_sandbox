@@ -23,6 +23,15 @@ serialization = types.ModuleType("serialization")
 primitives = sys.modules["cryptography.hazmat.primitives"]
 primitives.serialization = serialization
 sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
+dummy_cb = types.ModuleType("context_builder")
+class _DummyCB:
+    def __init__(self, *a, **k):
+        pass
+    def build_context(self, *a, **k):
+        return "{}"
+dummy_cb.ContextBuilder = _DummyCB
+sys.modules.setdefault("menace.context_builder", dummy_cb)
+sys.modules.setdefault("context_builder", dummy_cb)
 sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///:memory:"))
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
@@ -103,3 +112,11 @@ def test_build_visual_agent_prompt_layout(monkeypatch):
     prompt = eng.build_visual_agent_prompt("a.py", "desc", "ctx")
     for line in expected.splitlines():
         assert line in prompt
+
+
+def test_build_visual_agent_prompt_retrieval_context():
+    eng = sce.SelfCodingEngine(None, None)
+    rc = "{\"bots\": []}"
+    prompt = eng.build_visual_agent_prompt("a.py", "desc", "ctx", rc)
+    assert "### Retrieval context" in prompt
+    assert '"bots": []' in prompt
