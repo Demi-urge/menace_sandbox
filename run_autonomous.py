@@ -25,6 +25,7 @@ from typing import Callable, List
 import math
 from scipy.stats import t
 from gpt_memory import GPTMemoryManager
+from memory_maintenance import MemoryMaintenance
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -1366,6 +1367,12 @@ def main(argv: List[str] | None = None) -> None:
     atexit.register(_cleanup)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda _s, _f: (_cleanup(), sys.exit(0)))
+
+    mem_maint = None
+    if GPT_MEMORY_MANAGER is not None:
+        mem_maint = MemoryMaintenance(GPT_MEMORY_MANAGER)
+        mem_maint.start()
+        cleanup_funcs.append(mem_maint.stop)
 
     meta_log_path = (
         Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
