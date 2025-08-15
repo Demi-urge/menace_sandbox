@@ -17,6 +17,10 @@ from .bot_database import BotDB
 from .resources_bot import ROIHistoryDB
 from .resource_prediction_bot import ResourcePredictionBot, ResourceMetrics
 from .resource_allocation_bot import ResourceAllocationBot, AllocationDB
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 
 class MenaceGUI(tk.Tk):
@@ -31,7 +35,9 @@ class MenaceGUI(tk.Tk):
         self.report_bot = ReportGenerationBot()
         self.chatgpt_enabled = bool(OPENAI_API_KEY)
         if self.chatgpt_enabled:
-            client = ChatGPTClient(api_key=OPENAI_API_KEY)
+            client = ChatGPTClient(
+                api_key=OPENAI_API_KEY, gpt_memory=GPT_MEMORY_MANAGER
+            )
             self.conv_bot = ConversationManagerBot(client, report_bot=self.report_bot)
         else:
             logging.warning("OPENAI_API_KEY not set. ChatGPT features disabled.")

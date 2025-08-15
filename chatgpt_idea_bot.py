@@ -434,7 +434,11 @@ def follow_up(client: ChatGPTClient, idea: Idea) -> str:
         }
     ]
     try:
-        data = client.ask(messages, tags=[FEEDBACK, INSIGHT])
+        data = client.ask(
+            messages,
+            tags=[FEEDBACK, INSIGHT],
+            memory_manager=getattr(client, "gpt_memory", None),
+        )
         idea.insight = (
             data.get("choices", [{}])[0]
             .get("message", {})
@@ -461,6 +465,7 @@ def generate_and_filter(
     response = client.ask(
         messages,
         tags=[IMPROVEMENT_PATH, INSIGHT, *tags],
+        memory_manager=getattr(client, "gpt_memory", None),
     )
     ideas = parse_ideas(response)
     novel: List[Idea] = []
