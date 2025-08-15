@@ -797,9 +797,14 @@ class UniversalRetriever:
     ) -> Union[List[ResultBundle], Tuple[List[ResultBundle], List[dict[str, Any]]]]:
         """Retrieve results with scores and reasons.
 
-        Metadata for each hit includes the raw vector distance and a mapping
-        of contextual metrics so downstream consumers can understand why a
-        particular item ranked the way it did.
+        Beyond returning :class:`ResultBundle` objects, this method records
+        rich statistics for every candidate.  Each hit stores its rank
+        position, whether it was injected into downstream prompts, the number
+        of tokens contributed, and the overall retrieval hit rate.  These
+        details are persisted to the ``retrieval_stats`` SQLite table and
+        surfaced via Prometheus metrics such as
+        ``retrieval_hits_total`` and ``retrieval_rank_histogram`` so that
+        later systems can evaluate contribution scores and win rates.
         """
 
         start_time = time.perf_counter()
@@ -943,6 +948,7 @@ class UniversalRetriever:
                     "origin_db": bundle.origin_db,
                     "record_id": bundle.record_id,
                     "rank": rank,
+                    "rank_position": rank,
                     "hit": included,
                     "tokens": tokens,
                     "tokens_injected": tokens if included else 0,
