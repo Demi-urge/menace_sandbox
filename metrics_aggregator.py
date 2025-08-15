@@ -83,12 +83,9 @@ def compute_retriever_stats(
 
     with sqlite3.connect(m_path) as conn:
         rm = pd.read_sql(
-            "SELECT origin_db, record_id, hit, ts FROM retrieval_metrics",
+            "SELECT origin_db, record_id, hit, ts FROM retrieval_stats",
             conn,
             parse_dates=["ts"],
-        )
-        emb = pd.read_sql(
-            "SELECT record_id, ts FROM embedding_metrics", conn, parse_dates=["ts"]
         )
         outcomes = pd.read_sql(
             "SELECT patch_id, origin_db, success FROM patch_outcomes", conn
@@ -117,18 +114,16 @@ def compute_retriever_stats(
         roi_total = float(grp.get("roi", pd.Series()).fillna(0).sum())
 
         stale_penalty = 0.0
-        if not rm.empty and not emb.empty:
+        if not rm.empty:
             m = rm[rm["origin_db"] == origin]
             if not m.empty:
-                df = m.merge(emb, on="record_id", suffixes=("_ret", "_emb"))
-                if not df.empty:
-                    df.sort_values(["record_id", "ts_ret"], inplace=True)
-                    df["prev_ts"] = df.groupby("record_id")["ts_ret"].shift(1)
-                    df["prev_ts"].fillna(df["ts_emb"], inplace=True)
-                    df["age_hours"] = (
-                        df["ts_ret"] - df["prev_ts"]
-                    ).dt.total_seconds() / 3600.0
-                    stale_penalty = float(df["age_hours"].mean())
+                m.sort_values(["record_id", "ts"], inplace=True)
+                m["prev_ts"] = m.groupby("record_id")["ts"].shift(1)
+                m["prev_ts"].fillna(m["ts"], inplace=True)
+                m["age_hours"] = (
+                    m["ts"] - m["prev_ts"]
+                ).dt.total_seconds() / 3600.0
+                stale_penalty = float(m["age_hours"].mean())
 
         try:
             _RETRIEVER_WIN_GAUGE.labels(origin_db=origin).set(win_rate)
@@ -229,11 +224,11 @@ class MetricsAggregator:
             compute_retriever_stats(self.db_path)
         except Exception:
             pass
-        emb_cols = ["tokens", "wall_time", "index_latency"]
-        emb = self._aggregate_table("embedding_metrics", emb_cols, period)
-        results["embedding_csv"] = self._export_csv(emb, f"embedding_{period}")
-        results["embedding_heatmap"] = self._heatmap(emb, f"embedding_{period}")
-        self._store_aggregate(emb, f"embedding_agg_{period}")
+        emb_cols = ["tokens", "wall_ms", "store_ms"]
+        emb = self._aggregate_table("embedding_stats", emb_cols, period)
+        results["embedding_csv"] = self._export_csv(emb, f"embedding_stats_{period}")
+        results["embedding_heatmap"] = self._heatmap(emb, f"embedding_stats_{period}")
+        self._store_aggregate(emb, f"embedding_stats_agg_{period}")
         if not emb.empty:
             latest = emb.iloc[-1]
             for col, val in latest.items():
@@ -245,11 +240,11 @@ class MetricsAggregator:
                 elif col.endswith("_count"):
                     metric = col[:-6]
                     _EMBED_COUNT_GAUGE.labels(metric=metric, period=period).set(float(val))
-        ret_cols = ["rank", "hit", "tokens", "score"]
-        ret = self._aggregate_table("retrieval_metrics", ret_cols, period)
-        results["retrieval_csv"] = self._export_csv(ret, f"retrieval_{period}")
-        results["retrieval_heatmap"] = self._heatmap(ret, f"retrieval_{period}")
-        self._store_aggregate(ret, f"retrieval_agg_{period}")
+        ret_cols = ["rank", "hit", "tokens_injected", "contribution", "hit_rate"]
+        ret = self._aggregate_table("retrieval_stats", ret_cols, period)
+        results["retrieval_csv"] = self._export_csv(ret, f"retrieval_stats_{period}")
+        results["retrieval_heatmap"] = self._heatmap(ret, f"retrieval_stats_{period}")
+        self._store_aggregate(ret, f"retrieval_stats_agg_{period}")
         if not ret.empty:
             latest = ret.iloc[-1]
             for col, val in latest.items():

@@ -194,6 +194,36 @@ class MetricsDB:
             """
             )
             conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS embedding_stats(
+                db_name TEXT,
+                tokens INTEGER,
+                wall_ms REAL,
+                store_ms REAL,
+                patch_id TEXT,
+                db_source TEXT,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS retrieval_stats(
+                session_id TEXT,
+                origin_db TEXT,
+                record_id TEXT,
+                rank INTEGER,
+                hit INTEGER,
+                hit_rate REAL,
+                tokens_injected INTEGER,
+                contribution REAL,
+                patch_id TEXT,
+                db_source TEXT,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
             conn.execute(
@@ -214,6 +244,32 @@ class MetricsDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_origin ON patch_outcomes(origin_db)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embedding_stats_ts ON embedding_stats(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retrieval_stats_ts ON retrieval_stats(ts)"
+            )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(embedding_stats)").fetchall()]
+            if "patch_id" not in cols:
+                conn.execute("ALTER TABLE embedding_stats ADD COLUMN patch_id TEXT")
+            if "db_source" not in cols:
+                conn.execute("ALTER TABLE embedding_stats ADD COLUMN db_source TEXT")
+            if "ts" not in cols:
+                conn.execute(
+                    "ALTER TABLE embedding_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(retrieval_stats)").fetchall()]
+            for column, stmt in {
+                "patch_id": "ALTER TABLE retrieval_stats ADD COLUMN patch_id TEXT",
+                "db_source": "ALTER TABLE retrieval_stats ADD COLUMN db_source TEXT",
+                "hit_rate": "ALTER TABLE retrieval_stats ADD COLUMN hit_rate REAL",
+                "tokens_injected": "ALTER TABLE retrieval_stats ADD COLUMN tokens_injected INTEGER",
+                "contribution": "ALTER TABLE retrieval_stats ADD COLUMN contribution REAL",
+                "ts": "ALTER TABLE retrieval_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP",
+            }.items():
+                if column not in cols:
+                    conn.execute(stmt)
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(retriever_kpi)").fetchall()
             ]
@@ -446,6 +502,77 @@ class MetricsDB:
                     1 if hit else 0,
                     int(tokens),
                     float(score),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def log_embedding_stat(
+        self,
+        db_name: str,
+        tokens: int,
+        wall_ms: float,
+        store_ms: float,
+        *,
+        patch_id: str = "",
+        db_source: str = "",
+    ) -> None:
+        """Record a single embedding statistics entry."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO embedding_stats(
+                db_name, tokens, wall_ms, store_ms, patch_id, db_source, ts
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+                (
+                    db_name,
+                    int(tokens),
+                    float(wall_ms),
+                    float(store_ms),
+                    patch_id,
+                    db_source,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def log_retrieval_stat(
+        self,
+        session_id: str,
+        origin_db: str,
+        record_id: str,
+        rank: int,
+        hit: bool,
+        hit_rate: float,
+        tokens_injected: int,
+        contribution: float,
+        *,
+        patch_id: str = "",
+        db_source: str = "",
+    ) -> None:
+        """Persist retrieval statistics compatible with aggregation."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO retrieval_stats(
+                session_id, origin_db, record_id, rank, hit, hit_rate,
+                tokens_injected, contribution, patch_id, db_source, ts
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            """,
+                (
+                    session_id,
+                    origin_db,
+                    record_id,
+                    int(rank),
+                    1 if hit else 0,
+                    float(hit_rate),
+                    int(tokens_injected),
+                    float(contribution),
+                    patch_id,
+                    db_source,
                     datetime.utcnow().isoformat(),
                 ),
             )
