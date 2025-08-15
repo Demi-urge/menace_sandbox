@@ -104,6 +104,14 @@ def configure_logging(
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
+try:  # canonical tag constant
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 DatabaseRouter = _deps.load(
     "DatabaseRouter", lambda: __import__("menace.database_router", fromlist=["DatabaseRouter"]).DatabaseRouter
@@ -586,7 +594,7 @@ class ChatGPTResearchBot:
         summary_config: SummaryConfig | None = None,
         *,
         settings: ResearchBotSettings | None = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
     ) -> None:
         if not isinstance(client, ChatGPTClient):
             raise TypeError("client must be ChatGPTClient")
@@ -598,6 +606,11 @@ class ChatGPTResearchBot:
         self.summary_config = summary_config or SummaryConfig()
         self.settings = settings or ResearchBotSettings()
         self.gpt_memory = gpt_memory
+        if getattr(self.client, "gpt_memory", None) is None:
+            try:
+                self.client.gpt_memory = self.gpt_memory
+            except Exception:
+                logger.debug("failed to attach gpt_memory to client", exc_info=True)
 
     def _truncate_history(self, text: str) -> str:
         limit = self.settings.conversation_token_limit
@@ -620,14 +633,12 @@ class ChatGPTResearchBot:
 
         def _do() -> str:
             b_prompt = self._budget_prompt(prompt)
-            messages = self.client.build_prompt_with_memory(
-                ["research_insight"], b_prompt
-            )
+            messages = self.client.build_prompt_with_memory([INSIGHT], b_prompt)
             data = self.client.ask(
                 messages,
                 validate=False,
                 memory_manager=self.gpt_memory,
-                tags=["research_insight"],
+                tags=[INSIGHT],
             )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))

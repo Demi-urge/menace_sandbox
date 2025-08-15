@@ -35,10 +35,14 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     gensim = None  # type: ignore
 
-try:  # canonical tag constant for logging
-    from .log_tags import INSIGHT
+try:  # canonical tag constants for logging
+    from .log_tags import INSIGHT, IMPROVEMENT_PATH
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from log_tags import INSIGHT, IMPROVEMENT_PATH  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 DB_PATH = Path(__file__).parent / "news.db"
 
@@ -260,8 +264,8 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
     ]
     data = client.ask(
         messages,
-        tags=[INSIGHT],
-        memory_manager=getattr(client, "gpt_memory", None),
+        tags=[INSIGHT, IMPROVEMENT_PATH],
+        memory_manager=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
     )
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 

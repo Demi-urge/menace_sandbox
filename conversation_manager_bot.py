@@ -23,6 +23,14 @@ from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
+try:  # canonical tag constant
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 try:
     import speech_recognition as sr  # type: ignore
@@ -51,7 +59,7 @@ class ConversationManagerBot:
         client: ChatGPTClient,
         stage7_bots: Optional[Dict[str, Callable[[str], str]]] = None,
         report_bot: ReportGenerationBot | None = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
     ) -> None:
         self.client = client
         self.stage7_bots = stage7_bots or {}
@@ -61,6 +69,11 @@ class ConversationManagerBot:
         self.report_bot = report_bot or ReportGenerationBot()
         self.strategy = "neutral"
         self.gpt_memory = gpt_memory
+        if getattr(self.client, "gpt_memory", None) is None:
+            try:
+                self.client.gpt_memory = self.gpt_memory
+            except Exception:
+                logger.debug("failed to attach gpt_memory to client", exc_info=True)
         self._objection_keywords = {"no", "not", "don't", "cant", "can't", "won't"}
         self.resistance_handler: Callable[[List[MessageEntry], CTAChain | None], None] | None = None
 
@@ -123,10 +136,12 @@ class ConversationManagerBot:
             data = self.client.ask(
                 [{"role": "user", "content": prompt}],
                 memory_manager=self.gpt_memory,
-                tags=["idea"],
+                tags=[INSIGHT],
             )
         except TypeError:
-            data = self.client.ask([{"role": "user", "content": prompt}])
+            data = self.client.ask(
+                [{"role": "user", "content": prompt}], tags=[INSIGHT]
+            )
         text = (
             data.get("choices", [{}])[0]
             .get("message", {})
