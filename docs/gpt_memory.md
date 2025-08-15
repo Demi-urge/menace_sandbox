@@ -65,3 +65,19 @@ migrate to the interface and remove uses of this wrapper.
 Use an in-memory database (`db_path=":memory:"`) for ephemeral runs or supply a
 preloaded `SentenceTransformer` as `embedder` to enable semantic similarity
 queries.
+
+## Automatic maintenance
+
+When `run_autonomous.py` launches it spawns a lightweight background thread that
+periodically compacts the memory store using
+`GPTMemoryManager.compact()`. Retention limits are configured with the
+`GPT_MEMORY_RETENTION` environment variable which accepts comma separated
+`tag=count` pairs, for example:
+
+```bash
+export GPT_MEMORY_RETENTION="error_fix=50,feedback=20"
+```
+
+The compaction interval defaults to one hour and can be customised via
+`GPT_MEMORY_COMPACT_INTERVAL` (seconds). If no retention rules are provided the
+maintenance thread is disabled.
