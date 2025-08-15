@@ -36,18 +36,34 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-from .vector_metrics_db import VectorMetricsDB
-from .metrics_exporter import (
-    embedding_tokens_total as _EMBED_TOKENS,
-    embedding_wall_time_seconds as _EMBED_WALL,
-    embedding_store_latency_seconds as _EMBED_STORE,
-    embedding_stale_cost_seconds as _EMBED_STALE,
-)
+try:
+    from .vector_metrics_db import VectorMetricsDB
+    from .embedding_stats_db import EmbeddingStatsDB
+    from .metrics_exporter import (
+        embedding_tokens_total as _EMBED_TOKENS,
+        embedding_wall_seconds_total as _EMBED_WALL_TOTAL,
+        embedding_store_seconds_total as _EMBED_STORE_TOTAL,
+        embedding_stale_cost_seconds as _EMBED_STALE,
+        embedding_wall_time_seconds as _EMBED_WALL_LAST,
+        embedding_store_latency_seconds as _EMBED_STORE_LAST,
+    )
+except Exception:  # pragma: no cover - fallback to absolute imports
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
+    from embedding_stats_db import EmbeddingStatsDB  # type: ignore
+    from metrics_exporter import (
+        embedding_tokens_total as _EMBED_TOKENS,
+        embedding_wall_seconds_total as _EMBED_WALL_TOTAL,
+        embedding_store_seconds_total as _EMBED_STORE_TOTAL,
+        embedding_stale_cost_seconds as _EMBED_STALE,
+        embedding_wall_time_seconds as _EMBED_WALL_LAST,
+        embedding_store_latency_seconds as _EMBED_STORE_LAST,
+    )
 
 logger = logging.getLogger(__name__)
 
 
 _VEC_METRICS = VectorMetricsDB()
+_EMBED_STATS_DB = EmbeddingStatsDB()
 
 
 def log_embedding_metrics(
@@ -56,15 +72,23 @@ def log_embedding_metrics(
     wall_time: float,
     store_latency: float,
 ) -> None:
-    """Log embedding metrics to Prometheus and VectorMetricsDB."""
+    """Log embedding metrics to Prometheus and persistent storage."""
 
     try:
         _EMBED_TOKENS.inc(tokens)
-        _EMBED_WALL.set(wall_time)
-        _EMBED_STORE.set(store_latency)
+        _EMBED_WALL_TOTAL.inc(wall_time)
+        _EMBED_STORE_TOTAL.inc(store_latency)
+        _EMBED_WALL_LAST.set(wall_time)
+        _EMBED_STORE_LAST.set(store_latency)
     except Exception:  # pragma: no cover - best effort
         pass
     try:
+        _EMBED_STATS_DB.log(
+            db_name=db_name,
+            tokens=tokens,
+            wall_ms=wall_time * 1000,
+            store_ms=store_latency * 1000,
+        )
         _VEC_METRICS.log_embedding(
             db=db_name,
             tokens=tokens,

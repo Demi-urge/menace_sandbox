@@ -20,9 +20,11 @@ import json
 import sqlite3
 import argparse
 import warnings
+from time import perf_counter
 from typing import Any, List, Sequence, Mapping, Dict, Optional
 
 from gpt_memory_interface import GPTMemoryInterface
+from embeddable_db_mixin import log_embedding_metrics
 
 try:  # Optional dependency used for event publication
     from unified_event_bus import UnifiedEventBus
@@ -136,19 +138,36 @@ class GPTMemoryManager(GPTMemoryInterface):
         timestamp = datetime.utcnow().isoformat()
         tag_str = ",".join(tags) if tags else ""
         embedding: str | None = None
+        tokens = 0
+        wall_time = 0.0
         if self.embedder is not None:
             try:
+                start = perf_counter()
+                tokenizer = getattr(self.embedder, "tokenizer", None)
+                if tokenizer:
+                    tokens = len(tokenizer.encode(prompt))
                 vec = self.embedder.encode(prompt)
+                wall_time = perf_counter() - start
                 embedding = json.dumps([float(x) for x in vec])
             except Exception:  # pragma: no cover - embedding is optional
                 embedding = None
+                tokens = 0
+                wall_time = 0.0
 
+        store_start = perf_counter()
         self.conn.execute(
             "INSERT INTO interactions(prompt, response, tags, ts, embedding)"
             " VALUES (?, ?, ?, ?, ?)",
             (prompt, response, tag_str, timestamp, embedding),
         )
         self.conn.commit()
+        store_latency = perf_counter() - store_start
+
+        if embedding is not None:
+            log_embedding_metrics(
+                self.__class__.__name__, tokens, wall_time, store_latency
+            )
+
         if self.event_bus:
             tag_list = list(tags or [])
             try:
