@@ -38,6 +38,11 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
 
 AGENT_MONITOR_INTERVAL = float(os.getenv("VISUAL_AGENT_MONITOR_INTERVAL", "30"))
+LOCAL_KNOWLEDGE_REFRESH_INTERVAL = float(
+    os.getenv("LOCAL_KNOWLEDGE_REFRESH_INTERVAL", "600")
+)
+_LKM_REFRESH_STOP = threading.Event()
+_LKM_REFRESH_THREAD: threading.Thread | None = None
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -227,6 +232,32 @@ def _free_port() -> int:
     with contextlib.closing(socket.socket()) as sock:
         sock.bind(("", 0))
         return sock.getsockname()[1]
+
+
+def _start_local_knowledge_refresh(cleanup_funcs: List[Callable[[], None]]) -> None:
+    """Start background thread to periodically refresh local knowledge."""
+
+    def _loop() -> None:
+        while not _LKM_REFRESH_STOP.wait(LOCAL_KNOWLEDGE_REFRESH_INTERVAL):
+            if LOCAL_KNOWLEDGE_MODULE is not None:
+                try:
+                    LOCAL_KNOWLEDGE_MODULE.refresh()
+                    LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+                except Exception:
+                    logger.exception("failed to refresh local knowledge module")
+
+    global _LKM_REFRESH_THREAD
+    if _LKM_REFRESH_THREAD is None:
+        _LKM_REFRESH_THREAD = threading.Thread(target=_loop, daemon=True)
+        _LKM_REFRESH_THREAD.start()
+
+        def _stop() -> None:
+            _LKM_REFRESH_STOP.set()
+            _LKM_REFRESH_THREAD and _LKM_REFRESH_THREAD.join(timeout=1.0)
+            _LKM_REFRESH_THREAD = None
+            _LKM_REFRESH_STOP.clear()
+
+        cleanup_funcs.append(_stop)
 
 
 class VisualAgentMonitor:
@@ -1390,6 +1421,7 @@ def main(argv: List[str] | None = None) -> None:
         synergy_dash_port = dash_env + 1
 
     cleanup_funcs: list[Callable[[], None]] = []
+    _start_local_knowledge_refresh(cleanup_funcs)
 
     def _cleanup() -> None:
         for func in cleanup_funcs:
