@@ -1056,7 +1056,7 @@ def _sandbox_cycle_runner(
                         history + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
                         tags=[key, ERROR_FIX, INSIGHT, IMPROVEMENT_PATH],
-                        use_memory=False,
+                        use_memory=getattr(ctx.settings, "use_memory", True),
                     )
                     suggestion = (
                         resp.get("choices", [{}])[0]
@@ -1198,7 +1198,7 @@ def _sandbox_cycle_runner(
                             hist + [{"role": "user", "content": prompt}],
                             memory_manager=gpt_mem,
                             tags=["brainstorm", INSIGHT, IMPROVEMENT_PATH],
-                            use_memory=False,
+                            use_memory=getattr(ctx.settings, "use_memory", True),
                         )
                         idea = (
                             resp.get("choices", [{}])[0]
@@ -1299,7 +1299,7 @@ def _sandbox_cycle_runner(
                         hist + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
                         tags=["brainstorm", INSIGHT, IMPROVEMENT_PATH],
-                        use_memory=False,
+                        use_memory=getattr(ctx.settings, "use_memory", True),
                     )
                     idea = (
                         resp.get("choices", [{}])[0]
