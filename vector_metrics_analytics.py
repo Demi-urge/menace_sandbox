@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-"""Analytical utilities for vector operation metrics."""
+"""Analytical utilities for vector operation metrics.
+
+This module exposes helpers to:
+
+* calculate the time-based cost of serving stale embeddings,
+* aggregate retrieval metrics by database to evaluate ROI contribution,
+* surface retrieval events for ranking or model training pipelines.
+"""
 
 from datetime import datetime, timedelta
 from typing import Any
@@ -62,9 +69,11 @@ def retrieval_training_samples(
 ) -> list[dict[str, Any]]:
     """Return retrieval events as training samples.
 
-    Each sample contains ``db``, ``rank``, ``hit``, ``contribution``,
-    ``win`` and ``regret`` fields. ``limit`` restricts the number of
-    rows returned, newest first.
+    The resulting list can be fed into ranking algorithms or other
+    model-training pipelines to improve retrieval quality. Each sample
+    contains ``db``, ``rank``, ``hit``, ``contribution``, ``win`` and
+    ``regret`` fields. ``limit`` restricts the number of rows returned,
+    newest first.
     """
 
     sql = (
