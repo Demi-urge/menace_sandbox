@@ -135,6 +135,20 @@ class MetricsDB:
             """
             )
             conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS retrieval_metrics(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_db TEXT,
+                record_id TEXT,
+                rank INTEGER,
+                hit INTEGER,
+                tokens INTEGER,
+                score REAL,
+                ts TEXT
+            )
+            """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
@@ -288,6 +302,36 @@ class MetricsDB:
             conn.execute(
                 "INSERT INTO eval_metrics(cycle, metric, value, ts) VALUES(?,?,?,?)",
                 (cycle, metric, value, datetime.utcnow().isoformat()),
+            )
+            conn.commit()
+
+    def log_retrieval_metrics(
+        self,
+        origin_db: str,
+        record_id: str,
+        rank: int,
+        hit: bool,
+        tokens: int,
+        score: float,
+    ) -> None:
+        """Persist per-result retrieval metrics."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO retrieval_metrics(
+                origin_db, record_id, rank, hit, tokens, score, ts
+            ) VALUES(?,?,?,?,?,?,?)
+            """,
+                (
+                    origin_db,
+                    record_id,
+                    int(rank),
+                    1 if hit else 0,
+                    int(tokens),
+                    float(score),
+                    datetime.utcnow().isoformat(),
+                ),
             )
             conn.commit()
 
