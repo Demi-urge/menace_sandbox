@@ -178,5 +178,6 @@ menace.env
 os.txt
 
 sessions.db
+metrics.db
 qemu_images/
 !qemu_images/.gitkeep
