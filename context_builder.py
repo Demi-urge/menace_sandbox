@@ -18,10 +18,22 @@ from typing import Any, Dict, List, Optional, Tuple
 from universal_retriever import ResultBundle, UniversalRetriever
 
 # Database wrappers ---------------------------------------------------------
-from error_bot import ErrorDB
-from bot_database import BotDB
-from task_handoff_bot import WorkflowDB
-from code_database import CodeDB
+try:
+    from .error_bot import ErrorDB  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    ErrorDB = object  # type: ignore
+try:
+    from .bot_database import BotDB  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    BotDB = object  # type: ignore
+try:
+    from .task_handoff_bot import WorkflowDB  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    WorkflowDB = object  # type: ignore
+try:
+    from .code_database import CodeDB  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    CodeDB = object  # type: ignore
 
 try:  # Optional discrepancy database
     from failure_learning_system import DiscrepancyDB
