@@ -6,6 +6,7 @@ import logging
 import sqlite3
 from pathlib import Path
 from typing import List
+import json
 
 from flask import Flask, jsonify
 
@@ -46,6 +47,9 @@ class MetricsDashboard:
             "/plots/prediction_stats.png",
             "plot_prediction_stats",
             self.plot_prediction_stats,
+        )
+        self.app.add_url_rule(
+            "/vector_heatmap", "vector_heatmap", self.vector_heatmap
         )
 
     # ------------------------------------------------------------------
@@ -120,6 +124,18 @@ class MetricsDashboard:
             pass
 
         return jsonify(metrics), 200
+
+    # ------------------------------------------------------------------
+    def vector_heatmap(self) -> tuple[str, int]:
+        """Return aggregated vector metrics suitable for heatmaps."""
+        path = Path("vector_metrics_heatmap.json")
+        if not path.exists():
+            return jsonify([]), 200
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            data = []
+        return jsonify(data), 200
 
     # ------------------------------------------------------------------
     def _load_tracker(self) -> "ROITracker":

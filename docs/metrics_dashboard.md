@@ -50,6 +50,18 @@ real-time dashboards. The median latency is exported via
 so you can correlate metric jumps with particular patches, workflows or
 trending topics.
 
+## Vector Metrics Heatmaps
+
+`vector_metrics_aggregator.py` can summarise entries in
+`VectorMetricsDB` and write `vector_metrics_heatmap.json`. The dashboard
+serves this file at `/vector_heatmap`, providing ready‑made data for
+heatmap visualisations.
+
+```bash
+python -m menace.vector_metrics_aggregator --period hourly
+curl http://localhost:8002/vector_heatmap
+```
+
 ## Synergy Metrics
 
 When synergy runs are enabled additional metrics such as
