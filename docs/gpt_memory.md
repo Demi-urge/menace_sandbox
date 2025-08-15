@@ -4,6 +4,19 @@
 store prompts and responses with tags, optionally embed each prompt for semantic
 search and compact old records into concise summaries.
 
+## Tag taxonomy
+
+To keep memory queries consistent across modules, GPT interactions use a small
+set of canonical tags:
+
+- `feedback` – captures the outcome or evaluation of an action.
+- `improvement_path` – records planned follow-up work or patch identifiers.
+- `error_fix` – marks code changes or suggestions intended to address faults.
+- `insight` – stores ideas, predictions, or general observations.
+
+These tags are defined in `log_tags.py` and mirrored by `gpt_memory.STANDARD_TAGS`
+so new modules can reference the same taxonomy when logging.
+
 ## Unified interface
 
 All memory backends now implement `GPTMemoryInterface` providing four core

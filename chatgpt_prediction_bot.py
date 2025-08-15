@@ -43,6 +43,10 @@ from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
 from .chatgpt_idea_bot import ChatGPTClient
+try:  # canonical tag constants
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer, util as st_util
@@ -797,10 +801,8 @@ class ChatGPTPredictionBot:
                     f"Evaluate enhancement '{idea}' with rationale '{rationale}'."
                     " Provide brief feedback."
                 )
-                messages = client.build_prompt_with_memory(
-                    ["profit_prediction"], prompt
-                )
-                client.ask(messages, tags=["profit_prediction"])
+                messages = client.build_prompt_with_memory([INSIGHT], prompt)
+                client.ask(messages, tags=[INSIGHT])
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(description=idea, reason=rationale, value=value)

@@ -38,6 +38,18 @@ except Exception:  # pragma: no cover - tests stub this module
         """Fallback summariser used when menace_memory_manager is unavailable."""
         return text[: max(1, int(len(text) * ratio))]
 
+# --------------------------------------------------------------------------- tags
+try:  # Canonical tag constants shared across modules
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - flat layout fallback
+    FEEDBACK = "feedback"
+    IMPROVEMENT_PATH = "improvement_path"
+    ERROR_FIX = "error_fix"
+    INSIGHT = "insight"
+
+# Standardised tag set for GPT interaction logging
+STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
+
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
     """Return the cosine similarity between two vectors."""
@@ -325,7 +337,8 @@ class GPTMemory(GPTMemoryInterface):
     tests can exercise tag filtering behaviour.
     """
 
-    ALLOWED_TAGS = {"improvement", "bugfix", "insight"}
+    # Legacy wrapper uses the shared tag taxonomy for backwards compatibility
+    ALLOWED_TAGS = STANDARD_TAGS
 
     def __init__(self, manager: MenaceMemoryManager | None = None) -> None:
         if MenaceMemoryManager is None and manager is None:
