@@ -318,6 +318,7 @@ class SelfCodingEngine:
         *,
         path: Path | None = None,
         metadata: Dict[str, Any] | None = None,
+        memory_context: GPTMemoryInterface | None = None,
     ) -> str:
         """Create helper text by asking an LLM using snippet context and retrieval context."""
         snippets = self.suggest_snippets(description, limit=3)
@@ -451,10 +452,30 @@ class SelfCodingEngine:
             )
             prompt += "\n\n### Patch history\n" + combined_history
 
+        if memory_context is None:
+            try:
+                tagged = self.gpt_memory.search_context("", tags=[ERROR_FIX])
+
+                class _TaggedMemory:
+                    def __init__(self, base: GPTMemoryInterface, entries: list[Any]) -> None:
+                        self.base = base
+                        self.entries = entries
+
+                    def search_context(self, query: str, limit: int = 5):  # pragma: no cover - tiny wrapper
+                        extra: list[Any]
+                        try:
+                            extra = self.base.search_context(query, limit=limit, tags=[ERROR_FIX])
+                        except Exception:
+                            extra = []
+                        return (self.entries + extra)[:limit]
+
+                memory_context = _TaggedMemory(self.gpt_memory, tagged)
+            except Exception:
+                memory_context = self.gpt_memory
         try:
             data = self.llm_client.ask(
                 [{"role": "user", "content": prompt}],
-                memory_manager=self.gpt_memory,
+                memory_manager=memory_context,
                 tags=[ERROR_FIX],
                 use_memory=True,
             )
@@ -485,10 +506,19 @@ class SelfCodingEngine:
             return text + ("\n" if not text.endswith("\n") else "")
         return _fallback()
 
-    def patch_file(self, path: Path, description: str, *, context_meta: Dict[str, Any] | None = None) -> str:
+    def patch_file(
+        self,
+        path: Path,
+        description: str,
+        *,
+        context_meta: Dict[str, Any] | None = None,
+        memory_context: GPTMemoryInterface | None = None,
+    ) -> str:
         """Append a generated helper to the given file and return its code."""
         try:
-            code = self.generate_helper(description, path=path, metadata=context_meta)
+            code = self.generate_helper(
+                description, path=path, metadata=context_meta, memory_context=memory_context
+            )
         except TypeError:
             code = self.generate_helper(description)
         self.logger.info(
@@ -581,6 +611,7 @@ class SelfCodingEngine:
         trigger: str | None = None,
         requesting_bot: str | None = None,
         context_meta: Dict[str, Any] | None = None,
+        memory_context: GPTMemoryInterface | None = None,
     ) -> tuple[int | None, bool, float]:
         """Patch file, run CI and benchmark a workflow.
 
@@ -634,7 +665,9 @@ class SelfCodingEngine:
                 self.logger.error("complexity query failed: %s", exc)
                 before_complexity = 0.0
         original = path.read_text(encoding="utf-8")
-        generated_code = self.patch_file(path, description, context_meta=context_meta)
+        generated_code = self.patch_file(
+            path, description, context_meta=context_meta, memory_context=memory_context
+        )
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)

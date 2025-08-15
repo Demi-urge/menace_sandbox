@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import json
 from typing import Tuple, Iterable, Dict, Any
+from gpt_memory_interface import GPTMemoryInterface
 
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
@@ -39,11 +40,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - missing dependency
     UniversalRetriever = None  # type: ignore
 
+try:  # pragma: no cover - tag constants
+    from .log_tags import ERROR_FIX
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import ERROR_FIX  # type: ignore
 
 def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
     context_builder: ContextBuilder | None = None,
+    memory_context: GPTMemoryInterface | None = None,
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -86,6 +92,28 @@ def generate_patch(
             logger.error("self coding engine unavailable: %s", exc)
             return None
 
+    if memory_context is None and getattr(engine, "gpt_memory", None) is not None:
+        try:
+            base_mem = engine.gpt_memory  # type: ignore[attr-defined]
+            tagged = base_mem.search_context("", tags=[ERROR_FIX])
+
+            class _TaggedMemory:
+                def __init__(self, base: GPTMemoryInterface, entries: list[Any]) -> None:
+                    self.base = base
+                    self.entries = entries
+
+                def search_context(self, query: str, limit: int = 5):  # pragma: no cover - tiny wrapper
+                    extra: list[Any]
+                    try:
+                        extra = self.base.search_context(query, limit=limit, tags=[ERROR_FIX])
+                    except Exception:
+                        extra = []
+                    return (self.entries + extra)[:limit]
+
+            memory_context = _TaggedMemory(base_mem, tagged)
+        except Exception:
+            memory_context = getattr(engine, "gpt_memory", None)
+
     try:
         patch_id: int | None
         with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
@@ -100,9 +128,12 @@ def generate_patch(
                     reason="preemptive_fix",
                     trigger="quick_fix_engine",
                     context_meta=context_meta,
+                    memory_context=memory_context,
                 )
             except AttributeError:
-                engine.patch_file(path, "preemptive_fix", context_meta=context_meta)
+                engine.patch_file(
+                    path, "preemptive_fix", context_meta=context_meta, memory_context=memory_context
+                )
                 patch_id = None
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)

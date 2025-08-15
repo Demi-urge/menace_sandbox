@@ -57,6 +57,7 @@ import math
 import shutil
 import ast
 import yaml
+from typing import Any
 from pathlib import Path
 from datetime import datetime
 from dynamic_module_mapper import build_module_map, discover_module_groups
@@ -1045,7 +1046,32 @@ class SelfImprovementEngine:
         prompt = f"{action}:{module}"
         if history:
             prompt += "\n" + history
-        patch_id = generate_patch(module, self.self_coding_engine)
+        memory_context: GPTMemoryInterface | None = None
+        try:
+            base_mem = self.gpt_memory
+            tagged = base_mem.search_context("", tags=[IMPROVEMENT_PATH, ERROR_FIX])
+
+            class _TaggedMemory:
+                def __init__(self, base: GPTMemoryInterface, entries: list[Any]) -> None:
+                    self.base = base
+                    self.entries = entries
+
+                def search_context(self, query: str, limit: int = 5):  # pragma: no cover - tiny wrapper
+                    extra: list[Any]
+                    try:
+                        extra = self.base.search_context(
+                            query, limit=limit, tags=[IMPROVEMENT_PATH, ERROR_FIX]
+                        )
+                    except Exception:
+                        extra = []
+                    return (self.entries + extra)[:limit]
+
+            memory_context = _TaggedMemory(base_mem, tagged)
+        except Exception:
+            memory_context = self.gpt_memory
+        patch_id = generate_patch(
+            module, self.self_coding_engine, memory_context=memory_context
+        )
         try:
             log_with_tags(
                 self.gpt_memory, prompt, f"patch_id={patch_id}", tags=[IMPROVEMENT_PATH]
