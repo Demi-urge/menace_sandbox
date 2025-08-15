@@ -103,7 +103,7 @@ def configure_logging(
 
 
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory
+from gpt_memory_interface import GPTMemoryInterface
 
 DatabaseRouter = _deps.load(
     "DatabaseRouter", lambda: __import__("menace.database_router", fromlist=["DatabaseRouter"]).DatabaseRouter
@@ -586,7 +586,7 @@ class ChatGPTResearchBot:
         summary_config: SummaryConfig | None = None,
         *,
         settings: ResearchBotSettings | None = None,
-        gpt_memory: GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
     ) -> None:
         if not isinstance(client, ChatGPTClient):
             raise TypeError("client must be ChatGPTClient")

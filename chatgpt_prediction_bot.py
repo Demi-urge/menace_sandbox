@@ -43,7 +43,8 @@ from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory, GPTMemoryManager
+from .gpt_memory import GPTMemoryManager
+from gpt_memory_interface import GPTMemoryInterface
 try:  # canonical tag constants
     from .log_tags import INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -636,7 +637,7 @@ class ChatGPTPredictionBot:
         model_path: Path | str | None = None,
         threshold: float | None = None,
         client: ChatGPTClient | None = None,
-        gpt_memory: GPTMemory | GPTMemoryManager | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.

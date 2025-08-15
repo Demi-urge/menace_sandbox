@@ -76,7 +76,8 @@ from .error_cluster_predictor import ErrorClusterPredictor
 from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
-from .gpt_memory import GPTMemoryManager, GPTMemory
+from .gpt_memory import GPTMemoryManager
+from gpt_memory_interface import GPTMemoryInterface
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -613,7 +614,7 @@ class SelfImprovementEngine:
         error_predictor: ErrorClusterPredictor | None = None,
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
-        gpt_memory: GPTMemoryManager | GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
         **kwargs: Any,
     ) -> None:
         if gpt_memory is None:

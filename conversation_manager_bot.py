@@ -22,7 +22,7 @@ from neurosales import (
 from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory
+from gpt_memory_interface import GPTMemoryInterface
 
 try:
     import speech_recognition as sr  # type: ignore
@@ -51,7 +51,7 @@ class ConversationManagerBot:
         client: ChatGPTClient,
         stage7_bots: Optional[Dict[str, Callable[[str], str]]] = None,
         report_bot: ReportGenerationBot | None = None,
-        gpt_memory: GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
     ) -> None:
         self.client = client
         self.stage7_bots = stage7_bots or {}

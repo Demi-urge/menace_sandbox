@@ -15,10 +15,7 @@ from typing import Any, Iterable, List, Optional, Iterator
 from .override_policy import OverridePolicyManager
 
 from .chatgpt_idea_bot import ChatGPTClient
-try:  # pragma: no cover - optional dependency
-    from .gpt_memory import GPTMemory
-except Exception:  # pragma: no cover - fallback for tests
-    GPTMemory = object  # type: ignore
+from gpt_memory_interface import GPTMemoryInterface
 from . import RAISE_ERRORS
 from menace.embeddable_db_mixin import EmbeddableDBMixin
 
@@ -755,7 +752,7 @@ class ChatGPTEnhancementBot:
         client: ChatGPTClient,
         db: Optional[EnhancementDB] = None,
         override_manager: Optional[OverridePolicyManager] = None,
-        gpt_memory: GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
     ) -> None:
         self.override_manager = override_manager
         self.client = client

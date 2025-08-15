@@ -1,47 +1,8 @@
 import sys
 import types
 
-# Stub menace_memory_manager so gpt_memory can import it without heavy deps.
-stub_mm = types.ModuleType("menace_memory_manager")
-
-class _Entry:
-    def __init__(self, key, data, version=1, tags="", ts="now"):
-        self.key = key
-        self.data = data
-        self.version = version
-        self.tags = tags
-        self.ts = ts
-
-class _StubManager:
-    def __init__(self):
-        self.items = []
-
-    def store(self, key, data, tags="", bot_id=None, info_id=None):
-        self.items.append(_Entry(key, data, tags=tags))
-        return len(self.items)
-
-    def search(self, text, limit=20):
-        res = []
-        for e in self.items:
-            if text in e.data or text in e.key:
-                res.append(e)
-        return res[:limit]
-
-    def summarise_memory(self, key, limit=20, ratio=0.2, store=True, condense=False):
-        entries = [e for e in self.items if e.key == key]
-        if not entries:
-            return ""
-        text = "\n".join(e.data for e in entries[-limit:])
-        summary = stub_mm._summarise_text(text, ratio)
-        if store:
-            self.store(f"{key}:summary", summary, tags="summary")
-        if condense:
-            self.items = [e for e in self.items if e.key != key]
-        return summary
-
-stub_mm.MenaceMemoryManager = _StubManager
-stub_mm._summarise_text = lambda text, ratio=0.2: text[: max(1, int(len(text) * ratio))]
-sys.modules.setdefault("menace_memory_manager", stub_mm)
+import types
+import sys
 
 # Stub sentence_transformers to keep import lightweight.
 stub_st = types.ModuleType("sentence_transformers")
@@ -51,13 +12,13 @@ class _DummyModel:
 stub_st.SentenceTransformer = _DummyModel
 sys.modules.setdefault("sentence_transformers", stub_st)
 
-from gpt_memory import GPTMemory, GPTMemoryManager
+from gpt_memory import GPTMemoryManager
 
 
 def test_store_and_retrieve_with_tags():
-    mem = GPTMemory()
-    mem.store("fix login bug", "patched", ["error_fix"])
-    mem.store("add feature", "improve UX", ["improvement_path"])
+    mem = GPTMemoryManager(db_path=":memory:")
+    mem.log_interaction("fix login bug", "patched", ["error_fix"])
+    mem.log_interaction("add feature", "improve UX", ["improvement_path"])
 
     bug = mem.retrieve("fix", tags=["error_fix"])
     assert len(bug) == 1
@@ -70,22 +31,27 @@ def test_store_and_retrieve_with_tags():
     all_entries = mem.retrieve("add")
     assert len(all_entries) == 1
     assert all_entries[0].tags == ["improvement_path"]
+    mem.close()
 
 
 def test_summarize_and_prune_removes_old_entries():
-    mem = GPTMemory()
+    mem = GPTMemoryManager(db_path=":memory:")
     for i in range(3):
-        mem.log_interaction(f"p{i}", f"r{i}")
+        mem.log_interaction(f"p{i}", f"r{i}", tags=["general"])
 
-    summary = mem.summarize_and_prune("general")
-    assert summary
+    mem.compact({"general": 1})
 
-    # Original entries should be pruned
-    assert mem.retrieve("p0") == []
+    # Oldest entries should be pruned; newest remains
+    entries = [e for e in mem.retrieve("p0", tags=["general"]) if "summary" not in e.tags]
+    assert entries == []
+    remaining = [e for e in mem.retrieve("p2", tags=["general"]) if "summary" not in e.tags]
+    assert len(remaining) == 1
 
     # Summary entry should be stored
-    summaries = [e for e in mem.manager.search("summary") if "summary" in e.key]
+    summaries = [e for e in mem.search_context("", tags=["general"]) if "summary" in e.tags]
     assert len(summaries) == 1
+    assert summaries[0].response
+    mem.close()
 
 
 def test_manager_get_similar_entries_text():
