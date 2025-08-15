@@ -331,6 +331,15 @@ embedding_stale_cost_seconds = Gauge(
 retrieval_hits_total = Gauge(
     "retrieval_hits_total", "Number of retrieval hits",
 )
+retrieval_tokens_injected_total = Gauge(
+    "retrieval_tokens_injected_total",
+    "Total tokens injected into downstream prompts",
+)
+retrieval_rank_histogram = Gauge(
+    "retrieval_rank_histogram",
+    "Histogram of retrieval ranks",
+    ["rank"],
+)
 retrieval_win_rate = Gauge(
     "retrieval_win_rate", "Win rate of retrieval operations",
 )
