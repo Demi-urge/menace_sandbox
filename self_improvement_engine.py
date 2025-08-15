@@ -1030,7 +1030,6 @@ class SelfImprovementEngine:
                 self.gpt_memory,
                 f"{action}:{module}",
                 "success" if success else "failure",
-                tags=[FEEDBACK],
             )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
@@ -1047,9 +1046,7 @@ class SelfImprovementEngine:
             prompt += "\n" + history
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
-            log_with_tags(
-                self.gpt_memory, prompt, f"patch_id={patch_id}", tags=[IMPROVEMENT_PATH]
-            )
+            log_with_tags(self.gpt_memory, prompt, f"patch_id={patch_id}")
         except Exception:
             self.logger.exception(
                 "memory logging failed", extra=log_record(module=module)
