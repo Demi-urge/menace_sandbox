@@ -41,6 +41,13 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+try:
+    from vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - optional dependency
+    VectorMetricsDB = None  # type: ignore
+
+_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+
 logger = get_logger(__name__)
 
 from analytics import adaptive_roi_model
@@ -1111,6 +1118,22 @@ def _sandbox_cycle_runner(
                     continue
                 if not suggestion:
                     continue
+                session_id = ""
+                vectors: list[tuple[str, str]] = []
+                retriever = getattr(ctx, "retriever", None)
+                if retriever is not None:
+                    try:
+                        hits = retriever.retrieve(mod, top_k=1)
+                        session_id = getattr(hits, "session_id", "")
+                        vectors = getattr(hits, "vectors", [])
+                    except Exception:
+                        logger.debug("retriever lookup failed", exc_info=True)
+                context_meta: Dict[str, Any] | None = None
+                if session_id:
+                    context_meta = {
+                        "retrieval_session_id": session_id,
+                        "retrieval_vectors": vectors,
+                    }
                 try:
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(
@@ -1118,6 +1141,7 @@ def _sandbox_cycle_runner(
                         suggestion,
                         reason=suggestion,
                         trigger="sandbox_runner",
+                        context_meta=context_meta,
                     )
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
@@ -1148,17 +1172,42 @@ def _sandbox_cycle_runner(
                 try:
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
+                    roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo)
                     tracker.update(roi, new_roi, [mapped], resources)
                     ctx.meta_log.log_cycle(idx, new_roi, [mapped], "gpt4")
-                    if new_roi - roi <= tracker.diminishing() and patch_id:
+                    if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
                             extra={"module": mod, "patch_id": patch_id},
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
+                        if _VEC_METRICS is not None and session_id and vectors:
+                            try:
+                                _VEC_METRICS.update_outcome(
+                                    session_id,
+                                    vectors,
+                                    contribution=roi_delta,
+                                    patch_id=str(patch_id),
+                                    win=False,
+                                    regret=True,
+                                )
+                            except Exception:
+                                logger.exception("failed to log vector outcome")
                     else:
+                        if _VEC_METRICS is not None and session_id and vectors and patch_id:
+                            try:
+                                _VEC_METRICS.update_outcome(
+                                    session_id,
+                                    vectors,
+                                    contribution=roi_delta,
+                                    patch_id=str(patch_id),
+                                    win=True,
+                                    regret=False,
+                                )
+                            except Exception:
+                                logger.exception("failed to log vector outcome")
                         roi = new_roi
                 except Exception:
                     logger.exception("patch from gpt failed for %s", mod)
@@ -1400,6 +1449,22 @@ def _sandbox_cycle_runner(
                     continue
                 module_name = mod.split(":", 1)[0]
                 suggestion = _choose_suggestion(ctx, module_name)
+                session_id = ""
+                vectors: list[tuple[str, str]] = []
+                retriever = getattr(ctx, "retriever", None)
+                if retriever is not None:
+                    try:
+                        hits = retriever.retrieve(mod, top_k=1)
+                        session_id = getattr(hits, "session_id", "")
+                        vectors = getattr(hits, "vectors", [])
+                    except Exception:
+                        logger.debug("retriever lookup failed", exc_info=True)
+                context_meta: Dict[str, Any] | None = None
+                if session_id:
+                    context_meta = {
+                        "retrieval_session_id": session_id,
+                        "retrieval_vectors": vectors,
+                    }
                 try:
                     target_path = ctx.repo / module_name
                     patch_id, _reverted, _ = ctx.engine.apply_patch(
@@ -1407,6 +1472,7 @@ def _sandbox_cycle_runner(
                         suggestion,
                         reason=suggestion,
                         trigger="sandbox_runner",
+                        context_meta=context_meta,
                     )
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
@@ -1420,17 +1486,42 @@ def _sandbox_cycle_runner(
                 try:
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
+                    roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo)
                     tracker.update(roi, new_roi, [mapped], resources)
                     ctx.meta_log.log_cycle(idx, new_roi, [mapped], "offline")
-                    if new_roi - roi <= tracker.diminishing() and patch_id:
+                    if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
                             extra={"module": mod, "patch_id": patch_id},
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
+                        if _VEC_METRICS is not None and session_id and vectors:
+                            try:
+                                _VEC_METRICS.update_outcome(
+                                    session_id,
+                                    vectors,
+                                    contribution=roi_delta,
+                                    patch_id=str(patch_id),
+                                    win=False,
+                                    regret=True,
+                                )
+                            except Exception:
+                                logger.exception("failed to log vector outcome")
                     else:
+                        if _VEC_METRICS is not None and session_id and vectors and patch_id:
+                            try:
+                                _VEC_METRICS.update_outcome(
+                                    session_id,
+                                    vectors,
+                                    contribution=roi_delta,
+                                    patch_id=str(patch_id),
+                                    win=True,
+                                    regret=False,
+                                )
+                            except Exception:
+                                logger.exception("failed to log vector outcome")
                         roi = new_roi
                 except Exception:
                     logger.exception("offline suggestion failed for %s", mod)
