@@ -136,6 +136,17 @@ class MetricsDB:
             )
             conn.execute(
                 """
+            CREATE TABLE IF NOT EXISTS embedding_staleness(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_db TEXT,
+                record_id TEXT,
+                stale_seconds REAL,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
+                """
             CREATE TABLE IF NOT EXISTS retrieval_metrics(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 origin_db TEXT,
@@ -186,6 +197,9 @@ class MetricsDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_embedding_ts ON embedding_metrics(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embedding_stale_ts ON embedding_staleness(ts)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_retrieval_ts ON retrieval_metrics(ts)"
@@ -365,6 +379,27 @@ class MetricsDB:
                     float(wall_time),
                     float(index_latency),
                     source,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def log_embedding_staleness(
+        self, origin_db: str, record_id: str, stale_seconds: float
+    ) -> None:
+        """Record staleness cost for an accessed embedding."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO embedding_staleness(
+                origin_db, record_id, stale_seconds, ts
+            ) VALUES(?,?,?,?)
+            """,
+                (
+                    origin_db,
+                    record_id,
+                    float(stale_seconds),
                     datetime.utcnow().isoformat(),
                 ),
             )

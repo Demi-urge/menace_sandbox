@@ -298,6 +298,9 @@ embedding_wall_time_seconds = Gauge(
 vector_store_latency_seconds = Gauge(
     "vector_store_latency_seconds", "Latency of vector store operations",
 )
+embedding_stale_cost_seconds = Gauge(
+    "embedding_stale_cost_seconds", "Age in seconds of retrieved embedding", ["origin_db"],
+)
 retrieval_hits_total = Gauge(
     "retrieval_hits_total", "Number of retrieval hits",
 )

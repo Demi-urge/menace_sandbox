@@ -41,6 +41,7 @@ from .metrics_exporter import (
     embedding_tokens_total as _EMBED_TOKENS,
     embedding_wall_time_seconds as _EMBED_WALL,
     vector_store_latency_seconds as _EMBED_INDEX,
+    embedding_stale_cost_seconds as _EMBED_STALE,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,7 @@ class EmbeddableDBMixin:
 
         meta = self._metadata.get(str(record_id))
         if meta:
+            self._record_staleness(str(record_id), meta.get("created_at"))
             return list(meta["vector"])
         return None
 
@@ -323,6 +325,26 @@ class EmbeddableDBMixin:
         if updated:
             self.save_index()
 
+    # internal ---------------------------------------------------------
+    def _record_staleness(self, rid: str, created_at: str | None) -> None:
+        """Log how stale an embedding is when accessed."""
+        if not created_at:
+            return
+        try:
+            age = (datetime.utcnow() - datetime.fromisoformat(created_at)).total_seconds()
+        except Exception:
+            return
+        origin = getattr(self, "origin_db", self.__class__.__name__)
+        if _EMBED_STALE:
+            try:
+                _EMBED_STALE.labels(origin_db=origin).set(age)
+            except ValueError:  # pragma: no cover - labels not configured
+                _EMBED_STALE.set(age)
+        try:
+            MetricsDB().log_embedding_staleness(origin, rid, age)
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to persist embedding staleness")
+
     def search_by_vector(
         self, vector: Sequence[float], top_k: int = 10
     ) -> List[Tuple[Any, float]]:
@@ -336,11 +358,15 @@ class EmbeddableDBMixin:
             ids, dists = self._index.get_nns_by_vector(
                 list(vector), top_k, include_distances=True
             )
-            return [
-                (self._id_map[i], float(d))
-                for i, d in zip(ids, dists)
-                if i < len(self._id_map)
-            ]
+            results: List[Tuple[Any, float]] = []
+            for i, d in zip(ids, dists):
+                if i < len(self._id_map):
+                    rid = self._id_map[i]
+                    results.append((rid, float(d)))
+                    meta = self._metadata.get(rid)
+                    if meta:
+                        self._record_staleness(rid, meta.get("created_at"))
+            return results
         elif self.backend == "faiss":
             if not faiss or not np:
                 return []
@@ -349,7 +375,11 @@ class EmbeddableDBMixin:
             results: List[Tuple[Any, float]] = []
             for idx, dist in zip(ids[0], dists[0]):
                 if 0 <= idx < len(self._id_map):
-                    results.append((self._id_map[idx], float(dist)))
+                    rid = self._id_map[idx]
+                    results.append((rid, float(dist)))
+                    meta = self._metadata.get(rid)
+                    if meta:
+                        self._record_staleness(rid, meta.get("created_at"))
             return results
         return []
 
