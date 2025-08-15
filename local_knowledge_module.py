@@ -9,7 +9,7 @@ context.
 """
 
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Any
 
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer
@@ -18,6 +18,10 @@ except Exception:  # pragma: no cover - keep import lightweight
 
 from gpt_memory import GPTMemoryManager
 from gpt_knowledge_service import GPTKnowledgeService
+try:  # pragma: no cover - allow flat imports
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX  # type: ignore
 
 
 class LocalKnowledgeModule:
@@ -66,4 +70,71 @@ class LocalKnowledgeModule:
         """Regenerate stored insights from recent interactions."""
 
         self.knowledge.update_insights()
+
+    # ---------------------------------------------------------------- context
+    def _fmt(self, entries: Sequence[Any], title: str) -> str:
+        parts: list[str] = []
+        for e in entries:
+            prompt = getattr(e, "prompt", "")
+            response = getattr(e, "response", "")
+            text = response or prompt
+            if text:
+                parts.append(f"- {text}")
+        if not parts:
+            return ""
+        body = "\n".join(parts)
+        return f"### {title}\n{body}"
+
+    def build_context(self, key: str, limit: int = 5) -> str:
+        """Return formatted context for ``key`` combining raw entries and insights."""
+
+        sections: list[str] = []
+        try:
+            fb = self.memory.search_context(
+                key, tags=[FEEDBACK], limit=limit, use_embeddings=True
+            )
+            ctx = self._fmt(fb, "Feedback")
+            if ctx:
+                sections.append(ctx)
+        except Exception:
+            pass
+        try:
+            fixes = self.memory.search_context(
+                key, tags=[ERROR_FIX], limit=limit, use_embeddings=True
+            )
+            ctx = self._fmt(fixes, "Error fixes")
+            if ctx:
+                sections.append(ctx)
+        except Exception:
+            pass
+        try:
+            improv = self.memory.search_context(
+                key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=True
+            )
+            ctx = self._fmt(improv, "Improvement paths")
+            if ctx:
+                sections.append(ctx)
+        except Exception:
+            pass
+
+        try:
+            insight = self.knowledge.get_recent_insights(FEEDBACK)
+            if insight:
+                sections.append(f"### Feedback insight\n- {insight}")
+        except Exception:
+            pass
+        try:
+            insight = self.knowledge.get_recent_insights(ERROR_FIX)
+            if insight:
+                sections.append(f"### Error fix insight\n- {insight}")
+        except Exception:
+            pass
+        try:
+            insight = self.knowledge.get_recent_insights(IMPROVEMENT_PATH)
+            if insight:
+                sections.append(f"### Improvement path insight\n- {insight}")
+        except Exception:
+            pass
+
+        return "\n\n".join(sections)
 __all__ = ["LocalKnowledgeModule"]

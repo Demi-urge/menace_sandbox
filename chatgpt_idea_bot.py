@@ -48,6 +48,10 @@ try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .local_knowledge_module import LocalKnowledgeModule
+except Exception:  # pragma: no cover - fallback for flat layout
+    from local_knowledge_module import LocalKnowledgeModule  # type: ignore
 try:  # contextual history retrieval
     from .knowledge_retriever import (
         get_feedback,
@@ -60,6 +64,16 @@ except Exception:  # pragma: no cover - fallback for flat layout
         get_improvement_paths,
         get_error_fixes,
     )
+try:
+    from .run_autonomous import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
+except Exception:
+    try:
+        from .sandbox_runner import LOCAL_KNOWLEDGE_MODULE as _LOCAL_KNOWLEDGE
+    except Exception:  # pragma: no cover - fallback
+        _LOCAL_KNOWLEDGE = None
+if _LOCAL_KNOWLEDGE is None:
+    _LOCAL_KNOWLEDGE = LocalKnowledgeModule(manager=GPT_MEMORY_MANAGER)
+LOCAL_KNOWLEDGE_MODULE = _LOCAL_KNOWLEDGE
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
@@ -496,7 +510,7 @@ def follow_up(client: ChatGPTClient, idea: Idea) -> str:
             client,
             "chatgpt_idea_bot.follow_up",
             prompt,
-            memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+            memory=LOCAL_KNOWLEDGE_MODULE,
             tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         idea.insight = (
@@ -532,7 +546,7 @@ def generate_and_filter(
         client,
         "chatgpt_idea_bot.generate_and_filter",
         prompt,
-        memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+        memory=LOCAL_KNOWLEDGE_MODULE,
         tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     ideas = parse_ideas(response)
