@@ -91,6 +91,10 @@ try:  # helper for standardised GPT memory logging
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
+    from .memory_aware_gpt_client import ask_with_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # pragma: no cover - allow flat imports
     from .knowledge_retriever import (
         get_feedback,
         get_error_fixes,
@@ -1042,14 +1046,38 @@ class SelfImprovementEngine:
                 "patch memory context",
                 extra=log_record(module=module, history=history, tags=[INSIGHT]),
             )
-        prompt = f"{action}:{module}"
-        if history:
-            prompt += "\n" + history
+        client = getattr(self.self_coding_engine, "llm_client", None)
+        if client is not None:
+            try:
+                data = ask_with_memory(
+                    client,
+                    f"self_improvement_engine.{action}:{module}",
+                    f"{action}:{module}",
+                    memory=self.gpt_memory,
+                    tags=[ERROR_FIX, IMPROVEMENT_PATH],
+                )
+                text = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+                if text:
+                    self.logger.info(
+                        "gpt_suggestion",
+                        extra=log_record(
+                            module=module, suggestion=text, tags=[ERROR_FIX]
+                        ),
+                    )
+            except Exception:
+                self.logger.exception(
+                    "gpt suggestion failed", extra=log_record(module=module)
+                )
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
             log_with_tags(
                 self.gpt_memory,
-                prompt,
+                f"{action}:{module}",
                 f"patch_id={patch_id}",
                 tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
