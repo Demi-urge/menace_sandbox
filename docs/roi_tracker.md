@@ -20,6 +20,16 @@ whether to stop further iterations. Pass the ``weights`` argument to
 and applied to the most recent deltas, giving greater influence to later
 entries when desired.
 
+## Retrieval Source ROI
+
+`ROITracker.update()` accepts a `retrieval_metrics` list describing
+retrieval outcomes from `UniversalRetriever`. Each entry should include an
+`origin_db` label, a `hit` flag, and optional `tokens` count. When ROI deltas
+are recorded with these metrics, `roi_by_origin_db()` returns the average ROI
+contribution per database. `export_origin_db_roi_csv(path)` writes a CSV report
+and `retrieval_bias()` exposes weights that ranking modules can use to favour
+high-ROI databases.
+
 ## Resource-aware Forecasts
 
 `ROITracker` can incorporate CPU, memory, disk and time usage when predicting the next delta. Pass a `ROIHistoryDB` instance to the constructor and provide the `resources` argument to `update()`. These values act as exogenous variables for ARIMA or as additional regression features.

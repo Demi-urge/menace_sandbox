@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence
 
 import argparse
+import csv
 
 import json
 import os
@@ -16,6 +17,29 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
 from .logging_utils import get_logger, log_record
+try:  # pragma: no cover - optional dependency
+    from . import metrics_exporter as _me
+except Exception:  # pragma: no cover - best effort
+    _me = None
+
+if _me is not None:  # pragma: no cover - metrics optional
+    try:
+        _ORIGIN_DB_ROI = _me.Gauge(
+            "retrieval_origin_db_roi",
+            "Average ROI contribution per origin database",
+            ["origin_db"],
+        )
+    except Exception:  # pragma: no cover - gauge already registered
+        try:
+            from prometheus_client import REGISTRY  # type: ignore
+
+            _ORIGIN_DB_ROI = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
+                "retrieval_origin_db_roi"
+            )
+        except Exception:
+            _ORIGIN_DB_ROI = None
+else:  # pragma: no cover - metrics optional
+    _ORIGIN_DB_ROI = None
 
 logger = get_logger(__name__)
 
@@ -78,6 +102,7 @@ class ROITracker:
         self._poly = PolynomialFeatures(degree=2)
         self._model = LinearRegression()
         self.module_deltas: Dict[str, List[float]] = {}
+        self.origin_db_deltas: Dict[str, List[float]] = {}
         self.cluster_map: Dict[str, int] = dict(cluster_map or {})
         self.cluster_deltas: Dict[int, List[float]] = {}
         self.metrics_history: Dict[str, List[float]] = {
@@ -297,6 +322,8 @@ class ROITracker:
             self.module_deltas.setdefault(name, []).extend(deltas)
         for name, deltas in getattr(other, "cluster_deltas", {}).items():
             self.cluster_deltas.setdefault(name, []).extend(deltas)
+        for db, deltas in getattr(other, "origin_db_deltas", {}).items():
+            self.origin_db_deltas.setdefault(db, []).extend(deltas)
 
     # ------------------------------------------------------------------
     def diminishing(self) -> float:
@@ -904,6 +931,7 @@ class ROITracker:
         metrics: Optional[Dict[str, float]] = None,
         category: str | None = None,
         confidence: float | None = None,
+        retrieval_metrics: Sequence[Dict[str, Any]] | None = None,
     ) -> Tuple[Optional[int], List[float], bool]:
         """Record ROI delta and evaluate stopping criteria.
 
@@ -957,6 +985,24 @@ class ROITracker:
                     self.module_deltas.setdefault(key, []).append(adjusted)
                     if cid is not None:
                         self.cluster_deltas.setdefault(cid, []).append(adjusted)
+            if retrieval_metrics:
+                hits = [m for m in retrieval_metrics if m.get("hit")]
+                if hits:
+                    tot = (
+                        sum(float(m.get("tokens", 0.0)) for m in hits)
+                        or float(len(hits))
+                    )
+                    for m in hits:
+                        origin = str(m.get("origin_db", "unknown"))
+                        tokens = float(m.get("tokens", 0.0))
+                        w = tokens / tot if tot else 0.0
+                        contrib = adjusted * (w or 1.0 / len(hits))
+                        self.origin_db_deltas.setdefault(origin, []).append(contrib)
+                        if _ORIGIN_DB_ROI is not None:
+                            avg = sum(self.origin_db_deltas[origin]) / len(
+                                self.origin_db_deltas[origin]
+                            )
+                            _ORIGIN_DB_ROI.labels(origin_db=origin).set(avg)
             if resources:
                 try:
                     self.resource_metrics.append(
@@ -1673,6 +1719,7 @@ class ROITracker:
                 "roi_history": self.roi_history,
                 "confidence_history": self.confidence_history,
                 "module_deltas": self.module_deltas,
+                "origin_db_deltas": self.origin_db_deltas,
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
                 "category_history": self.category_history,
@@ -1720,6 +1767,20 @@ class ROITracker:
                 conn.executemany(
                     "INSERT INTO module_deltas (module, delta) VALUES (?, ?)",
                     rows,
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS db_deltas (origin_db TEXT, delta REAL)"
+            )
+            conn.execute("DELETE FROM db_deltas")
+            db_rows = [
+                (d, float(v))
+                for d, vals in self.origin_db_deltas.items()
+                for v in vals
+            ]
+            if db_rows:
+                conn.executemany(
+                    "INSERT INTO db_deltas (origin_db, delta) VALUES (?, ?)",
+                    db_rows,
                 )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS predictions (pred REAL, actual REAL)"
@@ -1834,6 +1895,7 @@ class ROITracker:
                     self.roi_history = [float(x) for x in data]
                     self.confidence_history = [0.0] * len(self.roi_history)
                     self.module_deltas = {}
+                    self.origin_db_deltas = {}
                     self.predicted_roi = []
                     self.actual_roi = []
                     self.category_history = []
@@ -1858,6 +1920,10 @@ class ROITracker:
                     self.module_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("module_deltas", {}).items()
+                    }
+                    self.origin_db_deltas = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("origin_db_deltas", {}).items()
                     }
                     self.predicted_roi = [
                         float(x) for x in data.get("predicted_roi", [])
@@ -1971,6 +2037,12 @@ class ROITracker:
                 mod_rows = conn.execute(
                     "SELECT module, delta FROM module_deltas ORDER BY rowid"
                 ).fetchall()
+                try:
+                    db_rows = conn.execute(
+                        "SELECT origin_db, delta FROM db_deltas ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    db_rows = []
                 pred_rows = conn.execute(
                     "SELECT pred, actual FROM predictions ORDER BY rowid"
                 ).fetchall()
@@ -2037,6 +2109,9 @@ class ROITracker:
         self.module_deltas = {}
         for mod, delta in mod_rows:
             self.module_deltas.setdefault(str(mod), []).append(float(delta))
+        self.origin_db_deltas = {}
+        for db, delta in db_rows:
+            self.origin_db_deltas.setdefault(str(db), []).append(float(delta))
         self.predicted_roi = [float(r[0]) for r in pred_rows]
         self.actual_roi = [float(r[1]) for r in pred_rows]
         self.category_history = [str(r[0]) for r in cat_rows]
@@ -2142,6 +2217,43 @@ class ROITracker:
         """Return clusters sorted by cumulative ROI contribution."""
         totals = {cid: sum(v) for cid, v in self.cluster_deltas.items()}
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+    # ------------------------------------------------------------------
+    def roi_by_origin_db(self) -> Dict[str, float]:
+        """Return average ROI contribution per ``origin_db``."""
+
+        return {
+            db: (sum(vals) / len(vals))
+            for db, vals in self.origin_db_deltas.items()
+            if vals
+        }
+
+    # ------------------------------------------------------------------
+    def export_origin_db_roi_csv(self, path: str) -> None:
+        """Write ROI contribution per ``origin_db`` to ``path`` as CSV."""
+
+        rows = self.roi_by_origin_db()
+        with open(path, "w", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["origin_db", "avg_roi", "count"])
+            for db, avg in sorted(rows.items()):
+                writer.writerow([db, avg, len(self.origin_db_deltas[db])])
+
+    # ------------------------------------------------------------------
+    def retrieval_bias(self) -> Dict[str, float]:
+        """Return multiplicative bias weights for databases based on ROI."""
+
+        averages = self.roi_by_origin_db()
+        if not averages:
+            return {}
+        max_abs = max(abs(v) for v in averages.values()) or 1.0
+        bias: Dict[str, float] = {}
+        for db, val in averages.items():
+            weight = 1.0 + val / max_abs
+            if weight < 0.1:
+                weight = 0.1
+            bias[db] = weight
+        return bias
 
 
 def cli(argv: List[str] | None = None) -> None:
