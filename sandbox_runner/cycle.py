@@ -492,7 +492,13 @@ def _sandbox_cycle_runner(
     """
 
     global SANDBOX_ENV_PRESETS
-    from sandbox_runner import build_section_prompt, GPT_SECTION_PROMPT_MAX_LENGTH
+    from sandbox_runner import (
+        build_section_prompt,
+        GPT_SECTION_PROMPT_MAX_LENGTH,
+        GPT_KNOWLEDGE_SERVICE,
+    )
+
+    knowledge_service = GPT_KNOWLEDGE_SERVICE
 
     env_val = os.getenv("SANDBOX_ENV_PRESETS")
     if env_val:
@@ -1004,8 +1010,15 @@ def _sandbox_cycle_runner(
                 if section and mod != section:
                     continue
                 try:
+                    key = mod.split(":", 1)[0]
+                    insight = ""
+                    if knowledge_service:
+                        try:
+                            insight = knowledge_service.get_recent_insights(key)
+                        except Exception:
+                            insight = ""
                     text = snippet or ""
-                    path = ctx.repo / mod.split(":", 1)[0]
+                    path = ctx.repo / key
                     if path.exists():
                         text = path.read_text(encoding="utf-8")[:500]
                     prompt = build_section_prompt(
@@ -1015,7 +1028,8 @@ def _sandbox_cycle_runner(
                         prior=brainstorm_summary if brainstorm_summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
-                    key = mod.split(":", 1)[0]
+                    if insight:
+                        prompt = f"{insight}\n\n{prompt}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     if gpt_mem:
                         try:
@@ -1041,7 +1055,7 @@ def _sandbox_cycle_runner(
                     resp = ctx.gpt_client.ask(
                         history + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
-                        tags=[ERROR_FIX, INSIGHT, IMPROVEMENT_PATH],
+                        tags=[key, ERROR_FIX, INSIGHT, IMPROVEMENT_PATH],
                         use_memory=False,
                     )
                     suggestion = (
@@ -1057,11 +1071,11 @@ def _sandbox_cycle_runner(
                             try:
                                 if hasattr(gpt_mem, "log_interaction"):
                                     gpt_mem.log_interaction(
-                                        prompt, suggestion, tags=[INSIGHT]
+                                        prompt, suggestion, tags=[key, INSIGHT]
                                     )
                                 elif hasattr(gpt_mem, "store"):
                                     gpt_mem.store(
-                                        prompt, suggestion, [INSIGHT]
+                                        prompt, suggestion, [key, INSIGHT]
                                     )
                             except Exception:
                                 logger.exception("memory logging failed for %s", mod)
@@ -1089,17 +1103,17 @@ def _sandbox_cycle_runner(
                             result_text = "success" if patch_id else "failure"
                             if hasattr(gpt_mem, "log_interaction"):
                                 gpt_mem.log_interaction(
-                                    f"{prompt}:patch_id", str(patch_id), tags=[IMPROVEMENT_PATH]
+                                    f"{prompt}:patch_id", str(patch_id), tags=[key, IMPROVEMENT_PATH]
                                 )
                                 gpt_mem.log_interaction(
-                                    f"{prompt}:result", result_text, tags=[FEEDBACK]
+                                    f"{prompt}:result", result_text, tags=[key, FEEDBACK]
                                 )
                             elif hasattr(gpt_mem, "store"):
                                 gpt_mem.store(
-                                    f"{prompt}:patch_id", str(patch_id), [IMPROVEMENT_PATH]
+                                    f"{prompt}:patch_id", str(patch_id), [key, IMPROVEMENT_PATH]
                                 )
                                 gpt_mem.store(
-                                    f"{prompt}:result", result_text, [FEEDBACK]
+                                    f"{prompt}:result", result_text, [key, FEEDBACK]
                                 )
                         except Exception:
                             logger.exception("memory logging failed for %s", mod)
@@ -1141,6 +1155,14 @@ def _sandbox_cycle_runner(
                             f"{k}:{metrics.get(k)}" for k in sorted(metrics)
                         )
                         prior = "; ".join(ctx.brainstorm_history[-3:])
+                        insight = ""
+                        if knowledge_service:
+                            try:
+                                insight = knowledge_service.get_recent_insights(
+                                    "brainstorm"
+                                )
+                            except Exception:
+                                insight = ""
                         prompt = build_section_prompt(
                             "overall",
                             tracker,
@@ -1148,6 +1170,8 @@ def _sandbox_cycle_runner(
                             prior=prior if prior else None,
                             max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                         )
+                        if insight:
+                            prompt = f"{insight}\n\n{prompt}"
                         gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                         if gpt_mem:
                             try:
@@ -1155,7 +1179,7 @@ def _sandbox_cycle_runner(
                                 if hasattr(gpt_mem, "search_context"):
                                     entries = gpt_mem.search_context(
                                         "brainstorm",
-                                        tags=["improvement_brainstorm"],
+                                        tags=["brainstorm", INSIGHT],
                                         limit=5,
                                         use_embeddings=False,
                                     )
@@ -1173,7 +1197,7 @@ def _sandbox_cycle_runner(
                         resp = ctx.gpt_client.ask(
                             hist + [{"role": "user", "content": prompt}],
                             memory_manager=gpt_mem,
-                            tags=[INSIGHT, IMPROVEMENT_PATH],
+                            tags=["brainstorm", INSIGHT, IMPROVEMENT_PATH],
                             use_memory=False,
                         )
                         idea = (
@@ -1191,11 +1215,11 @@ def _sandbox_cycle_runner(
                                 try:
                                     if hasattr(gpt_mem, "log_interaction"):
                                         gpt_mem.log_interaction(
-                                            prompt, idea, tags=["improvement_brainstorm"]
+                                            prompt, idea, tags=["brainstorm", INSIGHT]
                                         )
                                     elif hasattr(gpt_mem, "store"):
                                         gpt_mem.store(
-                                            prompt, idea, ["improvement_brainstorm"]
+                                            prompt, idea, ["brainstorm", INSIGHT]
                                         )
                                 except Exception:
                                     logger.exception("memory logging failed during stall")
@@ -1234,6 +1258,12 @@ def _sandbox_cycle_runner(
             if brainstorm_now:
                 try:
                     summary = "; ".join(ctx.brainstorm_history[-3:])
+                    insight = ""
+                    if knowledge_service:
+                        try:
+                            insight = knowledge_service.get_recent_insights("brainstorm")
+                        except Exception:
+                            insight = ""
                     prompt = build_section_prompt(
                         "overall",
                         tracker,
@@ -1241,6 +1271,8 @@ def _sandbox_cycle_runner(
                         prior=summary if summary else None,
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
+                    if insight:
+                        prompt = f"{insight}\n\n{prompt}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
                     if gpt_mem:
                         try:
@@ -1248,7 +1280,7 @@ def _sandbox_cycle_runner(
                             if hasattr(gpt_mem, "search_context"):
                                 entries = gpt_mem.search_context(
                                     "brainstorm",
-                                    tags=["improvement_brainstorm"],
+                                    tags=["brainstorm", INSIGHT],
                                     limit=5,
                                     use_embeddings=False,
                                 )
@@ -1266,7 +1298,7 @@ def _sandbox_cycle_runner(
                     resp = ctx.gpt_client.ask(
                         hist + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
-                        tags=[INSIGHT, IMPROVEMENT_PATH],
+                        tags=["brainstorm", INSIGHT, IMPROVEMENT_PATH],
                         use_memory=False,
                     )
                     idea = (
@@ -1283,11 +1315,11 @@ def _sandbox_cycle_runner(
                             try:
                                 if hasattr(gpt_mem, "log_interaction"):
                                     gpt_mem.log_interaction(
-                                        prompt, idea, tags=["improvement_brainstorm"]
+                                        prompt, idea, tags=["brainstorm", INSIGHT]
                                     )
                                 elif hasattr(gpt_mem, "store"):
                                     gpt_mem.store(
-                                        prompt, idea, ["improvement_brainstorm"]
+                                        prompt, idea, ["brainstorm", INSIGHT]
                                     )
                             except Exception:
                                 logger.exception("memory logging failed")
