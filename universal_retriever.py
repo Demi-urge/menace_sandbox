@@ -190,6 +190,7 @@ class UniversalRetriever:
         error_db: Any | None = None,
         enhancement_db: Any | None = None,
         information_db: Any | None = None,
+        code_db: Any | None = None,
         knowledge_graph: Any | None = None,
     ) -> None:
         self.bot_db = bot_db
@@ -197,6 +198,7 @@ class UniversalRetriever:
         self.error_db = error_db
         self.enhancement_db = enhancement_db
         self.information_db = information_db
+        self.code_db = code_db
         self.graph = knowledge_graph
         # lazy-instantiated DeploymentDB connection for bot deployment stats
         self._deploy_db: Any | None = None
@@ -214,7 +216,7 @@ class UniversalRetriever:
         self.register_db("enhancement", enhancement_db, ("id",))
         self.register_db("information", information_db, ("id", "info_id", "item_id"))
 
-        if self._encoder is None:
+        if self._encoder is None and code_db is None:
             raise ValueError("At least one database instance is required")
 
     def register_db(
@@ -290,17 +292,38 @@ class UniversalRetriever:
     ) -> List[tuple[str, Any, Any]]:
         """Return raw candidates and their sources for ``query``."""
 
-        vector = self._to_vector(query)
         candidates: List[tuple[str, Any, Any]] = []
+        vector: List[float] | None = None
 
-        for source, db in self._dbs.items():
+        if self._dbs:
+            vector = self._to_vector(query)
+            for source, db in self._dbs.items():
+                try:
+                    matches = db.search_by_vector(vector, top_k)
+                except Exception:  # pragma: no cover - defensive
+                    continue
+                for m in matches:
+                    rec_id = self._extract_id(m, self._id_fields[source])
+                    candidates.append((source, rec_id, m))
+
+        if self.code_db:
             try:
-                matches = db.search_by_vector(vector, top_k)
+                if hasattr(self.code_db, "search_by_vector"):
+                    if vector is None:
+                        vector = self._to_vector(query)
+                    matches = self.code_db.search_by_vector(vector, top_k)
+                elif isinstance(query, str):
+                    matches = self.code_db.search(query)[:top_k]
+                    for m in matches:
+                        if isinstance(m, dict) and "_distance" not in m:
+                            m["_distance"] = 0.0
+                else:
+                    matches = []
             except Exception:  # pragma: no cover - defensive
-                continue
+                matches = []
             for m in matches:
-                rec_id = self._extract_id(m, self._id_fields[source])
-                candidates.append((source, rec_id, m))
+                rec_id = self._extract_id(m, ("id", "cid"))
+                candidates.append(("code", rec_id, m))
 
         def _dist(entry: tuple[str, Any, Any]) -> float:
             item = entry[2]
@@ -547,6 +570,14 @@ class UniversalRetriever:
                 metrics["deploy"] = freq
                 lf = math.log1p(freq)
                 score = lf / (1.0 + lf)
+        elif kind == "code":
+            comp = float(
+                getattr(record, "complexity", getattr(record, "complexity_score", 0.0))
+                or 0.0
+            )
+            metrics["complexity"] = comp
+            lc = math.log1p(max(comp, 0.0))
+            score = lc / (1.0 + lc)
         return score, metrics
 
     def retrieve(
@@ -592,6 +623,7 @@ class UniversalRetriever:
             "frequency": "frequent error recurrence",
             "usage": "heavy usage",
             "deploy": "widely deployed bot",
+            "complexity": "high code complexity",
         }
 
         hits: List[ResultBundle] = []
