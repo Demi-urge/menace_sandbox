@@ -32,6 +32,13 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     CollectorRegistry = Gauge = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:
+    VectorMetricsDB = None  # type: ignore
+
+_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +189,7 @@ class MetricsDB:
                 vector_id TEXT,
                 success INTEGER,
                 reverted INTEGER DEFAULT 0,
+                label TEXT,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -214,6 +222,8 @@ class MetricsDB:
                 session_id TEXT,
                 origin_db TEXT,
                 record_id TEXT,
+                vector_id TEXT,
+                db_type TEXT,
                 rank INTEGER,
                 hit INTEGER,
                 hit_rate REAL,
@@ -221,6 +231,12 @@ class MetricsDB:
                 contribution REAL,
                 patch_id TEXT,
                 db_source TEXT,
+                age REAL,
+                similarity REAL,
+                frequency REAL,
+                roi_delta REAL,
+                usage REAL,
+                prior_hits INTEGER,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -268,6 +284,14 @@ class MetricsDB:
                 "hit_rate": "ALTER TABLE retrieval_stats ADD COLUMN hit_rate REAL",
                 "tokens_injected": "ALTER TABLE retrieval_stats ADD COLUMN tokens_injected INTEGER",
                 "contribution": "ALTER TABLE retrieval_stats ADD COLUMN contribution REAL",
+                "vector_id": "ALTER TABLE retrieval_stats ADD COLUMN vector_id TEXT",
+                "db_type": "ALTER TABLE retrieval_stats ADD COLUMN db_type TEXT",
+                "age": "ALTER TABLE retrieval_stats ADD COLUMN age REAL",
+                "similarity": "ALTER TABLE retrieval_stats ADD COLUMN similarity REAL",
+                "frequency": "ALTER TABLE retrieval_stats ADD COLUMN frequency REAL",
+                "roi_delta": "ALTER TABLE retrieval_stats ADD COLUMN roi_delta REAL",
+                "usage": "ALTER TABLE retrieval_stats ADD COLUMN usage REAL",
+                "prior_hits": "ALTER TABLE retrieval_stats ADD COLUMN prior_hits INTEGER",
                 "ts": "ALTER TABLE retrieval_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP",
             }.items():
                 if column not in cols:
@@ -310,7 +334,11 @@ class MetricsDB:
                 )
             if "reverted" not in cols:
                 conn.execute(
-                    "ALTER TABLE patch_outcomes ADD COLUMN reverted INTEGER DEFAULT 0"
+                    "ALTER TABLE patch_outcomes ADD COLUMN reverted INTEGER DEFAULT 0",
+                )
+            if "label" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_outcomes ADD COLUMN label TEXT",
                 )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
             if "revenue" not in cols:
@@ -659,13 +687,14 @@ class MetricsDB:
         """Record the outcome of a patch deployment and associated vectors."""
 
         entries = list(vectors or [])
+        label = "positive" if success and not reverted else "negative"
         with self._connect() as conn:
             if entries:
                 for origin_db, vec_id in entries:
                     conn.execute(
                         """
-                    INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, ts)
-                    VALUES(?,?,?,?,?,?,?)
+                    INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, label, ts)
+                    VALUES(?,?,?,?,?,?,?,?)
                     """,
                         (
                             patch_id,
@@ -674,6 +703,7 @@ class MetricsDB:
                             vec_id,
                             1 if success else 0,
                             1 if reverted else 0,
+                            label,
                             datetime.utcnow().isoformat(),
                         ),
                     )
@@ -690,8 +720,8 @@ class MetricsDB:
             else:
                 conn.execute(
                     """
-                INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, ts)
-                VALUES(?,?,?,?,?,?,?)
+                INSERT INTO patch_outcomes(patch_id, session_id, origin_db, vector_id, success, reverted, label, ts)
+                VALUES(?,?,?,?,?,?,?,?)
                 """,
                     (
                         patch_id,
@@ -700,10 +730,23 @@ class MetricsDB:
                         None,
                         1 if success else 0,
                         1 if reverted else 0,
+                        label,
                         datetime.utcnow().isoformat(),
                     ),
                 )
             conn.commit()
+        if _VEC_METRICS is not None and entries:
+            try:
+                _VEC_METRICS.update_outcome(
+                    session_id,
+                    list(entries),
+                    contribution=0.0,
+                    patch_id=patch_id,
+                    win=bool(success and not reverted),
+                    regret=bool((not success) or reverted),
+                )
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to update vector metrics outcome")
 
     def fetch_eval(self, cycle: str | None = None) -> List[tuple]:
         query = "SELECT cycle, metric, value, ts FROM eval_metrics"
