@@ -22,9 +22,9 @@ from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
 from .gpt_memory import GPTMemoryManager, GPTMemory
 try:  # canonical tag constants
-    from .log_tags import FEEDBACK, ERROR_FIX, INSIGHT
+    from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import FEEDBACK, ERROR_FIX, INSIGHT  # type: ignore
+    from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT  # type: ignore
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -153,7 +153,7 @@ class SelfCodingEngine:
         summary = f"status={status},roi_delta={roi_delta:.4f}"
         try:
             self.gpt_memory.log_interaction(
-                f"{path}:{description}", code.strip(), tags=[ERROR_FIX]
+                f"{path}:{description}", code.strip(), tags=[ERROR_FIX, IMPROVEMENT_PATH]
             )
             self.gpt_memory.log_interaction(
                 f"{path}:{description}:result", summary, tags=[FEEDBACK]
@@ -405,7 +405,9 @@ class SelfCodingEngine:
         )
         if text:
             try:
-                self.gpt_memory.log_interaction(prompt, text, tags=[ERROR_FIX])
+                self.gpt_memory.log_interaction(
+                    prompt, text, tags=[ERROR_FIX, IMPROVEMENT_PATH]
+                )
             except Exception:
                 self.logger.exception("memory logging failed")
             self.logger.info(

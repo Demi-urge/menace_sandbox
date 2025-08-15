@@ -32,6 +32,10 @@ except Exception:  # pragma: no cover - optional dependency
 
 from . import database_manager, RAISE_ERRORS
 from .database_management_bot import DatabaseManagementBot
+try:  # canonical tag constants
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .gpt_memory import GPTMemory
@@ -95,7 +99,7 @@ class ChatGPTClient:
 
         def _log(request: List[Dict[str, str]], response: str) -> None:
             prompt_str = request[-1].get("content", "") if request else ""
-            log_tags = list(tags or ["idea", "enhancement"])
+            log_tags = list(tags or [INSIGHT])
             try:
                 if memory:
                     if hasattr(memory, "log_interaction"):

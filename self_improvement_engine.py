@@ -1221,7 +1221,7 @@ class SelfImprovementEngine:
                                 self.gpt_memory.log_interaction(
                                     f"scenario_patch:{name}",
                                     "suggested",
-                                    tags=[IMPROVEMENT_PATH],
+                                    tags=[IMPROVEMENT_PATH, ERROR_FIX],
                                 )
                             except Exception:
                                 self.logger.exception(
@@ -3998,7 +3998,7 @@ class SelfImprovementEngine:
                         self.gpt_memory.log_interaction(
                             f"preventative_patch:{mod}",
                             "suggested",
-                            tags=[IMPROVEMENT_PATH],
+                            tags=[IMPROVEMENT_PATH, ERROR_FIX],
                         )
                     except Exception:
                         self.logger.exception(
@@ -4120,7 +4120,7 @@ class SelfImprovementEngine:
                             self.gpt_memory.log_interaction(
                                 f"high_risk_patch:{mod}",
                                 "suggested",
-                                tags=[IMPROVEMENT_PATH],
+                                tags=[IMPROVEMENT_PATH, ERROR_FIX],
                             )
                         except Exception:
                             self.logger.exception(

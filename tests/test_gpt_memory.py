@@ -56,20 +56,20 @@ from gpt_memory import GPTMemory, GPTMemoryManager
 
 def test_store_and_retrieve_with_tags():
     mem = GPTMemory()
-    mem.store("fix login bug", "patched", ["bugfix"])
-    mem.store("add feature", "improve UX", ["improvement"])
+    mem.store("fix login bug", "patched", ["error_fix"])
+    mem.store("add feature", "improve UX", ["improvement_path"])
 
-    bug = mem.retrieve("fix", tags=["bugfix"])
+    bug = mem.retrieve("fix", tags=["error_fix"])
     assert len(bug) == 1
     assert bug[0].prompt == "fix login bug"
-    assert bug[0].tags == ["bugfix"]
+    assert bug[0].tags == ["error_fix"]
 
-    none = mem.retrieve("fix", tags=["improvement"])
+    none = mem.retrieve("fix", tags=["improvement_path"])
     assert none == []
 
     all_entries = mem.retrieve("add")
     assert len(all_entries) == 1
-    assert all_entries[0].tags == ["improvement"]
+    assert all_entries[0].tags == ["improvement_path"]
 
 
 def test_summarize_and_prune_removes_old_entries():
@@ -103,9 +103,9 @@ def test_manager_get_similar_entries_text():
 def test_compaction_prunes_old_entries():
     mgr = GPTMemoryManager(db_path=":memory:")
     for i in range(5):
-        mgr.log_interaction(f"p{i}", f"r{i}", tags=["bugfix"])
+        mgr.log_interaction(f"p{i}", f"r{i}", tags=["error_fix"])
 
-    removed = mgr.compact({"bugfix": 2})
+    removed = mgr.compact({"error_fix": 2})
     assert removed == 3
 
     cur = mgr.conn.execute("SELECT prompt, tags FROM interactions ORDER BY id")
