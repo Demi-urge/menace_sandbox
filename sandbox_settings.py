@@ -96,6 +96,11 @@ class SandboxSettings(BaseSettings):
     auto_dashboard_port: int | None = Field(None, env="AUTO_DASHBOARD_PORT")
     visual_agent_autostart: bool = Field(True, env="VISUAL_AGENT_AUTOSTART")
     visual_agent_urls: str = Field("http://127.0.0.1:8001", env="VISUAL_AGENT_URLS")
+    use_memory: bool = Field(
+        True,
+        env="SANDBOX_USE_MEMORY",
+        description="Enable GPT memory integration during sandbox runs.",
+    )
     roi_threshold: float | None = Field(None, env="ROI_THRESHOLD")
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
