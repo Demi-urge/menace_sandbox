@@ -691,17 +691,89 @@ class SelfCodingEngine:
                 },
             )
             self._store_patch_memory(path, description, generated_code, False, roi_delta)
+            if self.patch_db and context_meta:
+                try:
+                    vectors: List[Tuple[str, str]] = []
+                    session_id = context_meta.get("retrieval_session_id", "")
+                    raw_vecs = context_meta.get("retrieval_vectors") or []
+                    for item in raw_vecs:
+                        if isinstance(item, dict):
+                            origin = item.get("origin_db") or item.get("origin")
+                            vid = item.get("vector_id") or item.get("id")
+                        else:
+                            origin, vid = item
+                        if origin is not None and vid is not None:
+                            vectors.append((str(origin), str(vid)))
+                    if session_id and vectors and patch_id is not None:
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            vectors,
+                            patch_id=patch_id,
+                            contribution=0.0,
+                            win=False,
+                            regret=True,
+                        )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
+            if self.patch_db and context_meta:
+                try:
+                    vectors: List[Tuple[str, str]] = []
+                    session_id = context_meta.get("retrieval_session_id", "")
+                    raw_vecs = context_meta.get("retrieval_vectors") or []
+                    for item in raw_vecs:
+                        if isinstance(item, dict):
+                            origin = item.get("origin_db") or item.get("origin")
+                            vid = item.get("vector_id") or item.get("id")
+                        else:
+                            origin, vid = item
+                        if origin is not None and vid is not None:
+                            vectors.append((str(origin), str(vid)))
+                    if session_id and vectors:
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            vectors,
+                            patch_id=0,
+                            contribution=0.0,
+                            win=False,
+                            regret=True,
+                        )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
+            if self.patch_db and context_meta:
+                try:
+                    vectors: List[Tuple[str, str]] = []
+                    session_id = context_meta.get("retrieval_session_id", "")
+                    raw_vecs = context_meta.get("retrieval_vectors") or []
+                    for item in raw_vecs:
+                        if isinstance(item, dict):
+                            origin = item.get("origin_db") or item.get("origin")
+                            vid = item.get("vector_id") or item.get("id")
+                        else:
+                            origin, vid = item
+                        if origin is not None and vid is not None:
+                            vectors.append((str(origin), str(vid)))
+                    if session_id and vectors:
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            vectors,
+                            patch_id=0,
+                            contribution=0.0,
+                            win=False,
+                            regret=True,
+                        )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
             return None, False, 0.0
         if self.pipeline:
             try:

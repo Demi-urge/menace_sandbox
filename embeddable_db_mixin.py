@@ -71,6 +71,8 @@ def log_embedding_metrics(
     tokens: int,
     wall_time: float,
     store_latency: float,
+    *,
+    vector_id: str = "",
 ) -> None:
     """Log embedding metrics to Prometheus and persistent storage."""
 
@@ -94,6 +96,7 @@ def log_embedding_metrics(
             tokens=tokens,
             wall_time_ms=wall_time * 1000,
             store_time_ms=store_latency * 1000,
+            vector_id=vector_id,
         )
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to persist embedding metrics")
@@ -290,6 +293,7 @@ class EmbeddableDBMixin:
             tokens,
             wall_time,
             index_latency,
+            vector_id=str(record_id),
         )
 
     def get_vector(self, record_id: Any) -> List[float] | None:

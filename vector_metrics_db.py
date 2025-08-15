@@ -39,6 +39,9 @@ class VectorMetric:
     patch_id: str = ""
     session_id: str = ""
     vector_id: str = ""
+    similarity: float | None = None
+    context_score: float | None = None
+    age: float | None = None
     win: bool | None = None
     regret: bool | None = None
     ts: str = datetime.utcnow().isoformat()
@@ -64,6 +67,9 @@ class VectorMetricsDB:
                 patch_id TEXT,
                 session_id TEXT,
                 vector_id TEXT,
+                similarity REAL,
+                context_score REAL,
+                age REAL,
                 win INTEGER,
                 regret INTEGER,
                 ts TEXT
@@ -81,6 +87,9 @@ class VectorMetricsDB:
         migrations = {
             "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
             "vector_id": "ALTER TABLE vector_metrics ADD COLUMN vector_id TEXT",
+            "similarity": "ALTER TABLE vector_metrics ADD COLUMN similarity REAL",
+            "context_score": "ALTER TABLE vector_metrics ADD COLUMN context_score REAL",
+            "age": "ALTER TABLE vector_metrics ADD COLUMN age REAL",
             "win": "ALTER TABLE vector_metrics ADD COLUMN win INTEGER",
             "regret": "ALTER TABLE vector_metrics ADD COLUMN regret INTEGER",
         }
@@ -96,8 +105,8 @@ class VectorMetricsDB:
             INSERT INTO vector_metrics(
                 event_type, db, tokens, wall_time_ms, store_time_ms, hit,
                 rank, contribution, prompt_tokens, patch_id, session_id,
-                vector_id, win, regret, ts
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                vector_id, similarity, context_score, age, win, regret, ts
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 rec.event_type,
@@ -112,6 +121,9 @@ class VectorMetricsDB:
                 rec.patch_id,
                 rec.session_id,
                 rec.vector_id,
+                rec.similarity,
+                rec.context_score,
+                rec.age,
                 None if rec.win is None else int(rec.win),
                 None if rec.regret is None else int(rec.regret),
                 rec.ts,
@@ -136,6 +148,7 @@ class VectorMetricsDB:
         store_time_ms: float = 0.0,
         prompt_tokens: int | None = None,
         patch_id: str = "",
+        vector_id: str = "",
     ) -> None:
         rec = VectorMetric(
             event_type="embedding",
@@ -145,6 +158,7 @@ class VectorMetricsDB:
             store_time_ms=store_time_ms,
             prompt_tokens=prompt_tokens,
             patch_id=patch_id,
+            vector_id=vector_id,
         )
         self.add(rec)
 
@@ -163,6 +177,9 @@ class VectorMetricsDB:
         store_time_ms: float = 0.0,
         session_id: str = "",
         vector_id: str = "",
+        similarity: float = 0.0,
+        context_score: float = 0.0,
+        age: float = 0.0,
     ) -> None:
         rec = VectorMetric(
             event_type="retrieval",
@@ -177,6 +194,9 @@ class VectorMetricsDB:
             patch_id=patch_id,
             session_id=session_id,
             vector_id=vector_id,
+            similarity=similarity,
+            context_score=context_score,
+            age=age,
         )
         self.add(rec)
 

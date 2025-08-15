@@ -25,8 +25,8 @@ def test_roi_by_database(tmp_path):
 
 def test_retrieval_training_samples(tmp_path):
     db = vdb.VectorMetricsDB(tmp_path / "v.db")
-    db.log_retrieval("db1", tokens=0, wall_time_ms=0.0, hit=True, rank=1, contribution=0.3, prompt_tokens=0)
-    db.log_retrieval("db1", tokens=0, wall_time_ms=0.0, hit=False, rank=2, contribution=0.1, prompt_tokens=0)
+    db.log_retrieval("db1", tokens=0, wall_time_ms=0.0, hit=True, rank=1, contribution=0.3, prompt_tokens=0, similarity=0.9, context_score=0.2, age=1.0)
+    db.log_retrieval("db1", tokens=0, wall_time_ms=0.0, hit=False, rank=2, contribution=0.1, prompt_tokens=0, similarity=0.8, context_score=0.1, age=2.0)
     samples = vma.retrieval_training_samples(db, limit=1)
     assert len(samples) == 1
     sample = samples[0]

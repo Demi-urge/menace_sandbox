@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
+from datetime import datetime
 
 _ALIASES = (
     "universal_retriever",
@@ -100,6 +101,8 @@ def log_retrieval_metrics(
     hit: bool,
     tokens: int,
     similarity: float,
+    context_score: float,
+    age: float,
     *,
     session_id: str,
 ) -> None:
@@ -123,10 +126,13 @@ def log_retrieval_metrics(
                 wall_time_ms=0.0,
                 hit=hit,
                 rank=rank,
-                contribution=similarity,
+                contribution=0.0,
                 prompt_tokens=tokens if hit else 0,
                 session_id=session_id,
                 vector_id=str(record_id),
+                similarity=similarity,
+                context_score=context_score,
+                age=age,
             )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to persist retrieval metrics")
@@ -946,6 +952,14 @@ class UniversalRetriever:
             tokens = len(json.dumps(bundle.metadata, ensure_ascii=False)) // 4
             included = rank <= top_k
             similarity = float(bundle.metadata.get("similarity", 0.0))
+            context_score = float(bundle.metadata.get("context_score", 0.0))
+            created_at = bundle.metadata.get("created_at")
+            age = 0.0
+            if created_at:
+                try:
+                    age = (datetime.utcnow() - datetime.fromisoformat(created_at)).total_seconds()
+                except Exception:
+                    age = 0.0
             win_rate = float(bundle.metadata.get("win_rate", 0.0))
             regret_rate = float(bundle.metadata.get("regret_rate", 0.0))
             log_retrieval_metrics(
@@ -955,6 +969,8 @@ class UniversalRetriever:
                 included,
                 tokens,
                 similarity,
+                context_score,
+                age,
                 session_id=session_id,
             )
             logger.info(
