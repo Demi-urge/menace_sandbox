@@ -9,6 +9,7 @@ import signal
 from typing import TYPE_CHECKING
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
+from memory_aware_gpt_client import ask_with_memory
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -1442,9 +1443,18 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                                 for e in entries
                             ]
                             prompt = "\n".join(snips) + "\n\n" + prompt
-                    resp = ctx.gpt_client.ask(
-                        hist + [{"role": "user", "content": prompt}],
-                        tags=[INSIGHT, IMPROVEMENT_PATH],
+                    history_text = "\n".join(
+                        f"{m.get('role')}: {m.get('content')}" for m in hist
+                    )
+                    prompt_text = (
+                        f"{history_text}\nuser: {prompt}" if history_text else prompt
+                    )
+                    resp = ask_with_memory(
+                        ctx.gpt_client,
+                        "sandbox_runner.brainstorm",
+                        prompt_text,
+                        memory=getattr(ctx.gpt_client, "gpt_memory", None),
+                        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                     )
                     idea = (
                         resp.get("choices", [{}])[0]
@@ -1462,7 +1472,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                                 LOCAL_KNOWLEDGE_MODULE.log(
                                     prompt,
                                     idea,
-                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 logger.exception("local knowledge logging failed")

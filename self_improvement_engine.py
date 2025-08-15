@@ -1030,6 +1030,7 @@ class SelfImprovementEngine:
                 self.gpt_memory,
                 f"{action}:{module}",
                 "success" if success else "failure",
+                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
@@ -1046,7 +1047,12 @@ class SelfImprovementEngine:
             prompt += "\n" + history
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
-            log_with_tags(self.gpt_memory, prompt, f"patch_id={patch_id}")
+            log_with_tags(
+                self.gpt_memory,
+                prompt,
+                f"patch_id={patch_id}",
+                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+            )
         except Exception:
             self.logger.exception(
                 "memory logging failed", extra=log_record(module=module)
@@ -1269,7 +1275,7 @@ class SelfImprovementEngine:
                                     self.gpt_memory,
                                     f"scenario_patch:{name}",
                                     "suggested",
-                                    tags=[IMPROVEMENT_PATH, ERROR_FIX],
+                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                                 )
                             except Exception:
                                 self.logger.exception(
@@ -4047,7 +4053,7 @@ class SelfImprovementEngine:
                             self.gpt_memory,
                             f"preventative_patch:{mod}",
                             "suggested",
-                            tags=[IMPROVEMENT_PATH, ERROR_FIX],
+                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                         )
                     except Exception:
                         self.logger.exception(
@@ -4170,7 +4176,7 @@ class SelfImprovementEngine:
                                 self.gpt_memory,
                                 f"high_risk_patch:{mod}",
                                 "suggested",
-                                tags=[IMPROVEMENT_PATH, ERROR_FIX],
+                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                             )
                         except Exception:
                             self.logger.exception(

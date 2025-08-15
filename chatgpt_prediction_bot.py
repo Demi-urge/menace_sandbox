@@ -44,10 +44,14 @@ from . import RAISE_ERRORS
 from .mirror_bot import sentiment_score
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-try:  # canonical tag constants
-    from .log_tags import INSIGHT, FEEDBACK
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT, FEEDBACK  # type: ignore
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -822,11 +826,12 @@ class ChatGPTPredictionBot:
                     f"Evaluate enhancement '{idea}' with rationale '{rationale}'."
                     " Provide brief feedback."
                 )
-                messages = client.build_prompt_with_memory([INSIGHT], prompt)
-                client.ask(
-                    messages,
-                    tags=[FEEDBACK, INSIGHT],
-                    memory_manager=self.gpt_memory,
+                ask_with_memory(
+                    client,
+                    "chatgpt_prediction_bot.evaluate_enhancement",
+                    prompt,
+                    memory=self.gpt_memory,
+                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
                 )
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)

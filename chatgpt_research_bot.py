@@ -104,10 +104,14 @@ def configure_logging(
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-try:  # canonical tag constant
-    from .log_tags import INSIGHT
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -633,12 +637,12 @@ class ChatGPTResearchBot:
 
         def _do() -> str:
             b_prompt = self._budget_prompt(prompt)
-            messages = self.client.build_prompt_with_memory([INSIGHT], b_prompt)
-            data = self.client.ask(
-                messages,
-                validate=False,
-                memory_manager=self.gpt_memory,
-                tags=[INSIGHT],
+            data = ask_with_memory(
+                self.client,
+                "chatgpt_research_bot._ask",
+                b_prompt,
+                memory=self.gpt_memory,
+                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
             )
             if not isinstance(data, dict):
                 logger.warning("unexpected response type %s", type(data))

@@ -28,10 +28,14 @@ logger = logging.getLogger(__name__)
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
-try:  # canonical tag constant
-    from .log_tags import INSIGHT
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -155,10 +159,12 @@ class QueryBot:
         data = self.fetcher.fetch(ents)
         self.store.add(context_id, query)
         prompt = f"Summarize the following data: {json.dumps(data)}"
-        answer = self.client.ask(
-            [{"role": "user", "content": prompt}],
-            memory_manager=self.gpt_memory,
-            tags=[INSIGHT],
+        answer = ask_with_memory(
+            self.client,
+            "query_bot.process",
+            prompt,
+            memory=self.gpt_memory,
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         text = (
             answer.get("choices", [{}])[0].get("message", {}).get("content", "")
