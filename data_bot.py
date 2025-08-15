@@ -161,6 +161,16 @@ class MetricsDB:
             """
             )
             conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS patch_outcomes(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patch_id TEXT,
+                success INTEGER,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
             conn.execute(
@@ -171,6 +181,9 @@ class MetricsDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_retriever_kpi_ts ON retriever_kpi(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_ts ON patch_outcomes(ts)"
             )
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
@@ -386,6 +399,23 @@ class MetricsDB:
                     float(win_rate),
                     float(regret_rate),
                     float(stale_penalty),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def log_patch_outcome(self, patch_id: str, success: bool) -> None:
+        """Record the outcome of a patch deployment."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO patch_outcomes(patch_id, success, ts)
+            VALUES(?,?,?)
+            """,
+                (
+                    patch_id,
+                    1 if success else 0,
                     datetime.utcnow().isoformat(),
                 ),
             )
