@@ -453,6 +453,8 @@ class UniversalRetriever:
         weights: "RetrievalWeights | None" = None,
         model_path: str | Path | None = None,
         reliability_threshold: float = 0.0,
+        enable_model_ranking: bool = True,
+        enable_reliability_bias: bool = True,
     ) -> None:
         self.bot_db = bot_db
         self.workflow_db = workflow_db
@@ -464,7 +466,7 @@ class UniversalRetriever:
         self.weights = weights or RetrievalWeights()
         self.reliability_threshold = float(reliability_threshold)
         self._ranker_model: dict[str, Any] | None = None
-        if model_path:
+        if enable_model_ranking and model_path:
             try:
                 data = json.loads(Path(model_path).read_text())
                 self._ranker_model = {
@@ -475,6 +477,9 @@ class UniversalRetriever:
                 }
             except Exception:
                 logger.exception("failed to load ranking model from %s", model_path)
+        self.enable_model_ranking = bool(enable_model_ranking)
+        self.enable_reliability_bias = bool(enable_reliability_bias)
+        self._reliability_stats: Dict[str, Dict[str, float]] = {}
         # lazy-instantiated DeploymentDB connection for bot deployment stats
         self._deploy_db: Any | None = None
 
@@ -494,6 +499,12 @@ class UniversalRetriever:
 
         if self._encoder is None and code_db is None:
             raise ValueError("At least one database instance is required")
+
+    @property
+    def reliability_metrics(self) -> Dict[str, Dict[str, float]]:
+        """Return last loaded reliability statistics per database."""
+
+        return dict(self._reliability_stats)
 
     def reload_ranker_model(self, model_path: str | Path) -> None:
         """Reload the ranking model from ``model_path``.
@@ -619,6 +630,39 @@ class UniversalRetriever:
             logger.exception("ranking model prediction failed")
             return 1.0
 
+    def _load_reliability_stats(self) -> Dict[str, Dict[str, float]]:
+        """Fetch win/regret rates for each DB from ``MetricsDB``.
+
+        Results are cached on ``self._reliability_stats`` and returned as a
+        mapping of database name to ``{"win_rate", "regret_rate", "reliability"}``.
+        Any database access errors are swallowed and result in an empty
+        mapping.
+        """
+
+        if MetricsDB is None:
+            self._reliability_stats = {}
+            return {}
+        try:
+            mdb = MetricsDB()
+            with sqlite3.connect(mdb.path) as conn:
+                cur = conn.execute(
+                    "SELECT origin_db, wins, regrets FROM retriever_stats"
+                )
+                stats: Dict[str, Dict[str, float]] = {}
+                for origin, wins, regrets in cur.fetchall():
+                    total = float(wins) + float(regrets)
+                    win_rate = float(wins) / total if total else 0.0
+                    regret_rate = float(regrets) / total if total else 0.0
+                    stats[str(origin)] = {
+                        "win_rate": win_rate,
+                        "regret_rate": regret_rate,
+                        "reliability": win_rate - regret_rate,
+                    }
+            self._reliability_stats = stats
+        except Exception:
+            self._reliability_stats = {}
+        return self._reliability_stats
+
     # ------------------------------------------------------------------
     def _retrieve_candidates(
         self, query: Any, top_k: int = 10
@@ -632,7 +676,23 @@ class UniversalRetriever:
         if self._dbs:
             vector = self._to_vector(query)
             items = list(self._dbs.items())
-            if _VEC_METRICS is not None:
+            if self.enable_reliability_bias and self._reliability_stats:
+                items.sort(
+                    key=lambda kv: self._reliability_stats.get(kv[0], {}).get(
+                        "reliability", 0.0
+                    ),
+                    reverse=True,
+                )
+                if self.reliability_threshold:
+                    items = [
+                        kv
+                        for kv in items
+                        if self._reliability_stats.get(kv[0], {}).get(
+                            "reliability", 0.0
+                        )
+                        >= self.reliability_threshold
+                    ]
+            elif _VEC_METRICS is not None:
                 reliabilities: Dict[str, float] = {}
                 for name, _ in items:
                     try:
@@ -772,7 +832,7 @@ class UniversalRetriever:
                 from .deployment_bot import DeploymentDB  # lazy import
 
                 self._deploy_db = DeploymentDB("deployment.db")
-            except Exception:
+            except BaseException:
                 self._deploy_db = None
         if not self._deploy_db:
             return 0.0
@@ -973,6 +1033,8 @@ class UniversalRetriever:
 
         start_time = time.perf_counter()
         session_id = uuid.uuid4().hex
+        if self.enable_reliability_bias:
+            self._load_reliability_stats()
         raw_results = self._retrieve_candidates(query, top_k)
         db_times = getattr(self, "_last_db_times", {})
         bias_map: Dict[str, float] = {}
@@ -981,12 +1043,12 @@ class UniversalRetriever:
                 bias_map = roi_tracker.retrieval_bias()
             except Exception:
                 bias_map = {}
-        feedback_map: Dict[str, Dict[str, float]] = {}
+        kpi_map: Dict[str, Dict[str, float]] = {}
         if MetricsDB is not None:
             try:
-                feedback_map = MetricsDB().latest_retriever_kpi()
+                kpi_map = MetricsDB().latest_retriever_kpi()
             except Exception:
-                feedback_map = {}
+                kpi_map = {}
 
         SIM_WEIGHT = self.weights.similarity
         CTX_WEIGHT = self.weights.context
@@ -1004,25 +1066,31 @@ class UniversalRetriever:
                 logger.exception("failed to adjust retrieval weights")
 
         scored: List[dict[str, Any]] = []
+        reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
         for source, rec_id, item in raw_results:
             dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
             similarity = 1.0 / (1.0 + float(dist))
             ctx_score, metrics = self._context_score(source, item)
-            kpi = feedback_map.get(source, {})
-            win_rate = kpi.get("win_rate", 0.0)
-            regret_rate = kpi.get("regret_rate", 0.0)
+            kpi = kpi_map.get(source, {})
+            rel = reliability_map.get(source, {})
+            win_rate = rel.get("win_rate", 0.0)
+            regret_rate = rel.get("regret_rate", 0.0)
             stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
-            feedback_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
-            feedback_bias *= math.exp(-STALE_COST * stale_cost)
+            reliability_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
+            reliability_bias *= math.exp(-STALE_COST * stale_cost)
             combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-            combined_score *= bias_map.get(source, 1.0) * feedback_bias
+            combined_score *= bias_map.get(source, 1.0)
+            if self.enable_reliability_bias:
+                combined_score *= reliability_bias
             feats = {
                 "similarity": similarity,
                 "context_score": ctx_score,
                 "win_rate": win_rate,
                 "regret_rate": regret_rate,
             }
-            model_score = self._model_predict(source, feats)
+            model_score = (
+                self._model_predict(source, feats) if self.enable_model_ranking else 1.0
+            )
             combined_score *= model_score
             scored.append({
                 "source": source,
