@@ -36,6 +36,10 @@ try:  # canonical tag constants
     from .log_tags import INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import INSIGHT  # type: ignore
+try:  # helper for GPT memory tagging
+    from .memory_logging import log_with_tags
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_logging import log_with_tags  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
@@ -102,12 +106,9 @@ class ChatGPTClient:
             log_tags = list(tags or [INSIGHT])
             try:
                 if memory:
-                    if hasattr(memory, "log_interaction"):
-                        memory.log_interaction(prompt_str, response, log_tags)
-                    elif hasattr(memory, "store"):
-                        memory.store(prompt_str, response, log_tags)
+                    log_with_tags(memory, prompt_str, response, log_tags)
                 if self.gpt_memory and self.gpt_memory is not memory:
-                    self.gpt_memory.log_interaction(prompt_str, response, log_tags)
+                    log_with_tags(self.gpt_memory, prompt_str, response, log_tags)
             except Exception:
                 logger.exception("failed to log interaction")
 

@@ -86,6 +86,10 @@ try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+try:  # helper for standardised GPT memory logging
+    from .memory_logging import log_with_tags
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_logging import log_with_tags  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .knowledge_retriever import (
         get_feedback,
@@ -1022,7 +1026,8 @@ class SelfImprovementEngine:
 
     def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
         try:
-            self.gpt_memory.log_interaction(
+            log_with_tags(
+                self.gpt_memory,
                 f"{action}:{module}",
                 "success" if success else "failure",
                 tags=[FEEDBACK],
@@ -1042,8 +1047,8 @@ class SelfImprovementEngine:
             prompt += "\n" + history
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
-            self.gpt_memory.log_interaction(
-                prompt, f"patch_id={patch_id}", tags=[IMPROVEMENT_PATH]
+            log_with_tags(
+                self.gpt_memory, prompt, f"patch_id={patch_id}", tags=[IMPROVEMENT_PATH]
             )
         except Exception:
             self.logger.exception(
@@ -1263,7 +1268,8 @@ class SelfImprovementEngine:
                                 ),
                             )
                             try:
-                                self.gpt_memory.log_interaction(
+                                log_with_tags(
+                                    self.gpt_memory,
                                     f"scenario_patch:{name}",
                                     "suggested",
                                     tags=[IMPROVEMENT_PATH, ERROR_FIX],
@@ -4040,7 +4046,8 @@ class SelfImprovementEngine:
                         ),
                     )
                     try:
-                        self.gpt_memory.log_interaction(
+                        log_with_tags(
+                            self.gpt_memory,
                             f"preventative_patch:{mod}",
                             "suggested",
                             tags=[IMPROVEMENT_PATH, ERROR_FIX],
@@ -4162,7 +4169,8 @@ class SelfImprovementEngine:
                             ),
                         )
                         try:
-                            self.gpt_memory.log_interaction(
+                            log_with_tags(
+                                self.gpt_memory,
                                 f"high_risk_patch:{mod}",
                                 "suggested",
                                 tags=[IMPROVEMENT_PATH, ERROR_FIX],
