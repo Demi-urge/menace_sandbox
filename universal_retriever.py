@@ -150,6 +150,8 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                     session_id TEXT,
                     origin_db TEXT,
                     record_id TEXT,
+                    vector_id TEXT,
+                    db_type TEXT,
                     rank INTEGER,
                     hit INTEGER,
                     hit_rate REAL,
@@ -157,21 +159,45 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                     contribution REAL,
                     patch_id TEXT,
                     db_source TEXT,
+                    age REAL,
+                    similarity REAL,
+                    frequency REAL,
+                    roi_delta REAL,
+                    usage REAL,
+                    prior_hits INTEGER,
                     ts TEXT DEFAULT CURRENT_TIMESTAMP
                 )
-                """
+                """,
             )
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(retrieval_stats)").fetchall()]
+            migrations = {
+                "vector_id": "ALTER TABLE retrieval_stats ADD COLUMN vector_id TEXT",
+                "db_type": "ALTER TABLE retrieval_stats ADD COLUMN db_type TEXT",
+                "age": "ALTER TABLE retrieval_stats ADD COLUMN age REAL",
+                "similarity": "ALTER TABLE retrieval_stats ADD COLUMN similarity REAL",
+                "frequency": "ALTER TABLE retrieval_stats ADD COLUMN frequency REAL",
+                "roi_delta": "ALTER TABLE retrieval_stats ADD COLUMN roi_delta REAL",
+                "usage": "ALTER TABLE retrieval_stats ADD COLUMN usage REAL",
+                "prior_hits": "ALTER TABLE retrieval_stats ADD COLUMN prior_hits INTEGER",
+            }
+            for col, stmt in migrations.items():
+                if col not in cols:
+                    conn.execute(stmt)
             conn.execute(
                 """
                 INSERT INTO retrieval_stats (
-                    session_id, origin_db, record_id, rank, hit,
-                    hit_rate, tokens_injected, contribution, patch_id, db_source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    session_id, origin_db, record_id, vector_id, db_type,
+                    rank, hit, hit_rate, tokens_injected, contribution,
+                    patch_id, db_source, age, similarity, frequency,
+                    roi_delta, usage, prior_hits
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry["session_id"],
                     entry["origin_db"],
                     str(entry.get("record_id")),
+                    str(entry.get("vector_id", "")),
+                    entry.get("db_type", ""),
                     entry["rank"],
                     int(entry["hit"]),
                     entry.get("hit_rate", 0.0),
@@ -179,6 +205,12 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                     entry.get("contribution"),
                     entry.get("patch_id", ""),
                     entry.get("db_source", ""),
+                    entry.get("age"),
+                    entry.get("similarity"),
+                    entry.get("frequency"),
+                    entry.get("roi_delta"),
+                    entry.get("usage"),
+                    entry.get("prior_hits", 0),
                 ),
             )
     except Exception:  # pragma: no cover - best effort
@@ -197,6 +229,22 @@ def mark_retrieval_contribution(session_id: str, record_id: Any, contribution: f
             )
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to update retrieval contribution")
+
+
+def _prior_hit_count(origin_db: str, record_id: Any) -> int:
+    """Return how many times a vector has previously been a hit."""
+
+    try:
+        conn = sqlite3.connect("metrics.db")
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM retrieval_stats WHERE origin_db=? AND record_id=? AND hit=1",
+            (origin_db, str(record_id)),
+        )
+        row = cur.fetchone()
+        conn.close()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:  # pragma: no cover - best effort
+        return 0
 
 
 @dataclass
@@ -1075,6 +1123,12 @@ class UniversalRetriever:
                     age = 0.0
             win_rate = float(bundle.metadata.get("win_rate", 0.0))
             regret_rate = float(bundle.metadata.get("regret_rate", 0.0))
+            ctx_metrics = bundle.metadata.get("contextual_metrics", {}) or {}
+            frequency = ctx_metrics.get("frequency")
+            roi_delta = ctx_metrics.get("roi")
+            usage = ctx_metrics.get("usage")
+            db_type = bundle.metadata.get("db_type") or bundle.metadata.get("db_source") or ""
+            prior_hits = _prior_hit_count(bundle.origin_db, bundle.record_id)
             log_retrieval_metrics(
                 bundle.origin_db,
                 bundle.record_id,
@@ -1095,6 +1149,8 @@ class UniversalRetriever:
             metrics_entry = {
                 "origin_db": bundle.origin_db,
                 "record_id": bundle.record_id,
+                 "vector_id": bundle.record_id,
+                "db_type": db_type,
                 "rank": rank,
                 "rank_position": rank,
                 "hit": included,
@@ -1105,18 +1161,32 @@ class UniversalRetriever:
                 "regret_rate": regret_rate,
                 "prompt_tokens": tokens if included else 0,
                 "session_id": session_id,
+                "age": age,
+                "frequency": frequency,
+                "roi_delta": roi_delta,
+                "usage": usage,
+                "prior_hits": prior_hits,
             }
             metrics_list.append(metrics_entry)
             dataset_entries.append(
                 {
                     "origin_db": bundle.origin_db,
+                    "db_type": db_type,
                     "record_id": bundle.record_id,
+                    "vector_id": bundle.record_id,
                     "rank": rank,
                     "score": bundle.score,
                     "win_rate": win_rate,
                     "regret_rate": regret_rate,
                     "hit": included,
                     "session_id": session_id,
+                    "age": age,
+                    "similarity": similarity,
+                    "context_score": context_score,
+                    "frequency": frequency,
+                    "roi_delta": roi_delta,
+                    "usage": usage,
+                    "prior_hits": prior_hits,
                 }
             )
 
