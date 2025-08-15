@@ -19,6 +19,15 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH  # type: ignore
 
 
+__all__ = [
+    "get_feedback",
+    "get_error_fixes",
+    "get_improvement_paths",
+    "recent_feedback",
+    "recent_error_fix",
+    "recent_improvement_path",
+]
+
 # ---------------------------------------------------------------------------
 # Raw interaction retrieval helpers
 
