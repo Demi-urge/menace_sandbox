@@ -71,9 +71,15 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
     captured = {}
 
     class DummyMetrics:
-        def log_patch_outcome(self, patch_id, success, vectors, reverted=False):
+        def log_patch_outcome(
+            self, patch_id, success, vectors, *, session_id="", reverted=False
+        ):
             captured.update(
-                patch_id=patch_id, success=success, vectors=list(vectors), reverted=reverted
+                patch_id=patch_id,
+                success=success,
+                vectors=list(vectors),
+                reverted=reverted,
+                session_id=session_id,
             )
 
     monkeypatch.setattr(psb, "MetricsDB", lambda *_a, **_k: DummyMetrics())
@@ -86,6 +92,7 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
     assert captured["success"] is False
     assert captured["vectors"] == [("db", "v1")]
     assert captured["reverted"] is True
+    assert captured["session_id"] == "s1"
 
 
 def test_backend_from_url_file(tmp_path):
