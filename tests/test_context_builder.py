@@ -70,6 +70,7 @@ from menace.context_builder import ContextBuilder
 from menace.self_coding_engine import SelfCodingEngine
 from menace.bot_development_bot import BotDevelopmentBot, BotSpec
 from universal_retriever import ResultBundle
+from menace.config import Config
 
 
 class DummyClient:
@@ -230,3 +231,63 @@ def test_truncates_when_tokens_small(monkeypatch):
     total_items = sum(len(v) for v in data.values())
     assert total_items < 8
     assert len(ctx) // 4 <= builder.max_tokens
+
+
+def test_builder_from_config(monkeypatch):
+    import menace.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "UnifiedConfigStore", None)
+    monkeypatch.setattr(cfg_mod, "_CONFIG_STORE", None)
+
+    overrides = {
+        "context_builder": {"db_weights": {"error": 4.0, "bot": 0.1}, "max_tokens": 400}
+    }
+    cfg = Config.from_overrides(overrides)
+
+    builder, expected = make_builder(
+        monkeypatch,
+        db_weights=cfg.context_builder.db_weights,
+        max_tokens=cfg.context_builder.max_tokens,
+    )
+
+    assert builder.db_weights == cfg.context_builder.db_weights
+    assert builder.max_tokens == cfg.context_builder.max_tokens
+
+    ctx = builder.build_context("alpha issue", top_k=1)
+    assert ctx == expected
+
+    bundles = [
+        ResultBundle("bot", {"id": 1, "name": "alpha", "roi": 1}, 1.0, ""),
+        ResultBundle("workflow", {"id": 10, "title": "deploy", "roi": 1}, 1.0, ""),
+        ResultBundle("error", {"id": 100, "message": "bad", "frequency": 1}, 1.0, ""),
+    ]
+
+    weighted_scores = [builder._bundle_to_entry(b)[1] for b in bundles]
+    weighted_ids = [
+        s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
+    ]
+    assert weighted_ids == [100, 10, 1]
+
+
+def test_config_respects_max_tokens(monkeypatch):
+    import menace.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "UnifiedConfigStore", None)
+    monkeypatch.setattr(cfg_mod, "_CONFIG_STORE", None)
+
+    overrides = {"context_builder": {"max_tokens": 40, "db_weights": {"error": 2.0}}}
+    cfg = Config.from_overrides(overrides)
+
+    builder, _ = make_builder(
+        monkeypatch,
+        db_weights=cfg.context_builder.db_weights,
+        max_tokens=cfg.context_builder.max_tokens,
+    )
+
+    ctx = builder.build_context("alpha issue", top_k=2)
+    data = json.loads(ctx)
+    total_items = sum(len(v) for v in data.values())
+    assert builder.db_weights == cfg.context_builder.db_weights
+    assert builder.max_tokens == cfg.context_builder.max_tokens
+    assert total_items < 8
+    assert len(ctx) // 4 <= cfg.context_builder.max_tokens
