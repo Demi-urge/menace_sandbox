@@ -478,6 +478,38 @@ class MetricsDB:
             )
             conn.commit()
 
+    def latest_retriever_kpi(self) -> Dict[str, Dict[str, float]]:
+        """Return latest KPI metrics for each origin database.
+
+        The most recent ``win_rate``, ``regret_rate`` and ``stale_penalty``
+        values are retrieved from the ``retriever_kpi`` table.  Results are
+        returned as a mapping of ``origin_db`` to the three metrics.  When no
+        KPI data has been recorded an empty mapping is returned.
+        """
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT origin_db, win_rate, regret_rate, stale_penalty
+                FROM (
+                    SELECT origin_db, win_rate, regret_rate, stale_penalty, ts
+                    FROM retriever_kpi
+                    ORDER BY ts DESC
+                )
+                GROUP BY origin_db
+                """
+            )
+            rows = cur.fetchall()
+
+        metrics: Dict[str, Dict[str, float]] = {}
+        for origin, win, regret, stale in rows:
+            metrics[origin] = {
+                "win_rate": float(win),
+                "regret_rate": float(regret),
+                "stale_penalty": float(stale),
+            }
+        return metrics
+
     def log_patch_outcome(
         self,
         patch_id: str,

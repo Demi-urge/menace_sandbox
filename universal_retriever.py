@@ -169,6 +169,17 @@ RetrievedItem = ResultBundle
 RetrievalHit = ResultBundle
 
 
+@dataclass
+class RetrievalWeights:
+    """Tunable weights for ranking and feedback signals."""
+
+    similarity: float = 0.7
+    context: float = 0.3
+    win: float = 0.1
+    regret: float = 0.1
+    stale_cost: float = 0.01
+
+
 def boost_linked_candidates(
     scored: List[dict[str, Any]],
     *,
@@ -303,6 +314,7 @@ class UniversalRetriever:
         information_db: Any | None = None,
         code_db: Any | None = None,
         knowledge_graph: Any | None = None,
+        weights: "RetrievalWeights | None" = None,
     ) -> None:
         self.bot_db = bot_db
         self.workflow_db = workflow_db
@@ -311,6 +323,7 @@ class UniversalRetriever:
         self.information_db = information_db
         self.code_db = code_db
         self.graph = knowledge_graph
+        self.weights = weights or RetrievalWeights()
         # lazy-instantiated DeploymentDB connection for bot deployment stats
         self._deploy_db: Any | None = None
 
@@ -723,17 +736,32 @@ class UniversalRetriever:
                 bias_map = roi_tracker.retrieval_bias()
             except Exception:
                 bias_map = {}
+        feedback_map: Dict[str, Dict[str, float]] = {}
+        if MetricsDB is not None:
+            try:
+                feedback_map = MetricsDB().latest_retriever_kpi()
+            except Exception:
+                feedback_map = {}
 
-        SIM_WEIGHT = 0.7
-        CTX_WEIGHT = 0.3
+        SIM_WEIGHT = self.weights.similarity
+        CTX_WEIGHT = self.weights.context
+        WIN_WEIGHT = self.weights.win
+        REGRET_WEIGHT = self.weights.regret
+        STALE_COST = self.weights.stale_cost
 
         scored: List[dict[str, Any]] = []
         for source, rec_id, item in raw_results:
             dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
             similarity = 1.0 / (1.0 + float(dist))
             ctx_score, metrics = self._context_score(source, item)
+            kpi = feedback_map.get(source, {})
+            win_rate = kpi.get("win_rate", 0.0)
+            regret_rate = kpi.get("regret_rate", 0.0)
+            stale_penalty = kpi.get("stale_penalty", 0.0)
+            feedback_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
+            feedback_bias *= math.exp(-STALE_COST * stale_penalty)
             combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-            combined_score *= bias_map.get(source, 1.0)
+            combined_score *= bias_map.get(source, 1.0) * feedback_bias
             scored.append({
                 "source": source,
                 "record_id": rec_id,
@@ -742,6 +770,9 @@ class UniversalRetriever:
                 "distance": dist,
                 "similarity": similarity,
                 "context": ctx_score,
+                "win_rate": win_rate,
+                "regret_rate": regret_rate,
+                "stale_penalty": stale_penalty,
                 **metrics,
             })
 
@@ -757,6 +788,9 @@ class UniversalRetriever:
             "usage": "heavy usage",
             "deploy": "widely deployed bot",
             "complexity": "high code complexity",
+            "win_rate": "high historical win rate",
+            "regret_rate": "low regret rate",
+            "stale_penalty": "fresh embedding",
         }
 
         hits: List[ResultBundle] = []
