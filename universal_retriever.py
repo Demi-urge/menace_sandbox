@@ -7,6 +7,7 @@ import time
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
@@ -51,6 +52,12 @@ try:  # pragma: no cover - typing only
     from .roi_tracker import ROITracker
 except Exception:  # pragma: no cover - fallback when tracker unavailable
     ROITracker = None  # type: ignore
+
+try:
+    from .metrics_plugins import fetch_retrieval_stats
+except Exception:  # pragma: no cover - fallback when unavailable
+    def fetch_retrieval_stats(*_args: Any, **_kwargs: Any) -> Dict[str, float]:
+        return {"win_rate": 0.0, "regret_rate": 0.0}
 
 _RETRIEVAL_RANK = _me.Gauge(
     "retrieval_rank",
@@ -794,6 +801,7 @@ class UniversalRetriever:
         link_multiplier: float = 1.1,
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
+        adjust_weights: bool = False,
     ) -> Union[List[ResultBundle], Tuple[List[ResultBundle], List[dict[str, Any]]]]:
         """Retrieve results with scores and reasons.
 
@@ -829,6 +837,14 @@ class UniversalRetriever:
         WIN_WEIGHT = self.weights.win
         REGRET_WEIGHT = self.weights.regret
         STALE_COST = self.weights.stale_cost
+
+        if adjust_weights:
+            try:
+                stats = fetch_retrieval_stats()
+                WIN_WEIGHT *= 1.0 + float(stats.get("win_rate", 0.0))
+                REGRET_WEIGHT *= 1.0 + float(stats.get("regret_rate", 0.0))
+            except Exception:
+                logger.exception("failed to adjust retrieval weights")
 
         scored: List[dict[str, Any]] = []
         for source, rec_id, item in raw_results:
@@ -924,10 +940,13 @@ class UniversalRetriever:
         hits.sort(key=lambda h: h.score, reverse=True)
 
         metrics_list: List[dict[str, Any]] = []
+        dataset_entries: List[dict[str, Any]] = []
         for rank, bundle in enumerate(hits, start=1):
             tokens = len(json.dumps(bundle.metadata, ensure_ascii=False)) // 4
             included = rank <= top_k
             similarity = float(bundle.metadata.get("similarity", 0.0))
+            win_rate = float(bundle.metadata.get("win_rate", 0.0))
+            regret_rate = float(bundle.metadata.get("regret_rate", 0.0))
             log_retrieval_metrics(
                 bundle.origin_db,
                 bundle.record_id,
@@ -943,17 +962,30 @@ class UniversalRetriever:
                 bundle.origin_db,
                 tokens,
             )
-            metrics_list.append(
+            metrics_entry = {
+                "origin_db": bundle.origin_db,
+                "record_id": bundle.record_id,
+                "rank": rank,
+                "rank_position": rank,
+                "hit": included,
+                "tokens": tokens,
+                "tokens_injected": tokens if included else 0,
+                "similarity": similarity,
+                "win_rate": win_rate,
+                "regret_rate": regret_rate,
+                "prompt_tokens": tokens if included else 0,
+                "session_id": session_id,
+            }
+            metrics_list.append(metrics_entry)
+            dataset_entries.append(
                 {
                     "origin_db": bundle.origin_db,
                     "record_id": bundle.record_id,
                     "rank": rank,
-                    "rank_position": rank,
+                    "score": bundle.score,
+                    "win_rate": win_rate,
+                    "regret_rate": regret_rate,
                     "hit": included,
-                    "tokens": tokens,
-                    "tokens_injected": tokens if included else 0,
-                    "similarity": similarity,
-                    "prompt_tokens": tokens if included else 0,
                     "session_id": session_id,
                 }
             )
@@ -976,6 +1008,17 @@ class UniversalRetriever:
             entry["hit_rate"] = hit_rate
             entry["contribution"] = 0.0
             _log_stat_to_db(entry)
+        for entry in dataset_entries:
+            entry["hit_rate"] = hit_rate
+
+        dataset_path = Path(__file__).resolve().parent / "analytics" / "retrieval_outcomes.jsonl"
+        try:
+            dataset_path.parent.mkdir(parents=True, exist_ok=True)
+            with dataset_path.open("a", encoding="utf8") as fh:
+                for rec in dataset_entries:
+                    fh.write(json.dumps(rec) + "\n")
+        except Exception:
+            logger.exception("failed to store retrieval outcomes dataset")
 
         for db_name, duration in db_times.items():
             try:
@@ -1013,6 +1056,7 @@ class UniversalRetriever:
         link_multiplier: float = 1.1,
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
+        adjust_weights: bool = False,
     ) -> Union[List[dict[str, Any]], Tuple[List[dict[str, Any]], List[dict[str, Any]]]]:
         res = self.retrieve(
             query,
@@ -1020,6 +1064,7 @@ class UniversalRetriever:
             link_multiplier=link_multiplier,
             return_metrics=return_metrics,
             roi_tracker=roi_tracker,
+            adjust_weights=adjust_weights,
         )
         if return_metrics:
             hits, metrics_list = res  # type: ignore[misc]
