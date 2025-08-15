@@ -447,6 +447,41 @@ class UniversalRetriever:
         if self._encoder is None and code_db is None:
             raise ValueError("At least one database instance is required")
 
+    def reload_ranker_model(self, model_path: str | Path) -> None:
+        """Reload the ranking model from ``model_path``.
+
+        The model file must be in the JSON format produced by
+        :mod:`retrieval_ranker`.  Any errors are logged but otherwise
+        ignored to keep the retriever operational.
+        """
+        try:
+            data = json.loads(Path(model_path).read_text())
+            self._ranker_model = {
+                "coef": data.get("coef", [[0.0]])[0],
+                "intercept": float(data.get("intercept", [0.0])[0]),
+                "features": data.get("features", []),
+                "classes": data.get("classes", []),
+            }
+        except Exception:
+            logger.exception("failed to reload ranking model from %s", model_path)
+
+    def reload_reliability_scores(self) -> None:
+        """Refresh reliability metrics used for ranking.
+
+        Reliability values are read on demand from
+        :class:`vector_metrics_db.VectorMetricsDB`, so this method simply
+        touches the metrics for all registered databases allowing external
+        schedulers to signal that scores have changed.
+        """
+        if _VEC_METRICS is None:
+            return
+        for name in list(self._dbs):
+            try:
+                _VEC_METRICS.retriever_win_rate(name)
+                _VEC_METRICS.retriever_regret_rate(name)
+            except Exception:
+                continue
+
     def register_db(
         self, name: str, db: Any | None, id_fields: Sequence[str]
     ) -> None:
