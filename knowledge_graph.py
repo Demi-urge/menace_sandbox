@@ -27,6 +27,17 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
+try:  # tag constants shared across modules
+    from log_tags import FEEDBACK, ERROR_FIX
+except Exception:  # pragma: no cover - best effort fallback
+    FEEDBACK = "feedback"  # type: ignore
+    ERROR_FIX = "error_fix"  # type: ignore
+
+try:  # optional protocol used for runtime checks
+    from gpt_memory_interface import GPTMemoryInterface  # type: ignore
+except Exception:  # pragma: no cover - interface may be absent
+    GPTMemoryInterface = None  # type: ignore
+
 
 class _SimpleKMeans:
     """Fallback k-means clustering if scikit-learn is unavailable."""
@@ -286,45 +297,99 @@ class KnowledgeGraph:
             logger.exception("failed subscribing to memory:new events")
 
     def ingest_gpt_memory(self, memory_mgr: object) -> None:
-        """Load GPT insights from a memory manager or :class:`GPTMemory`.
+        """Load GPT insights from ``memory_mgr``.
 
-        The ``memory_mgr`` can either expose a ``conn`` attribute directly or
-        provide a ``manager`` attribute with the underlying connection.  Tags in
-        the memory table that start with ``bot:``, ``code:`` or ``error:`` are
-        converted into edges pointing at the corresponding nodes so the insights
-        become discoverable through graph traversal.
+        ``memory_mgr`` may implement :class:`GPTMemoryInterface` where GPT
+        interactions are stored in an ``interactions`` table with ``prompt``,
+        ``response`` and ``tags`` columns.  Older managers expose a ``memory``
+        table keyed by ``key`` with optional ``tags``.  This method detects the
+        available schema and ingests entries accordingly, mapping tag labels to
+        appropriate graph relationships.  ``FEEDBACK`` tags create edges to an
+        ``outcome`` node while ``ERROR_FIX`` tags create edges to an ``error``
+        node.  Unrecognised tags fall back to generic ``tag`` edges.  Legacy tag
+        prefixes such as ``bot:``, ``code:`` and ``error:`` continue to be
+        supported for backward compatibility.
         """
 
         if self.graph is None:
             return
 
-        # Accept either GPTMemory (which exposes ``manager``) or the manager
-        # itself which must have a ``conn`` attribute.
-        conn = getattr(getattr(memory_mgr, "manager", memory_mgr), "conn", None)
+        base = getattr(memory_mgr, "manager", memory_mgr)
+        conn = getattr(base, "conn", None)
         if conn is None:
             return
-        try:
-            rows = conn.execute("SELECT key, tags FROM memory").fetchall()
-        except Exception:
-            return
 
-        for key, tags in rows:
-            tag_list = [t.strip() for t in str(tags).replace(",", " ").split() if t.strip()]
-            bots: List[str] = []
-            codes: List[str] = []
-            errs: List[str] = []
-            for t in tag_list:
-                if t.startswith("bot:"):
-                    bots.append(t.split(":", 1)[1])
-                elif t.startswith("code:"):
-                    codes.append(t.split(":", 1)[1])
-                elif t.startswith("error:") or t.startswith("error_category:"):
-                    errs.append(t.split(":", 1)[1])
-            if bots or codes or errs:
-                self.add_gpt_insight(key, bots=bots, code_paths=codes, error_categories=errs)
-            else:
-                # fallback to generic memory node linkage
-                self.add_memory_entry(key, tag_list)
+        # Determine whether ``memory_mgr`` conforms to GPTMemoryInterface.
+        is_iface = False
+        if GPTMemoryInterface is not None:
+            try:
+                is_iface = isinstance(base, GPTMemoryInterface)  # type: ignore[arg-type]
+            except TypeError:  # Protocol not runtime checkable
+                required = ["log_interaction", "search_context"]
+                is_iface = all(hasattr(base, a) for a in required)
+
+        rows: List[tuple] = []
+        used_interactions = False
+        if is_iface:
+            try:
+                rows = conn.execute(
+                    "SELECT prompt, response, tags FROM interactions"
+                ).fetchall()
+                used_interactions = True
+            except Exception:
+                rows = []
+
+        if not rows:  # legacy schema
+            try:
+                rows = conn.execute("SELECT key, tags FROM memory").fetchall()
+            except Exception:
+                return
+
+        if used_interactions:
+            for prompt, response, tag_str in rows:
+                inode = f"insight:{prompt}"
+                try:
+                    self.graph.add_node(inode, response=response)
+                except Exception:
+                    self.graph.add_node(inode)
+                tag_list = [
+                    t.strip() for t in str(tag_str or "").replace(",", " ").split() if t.strip()
+                ]
+                for t in tag_list:
+                    tl = t.lower()
+                    if tl == FEEDBACK:
+                        onode = f"outcome:{tl}"
+                        self.graph.add_node(onode)
+                        self.graph.add_edge(inode, onode, type="outcome")
+                    elif tl == ERROR_FIX:
+                        enode = f"error:{tl}"
+                        self.graph.add_node(enode)
+                        self.graph.add_edge(inode, enode, type="error")
+                    else:
+                        tnode = f"tag:{tl}"
+                        self.graph.add_node(tnode)
+                        self.graph.add_edge(inode, tnode, type="tag")
+        else:  # legacy memory table
+            for key, tags in rows:
+                tag_list = [
+                    t.strip() for t in str(tags or "").replace(",", " ").split() if t.strip()
+                ]
+                bots: List[str] = []
+                codes: List[str] = []
+                errs: List[str] = []
+                for t in tag_list:
+                    if t.startswith("bot:"):
+                        bots.append(t.split(":", 1)[1])
+                    elif t.startswith("code:"):
+                        codes.append(t.split(":", 1)[1])
+                    elif t.startswith("error:") or t.startswith("error_category:"):
+                        errs.append(t.split(":", 1)[1])
+                if bots or codes or errs:
+                    self.add_gpt_insight(
+                        key, bots=bots, code_paths=codes, error_categories=errs
+                    )
+                else:
+                    self.add_memory_entry(key, tag_list)
 
     def add_code_snippet(self, summary: str, bots: Iterable[str] | None = None) -> None:
         if self.graph is None:
