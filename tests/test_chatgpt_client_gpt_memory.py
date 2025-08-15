@@ -81,7 +81,7 @@ def test_build_prompt_injects_summary_and_logs(monkeypatch):
     logs = [
         json.loads(e.data)
         for e in mem.manager.items
-        if e.key in ("gpt:idea", "gpt:enhancement")
+        if e.key.startswith("gpt:")
     ]
     assert any(
         l["prompt"] == "new question" and l["response"] == "later resp" for l in logs
