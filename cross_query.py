@@ -11,7 +11,7 @@ from .bot_registry import BotRegistry
 from .neuroplasticity import PathwayDB
 from .databases import MenaceDB
 from .research_aggregator_bot import InfoDB
-from .menace_memory_manager import MenaceMemoryManager
+from gpt_memory_interface import GPTMemoryInterface
 
 
 logger = logging.getLogger(__name__)
@@ -194,7 +194,7 @@ def related_resources(
     registry: BotRegistry,
     menace_db: MenaceDB,
     info_db: Optional[InfoDB] = None,
-    memory_mgr: Optional[MenaceMemoryManager] = None,
+    memory_mgr: Optional[GPTMemoryInterface] = None,
     pathway_db: PathwayDB | None = None,
     depth: int = 1,
 ) -> Dict[str, List[str]]:
@@ -283,42 +283,46 @@ def related_resources(
     if memory_mgr:
         for name in bot_names:
             try:
-                entries = memory_mgr.search_by_tag(name)
+                entries = memory_mgr.search_context(name, tags=[name])
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "memory search_by_tag failed for %s: %s", name, exc
+                    "memory search_context failed for %s: %s", name, exc
                 )
                 continue
             for e in entries:
-                memory_keys[e.key] = memory_keys.get(e.key, 0.0) + 1.0
+                key = getattr(e, "key", getattr(e, "prompt", ""))
+                if key:
+                    memory_keys[key] = memory_keys.get(key, 0.0) + 1.0
 
-        cur = memory_mgr.conn.cursor()
-        if bot_ids:
-            marks = ",".join("?" for _ in bot_ids)
-            try:
-                rows = cur.execute(
-                    f"SELECT key FROM memory WHERE bot_id IN ({marks})",
-                    tuple(bot_ids),
-                ).fetchall()
-                for r in rows:
-                    memory_keys[r[0]] = memory_keys.get(r[0], 0.0) + 1.0
-            except Exception as exc:
-                logger.exception(
-                    "failed to fetch memory keys for bot ids: %s", exc
-                )
-        if info_ids:
-            marks = ",".join("?" for _ in info_ids)
-            try:
-                rows = cur.execute(
-                    f"SELECT key FROM memory WHERE info_id IN ({marks})",
-                    tuple(info_ids),
-                ).fetchall()
-                for r in rows:
-                    memory_keys[r[0]] = memory_keys.get(r[0], 0.0) + 1.0
-            except Exception as exc:
-                logger.exception(
-                    "failed to fetch memory keys for info ids: %s", exc
-                )
+        # Legacy fallback when underlying manager exposes raw connection
+        if hasattr(memory_mgr, "conn"):
+            cur = memory_mgr.conn.cursor()
+            if bot_ids:
+                marks = ",".join("?" for _ in bot_ids)
+                try:
+                    rows = cur.execute(
+                        f"SELECT key FROM memory WHERE bot_id IN ({marks})",
+                        tuple(bot_ids),
+                    ).fetchall()
+                    for r in rows:
+                        memory_keys[r[0]] = memory_keys.get(r[0], 0.0) + 1.0
+                except Exception as exc:
+                    logger.exception(
+                        "failed to fetch memory keys for bot ids: %s", exc
+                    )
+            if info_ids:
+                marks = ",".join("?" for _ in info_ids)
+                try:
+                    rows = cur.execute(
+                        f"SELECT key FROM memory WHERE info_id IN ({marks})",
+                        tuple(info_ids),
+                    ).fetchall()
+                    for r in rows:
+                        memory_keys[r[0]] = memory_keys.get(r[0], 0.0) + 1.0
+                except Exception as exc:
+                    logger.exception(
+                        "failed to fetch memory keys for info ids: %s", exc
+                    )
 
     if pathway_db:
         for wf in list(workflows):
@@ -345,7 +349,7 @@ def entry_workflow_features(
     menace_db: MenaceDB,
     pathway_db: PathwayDB | None = None,
     info_db: Optional[InfoDB] = None,
-    memory_mgr: Optional[MenaceMemoryManager] = None,
+    memory_mgr: Optional[GPTMemoryInterface] = None,
     depth: int = 1,
 ) -> List[str]:
     """Return workflow names linked to a new database ``entry``.

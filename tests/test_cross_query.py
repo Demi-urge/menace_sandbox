@@ -28,6 +28,12 @@ env_mod = types.ModuleType("env_config")
 env_mod.DATABASE_URL = "sqlite:///"
 sys.modules.setdefault("env_config", env_mod)
 
+# Lightweight stubs for modules with heavy dependencies
+rao_mod = types.ModuleType("menace.resource_allocation_optimizer")
+rao_mod.ROIDB = type("ROIDB", (), {})
+rao_mod.KPIRecord = type("KPIRecord", (), {})
+sys.modules.setdefault("menace.resource_allocation_optimizer", rao_mod)
+
 for name, attrs in {
     "menace.chatgpt_enhancement_bot": ["EnhancementDB", "ChatGPTEnhancementBot", "Enhancement"],
     "menace.chatgpt_prediction_bot": ["ChatGPTPredictionBot", "IdeaFeatures"],
@@ -118,7 +124,7 @@ def test_related_resources(tmp_path):
         sys.modules.setdefault(name, module)
 
     import menace.research_aggregator_bot as rab
-    from menace.menace_memory_manager import MenaceMemoryManager
+    from menace.gpt_memory import GPTMemoryManager
 
     db = _setup_menace(tmp_path)
     reg = BotRegistry()
@@ -130,11 +136,9 @@ def test_related_resources(tmp_path):
     it2 = rab.ResearchItem(topic="t2", content="c", timestamp=time.time(), title="B info", summary="sb", associated_bots=["B"])
     info_db.add(it2)
 
-    mm = MenaceMemoryManager(tmp_path / "mem.db")
-    mm.store("ka", "d", tags="A", bot_id=1)
-    mm.store("kb", "d", tags="B", bot_id=2)
-    mm.store("ia", "d", info_id=it1.item_id)
-    mm.store("ib", "d", info_id=it2.item_id)
+    mm = GPTMemoryManager(tmp_path / "mem.db")
+    mm.store("ka", "d", tags=["A"])
+    mm.store("kb", "d", tags=["B"])
 
     results = cross_query.related_resources(
         'A', registry=reg, menace_db=db, info_db=info_db, memory_mgr=mm
@@ -146,8 +150,6 @@ def test_related_resources(tmp_path):
     assert 'B info' in results['information']
     assert 'ka' in results['memory']
     assert 'kb' in results['memory']
-    assert 'ia' in results['memory']
-    assert 'ib' in results['memory']
 
 
 def test_entry_workflow_features(tmp_path):
@@ -212,7 +214,7 @@ def test_bot_roi_stats_and_ranking(tmp_path):
 def test_related_resources_failures(tmp_path, monkeypatch):
     import types
     import menace.research_aggregator_bot as rab
-    from menace.menace_memory_manager import MenaceMemoryManager
+    from menace.gpt_memory import GPTMemoryManager
 
     db = _setup_menace(tmp_path)
     reg = BotRegistry()
@@ -222,14 +224,14 @@ def test_related_resources_failures(tmp_path, monkeypatch):
     it = rab.ResearchItem(topic="t", content="c", timestamp=0.0, title="A info", summary="s", associated_bots=["A"])
     info_db.add(it)
 
-    mm = MenaceMemoryManager(tmp_path / "mem_fail.db")
-    mm.store("ka", "d", tags="A", bot_id=1)
+    mm = GPTMemoryManager(tmp_path / "mem_fail.db")
+    mm.store("ka", "d", tags=["A"])
 
-    def fail_search(term):
+    def fail_search(*args, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(info_db, "search", fail_search)
-    monkeypatch.setattr(mm, "search_by_tag", fail_search)
+    monkeypatch.setattr(mm, "search_context", fail_search)
 
     res = cross_query.related_resources("A", registry=reg, menace_db=db, info_db=info_db, memory_mgr=mm)
     assert "wfA" in res["workflows"]

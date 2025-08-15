@@ -16,7 +16,7 @@ from datetime import datetime
 from .code_database import CodeDB, CodeRecord, PatchHistoryDB, PatchRecord
 from .unified_event_bus import UnifiedEventBus
 from .trend_predictor import TrendPredictor
-from .menace_memory_manager import MenaceMemoryManager
+from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
@@ -52,7 +52,7 @@ class SelfCodingEngine:
     def __init__(
         self,
         code_db: CodeDB,
-        memory_mgr: MenaceMemoryManager,
+        memory_mgr: GPTMemoryInterface,
         *,
         pipeline: Optional[ModelAutomationPipeline] = None,
         data_bot: Optional[DataBot] = None,
