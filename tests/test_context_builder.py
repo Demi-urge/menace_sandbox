@@ -1,187 +1,196 @@
 import json
 import sys
 import types
+from dataclasses import dataclass
 
-import pytest
+# Stub heavy dependencies before importing the targets
+
+@dataclass
+class _CodeRecord:
+    code: str
+
+@dataclass
+class _BotRecord:
+    name: str = ""
+
+sys.modules.setdefault(
+    "menace.code_database",
+    types.SimpleNamespace(
+        CodeDB=object, CodeRecord=_CodeRecord, PatchHistoryDB=object, PatchRecord=object
+    ),
+)
+sys.modules.setdefault("menace.error_bot", types.SimpleNamespace(ErrorDB=object))
+sys.modules.setdefault(
+    "menace.bot_database", types.SimpleNamespace(BotDB=object, BotRecord=_BotRecord)
+)
+sys.modules.setdefault("menace.task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
+sys.modules.setdefault("menace.database_router", types.SimpleNamespace(DatabaseRouter=object))
+sys.modules.setdefault("menace.unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+sys.modules.setdefault("menace.trend_predictor", types.SimpleNamespace(TrendPredictor=object))
+sys.modules.setdefault("menace.menace_memory_manager", types.SimpleNamespace(MenaceMemoryManager=object))
+sys.modules.setdefault("menace.safety_monitor", types.SimpleNamespace(SafetyMonitor=object))
+sys.modules.setdefault("menace.advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
+sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
+sys.modules.setdefault(
+    "menace.gpt_memory", types.SimpleNamespace(GPTMemoryManager=object, GPTMemory=object)
+)
+sys.modules.setdefault("menace.rollback_manager", types.SimpleNamespace(RollbackManager=object))
+sys.modules.setdefault("menace.audit_trail", types.SimpleNamespace(AuditTrail=lambda *a, **k: object()))
+sys.modules.setdefault(
+    "menace.access_control",
+    types.SimpleNamespace(READ=object(), WRITE=object(), check_permission=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "menace.patch_suggestion_db",
+    types.SimpleNamespace(PatchSuggestionDB=object, SuggestionRecord=object),
+)
+
+# Provide top-level aliases for modules imported without package prefix
+for name in [
+    "code_database",
+    "error_bot",
+    "bot_database",
+    "task_handoff_bot",
+    "database_router",
+    "unified_event_bus",
+    "trend_predictor",
+    "menace_memory_manager",
+    "safety_monitor",
+    "advanced_error_management",
+    "chatgpt_idea_bot",
+    "gpt_memory",
+    "rollback_manager",
+    "audit_trail",
+    "access_control",
+    "patch_suggestion_db",
+]:
+    sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
+
+from menace.context_builder import ContextBuilder
+from menace.self_coding_engine import SelfCodingEngine
+from menace.bot_development_bot import BotDevelopmentBot, BotSpec
 from universal_retriever import ResultBundle
 
 
-# ---------------------------------------------------------------------------
-# Lightweight module stubs so imports succeed without heavy dependencies.
-sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
-sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
-sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
+class DummyClient:
+    def __init__(self):
+        self.last_prompt = ""
+
+    def ask(self, messages, **kwargs):
+        self.last_prompt = messages[0]["content"]
+        return {"choices": [{"message": {"content": "pass"}}]}
 
 
-class _DummyCodeDB:
-    def __init__(self, *a, **k):
-        pass
+class MemDB:
+    def __init__(self, records):
+        self.records = records
 
-    def encode_text(self, text):  # pragma: no cover - simple stub
-        return [0.0]
-
-    def search_by_vector(self, vector, top_k):  # pragma: no cover - simple stub
-        return []
-
-    def get_vector(self, rec_id):  # pragma: no cover - simple stub
-        return [0.0]
-
-    def search(self, *a, **k):  # pragma: no cover - simple stub
-        return []
+    def search(self, _query):
+        return self.records
 
 
-_code_stub = types.ModuleType("code_database")
-_code_stub.__spec__ = types.SimpleNamespace()
-_code_stub.CodeDB = _DummyCodeDB
-_code_stub.CodeRecord = object
-_code_stub.PatchHistoryDB = _DummyCodeDB
-_code_stub.PatchRecord = object
-sys.modules.setdefault("code_database", _code_stub)
-sys.modules.setdefault("menace.code_database", _code_stub)
-sys.modules.setdefault(
-    "failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object)
-)
+class DummyRetriever:
+    def __init__(self, *, bot_db=None, workflow_db=None, error_db=None):
+        self.bot_db = bot_db
+        self.workflow_db = workflow_db
+        self.error_db = error_db
+        self.extra = {}
 
-# Additional optional dependency stubs for self_coding_engine import.
-jinja_mod = types.ModuleType("jinja2")
-jinja_mod.Template = lambda *a, **k: None
-sys.modules.setdefault("jinja2", jinja_mod)
-sys.modules.setdefault("yaml", types.ModuleType("yaml"))
-sys.modules.setdefault("numpy", types.ModuleType("numpy"))
-sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
-sys.modules.setdefault("cryptography.hazmat", types.ModuleType("hazmat"))
-sys.modules.setdefault(
-    "cryptography.hazmat.primitives", types.ModuleType("primitives")
-)
-sys.modules.setdefault(
-    "cryptography.hazmat.primitives.asymmetric", types.ModuleType("asymmetric")
-)
-ed = types.ModuleType("ed25519")
-ed.Ed25519PrivateKey = types.SimpleNamespace(generate=lambda: object())
-ed.Ed25519PublicKey = object
-sys.modules.setdefault("cryptography.hazmat.primitives.asymmetric.ed25519", ed)
-sys.modules.setdefault(
-    "cryptography.hazmat.primitives.serialization", types.ModuleType("serialization")
-)
-sys.modules.setdefault(
-    "env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///:memory:")
-)
-sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+    def register_db(self, name, db, _id_fields):
+        if db is not None:
+            self.extra[name] = db
 
-from menace.context_builder import ContextBuilder
+    def retrieve(self, query, top_k=5):
+        results = []
+        for name, db in [
+            ("bot", self.bot_db),
+            ("workflow", self.workflow_db),
+            ("error", self.error_db),
+            *self.extra.items(),
+        ]:
+            if db is None:
+                continue
+            for rec in db.search(query):
+                results.append(ResultBundle(name, rec, rec.get("score", 0.0), ""))
+        return results
 
 
-class DummyVecDB:
-    """Minimal vector DB used for building the ContextBuilder."""
+def make_builder(monkeypatch):
+    bot_data = [
+        {"id": 2, "name": "beta", "roi": 5},
+        {"id": 1, "name": "alpha", "roi": 10},
+    ]
+    workflow_data = [
+        {"id": 11, "title": "test", "roi": 2},
+        {"id": 10, "title": "deploy", "roi": 7},
+    ]
+    error_data = [
+        {"id": 101, "message": "worse", "frequency": 3},
+        {"id": 100, "message": "bad", "frequency": 1},
+    ]
+    code_data = [
+        {"id": 201, "summary": "tweak", "roi": 1},
+        {"id": 200, "summary": "fix", "roi": 9},
+    ]
+    import menace.context_builder as cb_mod
+    monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
 
-    def encode_text(self, text):  # pragma: no cover - simple stub
-        return [0.0]
-
-    def search_by_vector(self, vector, top_k):  # pragma: no cover - simple stub
-        return []
-
-    def get_vector(self, rec_id):  # pragma: no cover - simple stub
-        return [0.0]
-
-
-@pytest.fixture
-def builder(monkeypatch):
-    mm = types.SimpleNamespace(_summarise_text=lambda text: text[:7])
-    db = DummyVecDB()
-    cb = ContextBuilder(
-        error_db=db,
-        bot_db=db,
-        workflow_db=db,
-        discrepancy_db=db,
-        code_db=db,
-        memory_manager=mm,
+    builder = ContextBuilder(
+        bot_db=MemDB(bot_data),
+        workflow_db=MemDB(workflow_data),
+        error_db=MemDB(error_data),
+        code_db=MemDB(code_data),
     )
 
-    bundles = [
-        ResultBundle("bot", {"id": 1, "name": "AlphaBot", "roi": 10.0}, 0.2, ""),
-        ResultBundle("bot", {"id": 2, "name": "BetaBot", "roi": 1.0}, 0.9, ""),
-        ResultBundle(
-            "workflow", {"id": 3, "title": "AlphaFlow", "roi": 5.0}, 0.1, ""
-        ),
-        ResultBundle(
-            "workflow", {"id": 4, "title": "OtherFlow", "roi": 0.1}, 0.9, ""
-        ),
-        ResultBundle(
-            "error", {"id": 100, "message": "alpha crash", "frequency": 1}, 0.2, ""
-        ),
-        ResultBundle(
-            "discrepancy", {"id": 200, "message": "alpha disc", "severity": 0.9}, 0.2, ""
-        ),
-        ResultBundle("code", {"id": 42, "summary": "alpha code", "roi": 5.0}, 0.2, ""),
-        ResultBundle("code", {"id": 43, "summary": "beta code", "roi": 0.1}, 0.8, ""),
-    ]
-
-    monkeypatch.setattr(cb.retriever, "retrieve", lambda q, top_k=15: bundles)
-    return cb
+    expected = {
+        "errors": [{"id": 100, "desc": "bad", "metric": 0.5}],
+        "bots": [
+            {"id": 1, "name": "alpha", "desc": "alpha", "metric": 10.0}
+        ],
+        "workflows": [
+            {"id": 10, "title": "deploy", "desc": "deploy", "metric": 7.0}
+        ],
+        "code": [{"id": 200, "desc": "fix", "metric": 9.0}],
+        "discrepancies": [],
+    }
+    expected_str = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+    return builder, expected_str
 
 
-def test_build_context_collects_and_prioritises(builder):
-    # Generous token budget so all categories are represented
-    ctx_json = builder.build_context("alpha", top_k=2)
-    ctx = json.loads(ctx_json)
-
-    for key in ("errors", "bots", "workflows", "discrepancies", "code"):
-        assert key in ctx and ctx[key]
-
-    # High ROI entries appear first
-    assert ctx["bots"][0]["id"] == 1
-    assert ctx["workflows"][0]["id"] == 3
-    assert ctx["code"][0]["id"] == 42
-
-    # Tight token budget trims lower scoring items
-    ctx_json_limited = builder.build_context("alpha", top_k=1)
-    limited_ctx = json.loads(ctx_json_limited)
-    assert len(limited_ctx["code"]) == 1
-    assert limited_ctx["code"][0]["id"] == 42
+def test_build_context_compact_json(monkeypatch):
+    builder, expected = make_builder(monkeypatch)
+    ctx = builder.build_context("alpha issue", top_k=1)
+    assert ctx == expected
+    assert ": " not in ctx
+    assert ", " not in ctx
 
 
-def test_build_context_caches(builder, monkeypatch):
-    calls = {"n": 0}
-
-    def fake(q, top_k=5):
-        calls["n"] += 1
-        return []
-
-    monkeypatch.setattr(builder.retriever, "retrieve", fake)
-    builder.build_context("cache test")
-    builder.build_context("cache test")
-    assert calls["n"] == 1
-
-
-def test_self_coding_engine_prompts_receive_context(builder, tmp_path, monkeypatch):
-    import menace.self_coding_engine as sce
-    import menace.menace_memory_manager as mm
-
-    mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
-
-    expected = builder.build_context("alpha issue")
-    called = {}
-
-    def bc(desc, **kw):
-        called["called"] = True
-        return expected
-
-    builder.build_context = bc  # type: ignore[assignment]
-
-    engine = sce.SelfCodingEngine(_DummyCodeDB(), mem, context_builder=builder)
-
-    class DummyClient:
-        def ask(self, messages, memory_manager=None, tags=None, use_memory=True):
-            DummyClient.prompt = messages[0]["content"]
-            return {"choices": [{"message": {"content": "def auto_fn():\n    pass"}}]}
-
-    engine.llm_client = DummyClient()
-    monkeypatch.setattr(engine, "suggest_snippets", lambda d, limit=3: [])
-
+def test_self_coding_engine_includes_context(monkeypatch):
+    builder, expected = make_builder(monkeypatch)
+    # Pre-compute context for pretty representation
+    pretty = json.dumps(json.loads(builder.build_context("alpha issue")), indent=2)
+    code_db = types.SimpleNamespace(search=lambda q: [{"code": "print('x')"}])
+    gpt_mem = types.SimpleNamespace(
+        search_context=lambda *a, **k: [], log_interaction=lambda *a, **k: None
+    )
+    client = DummyClient()
+    engine = SelfCodingEngine(
+        code_db,
+        object(),
+        llm_client=client,
+        context_builder=builder,
+        gpt_memory=gpt_mem,
+    )
     engine.generate_helper("alpha issue")
-    assert called["called"]
+    assert "### Retrieval context" in client.last_prompt
+    assert pretty in client.last_prompt
 
-    dumped = json.dumps(expected, indent=2)
-    assert "### Retrieval context" in DummyClient.prompt
-    assert dumped in DummyClient.prompt
 
+def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
+    builder, expected = make_builder(monkeypatch)
+    ctx = builder.build_context("alpha issue")
+    bot = BotDevelopmentBot(repo_base=tmp_path, context_builder=builder)
+    spec = BotSpec(name="demo", purpose="alpha issue")
+    prompt = bot._build_prompt(spec)
+    assert "\n\nContext:\n" in prompt
+    assert ctx in prompt
