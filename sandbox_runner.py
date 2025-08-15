@@ -7,6 +7,8 @@ import shutil
 import sys
 import signal
 
+from log_tags import INSIGHT, IMPROVEMENT_PATH
+
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
 REQUIRED_PYTHON_PKGS = ["pydantic", "dotenv"]
@@ -1419,7 +1421,8 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     resp = ctx.gpt_client.ask(
-                        hist + [{"role": "user", "content": prompt}]
+                        hist + [{"role": "user", "content": prompt}],
+                        tags=[INSIGHT, IMPROVEMENT_PATH],
                     )
                     idea = (
                         resp.get("choices", [{}])[0]

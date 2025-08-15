@@ -15,7 +15,7 @@ import inspect
 from typing import Any, Dict, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
-from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT
+from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
@@ -1041,7 +1041,7 @@ def _sandbox_cycle_runner(
                     resp = ctx.gpt_client.ask(
                         history + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
-                        tags=[INSIGHT],
+                        tags=[ERROR_FIX, INSIGHT, IMPROVEMENT_PATH],
                         use_memory=False,
                     )
                     suggestion = (
@@ -1173,7 +1173,7 @@ def _sandbox_cycle_runner(
                         resp = ctx.gpt_client.ask(
                             hist + [{"role": "user", "content": prompt}],
                             memory_manager=gpt_mem,
-                            tags=["improvement_brainstorm"],
+                            tags=[INSIGHT, IMPROVEMENT_PATH],
                             use_memory=False,
                         )
                         idea = (
@@ -1266,7 +1266,7 @@ def _sandbox_cycle_runner(
                     resp = ctx.gpt_client.ask(
                         hist + [{"role": "user", "content": prompt}],
                         memory_manager=gpt_mem,
-                        tags=["improvement_brainstorm"],
+                        tags=[INSIGHT, IMPROVEMENT_PATH],
                         use_memory=False,
                     )
                     idea = (

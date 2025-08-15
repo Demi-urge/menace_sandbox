@@ -17,6 +17,13 @@ set of canonical tags:
 These tags are defined in `log_tags.py` and mirrored by `gpt_memory.STANDARD_TAGS`
 so new modules can reference the same taxonomy when logging.
 
+Every call to `gpt_client.ask` should pass a `tags` list using these constants to
+describe the intent of the interaction. Use `ERROR_FIX` for patches and bug
+resolutions, `INSIGHT` when brainstorming or generating ideas, and
+`FEEDBACK`/`IMPROVEMENT_PATH` to capture evaluation results and follow-up work.
+This keeps memory queries and future contributions consistent with the
+definitions in `log_tags.py`.
+
 ## Unified interface
 
 All memory backends now implement `GPTMemoryInterface` providing four core
