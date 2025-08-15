@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import signal
+from typing import TYPE_CHECKING
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH
 
@@ -137,6 +138,10 @@ logger = get_logger(__name__)
 
 GPT_MEMORY_MANAGER = None
 GPT_KNOWLEDGE_SERVICE = None
+if TYPE_CHECKING:  # pragma: no cover - only for type hints
+    from local_knowledge_module import LocalKnowledgeModule
+
+LOCAL_KNOWLEDGE_MODULE: "LocalKnowledgeModule | None" = None
 
 ROOT = Path(__file__).resolve().parent
 

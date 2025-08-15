@@ -27,6 +27,7 @@ from scipy.stats import t
 from gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance
 from gpt_knowledge_service import GPTKnowledgeService
+from local_knowledge_module import LocalKnowledgeModule
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -203,6 +204,7 @@ logger = get_logger(__name__)
 
 GPT_MEMORY_MANAGER: GPTMemoryManager | None = None
 GPT_KNOWLEDGE_SERVICE: GPTKnowledgeService | None = None
+LOCAL_KNOWLEDGE_MODULE: LocalKnowledgeModule | None = None
 
 
 def _port_available(port: int, host: str = "0.0.0.0") -> bool:
@@ -1134,11 +1136,13 @@ def main(argv: List[str] | None = None) -> None:
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
     mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-    global GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
-    GPT_MEMORY_MANAGER = GPTMemoryManager(mem_db)
+    global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
+    LOCAL_KNOWLEDGE_MODULE = LocalKnowledgeModule(mem_db)
+    GPT_MEMORY_MANAGER = LOCAL_KNOWLEDGE_MODULE.memory
+    GPT_KNOWLEDGE_SERVICE = LOCAL_KNOWLEDGE_MODULE.knowledge
     sandbox_runner.GPT_MEMORY_MANAGER = GPT_MEMORY_MANAGER
-    GPT_KNOWLEDGE_SERVICE = GPTKnowledgeService(GPT_MEMORY_MANAGER)
     sandbox_runner.GPT_KNOWLEDGE_SERVICE = GPT_KNOWLEDGE_SERVICE
+    sandbox_runner.LOCAL_KNOWLEDGE_MODULE = LOCAL_KNOWLEDGE_MODULE
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"

@@ -1,0 +1,60 @@
+from __future__ import annotations
+
+"""Simple wrapper combining :mod:`gpt_memory` and :mod:`gpt_knowledge_service`.
+
+This module exposes :class:`LocalKnowledgeModule` which couples
+:class:`gpt_memory.GPTMemoryManager` with :class:`gpt_knowledge_service.GPTKnowledgeService`.
+It provides a minimal interface used by bots that need persistent long-term
+context.
+"""
+
+from pathlib import Path
+from typing import Sequence
+
+from gpt_memory import GPTMemoryManager
+from gpt_knowledge_service import GPTKnowledgeService
+
+
+class LocalKnowledgeModule:
+    """Aggregate GPT memory and summarised insights.
+
+    Parameters
+    ----------
+    db_path:
+        Location of the SQLite database used for storing interactions.  If an
+        existing :class:`GPTMemoryManager` is supplied it will be used instead.
+    manager:
+        Optional pre-initialised :class:`GPTMemoryManager` instance.
+    service:
+        Optional pre-initialised :class:`GPTKnowledgeService` instance.  When not
+        provided one will be created using ``manager``.
+    """
+
+    def __init__(
+        self,
+        db_path: str | Path = "gpt_memory.db",
+        *,
+        manager: GPTMemoryManager | None = None,
+        service: GPTKnowledgeService | None = None,
+    ) -> None:
+        self.memory = manager or GPTMemoryManager(db_path)
+        self.knowledge = service or GPTKnowledgeService(self.memory)
+
+    # ------------------------------------------------------------------ facade
+    def log(
+        self, prompt: str, response: str, tags: Sequence[str] | None = None
+    ) -> None:
+        """Store an interaction in long-term memory."""
+
+        self.memory.log_interaction(prompt, response, tags)
+
+    def get_insights(self, tag: str) -> str:
+        """Return the latest generated insight for ``tag``."""
+
+        return self.knowledge.get_recent_insights(tag)
+
+    def refresh(self) -> None:
+        """Regenerate stored insights from recent interactions."""
+
+        self.knowledge.update_insights()
+__all__ = ["LocalKnowledgeModule"]
