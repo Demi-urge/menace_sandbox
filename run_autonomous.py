@@ -26,6 +26,7 @@ import math
 from scipy.stats import t
 from gpt_memory import GPTMemoryManager
 from memory_maintenance import MemoryMaintenance
+from gpt_knowledge_service import GPTKnowledgeService
 
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
@@ -201,6 +202,7 @@ if not hasattr(sandbox_runner, "_sandbox_main"):
 logger = get_logger(__name__)
 
 GPT_MEMORY_MANAGER: GPTMemoryManager | None = None
+GPT_KNOWLEDGE_SERVICE: GPTKnowledgeService | None = None
 
 
 def _port_available(port: int, host: str = "0.0.0.0") -> bool:
@@ -1132,9 +1134,11 @@ def main(argv: List[str] | None = None) -> None:
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
     mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-    global GPT_MEMORY_MANAGER
+    global GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
     GPT_MEMORY_MANAGER = GPTMemoryManager(mem_db)
     sandbox_runner.GPT_MEMORY_MANAGER = GPT_MEMORY_MANAGER
+    GPT_KNOWLEDGE_SERVICE = GPTKnowledgeService(GPT_MEMORY_MANAGER)
+    sandbox_runner.GPT_KNOWLEDGE_SERVICE = GPT_KNOWLEDGE_SERVICE
 
     if args.preset_debug:
         os.environ["PRESET_DEBUG"] = "1"
@@ -1370,7 +1374,9 @@ def main(argv: List[str] | None = None) -> None:
 
     mem_maint = None
     if GPT_MEMORY_MANAGER is not None:
-        mem_maint = MemoryMaintenance(GPT_MEMORY_MANAGER)
+        mem_maint = MemoryMaintenance(
+            GPT_MEMORY_MANAGER, knowledge_service=GPT_KNOWLEDGE_SERVICE
+        )
         mem_maint.start()
         cleanup_funcs.append(mem_maint.stop)
 
