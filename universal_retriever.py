@@ -57,16 +57,10 @@ _RETRIEVAL_RANK = _me.Gauge(
     "Rank position for retrieval results",
     ["origin_db"],
 )
-_RETRIEVAL_HITS_TOTAL = _me.Gauge(
-    "retrieval_hits_total",
-    "Total retrieval hits included in final prompts",
-    ["origin_db"],
-)
-_RETRIEVAL_PROMPT_TOKENS_TOTAL = _me.Gauge(
-    "retrieval_prompt_tokens_total",
-    "Total tokens from retrieval results injected into prompts",
-    ["origin_db"],
-)
+# New cumulative counters/histograms exported via ``metrics_exporter``
+_RETRIEVAL_HITS_TOTAL = _me.retrieval_hits_total
+_RETRIEVAL_TOKENS_INJECTED_TOTAL = _me.retrieval_tokens_injected_total
+_RETRIEVAL_RANK_HISTOGRAM = _me.retrieval_rank_histogram
 _RETRIEVAL_SCORE = _me.Gauge(
     "retrieval_similarity_score",
     "Similarity score for retrieval result",
@@ -106,9 +100,10 @@ def log_retrieval_metrics(
 
     try:
         _RETRIEVAL_RANK.labels(origin_db=origin_db).set(rank)
+        _RETRIEVAL_RANK_HISTOGRAM.labels(rank=rank).inc()
         if hit:
-            _RETRIEVAL_HITS_TOTAL.labels(origin_db=origin_db).inc()
-            _RETRIEVAL_PROMPT_TOKENS_TOTAL.labels(origin_db=origin_db).inc(tokens)
+            _RETRIEVAL_HITS_TOTAL.inc()
+            _RETRIEVAL_TOKENS_INJECTED_TOTAL.inc(tokens)
         _RETRIEVAL_SCORE.labels(origin_db=origin_db).set(similarity)
     except Exception:
         pass  # best effort metrics
@@ -128,6 +123,62 @@ def log_retrieval_metrics(
             )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to persist retrieval metrics")
+
+
+def _log_stat_to_db(entry: dict[str, Any]) -> None:
+    """Persist retrieval statistics for later analysis."""
+
+    try:
+        conn = sqlite3.connect("retrieval_stats.db")
+        with conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS retrieval_stats (
+                    session_id TEXT,
+                    origin_db TEXT,
+                    record_id TEXT,
+                    rank INTEGER,
+                    hit INTEGER,
+                    hit_rate REAL,
+                    tokens_injected INTEGER,
+                    contribution REAL
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO retrieval_stats (
+                    session_id, origin_db, record_id, rank, hit,
+                    hit_rate, tokens_injected, contribution
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry["session_id"],
+                    entry["origin_db"],
+                    str(entry.get("record_id")),
+                    entry["rank"],
+                    int(entry["hit"]),
+                    entry.get("hit_rate", 0.0),
+                    entry.get("tokens_injected", 0),
+                    entry.get("contribution"),
+                ),
+            )
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to log retrieval stat")
+
+
+def mark_retrieval_contribution(session_id: str, record_id: Any, contribution: float) -> None:
+    """Update contribution score for a retrieval result."""
+
+    try:
+        conn = sqlite3.connect("retrieval_stats.db")
+        with conn:
+            conn.execute(
+                "UPDATE retrieval_stats SET contribution=? WHERE session_id=? AND record_id=?",
+                (contribution, session_id, str(record_id)),
+            )
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to update retrieval contribution")
 
 
 @dataclass
@@ -889,6 +940,7 @@ class UniversalRetriever:
                     "rank": rank,
                     "hit": included,
                     "tokens": tokens,
+                    "tokens_injected": tokens if included else 0,
                     "similarity": similarity,
                     "prompt_tokens": tokens if included else 0,
                     "session_id": session_id,
@@ -908,6 +960,11 @@ class UniversalRetriever:
                 MetricsDB().log_eval("retrieval_call", "hit_rate", hit_rate)
             except Exception:
                 logger.exception("failed to persist hit rate")
+
+        for entry in metrics_list:
+            entry["hit_rate"] = hit_rate
+            entry["contribution"] = 0.0
+            _log_stat_to_db(entry)
 
         for db_name, duration in db_times.items():
             try:
