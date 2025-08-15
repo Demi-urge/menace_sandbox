@@ -40,6 +40,17 @@ def _retry(func: Callable[[], T], tries: int = 3, delay: float = 1.0, backoff: f
             wait *= backoff
 
 
+def attach_retrieval_info(
+    record: Dict[str, object], session_id: str, vectors: List[Tuple[str, str]]
+) -> Dict[str, object]:
+    """Return a copy of *record* with retrieval metadata attached."""
+
+    rec = dict(record)
+    rec["retrieval_session_id"] = session_id
+    rec["vectors"] = list(vectors)
+    return rec
+
+
 
 class PatchScoreBackend:
     """Abstract interface for patch score storage backends."""
@@ -234,4 +245,5 @@ __all__ = [
     "S3PatchScoreBackend",
     "FilePatchScoreBackend",
     "backend_from_url",
+    "attach_retrieval_info",
 ]

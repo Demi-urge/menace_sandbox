@@ -783,8 +783,10 @@ class SelfCodingEngine:
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
         try:
             vectors: List[Tuple[str, str]] = []
+            session_id = ""
             if context_meta:
                 raw_vecs = context_meta.get("retrieval_vectors") or []
+                session_id = context_meta.get("retrieval_session_id", "")
                 for item in raw_vecs:
                     if isinstance(item, dict):
                         origin = item.get("origin_db") or item.get("origin")
@@ -793,6 +795,17 @@ class SelfCodingEngine:
                         origin, vid = item
                     if origin is not None and vid is not None:
                         vectors.append((str(origin), str(vid)))
+            if self.patch_db and session_id and patch_id is not None:
+                win_flag = not reverted and roi_delta > 0
+                regret_flag = reverted or roi_delta < 0
+                self.patch_db.record_vector_metrics(
+                    session_id,
+                    vectors,
+                    patch_id=patch_id,
+                    contribution=roi_delta,
+                    win=win_flag,
+                    regret=regret_flag,
+                )
             if self.data_bot and self.patch_db and patch_id is not None:
                 rec = self.patch_db.get(patch_id)
                 success = False

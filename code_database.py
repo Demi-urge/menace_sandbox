@@ -29,6 +29,11 @@ from .unified_event_bus import UnifiedEventBus
 from .retry_utils import publish_with_retry, with_retry
 from .alert_dispatcher import send_discord_alert, CONFIG as ALERT_CONFIG
 
+try:  # pragma: no cover - optional dependency
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - fallback when module unavailable
+    VectorMetricsDB = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 SQL_DIR = Path(__file__).with_name("sql_templates")
@@ -687,6 +692,7 @@ class PatchHistoryDB:
         self._lock = threading.Lock()
         self.keyword_counts: Counter[str] = Counter()
         self.keyword_recent: Dict[str, float] = {}
+        self._vec_db = VectorMetricsDB() if VectorMetricsDB is not None else None
         with sqlite3.connect(self.path) as conn:
             conn.execute(
                 """
@@ -922,6 +928,32 @@ class PatchHistoryDB:
             return 0.0
         success = sum(1 for d, in rows if d > 0)
         return float(success) / len(rows)
+
+    def record_vector_metrics(
+        self,
+        session_id: str,
+        vectors: list[tuple[str, str]],
+        *,
+        patch_id: int,
+        contribution: float,
+        win: bool,
+        regret: bool,
+    ) -> None:
+        """Update :class:`VectorMetricsDB` rows for *session_id* and *vectors*."""
+
+        if self._vec_db is None:
+            return
+        try:
+            self._vec_db.update_outcome(
+                session_id,
+                vectors,
+                contribution=contribution,
+                patch_id=str(patch_id),
+                win=win,
+                regret=regret,
+            )
+        except Exception:
+            logger.exception("vector metrics update failed")
 
     def keyword_features(self) -> tuple[int, int]:
         """Return count and recency (hrs) for the most common keyword."""
