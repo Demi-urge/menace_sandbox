@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 
 _VEC_METRICS = VectorMetricsDB()
-_EMBED_STATS_DB = EmbeddingStatsDB()
+_EMBED_STATS_DB = EmbeddingStatsDB("metrics.db")
 
 
 def log_embedding_metrics(

@@ -129,7 +129,7 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
     """Persist retrieval statistics for later analysis."""
 
     try:
-        conn = sqlite3.connect("retrieval_stats.db")
+        conn = sqlite3.connect("metrics.db")
         with conn:
             conn.execute(
                 """
@@ -141,7 +141,10 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                     hit INTEGER,
                     hit_rate REAL,
                     tokens_injected INTEGER,
-                    contribution REAL
+                    contribution REAL,
+                    patch_id TEXT,
+                    db_source TEXT,
+                    ts TEXT DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -149,8 +152,8 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                 """
                 INSERT INTO retrieval_stats (
                     session_id, origin_db, record_id, rank, hit,
-                    hit_rate, tokens_injected, contribution
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    hit_rate, tokens_injected, contribution, patch_id, db_source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry["session_id"],
@@ -161,6 +164,8 @@ def _log_stat_to_db(entry: dict[str, Any]) -> None:
                     entry.get("hit_rate", 0.0),
                     entry.get("tokens_injected", 0),
                     entry.get("contribution"),
+                    entry.get("patch_id", ""),
+                    entry.get("db_source", ""),
                 ),
             )
     except Exception:  # pragma: no cover - best effort
@@ -171,7 +176,7 @@ def mark_retrieval_contribution(session_id: str, record_id: Any, contribution: f
     """Update contribution score for a retrieval result."""
 
     try:
-        conn = sqlite3.connect("retrieval_stats.db")
+        conn = sqlite3.connect("metrics.db")
         with conn:
             conn.execute(
                 "UPDATE retrieval_stats SET contribution=? WHERE session_id=? AND record_id=?",
