@@ -31,6 +31,11 @@ try:  # Optional dependency used for event publication
 except Exception:  # pragma: no cover - optional
     UnifiedEventBus = None  # type: ignore
 
+try:  # Optional dependency for graph updates
+    from knowledge_graph import KnowledgeGraph
+except Exception:  # pragma: no cover - optional
+    KnowledgeGraph = None  # type: ignore
+
 try:  # Optional dependency used for semantic embeddings
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - keep import lightweight
@@ -95,6 +100,9 @@ class GPTMemoryManager(GPTMemoryInterface):
         Optional :class:`UnifiedEventBus`.  When supplied, each call to
         :meth:`log_interaction` publishes a ``"memory:new"`` event containing
         the interaction details.
+    knowledge_graph:
+        Optional :class:`KnowledgeGraph` instance used to mirror interactions into
+        the shared knowledge graph.
     """
 
     def __init__(
@@ -103,11 +111,13 @@ class GPTMemoryManager(GPTMemoryInterface):
         *,
         embedder: SentenceTransformer | None = None,
         event_bus: Optional[UnifiedEventBus] = None,
+        knowledge_graph: "KnowledgeGraph | None" = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.embedder = embedder
         self.event_bus = event_bus
+        self.graph = knowledge_graph
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
@@ -136,7 +146,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         """Record a GPT interaction in persistent storage."""
 
         timestamp = datetime.utcnow().isoformat()
-        tag_str = ",".join(tags) if tags else ""
+        tag_list = list(tags or [])
+        tag_str = ",".join(tag_list)
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
@@ -169,11 +180,30 @@ class GPTMemoryManager(GPTMemoryInterface):
             )
 
         if self.event_bus:
-            tag_list = list(tags or [])
             try:
                 self.event_bus.publish(
                     "memory:new", {"prompt": prompt, "tags": tag_list}
                 )
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        if self.graph:
+            try:
+                self.graph.add_memory_entry(prompt, tag_list)
+                bots = [t.split(":", 1)[1] for t in tag_list if t.startswith("bot:")]
+                codes = [t.split(":", 1)[1] for t in tag_list if t.startswith("code:")]
+                errs = [
+                    t.split(":", 1)[1]
+                    for t in tag_list
+                    if t.startswith("error:") or t.startswith("error_category:")
+                ]
+                if bots or codes or errs:
+                    self.graph.add_gpt_insight(
+                        prompt,
+                        bots=bots or None,
+                        code_paths=codes or None,
+                        error_categories=errs or None,
+                    )
             except Exception:  # pragma: no cover - defensive
                 pass
 

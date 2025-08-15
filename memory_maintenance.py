@@ -88,3 +88,10 @@ class MemoryMaintenance:
                     self.knowledge_service.update_insights()
                 except Exception:
                     logger.exception("knowledge service update failed")
+
+            kg = getattr(self.manager, "graph", None)
+            if kg is not None:
+                try:
+                    kg.ingest_gpt_memory(self.manager)
+                except Exception:
+                    logger.exception("knowledge graph update failed")
