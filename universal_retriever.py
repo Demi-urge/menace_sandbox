@@ -403,6 +403,8 @@ class UniversalRetriever:
         code_db: Any | None = None,
         knowledge_graph: Any | None = None,
         weights: "RetrievalWeights | None" = None,
+        model_path: str | Path | None = None,
+        reliability_threshold: float = 0.0,
     ) -> None:
         self.bot_db = bot_db
         self.workflow_db = workflow_db
@@ -412,6 +414,19 @@ class UniversalRetriever:
         self.code_db = code_db
         self.graph = knowledge_graph
         self.weights = weights or RetrievalWeights()
+        self.reliability_threshold = float(reliability_threshold)
+        self._ranker_model: dict[str, Any] | None = None
+        if model_path:
+            try:
+                data = json.loads(Path(model_path).read_text())
+                self._ranker_model = {
+                    "coef": data.get("coef", [[0.0]])[0],
+                    "intercept": float(data.get("intercept", [0.0])[0]),
+                    "features": data.get("features", []),
+                    "classes": data.get("classes", []),
+                }
+            except Exception:
+                logger.exception("failed to load ranking model from %s", model_path)
         # lazy-instantiated DeploymentDB connection for bot deployment stats
         self._deploy_db: Any | None = None
 
@@ -500,6 +515,28 @@ class UniversalRetriever:
         raise TypeError("Unsupported query type for retrieval")
 
     # ------------------------------------------------------------------
+    def _model_predict(self, source: str, feats: Dict[str, float]) -> float:
+        """Return ranking model probability for candidate ``source``."""
+
+        model = self._ranker_model
+        if not model:
+            return 1.0
+        try:
+            vec: List[float] = []
+            for name in model.get("features", []):
+                if name.startswith("db_"):
+                    vec.append(1.0 if source == name[3:] else 0.0)
+                else:
+                    vec.append(float(feats.get(name, 0.0)))
+            z = sum(c * v for c, v in zip(model.get("coef", []), vec)) + model.get(
+                "intercept", 0.0
+            )
+            return 1.0 / (1.0 + math.exp(-z))
+        except Exception:
+            logger.exception("ranking model prediction failed")
+            return 1.0
+
+    # ------------------------------------------------------------------
     def _retrieve_candidates(
         self, query: Any, top_k: int = 10
     ) -> List[tuple[str, Any, Any]]:
@@ -511,7 +548,26 @@ class UniversalRetriever:
 
         if self._dbs:
             vector = self._to_vector(query)
-            for source, db in self._dbs.items():
+            items = list(self._dbs.items())
+            if _VEC_METRICS is not None:
+                reliabilities: Dict[str, float] = {}
+                for name, _ in items:
+                    try:
+                        win = _VEC_METRICS.retriever_win_rate(name)
+                        regret = _VEC_METRICS.retriever_regret_rate(name)
+                        reliabilities[name] = win - regret
+                    except Exception:
+                        reliabilities[name] = 0.0
+                items.sort(
+                    key=lambda kv: reliabilities.get(kv[0], 0.0), reverse=True
+                )
+                if self.reliability_threshold:
+                    items = [
+                        kv
+                        for kv in items
+                        if reliabilities.get(kv[0], 0.0) >= self.reliability_threshold
+                    ]
+            for source, db in items:
                 start = time.perf_counter()
                 try:
                     matches = db.search_by_vector(vector, top_k)
@@ -524,25 +580,36 @@ class UniversalRetriever:
                     candidates.append((source, rec_id, m))
 
         if self.code_db:
-            start = time.perf_counter()
-            try:
-                if hasattr(self.code_db, "search_by_vector"):
-                    if vector is None:
-                        vector = self._to_vector(query)
-                    matches = self.code_db.search_by_vector(vector, top_k)
-                elif isinstance(query, str):
-                    matches = self.code_db.search(query)[:top_k]
-                    for m in matches:
-                        if isinstance(m, dict) and "_distance" not in m:
-                            m["_distance"] = 0.0
-                else:
+            allow = True
+            if _VEC_METRICS is not None:
+                try:
+                    win = _VEC_METRICS.retriever_win_rate("code")
+                    regret = _VEC_METRICS.retriever_regret_rate("code")
+                    rel = win - regret
+                    if self.reliability_threshold and rel < self.reliability_threshold:
+                        allow = False
+                except Exception:
+                    pass
+            if allow:
+                start = time.perf_counter()
+                try:
+                    if hasattr(self.code_db, "search_by_vector"):
+                        if vector is None:
+                            vector = self._to_vector(query)
+                        matches = self.code_db.search_by_vector(vector, top_k)
+                    elif isinstance(query, str):
+                        matches = self.code_db.search(query)[:top_k]
+                        for m in matches:
+                            if isinstance(m, dict) and "_distance" not in m:
+                                m["_distance"] = 0.0
+                    else:
+                        matches = []
+                except Exception:  # pragma: no cover - defensive
                     matches = []
-            except Exception:  # pragma: no cover - defensive
-                matches = []
-            timings["code"] = time.perf_counter() - start
-            for m in matches:
-                rec_id = self._extract_id(m, ("id", "cid"))
-                candidates.append(("code", rec_id, m))
+                timings["code"] = time.perf_counter() - start
+                for m in matches:
+                    rec_id = self._extract_id(m, ("id", "cid"))
+                    candidates.append(("code", rec_id, m))
 
         def _dist(entry: tuple[str, Any, Any]) -> float:
             item = entry[2]
@@ -866,6 +933,14 @@ class UniversalRetriever:
             feedback_bias *= math.exp(-STALE_COST * stale_cost)
             combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
             combined_score *= bias_map.get(source, 1.0) * feedback_bias
+            feats = {
+                "similarity": similarity,
+                "context_score": ctx_score,
+                "win_rate": win_rate,
+                "regret_rate": regret_rate,
+            }
+            model_score = self._model_predict(source, feats)
+            combined_score *= model_score
             scored.append({
                 "source": source,
                 "record_id": rec_id,
@@ -877,6 +952,8 @@ class UniversalRetriever:
                 "win_rate": win_rate,
                 "regret_rate": regret_rate,
                 "stale_cost": stale_cost,
+                "model_score": model_score,
+                "features": feats,
                 **metrics,
             })
 
@@ -914,6 +991,7 @@ class UniversalRetriever:
                     "distance",
                     "similarity",
                     "context",
+                    "features",
                 }
             }
             meta.update(

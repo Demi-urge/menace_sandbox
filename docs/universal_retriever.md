@@ -16,6 +16,8 @@ retriever = UniversalRetriever(
     error_db=ErrorDB(),
     enhancement_db=EnhancementDB(),
     information_db=InformationDB(),
+    model_path="ranker.json",
+    reliability_threshold=0.2,
 )
 
 hits = retriever.retrieve("upload failed", top_k=5, link_multiplier=1.2)
@@ -77,6 +79,22 @@ factor:
 
 These signals complement similarity and contextual metrics to encourage results
 that have performed well in past experiments.
+
+## Model ranking and reliability filtering
+
+Two additional knobs influence candidate ordering:
+
+- ``model_path`` – optional path to a JSON logistic‑regression model produced by
+  :mod:`retrieval_ranker`. When supplied, the model evaluates feature vectors
+  for each candidate and the predicted win probability is multiplied into the
+  final score.
+- ``reliability_threshold`` – minimum acceptable reliability score
+  (``win_rate - regret_rate``) fetched from :class:`VectorMetricsDB`. Databases
+  falling below this threshold are de‑prioritised or skipped during search.
+
+These settings make it possible to blend historical outcomes with real‑time
+signals, promoting trustworthy databases while still honouring similarity and
+context.
 
 ## Tuning parameters
 
