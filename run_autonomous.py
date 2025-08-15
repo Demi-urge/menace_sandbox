@@ -25,7 +25,7 @@ from typing import Callable, List
 import math
 from scipy.stats import t
 from gpt_memory import GPTMemoryManager
-from memory_maintenance import MemoryMaintenance
+from memory_maintenance import MemoryMaintenance, _load_retention_rules
 from gpt_knowledge_service import GPTKnowledgeService
 from local_knowledge_module import LocalKnowledgeModule
 
@@ -920,6 +920,21 @@ def main(argv: List[str] | None = None) -> None:
         help="path to GPT memory database (overrides GPT_MEMORY_DB)",
     )
     parser.add_argument(
+        "--memory-compact-interval",
+        type=float,
+        help=(
+            "seconds between GPT memory compaction cycles "
+            "(overrides GPT_MEMORY_COMPACT_INTERVAL)"
+        ),
+    )
+    parser.add_argument(
+        "--memory-retention",
+        help=(
+            "comma separated tag=limit pairs controlling memory retention "
+            "(overrides GPT_MEMORY_RETENTION)"
+        ),
+    )
+    parser.add_argument(
         "--runs",
         type=int,
         default=1,
@@ -1389,8 +1404,25 @@ def main(argv: List[str] | None = None) -> None:
 
     mem_maint = None
     if GPT_MEMORY_MANAGER is not None:
+        retention_rules = _load_retention_rules()
+        if args.memory_retention:
+            os.environ["GPT_MEMORY_RETENTION"] = args.memory_retention
+            retention_rules = _load_retention_rules()
+        interval = args.memory_compact_interval
+        if interval is None:
+            env_interval = os.getenv("GPT_MEMORY_COMPACT_INTERVAL")
+            if env_interval:
+                try:
+                    interval = float(env_interval)
+                except Exception:
+                    logger.warning(
+                        "Invalid GPT_MEMORY_COMPACT_INTERVAL value: %s", env_interval
+                    )
         mem_maint = MemoryMaintenance(
-            GPT_MEMORY_MANAGER, knowledge_service=GPT_KNOWLEDGE_SERVICE
+            GPT_MEMORY_MANAGER,
+            interval=interval,
+            retention=retention_rules,
+            knowledge_service=GPT_KNOWLEDGE_SERVICE,
         )
         mem_maint.start()
         cleanup_funcs.append(mem_maint.stop)
