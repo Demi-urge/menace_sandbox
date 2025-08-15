@@ -24,6 +24,97 @@ resolutions, `INSIGHT` when brainstorming or generating ideas, and
 This keeps memory queries and future contributions consistent with the
 definitions in `log_tags.py`.
 
+## LocalKnowledgeModule
+
+`LocalKnowledgeModule` combines a `GPTMemoryManager` with the
+`GPTKnowledgeService` summariser.  It exposes a tiny facade for logging new
+entries, generating insights and building context.  By default it stores data in
+`gpt_memory.db` and can be shared across modules using
+`local_knowledge_module.init_local_knowledge`.  Reusing the same database path
+allows memories and generated insights to persist between separate runs of the
+program.
+
+### Persistence across sessions
+
+When initialised with a `db_path` that already exists, the module reloads prior
+interactions so subsequent prompts gain access to earlier feedback, fixes and
+improvement plans.  The path can also be supplied via the `GPT_MEMORY_DB`
+environment variable:
+
+```bash
+export GPT_MEMORY_DB="persistent.db"
+```
+
+## Querying with `ask_with_memory`
+
+The helper `memory_aware_gpt_client.ask_with_memory` pulls recent context from a
+`LocalKnowledgeModule`, prepends it to the new prompt and logs the response back
+to memory.  Callers must supply a ``key`` in ``module.action`` form so related
+interactions can be grouped, plus a ``tags`` list describing the intent.
+
+```python
+from memory_aware_gpt_client import ask_with_memory
+from log_tags import FEEDBACK
+
+resp = ask_with_memory(client, "demo.run", "How did it go?",
+                       memory=module, tags=[FEEDBACK])
+```
+
+`ask_with_memory` automatically augments the tag list with ``module:`` and
+``action:`` markers derived from the key.  Tags should use the canonical labels
+from `log_tags.py` (`FEEDBACK`, `IMPROVEMENT_PATH`, `ERROR_FIX`, `INSIGHT`) so
+other tools can query the history consistently.
+
+## Configuration
+
+Several environment variables influence how memory behaves:
+
+- **`GPT_MEMORY_DB`** – path to the SQLite database used by
+  `LocalKnowledgeModule` (defaults to `gpt_memory.db`).
+- **`GPT_MEMORY_RETENTION`** – comma separated `tag=count` pairs limiting how
+  many entries of each type are kept when the store is compacted.
+- **`GPT_AUTO_REFRESH_INSIGHTS`** – when set to `0`/`false`, disables the
+  background refresh of summarised insights triggered after each log.
+
+## Example: context growth across runs
+
+Reusing the same database lets context accumulate over time.  The second run in
+the example below automatically includes the previous response when building the
+prompt:
+
+```bash
+# first run
+python - <<'PY'
+from local_knowledge_module import LocalKnowledgeModule
+from memory_aware_gpt_client import ask_with_memory
+from log_tags import FEEDBACK
+
+class Echo:
+    def ask(self, msgs, **_):
+        return {"choices": [{"message": {"content": "first"}}]}
+
+module = LocalKnowledgeModule("demo.db")
+ask_with_memory(Echo(), "demo.echo", "Hello", memory=module, tags=[FEEDBACK])
+PY
+
+# later run
+python - <<'PY'
+from local_knowledge_module import LocalKnowledgeModule
+from memory_aware_gpt_client import ask_with_memory
+from log_tags import FEEDBACK
+
+class Echo:
+    def ask(self, msgs, **_):
+        return {"choices": [{"message": {"content": "second"}}]}
+
+module = LocalKnowledgeModule("demo.db")
+ask_with_memory(Echo(), "demo.echo", "More", memory=module, tags=[FEEDBACK])
+PY
+```
+
+The second invocation prepends feedback from the first call, demonstrating how
+context grows across sessions.
+
 ## Unified interface
 
 All memory backends now implement `GPTMemoryInterface` providing four core
