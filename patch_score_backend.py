@@ -20,6 +20,11 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - dependency may be missing
     boto3 = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .data_bot import MetricsDB  # type: ignore
+except Exception:  # pragma: no cover - metrics logging is optional
+    MetricsDB = None  # type: ignore
+
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,27 @@ def attach_retrieval_info(
     rec["retrieval_session_id"] = session_id
     rec["vectors"] = list(vectors)
     return rec
+
+
+def _log_outcome(record: Dict[str, object]) -> None:
+    """Best-effort logging of patch outcomes for retrieval metrics."""
+
+    if MetricsDB is None:
+        return
+    patch_id = record.get("patch_id") or record.get("description")
+    result = record.get("result")
+    if not patch_id or result is None:
+        return
+    vectors = record.get("vectors") or []
+    if not isinstance(vectors, list):
+        vectors = []
+    result_str = str(result).lower()
+    success = result_str == "ok"
+    reverted = result_str == "reverted"
+    try:  # pragma: no cover - best effort
+        MetricsDB().log_patch_outcome(str(patch_id), success, vectors, reverted=reverted)
+    except Exception:
+        logger.exception("failed to log patch outcome")
 
 
 
@@ -93,6 +119,7 @@ class HTTPPatchScoreBackend(PatchScoreBackend):
 
     # ------------------------------------------------------------------
     def store(self, record: Dict[str, object]) -> None:
+        _log_outcome(record)
         if not requests:
             logger.debug("requests unavailable; skipping HTTP backend")
             if self._fallback:
@@ -142,6 +169,7 @@ class S3PatchScoreBackend(PatchScoreBackend):
 
     # ------------------------------------------------------------------
     def store(self, record: Dict[str, object]) -> None:
+        _log_outcome(record)
         client = self._get_client()
         if client is None:
             logger.debug("boto3 unavailable; skipping S3 backend")
@@ -194,6 +222,7 @@ class FilePatchScoreBackend(PatchScoreBackend):
 
     # ------------------------------------------------------------------
     def store(self, record: Dict[str, object]) -> None:
+        _log_outcome(record)
         path = os.path.join(self._ensure_dir(), f"{int(time.time()*1000)}.json")
         try:
             with open(path, "w", encoding="utf-8") as fh:
