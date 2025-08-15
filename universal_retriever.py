@@ -305,6 +305,20 @@ RetrievedItem = ResultBundle
 RetrievalHit = ResultBundle
 
 
+class RetrievalResult(list):
+    """List of retrieval hits carrying session metadata."""
+
+    def __init__(
+        self,
+        items: Sequence[Any],
+        session_id: str,
+        vectors: List[Tuple[str, str]],
+    ) -> None:
+        super().__init__(items)
+        self.session_id = session_id
+        self.vectors = vectors
+
+
 @dataclass
 class RetrievalWeights:
     """Tunable weights for ranking and feedback signals."""
@@ -1259,6 +1273,8 @@ class UniversalRetriever:
             )
 
         results = hits[:top_k]
+        vector_info = [(h.origin_db, str(h.record_id)) for h in results]
+        result_container = RetrievalResult(results, session_id, vector_info)
 
         total_candidates = len(hits)
         hit_rate = len(results) / total_candidates if total_candidates else 0.0
@@ -1313,8 +1329,8 @@ class UniversalRetriever:
         logger.info("retrieval total_query_time=%.6f", total_time)
 
         if return_metrics:
-            return results, metrics_list
-        return results
+            return result_container, metrics_list
+        return result_container
 
     # Backwards compatibility for older callers
     def retrieve_with_confidence(
@@ -1349,6 +1365,7 @@ class UniversalRetriever:
             }
             for h in hits
         ]
+        result_container = RetrievalResult(formatted, hits.session_id, hits.vectors)
         if return_metrics:
-            return formatted, metrics_list
-        return formatted
+            return result_container, metrics_list
+        return result_container

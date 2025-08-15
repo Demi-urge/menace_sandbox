@@ -39,6 +39,13 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - missing dependency
     UniversalRetriever = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .vector_metrics_db import VectorMetricsDB
+except Exception:  # pragma: no cover - fallback when unavailable
+    VectorMetricsDB = None  # type: ignore
+
+_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+
 
 def generate_patch(
     module: str,
@@ -211,17 +218,12 @@ class QuickFixEngine:
         if ctx_block:
             desc += "\n\n" + json.dumps(ctx_block, indent=2)
         session_id = ""
-        vectors = []
+        vectors: list[tuple[str, str]] = []
         if self.retriever is not None:
             try:
-                _, metrics = self.retriever.retrieve_with_confidence(
-                    module, top_k=1, return_metrics=True
-                )
-                if metrics:
-                    session_id = metrics[0].get("session_id", "")
-                    vectors = [
-                        (m["origin_db"], m["record_id"]) for m in metrics if m.get("hit")
-                    ]
+                hits = self.retriever.retrieve(module, top_k=1)
+                session_id = getattr(hits, "session_id", "")
+                vectors = getattr(hits, "vectors", [])
             except Exception:
                 self.logger.debug("retriever lookup failed", exc_info=True)
         if session_id:
@@ -250,6 +252,18 @@ class QuickFixEngine:
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
             raise
+        if _VEC_METRICS is not None and session_id and vectors:
+            try:
+                _VEC_METRICS.update_outcome(
+                    session_id,
+                    vectors,
+                    contribution=1.0 if tests_ok else 0.0,
+                    patch_id=str(patch_id or ""),
+                    win=tests_ok,
+                    regret=not tests_ok,
+                )
+            except Exception:
+                self.logger.exception("failed to log vector outcome")
 
     # ------------------------------------------------------------------
     def preemptive_patch_modules(
@@ -300,17 +314,12 @@ class QuickFixEngine:
             if ctx:
                 desc += "\n\n" + json.dumps(ctx, indent=2)
             session_id = ""
-            vectors = []
+            vectors: list[tuple[str, str]] = []
             if self.retriever is not None:
                 try:
-                    _, metrics = self.retriever.retrieve_with_confidence(
-                        module, top_k=1, return_metrics=True
-                    )
-                    if metrics:
-                        session_id = metrics[0].get("session_id", "")
-                        vectors = [
-                            (m["origin_db"], m["record_id"]) for m in metrics if m.get("hit")
-                        ]
+                    hits = self.retriever.retrieve(module, top_k=1)
+                    session_id = getattr(hits, "session_id", "")
+                    vectors = getattr(hits, "vectors", [])
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
             if session_id:
@@ -354,6 +363,18 @@ class QuickFixEngine:
                 self.db.log_preemptive_patch(module, risk, patch_id)
             except Exception as exc:  # pragma: no cover - db issues
                 self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
+            if _VEC_METRICS is not None and session_id and vectors:
+                try:
+                    _VEC_METRICS.update_outcome(
+                        session_id,
+                        vectors,
+                        contribution=1.0 if patch_id else 0.0,
+                        patch_id=str(patch_id or ""),
+                        win=bool(patch_id),
+                        regret=not bool(patch_id),
+                    )
+                except Exception:
+                    self.logger.exception("failed to log vector outcome")
 
     # ------------------------------------------------------------------
     def run_and_validate(self, bot: str) -> None:
