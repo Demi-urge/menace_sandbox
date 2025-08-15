@@ -29,6 +29,11 @@ from memory_maintenance import MemoryMaintenance
 from gpt_knowledge_service import GPTKnowledgeService
 from local_knowledge_module import LocalKnowledgeModule
 
+try:  # pragma: no cover - optional dependency
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - keep import lightweight
+    SentenceTransformer = None  # type: ignore
+
 if os.getenv("SANDBOX_CENTRAL_LOGGING") is None:
     os.environ["SANDBOX_CENTRAL_LOGGING"] = "1"
 
@@ -1136,8 +1141,14 @@ def main(argv: List[str] | None = None) -> None:
     setup_logging(level="DEBUG" if args.verbose else args.log_level)
 
     mem_db = args.memory_db or os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+    embedder = None
+    if SentenceTransformer is not None:
+        try:
+            embedder = SentenceTransformer("all-MiniLM-L6-v2")
+        except Exception:
+            embedder = None
     global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
-    LOCAL_KNOWLEDGE_MODULE = LocalKnowledgeModule(mem_db)
+    LOCAL_KNOWLEDGE_MODULE = LocalKnowledgeModule(mem_db, embedder=embedder)
     GPT_MEMORY_MANAGER = LOCAL_KNOWLEDGE_MODULE.memory
     GPT_KNOWLEDGE_SERVICE = LOCAL_KNOWLEDGE_MODULE.knowledge
     sandbox_runner.GPT_MEMORY_MANAGER = GPT_MEMORY_MANAGER

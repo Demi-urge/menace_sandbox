@@ -11,6 +11,11 @@ context.
 from pathlib import Path
 from typing import Sequence
 
+try:  # pragma: no cover - optional dependency
+    from sentence_transformers import SentenceTransformer
+except Exception:  # pragma: no cover - keep import lightweight
+    SentenceTransformer = None  # type: ignore
+
 from gpt_memory import GPTMemoryManager
 from gpt_knowledge_service import GPTKnowledgeService
 
@@ -28,6 +33,9 @@ class LocalKnowledgeModule:
     service:
         Optional pre-initialised :class:`GPTKnowledgeService` instance.  When not
         provided one will be created using ``manager``.
+    embedder:
+        Optional :class:`SentenceTransformer` shared with the underlying
+        :class:`GPTMemoryManager` to enable semantic search.
     """
 
     def __init__(
@@ -36,8 +44,9 @@ class LocalKnowledgeModule:
         *,
         manager: GPTMemoryManager | None = None,
         service: GPTKnowledgeService | None = None,
+        embedder: "SentenceTransformer | None" = None,
     ) -> None:
-        self.memory = manager or GPTMemoryManager(db_path)
+        self.memory = manager or GPTMemoryManager(db_path, embedder=embedder)
         self.knowledge = service or GPTKnowledgeService(self.memory)
 
     # ------------------------------------------------------------------ facade
