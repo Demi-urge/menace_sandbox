@@ -123,7 +123,8 @@ def log_retrieval_metrics(
                 rank=rank,
                 contribution=similarity,
                 prompt_tokens=tokens if hit else 0,
-                patch_id=session_id,
+                session_id=session_id,
+                vector_id=str(record_id),
             )
         except Exception:  # pragma: no cover - best effort
             logger.exception("failed to persist retrieval metrics")
@@ -890,6 +891,7 @@ class UniversalRetriever:
                     "tokens": tokens,
                     "similarity": similarity,
                     "prompt_tokens": tokens if included else 0,
+                    "session_id": session_id,
                 }
             )
 

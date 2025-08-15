@@ -37,6 +37,10 @@ class VectorMetric:
     contribution: float | None = None
     prompt_tokens: int | None = None
     patch_id: str = ""
+    session_id: str = ""
+    vector_id: str = ""
+    win: bool | None = None
+    regret: bool | None = None
     ts: str = datetime.utcnow().isoformat()
 
 
@@ -58,6 +62,10 @@ class VectorMetricsDB:
                 contribution REAL,
                 prompt_tokens INTEGER,
                 patch_id TEXT,
+                session_id TEXT,
+                vector_id TEXT,
+                win INTEGER,
+                regret INTEGER,
                 ts TEXT
             )
             """
@@ -69,6 +77,17 @@ class VectorMetricsDB:
             """
         )
         self.conn.commit()
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(vector_metrics)").fetchall()]
+        migrations = {
+            "session_id": "ALTER TABLE vector_metrics ADD COLUMN session_id TEXT",
+            "vector_id": "ALTER TABLE vector_metrics ADD COLUMN vector_id TEXT",
+            "win": "ALTER TABLE vector_metrics ADD COLUMN win INTEGER",
+            "regret": "ALTER TABLE vector_metrics ADD COLUMN regret INTEGER",
+        }
+        for name, stmt in migrations.items():
+            if name not in cols:
+                self.conn.execute(stmt)
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     def add(self, rec: VectorMetric) -> None:
@@ -76,8 +95,9 @@ class VectorMetricsDB:
             """
             INSERT INTO vector_metrics(
                 event_type, db, tokens, wall_time_ms, store_time_ms, hit,
-                rank, contribution, prompt_tokens, patch_id, ts
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                rank, contribution, prompt_tokens, patch_id, session_id,
+                vector_id, win, regret, ts
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 rec.event_type,
@@ -90,6 +110,10 @@ class VectorMetricsDB:
                 rec.contribution,
                 rec.prompt_tokens,
                 rec.patch_id,
+                rec.session_id,
+                rec.vector_id,
+                None if rec.win is None else int(rec.win),
+                None if rec.regret is None else int(rec.regret),
                 rec.ts,
             ),
         )
@@ -137,6 +161,8 @@ class VectorMetricsDB:
         prompt_tokens: int = 0,
         patch_id: str = "",
         store_time_ms: float = 0.0,
+        session_id: str = "",
+        vector_id: str = "",
     ) -> None:
         rec = VectorMetric(
             event_type="retrieval",
@@ -149,6 +175,8 @@ class VectorMetricsDB:
             contribution=contribution,
             prompt_tokens=prompt_tokens,
             patch_id=patch_id,
+            session_id=session_id,
+            vector_id=vector_id,
         )
         self.add(rec)
 
@@ -171,6 +199,55 @@ class VectorMetricsDB:
         )
         res = cur.fetchone()
         return float(res[0]) if res and res[0] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    def retriever_win_rate(self, db: str | None = None) -> float:
+        cur = self.conn.execute(
+            "SELECT AVG(win) FROM vector_metrics WHERE event_type='retrieval' AND win IS NOT NULL"
+            + (" AND db=?" if db else ""),
+            (db,) if db else (),
+        )
+        res = cur.fetchone()
+        return float(res[0]) if res and res[0] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    def retriever_regret_rate(self, db: str | None = None) -> float:
+        cur = self.conn.execute(
+            "SELECT AVG(regret) FROM vector_metrics WHERE event_type='retrieval' AND regret IS NOT NULL"
+            + (" AND db=?" if db else ""),
+            (db,) if db else (),
+        )
+        res = cur.fetchone()
+        return float(res[0]) if res and res[0] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    def update_outcome(
+        self,
+        session_id: str,
+        vectors: list[tuple[str, str]],
+        *,
+        contribution: float,
+        patch_id: str = "",
+        win: bool = False,
+        regret: bool = False,
+    ) -> None:
+        for _, vec_id in vectors:
+            self.conn.execute(
+                """
+                UPDATE vector_metrics
+                   SET contribution=?, win=?, regret=?, patch_id=?
+                 WHERE session_id=? AND vector_id=?
+                """,
+                (
+                    contribution,
+                    int(win),
+                    int(regret),
+                    patch_id,
+                    session_id,
+                    vec_id,
+                ),
+            )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     def _update_retrieval_hit_rate(self) -> None:

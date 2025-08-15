@@ -210,11 +210,23 @@ class QuickFixEngine:
         desc = f"quick fix {etype}"
         if ctx_block:
             desc += "\n\n" + json.dumps(ctx_block, indent=2)
+        session_id = ""
+        vectors = []
         if self.retriever is not None:
             try:
-                self.retriever.retrieve_with_confidence(module, top_k=1)
+                _, metrics = self.retriever.retrieve_with_confidence(
+                    module, top_k=1, return_metrics=True
+                )
+                if metrics:
+                    session_id = metrics[0].get("session_id", "")
+                    vectors = [
+                        (m["origin_db"], m["record_id"]) for m in metrics if m.get("hit")
+                    ]
             except Exception:
                 self.logger.debug("retriever lookup failed", exc_info=True)
+        if session_id:
+            context_meta["retrieval_session_id"] = session_id
+            context_meta["retrieval_vectors"] = vectors
         patch_id = None
         try:
             try:
@@ -287,11 +299,23 @@ class QuickFixEngine:
             desc = "preemptive_patch"
             if ctx:
                 desc += "\n\n" + json.dumps(ctx, indent=2)
+            session_id = ""
+            vectors = []
             if self.retriever is not None:
                 try:
-                    self.retriever.retrieve_with_confidence(module, top_k=1)
+                    _, metrics = self.retriever.retrieve_with_confidence(
+                        module, top_k=1, return_metrics=True
+                    )
+                    if metrics:
+                        session_id = metrics[0].get("session_id", "")
+                        vectors = [
+                            (m["origin_db"], m["record_id"]) for m in metrics if m.get("hit")
+                        ]
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
+            if session_id:
+                meta["retrieval_session_id"] = session_id
+                meta["retrieval_vectors"] = vectors
             patch_id = None
             try:
                 try:
