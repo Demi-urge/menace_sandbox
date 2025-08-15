@@ -49,7 +49,10 @@ class MetricsDashboard:
             self.plot_prediction_stats,
         )
         self.app.add_url_rule(
-            "/vector_heatmap", "vector_heatmap", self.vector_heatmap
+            "/vector_heatmap", "vector_heatmap_default", self.vector_heatmap
+        )
+        self.app.add_url_rule(
+            "/vector_heatmap/<period>", "vector_heatmap", self.vector_heatmap
         )
         self.app.add_url_rule(
             "/aggregates/<metric>/<period>", "aggregates", self.aggregates
@@ -132,9 +135,9 @@ class MetricsDashboard:
         return jsonify(metrics), 200
 
     # ------------------------------------------------------------------
-    def vector_heatmap(self) -> tuple[str, int]:
+    def vector_heatmap(self, period: str = "hourly") -> tuple[str, int]:
         """Return aggregated vector metrics suitable for heatmaps."""
-        path = Path("vector_metrics_heatmap.json")
+        path = Path(f"vector_metrics_heatmap_{period}.json")
         if not path.exists():
             return jsonify([]), 200
         try:
