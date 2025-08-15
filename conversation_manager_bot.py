@@ -23,10 +23,14 @@ from .report_generation_bot import ReportGenerationBot, ReportOptions
 
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
-try:  # canonical tag constant
-    from .log_tags import INSIGHT
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # canonical tag constants
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -132,16 +136,13 @@ class ConversationManagerBot:
     def _chatgpt(self, prompt: str) -> str:
         if prompt in self.cache:
             return self.cache[prompt]
-        try:
-            data = self.client.ask(
-                [{"role": "user", "content": prompt}],
-                memory_manager=self.gpt_memory,
-                tags=[INSIGHT],
-            )
-        except TypeError:
-            data = self.client.ask(
-                [{"role": "user", "content": prompt}], tags=[INSIGHT]
-            )
+        data = ask_with_memory(
+            self.client,
+            "conversation_manager_bot._chatgpt",
+            prompt,
+            memory=self.gpt_memory,
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+        )
         text = (
             data.get("choices", [{}])[0]
             .get("message", {})

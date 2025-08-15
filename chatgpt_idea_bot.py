@@ -44,6 +44,10 @@ try:  # helper for GPT memory tagging
     from .memory_logging import log_with_tags
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_logging import log_with_tags  # type: ignore
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
@@ -427,17 +431,16 @@ def parse_ideas(data: Dict[str, object]) -> List[Idea]:
 
 def follow_up(client: ChatGPTClient, idea: Idea) -> str:
     """Request additional insight for a single idea."""
-    messages = [
-        {
-            "role": "user",
-            "content": f"Provide deeper insight or variations for this business model: {idea.name} - {idea.description}",
-        }
-    ]
+    prompt = (
+        f"Provide deeper insight or variations for this business model: {idea.name} - {idea.description}"
+    )
     try:
-        data = client.ask(
-            messages,
-            tags=[FEEDBACK, INSIGHT],
-            memory_manager=getattr(client, "gpt_memory", None),
+        data = ask_with_memory(
+            client,
+            "chatgpt_idea_bot.follow_up",
+            prompt,
+            memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
         )
         idea.insight = (
             data.get("choices", [{}])[0]
@@ -461,11 +464,19 @@ def generate_and_filter(
 ) -> List[Idea]:
     """Generate ideas and filter them for novelty."""
     logger.info("requesting ideas for tags: %s", ", ".join(tags))
-    messages = build_prompt(client, tags)
-    response = client.ask(
-        messages,
-        tags=[IMPROVEMENT_PATH, INSIGHT, *tags],
-        memory_manager=getattr(client, "gpt_memory", None),
+    parts = ["Suggest five new online business models"]
+    if tags:
+        parts.append("with a focus on " + ", ".join(tags))
+    prompt = (
+        " ".join(parts)
+        + ". Respond in JSON list format with fields name, description and tags."
+    )
+    response = ask_with_memory(
+        client,
+        "chatgpt_idea_bot.generate_and_filter",
+        prompt,
+        memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     ideas = parse_ideas(response)
     novel: List[Idea] = []

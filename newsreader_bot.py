@@ -36,13 +36,17 @@ except Exception:  # pragma: no cover - optional dependency
     gensim = None  # type: ignore
 
 try:  # canonical tag constants for logging
-    from .log_tags import INSIGHT, IMPROVEMENT_PATH
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT, IMPROVEMENT_PATH  # type: ignore
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
 try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
+try:  # memory-aware wrapper
+    from .memory_aware_gpt_client import ask_with_memory
+except Exception:  # pragma: no cover - fallback for flat layout
+    from memory_aware_gpt_client import ask_with_memory  # type: ignore
 
 DB_PATH = Path(__file__).parent / "news.db"
 
@@ -256,16 +260,15 @@ def monetise_event(client: "ChatGPTClient", event: Event) -> str:
 
     if not isinstance(client, _Client):  # pragma: no cover - type check
         return ""
-    messages = [
-        {
-            "role": "user",
-            "content": f"Suggest monetisation strategies for this event: {event.title} - {event.summary}",
-        }
-    ]
-    data = client.ask(
-        messages,
-        tags=[INSIGHT, IMPROVEMENT_PATH],
-        memory_manager=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+    prompt = (
+        f"Suggest monetisation strategies for this event: {event.title} - {event.summary}"
+    )
+    data = ask_with_memory(
+        client,
+        "newsreader_bot.monetise_event",
+        prompt,
+        memory=getattr(client, "gpt_memory", GPT_MEMORY_MANAGER),
+        tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
     )
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
