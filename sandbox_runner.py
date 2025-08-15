@@ -143,6 +143,10 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from local_knowledge_module import LocalKnowledgeModule
 
 LOCAL_KNOWLEDGE_MODULE: "LocalKnowledgeModule | None" = None
+LOCAL_KNOWLEDGE_REFRESH_EVERY = int(
+    os.getenv("LOCAL_KNOWLEDGE_REFRESH_EVERY", "10")
+)
+_local_knowledge_refresh_counter = 0
 
 ROOT = Path(__file__).resolve().parent
 
@@ -1126,12 +1130,18 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             policy_saved=bool(ctx.policy),
         ),
     )
+    if LOCAL_KNOWLEDGE_MODULE:
+        try:
+            LOCAL_KNOWLEDGE_MODULE.refresh()
+            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+        except Exception:
+            logger.exception("failed to refresh local knowledge module")
 
 
 def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
     from menace.roi_tracker import ROITracker
 
-    global SANDBOX_ENV_PRESETS
+    global SANDBOX_ENV_PRESETS, _local_knowledge_refresh_counter
     logger.info("starting sandbox run", extra=log_record(preset=preset))
     ctx = _sandbox_init(preset, args)
     graph = getattr(ctx.sandbox, "graph", KnowledgeGraph())
@@ -1229,6 +1239,23 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 ctx.predicted_roi = None
                 sec_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
                 _cycle(section_name, snippet, sec_tracker, scenario)
+                if (
+                    LOCAL_KNOWLEDGE_MODULE
+                    and LOCAL_KNOWLEDGE_REFRESH_EVERY > 0
+                ):
+                    _local_knowledge_refresh_counter += 1
+                    if (
+                        _local_knowledge_refresh_counter
+                        % LOCAL_KNOWLEDGE_REFRESH_EVERY
+                        == 0
+                    ):
+                        try:
+                            LOCAL_KNOWLEDGE_MODULE.refresh()
+                            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+                        except Exception:
+                            logger.exception(
+                                "failed to refresh local knowledge module"
+                            )
                 section_trackers.append(sec_tracker)
                 sec_res = section_results.setdefault(
                     section_name, {"roi": [], "metrics": []}
