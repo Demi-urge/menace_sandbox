@@ -1843,6 +1843,13 @@ def main(argv: List[str] | None = None) -> None:
         pass
     cleanup_funcs.clear()
 
+    if LOCAL_KNOWLEDGE_MODULE is not None:
+        try:
+            LOCAL_KNOWLEDGE_MODULE.refresh()
+            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+        except Exception:
+            logger.exception("failed to refresh local knowledge module")
+
     if exporter_monitor is not None:
         try:
             logger.info(
