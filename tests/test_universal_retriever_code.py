@@ -1,5 +1,6 @@
 import sys
 import types
+import pytest
 
 
 def test_code_snippet_retrieval(tmp_path, monkeypatch):
@@ -41,4 +42,6 @@ def test_code_snippet_retrieval(tmp_path, monkeypatch):
 
     assert hits and hits[0].origin_db == "code"
     assert "print('hello')" in hits[0].metadata["code"]
-    assert "complexity" in hits[0].metadata["contextual_metrics"]
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert "complexity" in metrics
+    assert metrics["model_score"] == pytest.approx(1.0)
