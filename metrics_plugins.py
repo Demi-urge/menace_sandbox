@@ -58,21 +58,34 @@ def collect_plugin_metrics(
 
 
 def fetch_retrieval_stats(path: str | Path | None = None) -> Dict[str, float]:
-    """Return aggregated win/regret metrics for ranking.
+    """Return aggregated win/regret statistics for ranking algorithms.
 
-    The function reads ``retrieval_outcomes.jsonl`` from the ``analytics``
-    directory and computes average ``win_rate`` and ``regret_rate`` values.  If
-    the dataset does not yet exist an empty mapping with zeroed metrics is
-    returned so callers can safely adjust weights based on historical
-    performance.
+    Parameters
+    ----------
+    path:
+        Optional path to a JSONL file containing retrieval outcome records.  If
+        omitted, ``analytics/retrieval_outcomes.jsonl`` relative to this module
+        is used.
+
+    Returns
+    -------
+    dict
+        Mapping containing average ``win_rate`` and ``regret_rate`` values as
+        well as a ``count`` of how many records were processed.  Missing or
+        unreadable datasets yield zeroed metrics so callers can safely adjust
+        ranking weights without additional checks.
     """
 
     if path is None:
-        path = Path(__file__).resolve().parent / "analytics" / "retrieval_outcomes.jsonl"
+        path = (
+            Path(__file__).resolve().parent
+            / "analytics"
+            / "retrieval_outcomes.jsonl"
+        )
     else:
         path = Path(path)
     if not path.exists():
-        return {"win_rate": 0.0, "regret_rate": 0.0}
+        return {"win_rate": 0.0, "regret_rate": 0.0, "count": 0.0}
 
     wins: List[float] = []
     regrets: List[float] = []
@@ -93,11 +106,12 @@ def fetch_retrieval_stats(path: str | Path | None = None) -> Dict[str, float]:
                     pass
     except Exception:
         logger.exception("failed reading retrieval stats from %s", path)
-        return {"win_rate": 0.0, "regret_rate": 0.0}
+        return {"win_rate": 0.0, "regret_rate": 0.0, "count": 0.0}
 
     return {
         "win_rate": mean(wins) if wins else 0.0,
         "regret_rate": mean(regrets) if regrets else 0.0,
+        "count": float(len(wins)),
     }
 
 

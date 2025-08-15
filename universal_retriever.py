@@ -841,8 +841,9 @@ class UniversalRetriever:
         if adjust_weights:
             try:
                 stats = fetch_retrieval_stats()
-                WIN_WEIGHT *= 1.0 + float(stats.get("win_rate", 0.0))
-                REGRET_WEIGHT *= 1.0 + float(stats.get("regret_rate", 0.0))
+                if stats.get("count", 0.0) > 0:
+                    WIN_WEIGHT *= 1.0 + float(stats.get("win_rate", 0.0))
+                    REGRET_WEIGHT *= 1.0 + float(stats.get("regret_rate", 0.0))
             except Exception:
                 logger.exception("failed to adjust retrieval weights")
 
