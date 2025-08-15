@@ -51,6 +51,56 @@ Key configuration options:
 - `event_bus` – optional `UnifiedEventBus` publishing a `"memory:new"` event for
   each logged interaction.
 
+### Logging with tags
+
+Use `log_interaction` to record prompts and responses. Tags should come from
+the constants in `log_tags.py` so downstream tools can query them
+consistently:
+
+```python
+from log_tags import ERROR_FIX
+
+mgr.log_interaction("bug report", "fixed", tags=[ERROR_FIX])
+```
+
+When an event bus is supplied every call also publishes a `memory:new` event.
+Other services may subscribe to react to new memories.
+
+### Knowledge graph ingestion
+
+`KnowledgeGraph` can subscribe to the event bus and ingest entries
+automatically:
+
+```python
+from knowledge_graph import KnowledgeGraph
+
+kg = KnowledgeGraph("kg.gpickle")
+kg.listen_to_memory(bus, mgr)  # ingests on each memory:new event
+# or import the current history manually
+kg.ingest_gpt_memory(mgr)
+```
+
+### Persisting across runs
+
+Reusing the same database path keeps interactions for future sessions:
+
+```bash
+# first run
+python - <<'PY'
+from gpt_memory import GPTMemoryManager
+mgr = GPTMemoryManager("persistent.db")
+mgr.log_interaction("hello", "world", tags=["insight"])
+mgr.close()
+PY
+
+# later run
+python - <<'PY'
+from gpt_memory import GPTMemoryManager
+mgr = GPTMemoryManager("persistent.db")
+print([e.response for e in mgr.search_context("hello")])
+PY
+```
+
 `get_similar_entries()` returns scored matches while `compact()` summarises and
 prunes old rows according to a retention policy.  Use `close()` when finished to
 ensure the connection is cleanly closed.
