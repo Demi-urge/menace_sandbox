@@ -16,6 +16,7 @@ from typing import Any, Dict, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
+from memory_logging import log_with_tags
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
@@ -1069,14 +1070,7 @@ def _sandbox_cycle_runner(
                         history.append({"role": "assistant", "content": suggestion})
                         if gpt_mem:
                             try:
-                                if hasattr(gpt_mem, "log_interaction"):
-                                    gpt_mem.log_interaction(
-                                        prompt, suggestion, tags=[key, INSIGHT]
-                                    )
-                                elif hasattr(gpt_mem, "store"):
-                                    gpt_mem.store(
-                                        prompt, suggestion, [key, INSIGHT]
-                                    )
+                                log_with_tags(gpt_mem, prompt, suggestion, tags=[key, INSIGHT])
                             except Exception:
                                 logger.exception("memory logging failed for %s", mod)
                     if len(history) > 6:
@@ -1101,20 +1095,18 @@ def _sandbox_cycle_runner(
                     if gpt_mem:
                         try:
                             result_text = "success" if patch_id else "failure"
-                            if hasattr(gpt_mem, "log_interaction"):
-                                gpt_mem.log_interaction(
-                                    f"{prompt}:patch_id", str(patch_id), tags=[key, IMPROVEMENT_PATH]
-                                )
-                                gpt_mem.log_interaction(
-                                    f"{prompt}:result", result_text, tags=[key, FEEDBACK]
-                                )
-                            elif hasattr(gpt_mem, "store"):
-                                gpt_mem.store(
-                                    f"{prompt}:patch_id", str(patch_id), [key, IMPROVEMENT_PATH]
-                                )
-                                gpt_mem.store(
-                                    f"{prompt}:result", result_text, [key, FEEDBACK]
-                                )
+                            log_with_tags(
+                                gpt_mem,
+                                f"{prompt}:patch_id",
+                                str(patch_id),
+                                tags=[key, IMPROVEMENT_PATH],
+                            )
+                            log_with_tags(
+                                gpt_mem,
+                                f"{prompt}:result",
+                                result_text,
+                                tags=[key, FEEDBACK],
+                            )
                         except Exception:
                             logger.exception("memory logging failed for %s", mod)
                 except PermissionError as exc:
@@ -1213,14 +1205,9 @@ def _sandbox_cycle_runner(
                             logger.info("brainstorm", extra={"idea": idea})
                             if gpt_mem:
                                 try:
-                                    if hasattr(gpt_mem, "log_interaction"):
-                                        gpt_mem.log_interaction(
-                                            prompt, idea, tags=["brainstorm", INSIGHT]
-                                        )
-                                    elif hasattr(gpt_mem, "store"):
-                                        gpt_mem.store(
-                                            prompt, idea, ["brainstorm", INSIGHT]
-                                        )
+                                    log_with_tags(
+                                        gpt_mem, prompt, idea, tags=["brainstorm", INSIGHT]
+                                    )
                                 except Exception:
                                     logger.exception("memory logging failed during stall")
                         if len(hist) > 6:
@@ -1311,18 +1298,13 @@ def _sandbox_cycle_runner(
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
                         logger.info("brainstorm", extra={"idea": idea})
-                        if gpt_mem:
-                            try:
-                                if hasattr(gpt_mem, "log_interaction"):
-                                    gpt_mem.log_interaction(
-                                        prompt, idea, tags=["brainstorm", INSIGHT]
-                                    )
-                                elif hasattr(gpt_mem, "store"):
-                                    gpt_mem.store(
-                                        prompt, idea, ["brainstorm", INSIGHT]
-                                    )
-                            except Exception:
-                                logger.exception("memory logging failed")
+                    if gpt_mem:
+                        try:
+                            log_with_tags(
+                                gpt_mem, prompt, idea, tags=["brainstorm", INSIGHT]
+                            )
+                        except Exception:
+                            logger.exception("memory logging failed")
                     if len(hist) > 6:
                         hist = hist[-6:]
                     ctx.conversations["brainstorm"] = hist
