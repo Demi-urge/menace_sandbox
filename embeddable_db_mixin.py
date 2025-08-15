@@ -36,39 +36,40 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-from .data_bot import MetricsDB
+from .vector_metrics_db import VectorMetricsDB
 from .metrics_exporter import (
     embedding_tokens_total as _EMBED_TOKENS,
     embedding_wall_time_seconds as _EMBED_WALL,
-    vector_store_latency_seconds as _EMBED_INDEX,
+    embedding_store_latency_seconds as _EMBED_STORE,
     embedding_stale_cost_seconds as _EMBED_STALE,
 )
 
 logger = logging.getLogger(__name__)
 
 
+_VEC_METRICS = VectorMetricsDB()
+
+
 def log_embedding_metrics(
-    record_id: str,
+    db_name: str,
     tokens: int,
     wall_time: float,
-    index_latency: float,
-    *,
-    source: str = "",
+    store_latency: float,
 ) -> None:
-    """Log embedding metrics to Prometheus and the metrics database."""
+    """Log embedding metrics to Prometheus and VectorMetricsDB."""
 
-    if _EMBED_TOKENS:
-        try:
-            _EMBED_TOKENS.labels(source=source).set(tokens)
-            _EMBED_WALL.labels(source=source).set(wall_time)
-            _EMBED_INDEX.labels(source=source).set(index_latency)
-        except ValueError:  # pragma: no cover - labels not configured
-            _EMBED_TOKENS.set(tokens)
-            _EMBED_WALL.set(wall_time)
-            _EMBED_INDEX.set(index_latency)
     try:
-        MetricsDB().log_embedding_metrics(
-            record_id, tokens, wall_time, index_latency, source=source
+        _EMBED_TOKENS.inc(tokens)
+        _EMBED_WALL.set(wall_time)
+        _EMBED_STORE.set(store_latency)
+    except Exception:  # pragma: no cover - best effort
+        pass
+    try:
+        _VEC_METRICS.log_embedding(
+            db=db_name,
+            tokens=tokens,
+            wall_time_ms=wall_time * 1000,
+            store_time_ms=store_latency * 1000,
         )
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to persist embedding metrics")
@@ -261,11 +262,10 @@ class EmbeddableDBMixin:
         self.save_index()
         index_latency = perf_counter() - save_start
         log_embedding_metrics(
-            rid,
+            self.__class__.__name__,
             tokens,
             wall_time,
             index_latency,
-            source=source_id,
         )
 
     def get_vector(self, record_id: Any) -> List[float] | None:
