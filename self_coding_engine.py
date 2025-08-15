@@ -76,7 +76,7 @@ class SelfCodingEngine:
             gpt_memory = kwargs.get("gpt_memory_manager")
         self.code_db = code_db
         self.memory_mgr = memory_mgr
-        self.gpt_memory = gpt_memory or GPTMemoryManager()
+        self.gpt_memory = gpt_memory or GPTMemoryManager(event_bus=event_bus)
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.pipeline = pipeline
         self.data_bot = data_bot
