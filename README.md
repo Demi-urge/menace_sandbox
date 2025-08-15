@@ -12,7 +12,10 @@
 - Self-coding manager applies patches then deploys via the automation pipeline
 - Memory-aware GPT wrapper injects prior feedback and fixes into prompts when
   calling ChatGPT. Callers pass a module/action key so retrieved context and the
-  resulting interaction are logged with appropriate tags.
+  resulting interaction are logged with standard tags via
+  `memory_logging.log_with_tags`. See
+  [docs/autonomous_sandbox.md#gpt-interaction-tags](docs/autonomous_sandbox.md#gpt-interaction-tags)
+  for details.
 - Evolution orchestrator coordinating self improvement and structural evolution
 - System evolution manager runs GA-driven structural updates ([docs/system_evolution_manager.md](docs/system_evolution_manager.md))
 - Experiment manager for automated A/B testing of bot variants
