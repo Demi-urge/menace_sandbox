@@ -5,7 +5,7 @@ import sqlite3
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Sequence, Tuple, Union
+from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
 
@@ -37,6 +37,11 @@ try:  # pragma: no cover - lightweight dependency
     from .data_bot import MetricsDB
 except Exception:  # pragma: no cover - fallback when module unavailable
     MetricsDB = None  # type: ignore
+
+try:  # pragma: no cover - typing only
+    from .roi_tracker import ROITracker
+except Exception:  # pragma: no cover - fallback when tracker unavailable
+    ROITracker = None  # type: ignore
 
 _RETRIEVAL_RANK = _me.Gauge(
     "retrieval_result_rank",
@@ -675,6 +680,7 @@ class UniversalRetriever:
         top_k: int = 10,
         link_multiplier: float = 1.1,
         return_metrics: bool = False,
+        roi_tracker: "ROITracker | None" = None,
     ) -> Union[List[ResultBundle], Tuple[List[ResultBundle], List[dict[str, Any]]]]:
         """Retrieve results with scores and reasons.
 
@@ -684,6 +690,12 @@ class UniversalRetriever:
         """
 
         raw_results = self._retrieve_candidates(query, top_k)
+        bias_map: Dict[str, float] = {}
+        if roi_tracker is not None:
+            try:
+                bias_map = roi_tracker.retrieval_bias()
+            except Exception:
+                bias_map = {}
 
         SIM_WEIGHT = 0.7
         CTX_WEIGHT = 0.3
@@ -694,6 +706,7 @@ class UniversalRetriever:
             similarity = 1.0 / (1.0 + float(dist))
             ctx_score, metrics = self._context_score(source, item)
             combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
+            combined_score *= bias_map.get(source, 1.0)
             scored.append({
                 "source": source,
                 "record_id": rec_id,
@@ -798,12 +811,14 @@ class UniversalRetriever:
         top_k: int = 10,
         link_multiplier: float = 1.1,
         return_metrics: bool = False,
+        roi_tracker: "ROITracker | None" = None,
     ) -> Union[List[dict[str, Any]], Tuple[List[dict[str, Any]], List[dict[str, Any]]]]:
         res = self.retrieve(
             query,
             top_k=top_k,
             link_multiplier=link_multiplier,
             return_metrics=return_metrics,
+            roi_tracker=roi_tracker,
         )
         if return_metrics:
             hits, metrics_list = res  # type: ignore[misc]
