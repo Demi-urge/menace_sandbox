@@ -76,6 +76,7 @@ menace = "menace_cli:main"
 adaptive-roi = "adaptive_roi_cli:main"
 backfill-embeddings = "scripts.backfill_embeddings:cli"
 retrieval-ranker = "retrieval_ranker:main"
+knowledge-cli = "knowledge_cli:main"
 
 [project.optional-dependencies]
 test = [
