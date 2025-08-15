@@ -24,8 +24,8 @@ except Exception:  # pragma: no cover - best effort
 
 if _me is not None:  # pragma: no cover - metrics optional
     try:
-        _ORIGIN_DB_ROI = _me.Gauge(
-            "retrieval_origin_db_roi",
+        _DB_ROI_GAUGE = _me.Gauge(
+            "db_roi_contribution",
             "Average ROI contribution per origin database",
             ["origin_db"],
         )
@@ -33,19 +33,20 @@ if _me is not None:  # pragma: no cover - metrics optional
         try:
             from prometheus_client import REGISTRY  # type: ignore
 
-            _ORIGIN_DB_ROI = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
-                "retrieval_origin_db_roi"
+            _DB_ROI_GAUGE = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
+                "db_roi_contribution"
             )
         except Exception:
-            _ORIGIN_DB_ROI = None
+            _DB_ROI_GAUGE = None
 else:  # pragma: no cover - metrics optional
-    _ORIGIN_DB_ROI = None
+    _DB_ROI_GAUGE = None
 
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .resources_bot import ROIHistoryDB
     from .prediction_manager_bot import PredictionManager
+    from .vector_metrics_db import VectorMetricsDB
 
 
 class ROITracker:
@@ -103,6 +104,7 @@ class ROITracker:
         self._model = LinearRegression()
         self.module_deltas: Dict[str, List[float]] = {}
         self.origin_db_deltas: Dict[str, List[float]] = {}
+        self.db_roi_metrics: Dict[str, Dict[str, float]] = {}
         self.cluster_map: Dict[str, int] = dict(cluster_map or {})
         self.cluster_deltas: Dict[int, List[float]] = {}
         self.metrics_history: Dict[str, List[float]] = {
@@ -998,11 +1000,11 @@ class ROITracker:
                         w = tokens / tot if tot else 0.0
                         contrib = adjusted * (w or 1.0 / len(hits))
                         self.origin_db_deltas.setdefault(origin, []).append(contrib)
-                        if _ORIGIN_DB_ROI is not None:
+                        if _DB_ROI_GAUGE is not None:
                             avg = sum(self.origin_db_deltas[origin]) / len(
                                 self.origin_db_deltas[origin]
                             )
-                            _ORIGIN_DB_ROI.labels(origin_db=origin).set(avg)
+                            _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
             if resources:
                 try:
                     self.resource_metrics.append(
@@ -1720,6 +1722,7 @@ class ROITracker:
                 "confidence_history": self.confidence_history,
                 "module_deltas": self.module_deltas,
                 "origin_db_deltas": self.origin_db_deltas,
+                "db_roi_metrics": self.db_roi_metrics,
                 "predicted_roi": self.predicted_roi,
                 "actual_roi": self.actual_roi,
                 "category_history": self.category_history,
@@ -1781,6 +1784,30 @@ class ROITracker:
                 conn.executemany(
                     "INSERT INTO db_deltas (origin_db, delta) VALUES (?, ?)",
                     db_rows,
+                )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS db_roi_metrics (
+                    origin_db TEXT,
+                    win_rate REAL,
+                    regret_rate REAL,
+                    roi REAL
+                )
+                """
+            )
+            conn.execute("DELETE FROM db_roi_metrics")
+            if self.db_roi_metrics:
+                conn.executemany(
+                    "INSERT INTO db_roi_metrics (origin_db, win_rate, regret_rate, roi) VALUES (?,?,?,?)",
+                    [
+                        (
+                            db,
+                            float(m.get("win_rate", 0.0)),
+                            float(m.get("regret_rate", 0.0)),
+                            float(m.get("roi", 0.0)),
+                        )
+                        for db, m in self.db_roi_metrics.items()
+                    ],
                 )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS predictions (pred REAL, actual REAL)"
@@ -1896,6 +1923,7 @@ class ROITracker:
                     self.confidence_history = [0.0] * len(self.roi_history)
                     self.module_deltas = {}
                     self.origin_db_deltas = {}
+                    self.db_roi_metrics = {}
                     self.predicted_roi = []
                     self.actual_roi = []
                     self.category_history = []
@@ -1924,6 +1952,15 @@ class ROITracker:
                     self.origin_db_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("origin_db_deltas", {}).items()
+                    }
+                    self.db_roi_metrics = {
+                        str(db): {
+                            "win_rate": float(stats.get("win_rate", 0.0)),
+                            "regret_rate": float(stats.get("regret_rate", 0.0)),
+                            "roi": float(stats.get("roi", 0.0)),
+                        }
+                        for db, stats in data.get("db_roi_metrics", {}).items()
+                        if isinstance(stats, dict)
                     }
                     self.predicted_roi = [
                         float(x) for x in data.get("predicted_roi", [])
@@ -2043,6 +2080,12 @@ class ROITracker:
                     ).fetchall()
                 except Exception:
                     db_rows = []
+                try:
+                    roi_metric_rows = conn.execute(
+                        "SELECT origin_db, win_rate, regret_rate, roi FROM db_roi_metrics ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    roi_metric_rows = []
                 pred_rows = conn.execute(
                     "SELECT pred, actual FROM predictions ORDER BY rowid"
                 ).fetchall()
@@ -2101,6 +2144,7 @@ class ROITracker:
             self.drift_scores = []
             self.drift_flags = []
             self.drift_metrics = {}
+            self.db_roi_metrics = {}
             return
         self.roi_history = [float(r[0]) for r in rows]
         self.confidence_history = [
@@ -2112,6 +2156,13 @@ class ROITracker:
         self.origin_db_deltas = {}
         for db, delta in db_rows:
             self.origin_db_deltas.setdefault(str(db), []).append(float(delta))
+        self.db_roi_metrics = {}
+        for db, win, regret, roi in roi_metric_rows:
+            self.db_roi_metrics[str(db)] = {
+                "win_rate": float(win),
+                "regret_rate": float(regret),
+                "roi": float(roi),
+            }
         self.predicted_roi = [float(r[0]) for r in pred_rows]
         self.actual_roi = [float(r[1]) for r in pred_rows]
         self.category_history = [str(r[0]) for r in cat_rows]
@@ -2219,6 +2270,101 @@ class ROITracker:
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
 
     # ------------------------------------------------------------------
+    def update_db_metrics(
+        self, metrics: Dict[str, Dict[str, float]], *, sqlite_path: str | None = None
+    ) -> None:
+        """Consume aggregated retrieval metrics grouped by ``origin_db``.
+
+        Parameters
+        ----------
+        metrics:
+            Mapping of origin database to a metrics dictionary containing
+            ``roi`` (contribution), ``win_rate`` and ``regret_rate`` values.
+        sqlite_path:
+            Optional SQLite file where metrics are appended for historical
+            analysis.
+        """
+
+        for origin, stats in metrics.items():
+            roi = float(stats.get("roi", 0.0))
+            win_rate = float(stats.get("win_rate", 0.0))
+            regret_rate = float(stats.get("regret_rate", 0.0))
+            if roi:
+                self.origin_db_deltas.setdefault(origin, []).append(roi)
+            self.db_roi_metrics[origin] = {
+                "win_rate": win_rate,
+                "regret_rate": regret_rate,
+                "roi": roi,
+            }
+            if _DB_ROI_GAUGE is not None and self.origin_db_deltas.get(origin):
+                avg = sum(self.origin_db_deltas[origin]) / len(
+                    self.origin_db_deltas[origin]
+                )
+                _DB_ROI_GAUGE.labels(origin_db=origin).set(avg)
+
+        if sqlite_path:
+            with sqlite3.connect(sqlite_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS db_roi_metrics (
+                        origin_db TEXT,
+                        win_rate REAL,
+                        regret_rate REAL,
+                        roi REAL
+                    )
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO db_roi_metrics (origin_db, win_rate, regret_rate, roi) VALUES (?,?,?,?)",
+                    [
+                        (
+                            db,
+                            float(m.get("win_rate", 0.0)),
+                            float(m.get("regret_rate", 0.0)),
+                            float(m.get("roi", 0.0)),
+                        )
+                        for db, m in metrics.items()
+                    ],
+                )
+                conn.commit()
+
+    # ------------------------------------------------------------------
+    def ingest_vector_metrics_db(
+        self, vec_db: "VectorMetricsDB", *, sqlite_path: str | None = None
+    ) -> Dict[str, Dict[str, float]]:
+        """Load aggregated retrieval metrics from a :class:`VectorMetricsDB`.
+
+        Parameters
+        ----------
+        vec_db:
+            Instance of :class:`VectorMetricsDB` providing raw retrieval
+            records. Metrics are aggregated by ``origin_db`` and passed to
+            :meth:`update_db_metrics`.
+        sqlite_path:
+            Optional SQLite file where the aggregated metrics are stored.
+        """
+
+        cur = vec_db.conn.execute(
+            """
+            SELECT db, AVG(win) AS win_rate, AVG(regret) AS regret_rate,
+                   COALESCE(SUM(contribution),0) AS roi
+              FROM vector_metrics
+             WHERE event_type='retrieval'
+          GROUP BY db
+            """
+        )
+        metrics = {
+            str(db or ""): {
+                "win_rate": float(win or 0.0),
+                "regret_rate": float(regret or 0.0),
+                "roi": float(roi or 0.0),
+            }
+            for db, win, regret, roi in cur.fetchall()
+        }
+        self.update_db_metrics(metrics, sqlite_path=sqlite_path)
+        return metrics
+
+    # ------------------------------------------------------------------
     def roi_by_origin_db(self) -> Dict[str, float]:
         """Return average ROI contribution per ``origin_db``."""
 
@@ -2229,15 +2375,48 @@ class ROITracker:
         }
 
     # ------------------------------------------------------------------
-    def export_origin_db_roi_csv(self, path: str) -> None:
-        """Write ROI contribution per ``origin_db`` to ``path`` as CSV."""
+    def db_roi_report(self) -> List[Dict[str, float]]:
+        """Return ROI contribution, win-rate and regret-rate per database."""
 
-        rows = self.roi_by_origin_db()
+        averages = self.roi_by_origin_db()
+        report: List[Dict[str, float]] = []
+        for db, avg in averages.items():
+            stats = self.db_roi_metrics.get(db, {})
+            report.append(
+                {
+                    "origin_db": db,
+                    "avg_roi": avg,
+                    "win_rate": float(stats.get("win_rate", 0.0)),
+                    "regret_rate": float(stats.get("regret_rate", 0.0)),
+                }
+            )
+        report.sort(key=lambda r: (-r["win_rate"], r["regret_rate"]))
+        return report
+
+    # ------------------------------------------------------------------
+    def export_origin_db_roi_csv(self, path: str) -> None:
+        """Write ROI contribution report per ``origin_db`` to ``path`` as CSV."""
+
+        rows = self.db_roi_report()
         with open(path, "w", newline="") as fh:
             writer = csv.writer(fh)
-            writer.writerow(["origin_db", "avg_roi", "count"])
-            for db, avg in sorted(rows.items()):
-                writer.writerow([db, avg, len(self.origin_db_deltas[db])])
+            writer.writerow([
+                "origin_db",
+                "avg_roi",
+                "win_rate",
+                "regret_rate",
+                "count",
+            ])
+            for row in rows:
+                writer.writerow(
+                    [
+                        row["origin_db"],
+                        row["avg_roi"],
+                        row["win_rate"],
+                        row["regret_rate"],
+                        len(self.origin_db_deltas.get(row["origin_db"], [])),
+                    ]
+                )
 
     # ------------------------------------------------------------------
     def retrieval_bias(self) -> Dict[str, float]:
