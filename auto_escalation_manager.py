@@ -3,6 +3,7 @@ from __future__ import annotations
 """Automatic handler for escalation events."""
 
 import logging
+import os
 from typing import Iterable, Optional
 from .retry_utils import retry
 
@@ -11,10 +12,10 @@ from .knowledge_graph import KnowledgeGraph
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
-from gpt_memory import GPTMemoryManager
 from .rollback_manager import RollbackManager
 from .error_bot import ErrorDB
 from .unified_event_bus import UnifiedEventBus
+from .local_knowledge_module import init_local_knowledge
 
 
 class AutoEscalationManager:
@@ -31,7 +32,9 @@ class AutoEscalationManager:
     ) -> None:
         self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
         if debugger is None:
-            gpt_mem = GPTMemoryManager(event_bus=event_bus)
+            gpt_mem = init_local_knowledge(
+                os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+            ).memory
             engine = SelfCodingEngine(CodeDB(), gpt_mem, event_bus=event_bus)
             debugger = AutomatedDebugger(ErrorDB(), engine)
         self.debugger = debugger

@@ -137,4 +137,29 @@ class LocalKnowledgeModule:
             pass
 
         return "\n\n".join(sections)
-__all__ = ["LocalKnowledgeModule"]
+
+
+_LOCAL_KNOWLEDGE: "LocalKnowledgeModule | None" = None
+
+
+def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
+    """Return a process-wide :class:`LocalKnowledgeModule` instance.
+
+    The module is initialised on first use and subsequent calls return the
+    existing instance, ensuring that all components share the same underlying
+    :class:`GPTMemoryManager` and :class:`GPTKnowledgeService`.
+    """
+
+    global _LOCAL_KNOWLEDGE
+    if _LOCAL_KNOWLEDGE is None:
+        embedder = None
+        if SentenceTransformer is not None:
+            try:  # pragma: no cover - optional heavy dependency
+                embedder = SentenceTransformer("all-MiniLM-L6-v2")
+            except Exception:
+                embedder = None
+        _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=embedder)
+    return _LOCAL_KNOWLEDGE
+
+
+__all__ = ["LocalKnowledgeModule", "init_local_knowledge"]

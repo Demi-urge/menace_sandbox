@@ -77,6 +77,7 @@ from .quick_fix_engine import generate_patch
 from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .gpt_memory import GPTMemoryManager
+from .local_knowledge_module import init_local_knowledge
 from gpt_memory_interface import GPTMemoryInterface
 try:
     from .gpt_knowledge_service import GPTKnowledgeService
@@ -772,7 +773,9 @@ class SelfImprovementEngine:
             gpt_memory
             or getattr(self_coding_engine, "gpt_memory", None)
             or getattr(self_coding_engine, "gpt_memory_manager", None)
-            or GPTMemoryManager(event_bus=event_bus)
+            or init_local_knowledge(
+                os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+            ).memory
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.local_knowledge = LocalKnowledgeModule(

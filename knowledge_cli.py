@@ -6,8 +6,10 @@ import argparse
 import sys
 from typing import Iterable
 
+import os
+
 from gpt_memory import INSIGHT
-from local_knowledge_module import LocalKnowledgeModule
+from local_knowledge_module import init_local_knowledge
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +31,7 @@ def cli(argv: Iterable[str] | None = None) -> int:
 
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    module = LocalKnowledgeModule()
+    module = init_local_knowledge(os.getenv("GPT_MEMORY_DB", "gpt_memory.db"))
 
     if args.cmd == "search":
         entries = module.memory.search_context(args.query, tags=[args.tag], limit=args.limit)

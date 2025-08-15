@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
+from local_knowledge_module import init_local_knowledge, LocalKnowledgeModule
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -139,10 +140,19 @@ logger = get_logger(__name__)
 
 GPT_MEMORY_MANAGER = None
 GPT_KNOWLEDGE_SERVICE = None
-if TYPE_CHECKING:  # pragma: no cover - only for type hints
-    from local_knowledge_module import LocalKnowledgeModule
-
 LOCAL_KNOWLEDGE_MODULE: "LocalKnowledgeModule | None" = None
+
+
+def _get_local_knowledge() -> LocalKnowledgeModule:
+    """Return the global :class:`LocalKnowledgeModule` instance."""
+
+    global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
+    if LOCAL_KNOWLEDGE_MODULE is None:
+        module = init_local_knowledge(os.getenv("GPT_MEMORY_DB", "gpt_memory.db"))
+        LOCAL_KNOWLEDGE_MODULE = module
+        GPT_MEMORY_MANAGER = module.memory
+        GPT_KNOWLEDGE_SERVICE = module.knowledge
+    return LOCAL_KNOWLEDGE_MODULE
 LOCAL_KNOWLEDGE_REFRESH_EVERY = int(
     os.getenv("LOCAL_KNOWLEDGE_REFRESH_EVERY", "10")
 )
@@ -746,7 +756,7 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
             score_backend = backend_from_url(backend_url)
         except Exception:
             logger.exception("patch score backend init failed")
-    gpt_memory = GPT_MEMORY_MANAGER
+    gpt_memory = _get_local_knowledge().memory
     improver = SelfImprovementEngine(
         meta_logger=meta_log,
         module_index=module_index,
@@ -834,7 +844,9 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         try:
             from menace.chatgpt_idea_bot import ChatGPTClient
 
-            gpt_client = ChatGPTClient(model="gpt-4", gpt_memory=GPT_MEMORY_MANAGER)
+            gpt_client = ChatGPTClient(
+                model="gpt-4", gpt_memory=_get_local_knowledge().memory
+            )
         except Exception:
             logger.exception("GPT client init failed")
             gpt_client = None
@@ -1130,12 +1142,12 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
             policy_saved=bool(ctx.policy),
         ),
     )
-    if LOCAL_KNOWLEDGE_MODULE:
-        try:
-            LOCAL_KNOWLEDGE_MODULE.refresh()
-            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
-        except Exception:
-            logger.exception("failed to refresh local knowledge module")
+    module = _get_local_knowledge()
+    try:
+        module.refresh()
+        module.memory.conn.commit()
+    except Exception:
+        logger.exception("failed to refresh local knowledge module")
 
 
 def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
@@ -1239,19 +1251,17 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 ctx.predicted_roi = None
                 sec_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
                 _cycle(section_name, snippet, sec_tracker, scenario)
-                if (
-                    LOCAL_KNOWLEDGE_MODULE
-                    and LOCAL_KNOWLEDGE_REFRESH_EVERY > 0
-                ):
+                if LOCAL_KNOWLEDGE_REFRESH_EVERY > 0:
                     _local_knowledge_refresh_counter += 1
                     if (
                         _local_knowledge_refresh_counter
                         % LOCAL_KNOWLEDGE_REFRESH_EVERY
                         == 0
                     ):
+                        module = _get_local_knowledge()
                         try:
-                            LOCAL_KNOWLEDGE_MODULE.refresh()
-                            LOCAL_KNOWLEDGE_MODULE.memory.conn.commit()
+                            module.refresh()
+                            module.memory.conn.commit()
                         except Exception:
                             logger.exception(
                                 "failed to refresh local knowledge module"
@@ -1454,21 +1464,21 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         max_prompt_length=GPT_SECTION_PROMPT_MAX_LENGTH,
                     )
                     hist = ctx.conversations.get("brainstorm", [])
-                    if LOCAL_KNOWLEDGE_MODULE:
-                        try:
-                            entries = LOCAL_KNOWLEDGE_MODULE.memory.search_context(
-                                "",
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
-                                limit=5,
-                                use_embeddings=False,
-                            )
-                        except Exception:
-                            entries = []
-                        if entries:
-                            snips = [
-                                (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                for e in entries
-                            ]
+                    module = _get_local_knowledge()
+                    try:
+                        entries = module.memory.search_context(
+                            "",
+                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
+                            limit=5,
+                            use_embeddings=False,
+                        )
+                    except Exception:
+                        entries = []
+                    if entries:
+                        snips = [
+                            (getattr(e, "response", "") or "").strip().splitlines()[0]
+                            for e in entries
+                        ]
                             prompt = "\n".join(snips) + "\n\n" + prompt
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
@@ -1494,15 +1504,15 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         ctx.brainstorm_history.append(idea)
                         hist.append({"role": "assistant", "content": idea})
                         logger.info("brainstorm", extra=log_record(idea=idea))
-                        if LOCAL_KNOWLEDGE_MODULE:
-                            try:
-                                LOCAL_KNOWLEDGE_MODULE.log(
-                                    prompt,
-                                    idea,
-                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
-                                )
-                            except Exception:
-                                logger.exception("local knowledge logging failed")
+                    module = _get_local_knowledge()
+                    try:
+                        module.log(
+                            prompt,
+                            idea,
+                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                        )
+                    except Exception:
+                        logger.exception("local knowledge logging failed")
                     if len(hist) > 6:
                         hist = hist[-6:]
                     ctx.conversations["brainstorm"] = hist
