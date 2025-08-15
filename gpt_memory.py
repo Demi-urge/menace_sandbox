@@ -168,7 +168,7 @@ class GPTMemoryManager(GPTMemoryInterface):
                 wall_time = 0.0
 
         store_start = perf_counter()
-        self.conn.execute(
+        cur = self.conn.execute(
             "INSERT INTO interactions(prompt, response, tags, ts, embedding)"
             " VALUES (?, ?, ?, ?, ?)",
             (prompt, response, tag_str, timestamp, embedding),
@@ -177,8 +177,9 @@ class GPTMemoryManager(GPTMemoryInterface):
         store_latency = perf_counter() - store_start
 
         if embedding is not None:
+            vector_id = str(cur.lastrowid)
             log_embedding_metrics(
-                self.__class__.__name__, tokens, wall_time, store_latency
+                self.__class__.__name__, tokens, wall_time, store_latency, vector_id=vector_id
             )
 
         if self.event_bus:
