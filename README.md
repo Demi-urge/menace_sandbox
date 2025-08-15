@@ -184,6 +184,10 @@ result = ask_with_memory(client, "self_coding_engine.generate_helper", "Write te
                          memory=gpt_memory, tags=[ERROR_FIX])
 ```
 
+For a deeper overview of the `LocalKnowledgeModule`, required tags, environment
+variables and multi-run examples see
+[docs/gpt_memory.md](docs/gpt_memory.md).
+
 ### Embedding lifecycle
 
 Databases such as `BotDB`, `WorkflowDB`, `ErrorDB`, `EnhancementDB` and
