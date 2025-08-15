@@ -12,12 +12,43 @@ if os.getenv("SANDBOX_CENTRAL_LOGGING") == "1":
 
     setup_logging()
 
-from .metrics_exporter import (
-    Gauge,
-    start_metrics_server,
-    synergy_weight_update_alerts_total,
-    synergy_weight_update_failures_total,
-)
+# ``metrics_exporter`` is optional and in tests may be loaded via a custom
+# ``importlib`` loader that leaves ``sys.modules['menace.metrics_exporter']`` as
+# ``None``.  Importing it again would reset any gauges already configured, so we
+# first try to reuse an existing module instance before falling back to a real
+# import.
+try:
+    import sys
+    _pkg = sys.modules.get(__package__ or "")
+    _me = getattr(_pkg, "metrics_exporter", None) if _pkg else None
+    if _me is None:  # pragma: no cover - executed only when not preloaded
+        from . import metrics_exporter as _me  # type: ignore
+
+    Gauge = _me.Gauge  # type: ignore
+    start_metrics_server = _me.start_metrics_server  # type: ignore
+    synergy_weight_update_alerts_total = _me.synergy_weight_update_alerts_total  # type: ignore
+    synergy_weight_update_failures_total = _me.synergy_weight_update_failures_total  # type: ignore
+except Exception:  # pragma: no cover - metrics exporter optional
+    class _StubGauge:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set(self, *args, **kwargs):
+            pass
+
+        def labels(self, *args, **kwargs):
+            return self
+
+        def inc(self, *args, **kwargs):
+            pass
+
+    Gauge = _StubGauge  # type: ignore
+
+    def start_metrics_server(*args, **kwargs):  # type: ignore
+        return None
+
+    synergy_weight_update_alerts_total = _StubGauge()
+    synergy_weight_update_failures_total = _StubGauge()
 from alert_dispatcher import dispatch_alert
 
 # Prometheus gauges tracking trainer state
@@ -36,7 +67,10 @@ synergy_trainer_failures_total = Gauge(
 
 ALERT_THRESHOLD = int(os.getenv("SYNERGY_WEIGHT_ALERT_THRESHOLD", "5"))
 
-from . import synergy_weight_cli
+try:
+    from . import synergy_weight_cli
+except Exception:  # pragma: no cover - optional dependency
+    synergy_weight_cli = None  # type: ignore
 from . import synergy_history_db as shd
 
 

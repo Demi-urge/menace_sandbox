@@ -160,6 +160,85 @@ class MetricsAggregator:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.heatmap_dir = self.out_dir / "heatmaps"
         self.heatmap_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure required tables exist in the metrics database.  Older
+        # deployments may not have the ``embedding_stats`` or
+        # ``retrieval_stats`` tables or may miss newly added columns such as
+        # ``patch_id`` and ``db_source``.  Creating them here keeps the
+        # aggregator self‑contained and avoids import order issues.
+        self._ensure_tables()
+
+    def _ensure_tables(self) -> None:
+        """Create metrics tables if they do not already exist.
+
+        The schema mirrors the one used by :class:`data_bot.MetricsDB` but is
+        duplicated here so the aggregator can operate independently when run as
+        a standalone script.
+        """
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS embedding_stats(
+                    db_name TEXT,
+                    tokens INTEGER,
+                    wall_ms REAL,
+                    store_ms REAL,
+                    patch_id TEXT,
+                    db_source TEXT,
+                    ts TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS retrieval_stats(
+                    session_id TEXT,
+                    origin_db TEXT,
+                    record_id TEXT,
+                    rank INTEGER,
+                    hit INTEGER,
+                    hit_rate REAL,
+                    tokens_injected INTEGER,
+                    contribution REAL,
+                    patch_id TEXT,
+                    db_source TEXT,
+                    ts TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embedding_stats_ts ON embedding_stats(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retrieval_stats_ts ON retrieval_stats(ts)"
+            )
+
+            cols = [r[1] for r in conn.execute(
+                "PRAGMA table_info(embedding_stats)"
+            ).fetchall()]
+            if "patch_id" not in cols:
+                conn.execute("ALTER TABLE embedding_stats ADD COLUMN patch_id TEXT")
+            if "db_source" not in cols:
+                conn.execute("ALTER TABLE embedding_stats ADD COLUMN db_source TEXT")
+            if "ts" not in cols:
+                conn.execute(
+                    "ALTER TABLE embedding_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                )
+
+            cols = [r[1] for r in conn.execute(
+                "PRAGMA table_info(retrieval_stats)"
+            ).fetchall()]
+            migrations = {
+                "patch_id": "ALTER TABLE retrieval_stats ADD COLUMN patch_id TEXT",
+                "db_source": "ALTER TABLE retrieval_stats ADD COLUMN db_source TEXT",
+                "hit_rate": "ALTER TABLE retrieval_stats ADD COLUMN hit_rate REAL",
+                "tokens_injected": "ALTER TABLE retrieval_stats ADD COLUMN tokens_injected INTEGER",
+                "contribution": "ALTER TABLE retrieval_stats ADD COLUMN contribution REAL",
+                "ts": "ALTER TABLE retrieval_stats ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP",
+            }
+            for column, stmt in migrations.items():
+                if column not in cols:
+                    conn.execute(stmt)
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.db_path)
