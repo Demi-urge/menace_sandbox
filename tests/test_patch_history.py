@@ -65,3 +65,12 @@ def test_keyword_features(tmp_path):
     count, recency = db.keyword_features()
     assert count > 0
     assert isinstance(recency, int)
+
+
+def test_get_patch_record(tmp_path):
+    db = cd.PatchHistoryDB(tmp_path / "p.db")
+    pid = db.add(cd.PatchRecord("a.py", "desc", 1.0, 2.0))
+    rec = db.get(pid)
+    assert rec is not None
+    assert rec.filename == "a.py"
+    assert db.get(9999) is None

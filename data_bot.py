@@ -165,8 +165,19 @@ class MetricsDB:
             CREATE TABLE IF NOT EXISTS patch_outcomes(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 patch_id TEXT,
+                origin_db TEXT,
+                vector_id TEXT,
                 success INTEGER,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS retriever_stats(
+                origin_db TEXT PRIMARY KEY,
+                wins INTEGER DEFAULT 0,
+                regrets INTEGER DEFAULT 0
             )
             """
             )
@@ -185,6 +196,9 @@ class MetricsDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_ts ON patch_outcomes(ts)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_origin ON patch_outcomes(origin_db)"
+            )
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
             ]
@@ -198,6 +212,17 @@ class MetricsDB:
             if "ts" not in cols:
                 conn.execute(
                     "ALTER TABLE retrieval_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                )
+            cols = [
+                r[1] for r in conn.execute("PRAGMA table_info(patch_outcomes)").fetchall()
+            ]
+            if "origin_db" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_outcomes ADD COLUMN origin_db TEXT"
+                )
+            if "vector_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_outcomes ADD COLUMN vector_id TEXT"
                 )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
             if "revenue" not in cols:
@@ -404,21 +429,55 @@ class MetricsDB:
             )
             conn.commit()
 
-    def log_patch_outcome(self, patch_id: str, success: bool) -> None:
-        """Record the outcome of a patch deployment."""
+    def log_patch_outcome(
+        self,
+        patch_id: str,
+        success: bool,
+        vectors: Iterable[tuple[str, str]] | None = None,
+    ) -> None:
+        """Record the outcome of a patch deployment and associated vectors."""
 
+        entries = list(vectors or [])
         with self._connect() as conn:
-            conn.execute(
-                """
-            INSERT INTO patch_outcomes(patch_id, success, ts)
-            VALUES(?,?,?)
-            """,
-                (
-                    patch_id,
-                    1 if success else 0,
-                    datetime.utcnow().isoformat(),
-                ),
-            )
+            if entries:
+                for origin_db, vec_id in entries:
+                    conn.execute(
+                        """
+                    INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, ts)
+                    VALUES(?,?,?,?,?)
+                    """,
+                        (
+                            patch_id,
+                            origin_db,
+                            vec_id,
+                            1 if success else 0,
+                            datetime.utcnow().isoformat(),
+                        ),
+                    )
+                    conn.execute(
+                        """
+                    INSERT INTO retriever_stats(origin_db, wins, regrets)
+                    VALUES(?,?,?)
+                    ON CONFLICT(origin_db) DO UPDATE SET
+                        wins = wins + excluded.wins,
+                        regrets = regrets + excluded.regrets
+                    """,
+                        (origin_db, 1 if success else 0, 0 if success else 1),
+                    )
+            else:
+                conn.execute(
+                    """
+                INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, ts)
+                VALUES(?,?,?,?,?)
+                """,
+                    (
+                        patch_id,
+                        None,
+                        None,
+                        1 if success else 0,
+                        datetime.utcnow().isoformat(),
+                    ),
+                )
             conn.commit()
 
     def fetch_eval(self, cycle: str | None = None) -> List[tuple]:

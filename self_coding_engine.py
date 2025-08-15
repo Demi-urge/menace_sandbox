@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any
+from typing import Iterable, Optional, Dict, List, Any, Tuple
 import subprocess
 import os
 import sys
@@ -768,6 +768,26 @@ class SelfCodingEngine:
             },
         )
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
+        try:
+            vectors: List[Tuple[str, str]] = []
+            if context_meta:
+                raw_vecs = context_meta.get("retrieval_vectors") or []
+                for item in raw_vecs:
+                    if isinstance(item, dict):
+                        origin = item.get("origin_db") or item.get("origin")
+                        vid = item.get("vector_id") or item.get("id")
+                    else:
+                        origin, vid = item
+                    if origin is not None and vid is not None:
+                        vectors.append((str(origin), str(vid)))
+            if self.data_bot and self.patch_db and patch_id is not None:
+                rec = self.patch_db.get(patch_id)
+                success = False
+                if rec:
+                    success = not rec.reverted and rec.roi_delta > 0
+                self.data_bot.db.log_patch_outcome(str(patch_id), success, vectors)
+        except Exception:
+            self.logger.exception("failed to log patch outcome")
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
