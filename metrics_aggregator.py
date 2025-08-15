@@ -41,6 +41,11 @@ _RETRIEVER_STALE_GAUGE = _me.Gauge(
     "Average hours since embedding last use",
     ["origin_db"],
 )
+_RETRIEVER_ROI_GAUGE = _me.Gauge(
+    "retriever_roi_total",
+    "Total ROI contribution of retrieved patches",
+    ["origin_db"],
+)
 
 _EMBED_MEAN_GAUGE = _me.Gauge(
     "embedding_metric_mean",
@@ -65,92 +70,90 @@ _RETR_COUNT_GAUGE = _me.Gauge(
 
 
 def compute_retriever_stats(
-    metrics_db: Path | str = "metrics.db", patch_db: Path | str = "patch_history.db"
-) -> Dict[str, float]:
-    """Join retrieval metrics with patch outcomes and log KPIs.
-
-    Parameters
-    ----------
-    metrics_db:
-        Path to the metrics database containing ``retrieval_metrics`` and
-        ``embedding_metrics`` tables.
-    patch_db:
-        Path to the patch history database used for outcome lookup.
-    """
+    metrics_db: Path | str = "metrics.db", roi_db: Path | str = "roi.db"
+) -> Dict[str, Dict[str, float]]:
+    """Join retrieval metrics with ROI outcomes and log KPIs per database."""
 
     if pd is None:
         raise RuntimeError("pandas is required for retriever stats")
 
     m_path = Path(metrics_db)
     if not m_path.exists():
-        return {"win_rate": 0.0, "regret_rate": 0.0, "stale_penalty": 0.0}
+        return {}
 
     with sqlite3.connect(m_path) as conn:
-        def _load(name: str, cols: str) -> "pd.DataFrame":
-            exists = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (name,),
-            ).fetchone()
-            if not exists:
-                return pd.DataFrame()
-            return pd.read_sql(
-                f"SELECT {cols}, ts FROM {name}", conn, parse_dates=["ts"]
+        rm = pd.read_sql(
+            "SELECT origin_db, record_id, hit, ts FROM retrieval_metrics",
+            conn,
+            parse_dates=["ts"],
+        )
+        emb = pd.read_sql(
+            "SELECT record_id, ts FROM embedding_metrics", conn, parse_dates=["ts"]
+        )
+        outcomes = pd.read_sql(
+            "SELECT patch_id, origin_db, success FROM patch_outcomes", conn
+        )
+
+    roi_path = Path(roi_db)
+    roi_df = pd.DataFrame()
+    if roi_path.exists():
+        with sqlite3.connect(roi_path) as conn:
+            roi_df = pd.read_sql(
+                "SELECT action AS patch_id, revenue, api_cost FROM action_roi", conn
             )
 
-        rm = _load("retrieval_metrics", "origin_db, record_id, hit")
-        emb = _load("embedding_metrics", "record_id")
+    if not roi_df.empty:
+        roi_df["roi"] = roi_df["revenue"].fillna(0) - roi_df["api_cost"].fillna(0)
 
-    win_rate = regret_rate = stale_penalty = 0.0
+    merged = outcomes.merge(roi_df, on="patch_id", how="left")
+    metrics: Dict[str, Dict[str, float]] = {}
 
-    # Compute win/regret rate from patch outcomes
-    patch_path = Path(patch_db)
-    if not rm.empty and patch_path.exists():
-        with sqlite3.connect(patch_path) as conn:
-            patches = pd.read_sql(
-                "SELECT id, roi_delta, reverted FROM patch_history", conn
-            )
-        hit_df = rm[(rm["hit"] == 1) & rm["origin_db"].str.contains("patch", na=False)]
-        join = hit_df.merge(patches, left_on="record_id", right_on="id", how="left")
-        total = len(join)
-        if total:
-            wins = ((join["roi_delta"] > 0) & (join["reverted"] == 0)).sum()
-            regrets = total - int(wins)
-            win_rate = wins / total
-            regret_rate = regrets / total
+    for origin, grp in merged.groupby("origin_db"):
+        total = len(grp)
+        wins = int(grp.get("success", pd.Series()).sum()) if total else 0
+        regrets = total - wins
+        win_rate = wins / total if total else 0.0
+        regret_rate = regrets / total if total else 0.0
+        roi_total = float(grp.get("roi", pd.Series()).fillna(0).sum())
 
-    # Stale embedding penalty: time since last use of embedding
-    if not rm.empty and not emb.empty:
-        df = rm.merge(emb, on="record_id", suffixes=("_ret", "_emb"))
-        if not df.empty:
-            df.sort_values(["record_id", "ts_ret"], inplace=True)
-            df["prev_ts"] = df.groupby("record_id")["ts_ret"].shift(1)
-            df["prev_ts"].fillna(df["ts_emb"], inplace=True)
-            df["age_hours"] = (
-                df["ts_ret"] - df["prev_ts"]
-            ).dt.total_seconds() / 3600.0
-            stale_penalty = float(df["age_hours"].mean())
+        stale_penalty = 0.0
+        if not rm.empty and not emb.empty:
+            m = rm[rm["origin_db"] == origin]
+            if not m.empty:
+                df = m.merge(emb, on="record_id", suffixes=("_ret", "_emb"))
+                if not df.empty:
+                    df.sort_values(["record_id", "ts_ret"], inplace=True)
+                    df["prev_ts"] = df.groupby("record_id")["ts_ret"].shift(1)
+                    df["prev_ts"].fillna(df["ts_emb"], inplace=True)
+                    df["age_hours"] = (
+                        df["ts_ret"] - df["prev_ts"]
+                    ).dt.total_seconds() / 3600.0
+                    stale_penalty = float(df["age_hours"].mean())
 
-    origin = "patch_history"
-    try:  # best effort metrics
-        _RETRIEVER_WIN_GAUGE.labels(origin_db=origin).set(win_rate)
-        _RETRIEVER_REGRET_GAUGE.labels(origin_db=origin).set(regret_rate)
-        _RETRIEVER_STALE_GAUGE.labels(origin_db=origin).set(stale_penalty)
-    except Exception:
-        pass
-
-    if MetricsDB is not None:
         try:
-            MetricsDB(m_path).log_retriever_kpi(
-                origin, win_rate, regret_rate, stale_penalty
-            )
+            _RETRIEVER_WIN_GAUGE.labels(origin_db=origin).set(win_rate)
+            _RETRIEVER_REGRET_GAUGE.labels(origin_db=origin).set(regret_rate)
+            _RETRIEVER_STALE_GAUGE.labels(origin_db=origin).set(stale_penalty)
+            _RETRIEVER_ROI_GAUGE.labels(origin_db=origin).set(roi_total)
         except Exception:
             pass
 
-    return {
-        "win_rate": win_rate,
-        "regret_rate": regret_rate,
-        "stale_penalty": stale_penalty,
-    }
+        if MetricsDB is not None:
+            try:
+                MetricsDB(m_path).log_retriever_kpi(
+                    origin, win_rate, regret_rate, stale_penalty, roi_total
+                )
+            except Exception:
+                pass
+
+        metrics[origin] = {
+            "win_rate": win_rate,
+            "regret_rate": regret_rate,
+            "stale_penalty": stale_penalty,
+            "roi": roi_total,
+        }
+
+    return metrics
 
 
 class MetricsAggregator:

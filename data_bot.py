@@ -167,6 +167,7 @@ class MetricsDB:
                 win_rate REAL,
                 regret_rate REAL,
                 stale_penalty REAL,
+                roi REAL DEFAULT 0,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -213,6 +214,13 @@ class MetricsDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patch_outcomes_origin ON patch_outcomes(origin_db)"
             )
+            cols = [
+                r[1] for r in conn.execute("PRAGMA table_info(retriever_kpi)").fetchall()
+            ]
+            if "roi" not in cols:
+                conn.execute(
+                    "ALTER TABLE retriever_kpi ADD COLUMN roi REAL DEFAULT 0"
+                )
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
             ]
@@ -444,21 +452,27 @@ class MetricsDB:
             conn.commit()
 
     def log_retriever_kpi(
-        self, origin_db: str, win_rate: float, regret_rate: float, stale_penalty: float
+        self,
+        origin_db: str,
+        win_rate: float,
+        regret_rate: float,
+        stale_penalty: float,
+        roi: float = 0.0,
     ) -> None:
         """Store aggregate KPIs for retrieval performance."""
 
         with self._connect() as conn:
             conn.execute(
                 """
-            INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, ts)
-            VALUES(?,?,?,?,?)
+            INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, roi, ts)
+            VALUES(?,?,?,?,?,?)
             """,
                 (
                     origin_db,
                     float(win_rate),
                     float(regret_rate),
                     float(stale_penalty),
+                    float(roi),
                     datetime.utcnow().isoformat(),
                 ),
             )

@@ -30,8 +30,18 @@ try:
         Gauge as _PromGauge,
         start_http_server as _start_http_server,  # type: ignore
         CollectorRegistry as _PromCollectorRegistry,  # type: ignore
+        REGISTRY as _PROM_REGISTRY,  # type: ignore
     )
-    Gauge = _PromGauge  # type: ignore
+
+    def Gauge(name: str, documentation: str, labelnames: Sequence[str] | None = None, **kw: object) -> _PromGauge:  # type: ignore[override]
+        existing = _PROM_REGISTRY._names_to_collectors.get(name)
+        if existing is not None:
+            try:
+                _PROM_REGISTRY.unregister(existing)
+            except Exception:
+                pass
+        return _PromGauge(name, documentation, labelnames=labelnames or (), **kw)
+
     CollectorRegistry = _PromCollectorRegistry  # type: ignore
     start_http_server = _start_http_server  # type: ignore
     _USING_STUB = False
