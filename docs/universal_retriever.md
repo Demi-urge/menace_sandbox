@@ -63,3 +63,34 @@ downstream inspection.
 The helper provides a unified interface over the various vector stores while
 maintaining rich scoring explanations for ranking and troubleshooting.
 
+## Feedback weighting
+
+`UniversalRetriever` can bias ranking using aggregated feedback metrics stored
+in ``metrics.db``. The :class:`~menace.data_bot.MetricsDB` collects win rates,
+regret rates and embedding staleness for each origin database. During
+``retrieve()`` the latest KPI values are fetched and converted into a bias
+factor:
+
+- **win_rate** – higher historical success increases rank.
+- **regret_rate** – high regret reduces confidence.
+- **stale_penalty** – older embeddings are down-weighted.
+
+These signals complement similarity and contextual metrics to encourage results
+that have performed well in past experiments.
+
+## Tuning parameters
+
+Ranking behaviour can be customised via the :class:`RetrievalWeights` dataclass
+passed to ``UniversalRetriever``:
+
+```python
+from menace.universal_retriever import UniversalRetriever, RetrievalWeights
+
+weights = RetrievalWeights(similarity=0.6, context=0.4, win=0.2,
+                           regret=0.1, stale_cost=0.02)
+retriever = UniversalRetriever(bot_db=BotDB(), weights=weights)
+```
+
+Adjusting these parameters allows future experiments to explore different
+balances between vector similarity, contextual metrics and feedback signals.
+
