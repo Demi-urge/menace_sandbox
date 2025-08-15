@@ -84,10 +84,11 @@ that have performed well in past experiments.
 
 Two additional knobs influence candidate ordering:
 
-- ``model_path`` – optional path to a JSON logistic‑regression model produced by
-  :mod:`retrieval_ranker`. When supplied, the model evaluates feature vectors
-  for each candidate and the predicted win probability is multiplied into the
-  final score.
+- ``model_path`` – optional path to a model produced by
+  ``analytics/retrieval_ranker.py``. See ``docs/retrieval_ranker.md`` for the
+  required datasets and training command. When supplied, the model evaluates
+  feature vectors for each candidate and the predicted win probability is
+  multiplied into the final score.
 - ``reliability_threshold`` – minimum acceptable reliability score
   (``win_rate - regret_rate``) fetched from :class:`VectorMetricsDB`. Databases
   falling below this threshold are de‑prioritised or skipped during search.
