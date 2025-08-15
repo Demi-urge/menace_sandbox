@@ -115,7 +115,7 @@ class DummyRetriever:
         return results
 
 
-def make_builder(monkeypatch):
+def make_builder(monkeypatch, db_weights=None):
     bot_data = [
         {"id": 2, "name": "beta", "roi": 5},
         {"id": 1, "name": "alpha", "roi": 10},
@@ -140,6 +140,7 @@ def make_builder(monkeypatch):
         workflow_db=MemDB(workflow_data),
         error_db=MemDB(error_data),
         code_db=MemDB(code_data),
+        db_weights=db_weights,
     )
 
     expected = {
@@ -194,3 +195,28 @@ def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
     prompt = bot._build_prompt(spec)
     assert "\n\nContext:\n" in prompt
     assert ctx in prompt
+
+
+def test_weighted_ordering(monkeypatch):
+    import menace.context_builder as cb_mod
+
+    monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
+
+    bundles = [
+        ResultBundle("bot", {"id": 1, "name": "alpha", "roi": 1}, 1.0, ""),
+        ResultBundle("workflow", {"id": 10, "title": "deploy", "roi": 1}, 1.0, ""),
+        ResultBundle("error", {"id": 100, "message": "bad", "frequency": 1}, 1.0, ""),
+    ]
+
+    plain = ContextBuilder()
+    weighted = ContextBuilder(db_weights={"error": 4.0, "bot": 0.1})
+
+    plain_scores = [plain._bundle_to_entry(b)[1] for b in bundles]
+    plain_ids = [s.entry["id"] for s in sorted(plain_scores, key=lambda s: s.score, reverse=True)]
+    assert plain_ids == [1, 10, 100]
+
+    weighted_scores = [weighted._bundle_to_entry(b)[1] for b in bundles]
+    weighted_ids = [
+        s.entry["id"] for s in sorted(weighted_scores, key=lambda s: s.score, reverse=True)
+    ]
+    assert weighted_ids == [100, 10, 1]

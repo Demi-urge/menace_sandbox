@@ -82,6 +82,7 @@ class ContextBuilder:
         code_db: CodeDB | str | Path | None = None,
         discrepancy_db: DiscrepancyDB | str | Path | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
+        db_weights: Dict[str, float] | None = None,
     ) -> None:
         self.bot_db = _resolve_db(bot_db, BotDB)
         self.workflow_db = _resolve_db(workflow_db, WorkflowDB)
@@ -95,6 +96,7 @@ class ContextBuilder:
 
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
+        self.db_weights = db_weights or {}
 
         # Assemble the universal retriever
         self.retriever = UniversalRetriever(
@@ -189,6 +191,7 @@ class ContextBuilder:
             entry["metric"] = metric
 
         score = bundle.score + (metric or 0.0)
+        score *= self.db_weights.get(origin, 1.0)
 
         key_map = {
             "error": "errors",

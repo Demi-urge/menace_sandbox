@@ -152,7 +152,9 @@ class ContextBuilderConfig(BaseModel):
     """Context builder tuning parameters."""
 
     max_tokens: int = 800
-    db_weights: Dict[str, float] = Field(default_factory=dict)
+    db_weights: Dict[str, float] = Field(
+        default_factory=dict, description="Score multipliers per origin database"
+    )
 
     model_config = ConfigDict(extra="forbid")
 
