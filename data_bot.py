@@ -149,6 +149,18 @@ class MetricsDB:
             """
             )
             conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS retriever_kpi(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_db TEXT,
+                win_rate REAL,
+                regret_rate REAL,
+                stale_penalty REAL,
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
             conn.execute(
@@ -156,6 +168,9 @@ class MetricsDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_retrieval_ts ON retrieval_metrics(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retriever_kpi_ts ON retriever_kpi(ts)"
             )
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
@@ -350,6 +365,27 @@ class MetricsDB:
                     1 if hit else 0,
                     int(tokens),
                     float(score),
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
+
+    def log_retriever_kpi(
+        self, origin_db: str, win_rate: float, regret_rate: float, stale_penalty: float
+    ) -> None:
+        """Store aggregate KPIs for retrieval performance."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, ts)
+            VALUES(?,?,?,?,?)
+            """,
+                (
+                    origin_db,
+                    float(win_rate),
+                    float(regret_rate),
+                    float(stale_penalty),
                     datetime.utcnow().isoformat(),
                 ),
             )
