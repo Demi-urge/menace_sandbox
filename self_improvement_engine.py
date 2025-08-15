@@ -78,6 +78,10 @@ from .error_logger import TelemetryEvent
 from . import mutation_logger as MutationLogger
 from .gpt_memory import GPTMemoryManager
 from gpt_memory_interface import GPTMemoryInterface
+try:
+    from .gpt_knowledge_service import GPTKnowledgeService
+except Exception:  # pragma: no cover - fallback for flat layout
+    from gpt_knowledge_service import GPTKnowledgeService  # type: ignore
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -615,6 +619,7 @@ class SelfImprovementEngine:
         roi_predictor: AdaptiveROIPredictor | None = None,
         roi_tracker: ROITracker | None = None,
         gpt_memory: GPTMemoryInterface | None = None,
+        knowledge_service: GPTKnowledgeService | None = None,
         **kwargs: Any,
     ) -> None:
         if gpt_memory is None:
@@ -742,6 +747,7 @@ class SelfImprovementEngine:
             or GPTMemoryManager(event_bus=event_bus)
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
+        self.knowledge_service = knowledge_service
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -959,6 +965,7 @@ class SelfImprovementEngine:
 
     def _memory_summaries(self, key: str) -> str:
         """Return a summary of similar past actions from memory."""
+        summaries: list[str] = []
         try:
             entries = self.gpt_memory.search_context(
                 key,
@@ -967,13 +974,20 @@ class SelfImprovementEngine:
                 use_embeddings=False,
             )
         except Exception:
-            return ""
-        summaries: list[str] = []
+            entries = []
         for ent in entries:
             resp = (getattr(ent, "response", "") or "").strip()
             tag = "success" if "success" in resp.lower() else "failure"
             snippet = resp.splitlines()[0]
             summaries.append(f"{tag}: {snippet}")
+        if getattr(self, "knowledge_service", None):
+            for tag in (FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX):
+                try:
+                    insight = self.knowledge_service.get_recent_insights(tag)  # type: ignore[attr-defined]
+                except Exception:
+                    insight = ""
+                if insight:
+                    summaries.append(f"{tag} insight: {insight}")
         return "\n".join(summaries)
 
     def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
