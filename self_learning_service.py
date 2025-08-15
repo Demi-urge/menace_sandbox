@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Background service for automatic incremental learning."""
 
+import os
 import time
 import logging
 from typing import Optional
@@ -16,7 +17,7 @@ from .learning_engine import LearningEngine
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
-from .gpt_memory import GPTMemoryManager
+from .local_knowledge_module import init_local_knowledge
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,9 @@ def main(
     code_db = CodeDB(event_bus=bus)
     roi_db = ROIDB()
 
-    gpt_mem = GPTMemoryManager(event_bus=bus)
+    gpt_mem = init_local_knowledge(
+        os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
+    ).memory
 
     le = LearningEngine(pdb, mm)
     ule = UnifiedLearningEngine(pdb, mm, code_db, roi_db)
