@@ -29,8 +29,12 @@ from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
 from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
-from .context_builder import ContextBuilder
 from typing import TYPE_CHECKING
+
+try:  # pragma: no cover - optional dependency
+    from .context_builder import ContextBuilder
+except Exception:  # pragma: no cover - defensive fallback
+    ContextBuilder = None  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -108,11 +112,9 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
-        if context_builder is None:
-            try:
-                context_builder = ContextBuilder()
-            except Exception:  # pragma: no cover - defensive fallback
-                context_builder = None
+        # Optional contextual information builder for prompts; may be ``None``
+        # when the dependency is unavailable.  No automatic initialisation is
+        # attempted to keep operations fully offline.
         self.context_builder = context_builder
 
     def _check_permission(self, action: str, requesting_bot: str | None) -> None:
@@ -348,6 +350,8 @@ class SelfCodingEngine:
         if builder is not None:
             try:
                 retrieval_context = builder.build_context(description)
+                if not isinstance(retrieval_context, str):
+                    retrieval_context = json.dumps(retrieval_context)
             except Exception:
                 retrieval_context = ""
         prompt = self.build_visual_agent_prompt(
