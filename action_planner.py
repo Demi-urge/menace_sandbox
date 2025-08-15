@@ -8,6 +8,7 @@ import pickle
 import os
 import random
 import logging
+import json
 
 try:
     from .logging_utils import log_record
@@ -31,6 +32,7 @@ from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
+from .context_builder import ContextBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,7 @@ class ActionPlanner:
         use_adaptive_roi: bool | None = None,
         growth_weighting: bool | None = None,
         growth_multipliers: Dict[str, float] | None = None,
+        context_builder: ContextBuilder | None = None,
     ) -> None:
         self.pathway_db = pathway_db
         self.roi_db = roi_db
@@ -170,6 +173,7 @@ class ActionPlanner:
                 }
         self.growth_multipliers = growth_multipliers
         self.priority_weights: Dict[str, float] = {}
+        self.context_builder = context_builder
         if self.event_bus:
             try:
                 self.event_bus.subscribe("pathway:new", self._on_new_pathway)
@@ -398,6 +402,20 @@ class ActionPlanner:
             self._update_from_record(rec)
 
     # ------------------------------------------------------------------
+    def _context_metric(self, action: str, ctx: Dict[str, Any]) -> float:
+        """Return a metric boost for *action* from context data."""
+
+        for bucket in ("bots", "workflows", "errors", "discrepancies", "code"):
+            for entry in ctx.get(bucket, []):
+                name = entry.get("name") or entry.get("title") or ""
+                if isinstance(name, str) and name.lower() == action.lower():
+                    try:
+                        return float(entry.get("metric", 0.0))
+                    except Exception:
+                        return 0.0
+        return 0.0
+
+    # ------------------------------------------------------------------
     def predict_next_action(self, current: str) -> Optional[str]:
         steps = [s.strip() for s in current.split("->") if s.strip()]
         if not steps:
@@ -407,41 +425,8 @@ class ActionPlanner:
         values = self.model.q.get(state)
         if not values:
             return None
-        if self.roi_predictor and self.use_adaptive_roi and self.feature_fn:
-            scored: list[tuple[str, float, str, float]] = []
-            roi_vals: list[float] = []
-            for action, val in values.items():
-                try:
-                    seq, category, _ = self._predict_growth(action)
-                    roi_est = float(seq[-1]) if seq else 0.0
-                except Exception:
-                    category = "marginal"
-                    roi_est = 0.0
-                val *= self.priority_weights.get(action, 1.0)
-                scored.append((action, val, category, float(roi_est)))
-                roi_vals.append(float(roi_est))
-            if roi_vals:
-                max_roi = max(roi_vals)
-                min_roi = min(roi_vals)
-            else:
-                max_roi = min_roi = 0.0
-
-            def _norm(r: float) -> float:
-                if max_roi == min_roi:
-                    return 0.0
-                return (r - min_roi) / (max_roi - min_roi)
-
-            scored.sort(
-                key=lambda x: (
-                    -(
-                        growth_score(x[2])
-                        + _norm(x[3])
-                    ),
-                    -x[1],
-                )
-            )
-            return scored[0][0]
-        return max(values, key=values.get)
+        ranked = self.plan_actions(current, values.keys())
+        return ranked[0] if ranked else None
 
     # ------------------------------------------------------------------
     def plan_actions(
@@ -458,6 +443,12 @@ class ActionPlanner:
         state_steps = steps[-self.state_length :] if steps else []
         state = self._state_key(state_steps)
         values = self.model.q.get(state, {})
+        ctx: Dict[str, Any] = {}
+        if self.context_builder:
+            try:
+                ctx = json.loads(self.context_builder.build_context(current))
+            except Exception:
+                ctx = {}
         scored: list[tuple[str, float, float, str]] = []
         for action in candidates:
             base = float(values.get(action, 0.0))
@@ -478,6 +469,8 @@ class ActionPlanner:
             mult = self.growth_multipliers.get(category, 1.0)
             score += roi_est * mult
             score *= self.priority_weights.get(action, 1.0)
+            if ctx:
+                score += self._context_metric(action, ctx)
             scored.append((action, score, roi_est, category))
         scored.sort(key=lambda x: x[1], reverse=True)
         if scored and self.roi_tracker:

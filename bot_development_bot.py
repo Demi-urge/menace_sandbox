@@ -932,16 +932,28 @@ class BotDevelopmentBot:
                 raise RuntimeError(msg)
             return ""
 
-    def _build_prompt(self, spec: BotSpec) -> str:
-        """Return the final prompt for the visual agent or Codex."""
-        builder = self.context_builder
-        retrieval_context: Dict[str, Any] = {}
+    def _build_prompt(
+        self, spec: BotSpec, *, builder: ContextBuilder | None = None
+    ) -> str:
+        """Return the final prompt for the visual agent or Codex.
+
+        Parameters
+        ----------
+        spec:
+            Bot specification describing the desired bot.
+        builder:
+            Optional :class:`ContextBuilder` used to enrich the prompt with
+            historical context.  Falls back to ``self.context_builder`` when
+            not provided.
+        """
+        builder = builder or self.context_builder
+        retrieval_context: str | Dict[str, Any] = ""
         if builder is not None:
             try:
                 query = spec.description or spec.purpose or spec.name
                 retrieval_context = builder.build_context(query)
             except Exception:
-                retrieval_context = {}
+                retrieval_context = ""
 
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
@@ -1007,12 +1019,31 @@ class BotDevelopmentBot:
             "Return only the complete Python code without explanations or markdown."
         )
         if retrieval_context:
-            prompt += "\n\nContext:\n" + json.dumps(retrieval_context, indent=2)
+            if not isinstance(retrieval_context, str):
+                retrieval_context = json.dumps(retrieval_context, indent=2)
+            prompt += "\n\nContext:\n" + retrieval_context
 
         return prompt
 
-    def build_bot(self, spec: BotSpec, *, model_id: int | None = None) -> Path:
-        """Create code from a spec and save it to a repo."""
+    def build_bot(
+        self,
+        spec: BotSpec,
+        *,
+        model_id: int | None = None,
+        context_builder: ContextBuilder | None = None,
+    ) -> Path:
+        """Create code from a spec and save it to a repo.
+
+        Parameters
+        ----------
+        spec:
+            Description of the bot to generate.
+        model_id:
+            Optional model selector for the visual agent.
+        context_builder:
+            Optional :class:`ContextBuilder` overriding the instance level
+            builder for this call.
+        """
         # check for existing code templates first
         if self.db_steward:
             try:
@@ -1043,7 +1074,7 @@ class BotDevelopmentBot:
             )
             return file_path
 
-        prompt = self._build_prompt(spec)
+        prompt = self._build_prompt(spec, builder=context_builder)
         built = self._visual_build(prompt, spec.name)
 
         if built:
