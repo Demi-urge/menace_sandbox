@@ -36,33 +36,14 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
 
-try:  # pragma: no cover - optional dependency
-    from prometheus_client import Gauge  # type: ignore
-except Exception:  # pragma: no cover - Prometheus not installed
-    Gauge = None  # type: ignore
-
 from .data_bot import MetricsDB
+from .metrics_exporter import (
+    embedding_tokens_total as _EMBED_TOKENS,
+    embedding_wall_time_seconds as _EMBED_WALL,
+    vector_store_latency_seconds as _EMBED_INDEX,
+)
 
 logger = logging.getLogger(__name__)
-
-if Gauge:  # pragma: no cover - optional dependency
-    _EMBED_TOKENS = Gauge(
-        "embedding_tokens_total",
-        "Tokens processed during embedding",
-        ["source"],
-    )
-    _EMBED_WALL = Gauge(
-        "embedding_wall_time_seconds",
-        "Wall clock time for encoding",
-        ["source"],
-    )
-    _EMBED_INDEX = Gauge(
-        "embedding_index_latency_seconds",
-        "Latency to write embedding index",
-        ["source"],
-    )
-else:  # pragma: no cover - gauges unavailable
-    _EMBED_TOKENS = _EMBED_WALL = _EMBED_INDEX = None
 
 
 def log_embedding_metrics(

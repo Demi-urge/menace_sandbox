@@ -287,6 +287,31 @@ projected_lucrativity_gauge = Gauge(
     "projected_lucrativity", "Projected lucrativity"
 )
 
+
+# Gauges for vector store and retrieval metrics
+embedding_tokens_total = Gauge(
+    "embedding_tokens_total", "Total tokens processed during embedding",
+)
+embedding_wall_time_seconds = Gauge(
+    "embedding_wall_time_seconds", "Wall time spent generating embeddings",
+)
+vector_store_latency_seconds = Gauge(
+    "vector_store_latency_seconds", "Latency of vector store operations",
+)
+retrieval_hits_total = Gauge(
+    "retrieval_hits_total", "Number of retrieval hits",
+)
+retrieval_win_rate = Gauge(
+    "retrieval_win_rate", "Win rate of retrieval operations",
+)
+patch_success_total = Gauge(
+    "patch_success_total", "Number of successful patch applications",
+)
+patch_failure_total = Gauge(
+    "patch_failure_total", "Number of failed patch applications",
+)
+
+
 # Metrics for visual agent utilisation
 visual_agent_wait_time = Gauge(
     "visual_agent_wait_time_seconds",
