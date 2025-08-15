@@ -17,7 +17,7 @@ def test_log_interaction_publishes_event():
     topic, payload = bus.events[0]
     assert topic == "memory:new"
     assert payload["prompt"] == "p"
-    assert payload["response"] == "r"
     assert payload["tags"] == ["x"]
-    assert "ts" in payload
+    assert "response" not in payload
+    assert "ts" not in payload
 

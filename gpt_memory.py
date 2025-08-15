@@ -150,14 +150,11 @@ class GPTMemoryManager(GPTMemoryInterface):
         )
         self.conn.commit()
         if self.event_bus:
+            tag_list = list(tags or [])
             try:
-                payload = {
-                    "prompt": prompt,
-                    "response": response,
-                    "tags": list(tags or []),
-                    "ts": timestamp,
-                }
-                self.event_bus.publish("memory:new", payload)
+                self.event_bus.publish(
+                    "memory:new", {"prompt": prompt, "tags": tag_list}
+                )
             except Exception:  # pragma: no cover - defensive
                 pass
 

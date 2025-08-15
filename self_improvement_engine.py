@@ -738,7 +738,7 @@ class SelfImprovementEngine:
             gpt_memory
             or getattr(self_coding_engine, "gpt_memory", None)
             or getattr(self_coding_engine, "gpt_memory_manager", None)
-            or GPTMemoryManager()
+            or GPTMemoryManager(event_bus=event_bus)
         )
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
 

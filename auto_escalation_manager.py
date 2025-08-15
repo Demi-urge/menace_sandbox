@@ -31,7 +31,8 @@ class AutoEscalationManager:
     ) -> None:
         self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
         if debugger is None:
-            engine = SelfCodingEngine(CodeDB(), GPTMemoryManager())
+            gpt_mem = GPTMemoryManager(event_bus=event_bus)
+            engine = SelfCodingEngine(CodeDB(), gpt_mem, event_bus=event_bus)
             debugger = AutomatedDebugger(ErrorDB(), engine)
         self.debugger = debugger
         self.rollback_mgr = rollback_mgr
