@@ -64,3 +64,28 @@ def test_memory_new_event_triggers_ingest():
     assert ("insight:idea1", "bot:alpha") in kg.graph.edges
     assert ("insight:idea1", "code:module.py") in kg.graph.edges
     assert ("insight:idea1", "error_category:ValueError") in kg.graph.edges
+
+
+def test_interactions_table_ingested_and_tags_mapped():
+    kg = KnowledgeGraph()
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE interactions (prompt TEXT, response TEXT, tags TEXT, ts TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO interactions VALUES (?, ?, ?, ?)",
+        (
+            "p1",
+            "r1",
+            "feedback improvement_path error_fix insight",
+            "ts",
+        ),
+    )
+    manager = types.SimpleNamespace(conn=conn)
+    kg.ingest_gpt_memory(manager)
+    inode = "insight:p1"
+    assert inode in kg.graph
+    for tag in ["feedback", "improvement_path", "error_fix", "insight"]:
+        node = f"tag:{tag}"
+        assert (inode, node) in kg.graph.edges
+        assert kg.graph[inode][node]["type"] == tag

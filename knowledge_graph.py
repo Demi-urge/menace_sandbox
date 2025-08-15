@@ -28,10 +28,12 @@ except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
 try:  # tag constants shared across modules
-    from log_tags import FEEDBACK, ERROR_FIX
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - best effort fallback
     FEEDBACK = "feedback"  # type: ignore
+    IMPROVEMENT_PATH = "improvement_path"  # type: ignore
     ERROR_FIX = "error_fix"  # type: ignore
+    INSIGHT = "insight"  # type: ignore
 
 try:  # optional protocol used for runtime checks
     from gpt_memory_interface import GPTMemoryInterface  # type: ignore
@@ -299,16 +301,13 @@ class KnowledgeGraph:
     def ingest_gpt_memory(self, memory_mgr: object) -> None:
         """Load GPT insights from ``memory_mgr``.
 
-        ``memory_mgr`` may implement :class:`GPTMemoryInterface` where GPT
-        interactions are stored in an ``interactions`` table with ``prompt``,
-        ``response`` and ``tags`` columns.  Older managers expose a ``memory``
-        table keyed by ``key`` with optional ``tags``.  This method detects the
-        available schema and ingests entries accordingly, mapping tag labels to
-        appropriate graph relationships.  ``FEEDBACK`` tags create edges to an
-        ``outcome`` node while ``ERROR_FIX`` tags create edges to an ``error``
-        node.  Unrecognised tags fall back to generic ``tag`` edges.  Legacy tag
-        prefixes such as ``bot:``, ``code:`` and ``error:`` continue to be
-        supported for backward compatibility.
+        The function first attempts to read an ``interactions`` table containing
+        ``prompt``, ``response``, ``tags`` and ``ts`` columns.  When absent it
+        falls back to the legacy ``memory`` table keyed by ``key``.  Each tag is
+        mapped to a dedicated edge type – ``feedback``, ``improvement_path``,
+        ``error_fix`` and ``insight`` – while unrecognised tags use the generic
+        ``tag`` edge.  Legacy tag prefixes such as ``bot:``, ``code:`` and
+        ``error:`` are still supported for backward compatibility.
         """
 
         if self.graph is None:
@@ -319,56 +318,52 @@ class KnowledgeGraph:
         if conn is None:
             return
 
-        # Determine whether ``memory_mgr`` conforms to GPTMemoryInterface.
-        is_iface = False
-        if GPTMemoryInterface is not None:
-            try:
-                is_iface = isinstance(base, GPTMemoryInterface)  # type: ignore[arg-type]
-            except TypeError:  # Protocol not runtime checkable
-                required = ["log_interaction", "search_context"]
-                is_iface = all(hasattr(base, a) for a in required)
-
         rows: List[tuple] = []
         used_interactions = False
-        if is_iface:
-            try:
+        try:
+            exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='interactions'"
+            ).fetchone()
+            if exists:
                 rows = conn.execute(
-                    "SELECT prompt, response, tags FROM interactions"
+                    "SELECT prompt, response, tags, ts FROM interactions"
                 ).fetchall()
                 used_interactions = True
-            except Exception:
-                rows = []
+        except Exception:
+            rows = []
 
-        if not rows:  # legacy schema
+        if not used_interactions:
             try:
                 rows = conn.execute("SELECT key, tags FROM memory").fetchall()
             except Exception:
                 return
 
         if used_interactions:
-            for prompt, response, tag_str in rows:
+            tag_edge_map = {
+                FEEDBACK: FEEDBACK,
+                IMPROVEMENT_PATH: IMPROVEMENT_PATH,
+                ERROR_FIX: ERROR_FIX,
+                INSIGHT: INSIGHT,
+            }
+            for prompt, response, tag_str, _ts in rows:
                 inode = f"insight:{prompt}"
                 try:
                     self.graph.add_node(inode, response=response)
                 except Exception:
                     self.graph.add_node(inode)
                 tag_list = [
-                    t.strip() for t in str(tag_str or "").replace(",", " ").split() if t.strip()
+                    t.strip()
+                    for t in str(tag_str or "").replace(",", " ").split()
+                    if t.strip()
                 ]
                 for t in tag_list:
                     tl = t.lower()
-                    if tl == FEEDBACK:
-                        onode = f"outcome:{tl}"
-                        self.graph.add_node(onode)
-                        self.graph.add_edge(inode, onode, type="outcome")
-                    elif tl == ERROR_FIX:
-                        enode = f"error:{tl}"
-                        self.graph.add_node(enode)
-                        self.graph.add_edge(inode, enode, type="error")
-                    else:
-                        tnode = f"tag:{tl}"
-                        self.graph.add_node(tnode)
-                        self.graph.add_edge(inode, tnode, type="tag")
+                    edge_type = tag_edge_map.get(tl)
+                    tnode = f"tag:{tl}"
+                    self.graph.add_node(tnode)
+                    self.graph.add_edge(
+                        inode, tnode, type=edge_type if edge_type else "tag"
+                    )
         else:  # legacy memory table
             for key, tags in rows:
                 tag_list = [
