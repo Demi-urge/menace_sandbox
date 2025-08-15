@@ -150,6 +150,13 @@ class GPTMemoryManager(GPTMemoryInterface):
         timestamp = datetime.utcnow().isoformat()
         tag_list = list(tags or [])
         tag_str = ",".join(tag_list)
+        # Avoid storing duplicate prompt/response pairs
+        cur = self.conn.execute(
+            "SELECT 1 FROM interactions WHERE prompt = ? AND response = ? LIMIT 1",
+            (prompt, response),
+        )
+        if cur.fetchone() is not None:
+            return
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
@@ -358,6 +365,50 @@ class GPTMemoryManager(GPTMemoryInterface):
                 continue
 
             old_rows = rows[:-keep]
+            text = "\n".join(f"{p} {r}" for _, p, r in old_rows)
+            summary = _summarise_text(text)
+            ts = datetime.utcnow().isoformat()
+            self.conn.execute(
+                "INSERT INTO interactions(prompt, response, tags, ts, embedding) VALUES (?, ?, ?, ?, NULL)",
+                (f"summary:{tag}", summary, f"{tag},summary", ts),
+            )
+            ids = [str(r[0]) for r in old_rows]
+            placeholders = ",".join("?" for _ in ids)
+            self.conn.execute(
+                f"DELETE FROM interactions WHERE id IN ({placeholders})",
+                ids,
+            )
+            removed += len(ids)
+
+        self.conn.commit()
+        return removed
+
+    def prune_old_entries(self, max_rows: int) -> int:
+        """Ensure at most ``max_rows`` entries exist for each tag.
+
+        Older entries beyond ``max_rows`` are summarised into a single entry
+        and removed.  Returns the number of rows deleted.
+        """
+
+        if max_rows <= 0:
+            return 0
+
+        cur = self.conn.execute("SELECT tags FROM interactions WHERE tags != ''")
+        tags = set()
+        for (tag_str,) in cur.fetchall():
+            tags.update(t for t in tag_str.split(",") if t)
+
+        removed = 0
+        for tag in tags:
+            cur = self.conn.execute(
+                "SELECT id, prompt, response FROM interactions WHERE tags LIKE ? ORDER BY ts",
+                (f"%{tag}%",),
+            )
+            rows = cur.fetchall()
+            if len(rows) <= max_rows:
+                continue
+
+            old_rows = rows[:-max_rows]
             text = "\n".join(f"{p} {r}" for _, p, r in old_rows)
             summary = _summarise_text(text)
             ts = datetime.utcnow().isoformat()

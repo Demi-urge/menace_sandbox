@@ -14,8 +14,18 @@ from logging_utils import get_logger
 
 logger = get_logger(__name__)
 
-# Interval in seconds between compaction cycles
+# Interval in seconds between maintenance cycles
 DEFAULT_INTERVAL = float(os.getenv("GPT_MEMORY_COMPACT_INTERVAL", "3600"))
+
+
+def _load_prune_limit() -> int | None:
+    """Return the max rows per tag parsed from ``GPT_MEMORY_MAX_ROWS``."""
+
+    try:
+        limit = int(os.getenv("GPT_MEMORY_MAX_ROWS", "0"))
+    except ValueError:
+        return None
+    return limit if limit > 0 else None
 
 
 def _load_retention_rules() -> Dict[str, int]:
@@ -43,6 +53,14 @@ def _load_retention_rules() -> Dict[str, int]:
     return rules
 
 
+def prune_memory(manager: GPTMemoryManager, max_rows: int) -> int:
+    """Convenience wrapper around :meth:`GPTMemoryManager.prune_old_entries`."""
+
+    removed = manager.prune_old_entries(max_rows)
+    logger.debug("memory maintenance pruned %d rows", removed)
+    return removed
+
+
 class MemoryMaintenance:
     """Background thread that periodically compacts GPT memory."""
 
@@ -52,6 +70,7 @@ class MemoryMaintenance:
         *,
         interval: float | None = None,
         retention: Mapping[str, int] | None = None,
+        max_rows: int | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
     ) -> None:
         self.manager = manager
@@ -59,13 +78,16 @@ class MemoryMaintenance:
         self.retention: Dict[str, int] = (
             dict(retention) if retention is not None else _load_retention_rules()
         )
+        self.max_rows = max_rows if max_rows is not None else _load_prune_limit()
         self.knowledge_service = knowledge_service
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self) -> None:
-        if not self.retention:
-            logger.debug("memory maintenance disabled – no retention rules configured")
+        if not self.retention and not self.max_rows:
+            logger.debug(
+                "memory maintenance disabled – no retention or pruning rules configured"
+            )
             return
         self._thread.start()
 
@@ -78,10 +100,14 @@ class MemoryMaintenance:
     def _loop(self) -> None:
         while not self._stop.wait(self.interval):
             try:
-                removed = self.manager.compact(self.retention)
-                logger.debug("memory maintenance removed %d rows", removed)
+                if self.retention:
+                    removed = self.manager.compact(self.retention)
+                    logger.debug("memory maintenance removed %d rows", removed)
+                if self.max_rows:
+                    pruned = self.manager.prune_old_entries(self.max_rows)
+                    logger.debug("memory maintenance pruned %d rows", pruned)
             except Exception:
-                logger.exception("memory maintenance failed during compaction")
+                logger.exception("memory maintenance failed during maintenance")
 
             if self.knowledge_service is not None:
                 try:
