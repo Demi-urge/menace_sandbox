@@ -1380,7 +1380,7 @@ def main(argv: List[str] | None = None) -> None:
         mem_maint.start()
         cleanup_funcs.append(mem_maint.stop)
     if GPT_KNOWLEDGE_SERVICE is not None:
-        cleanup_funcs.append(getattr(GPT_KNOWLEDGE_SERVICE, "close", lambda: None))
+        cleanup_funcs.append(getattr(GPT_KNOWLEDGE_SERVICE, "stop", lambda: None))
 
     meta_log_path = (
         Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
