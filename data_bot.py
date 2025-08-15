@@ -122,6 +122,19 @@ class MetricsDB:
             """
             )
             conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS embedding_metrics(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                record_id TEXT,
+                tokens INTEGER,
+                wall_time REAL,
+                index_latency REAL,
+                source TEXT,
+                ts TEXT
+            )
+            """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
@@ -240,6 +253,35 @@ class MetricsDB:
             )
             conn.commit()
             return int(cur.lastrowid)
+
+    def log_embedding_metrics(
+        self,
+        record_id: str,
+        tokens: int,
+        wall_time: float,
+        index_latency: float,
+        *,
+        source: str = "",
+    ) -> None:
+        """Store embedding instrumentation details."""
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+            INSERT INTO embedding_metrics(
+                record_id, tokens, wall_time, index_latency, source, ts
+            ) VALUES(?,?,?,?,?,?)
+            """,
+                (
+                    record_id,
+                    int(tokens),
+                    float(wall_time),
+                    float(index_latency),
+                    source,
+                    datetime.utcnow().isoformat(),
+                ),
+            )
+            conn.commit()
 
     def log_eval(self, cycle: str, metric: str, value: float) -> None:
         with self._connect() as conn:

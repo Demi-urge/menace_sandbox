@@ -17,6 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Sequence, Tuple
+from time import perf_counter
 import json
 import logging
 
@@ -34,6 +35,56 @@ try:  # pragma: no cover - optional dependency
     import numpy as np  # type: ignore
 except Exception:  # pragma: no cover - NumPy not installed
     np = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from prometheus_client import Gauge  # type: ignore
+except Exception:  # pragma: no cover - Prometheus not installed
+    Gauge = None  # type: ignore
+
+from .data_bot import MetricsDB
+
+logger = logging.getLogger(__name__)
+
+if Gauge:  # pragma: no cover - optional dependency
+    _EMBED_TOKENS = Gauge(
+        "embedding_tokens_total",
+        "Tokens processed during embedding",
+        ["source"],
+    )
+    _EMBED_WALL = Gauge(
+        "embedding_wall_time_seconds",
+        "Wall clock time for encoding",
+        ["source"],
+    )
+    _EMBED_INDEX = Gauge(
+        "embedding_index_latency_seconds",
+        "Latency to write embedding index",
+        ["source"],
+    )
+else:  # pragma: no cover - gauges unavailable
+    _EMBED_TOKENS = _EMBED_WALL = _EMBED_INDEX = None
+
+
+def log_embedding_metrics(
+    record_id: str,
+    tokens: int,
+    wall_time: float,
+    index_latency: float,
+    *,
+    source: str = "",
+) -> None:
+    """Log embedding metrics to Prometheus and the metrics database."""
+
+    if _EMBED_TOKENS:
+        _EMBED_TOKENS.labels(source=source).set(tokens)
+        _EMBED_WALL.labels(source=source).set(wall_time)
+        _EMBED_INDEX.labels(source=source).set(index_latency)
+    try:
+        MetricsDB().log_embedding_metrics(
+            record_id, tokens, wall_time, index_latency, source=source
+        )
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to persist embedding metrics")
 
 
 class EmbeddableDBMixin:
@@ -65,6 +116,8 @@ class EmbeddableDBMixin:
         self._vector_dim = 0
         self._id_map: List[str] = []
         self._metadata: Dict[str, Dict[str, Any]] = {}
+        self._last_embedding_tokens = 0
+        self._last_embedding_time = 0.0
 
         self.load_index()
 
@@ -81,7 +134,19 @@ class EmbeddableDBMixin:
 
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
-        return self.model.encode(text).tolist()  # pragma: no cover - heavy
+
+        start = perf_counter()
+        tokens = 0
+        try:  # pragma: no cover - optional dependency
+            tokenizer = getattr(self.model, "tokenizer", None)
+            if tokenizer:
+                tokens = len(tokenizer.encode(text))
+        except Exception:
+            tokens = 0
+        vec = self.model.encode(text).tolist()  # pragma: no cover - heavy
+        self._last_embedding_tokens = tokens
+        self._last_embedding_time = perf_counter() - start
+        return vec
 
     # ------------------------------------------------------------------
     # methods expected to be overridden
@@ -191,8 +256,17 @@ class EmbeddableDBMixin:
             "kind": kind,
             "source_id": source_id,
         }
+        index_start = perf_counter()
         self._rebuild_index()
         self.save_index()
+        index_latency = perf_counter() - index_start
+        log_embedding_metrics(
+            rid,
+            getattr(self, "_last_embedding_tokens", 0),
+            getattr(self, "_last_embedding_time", 0.0),
+            index_latency,
+            source=source_id,
+        )
 
     def get_vector(self, record_id: Any) -> List[float] | None:
         """Return the stored embedding vector for ``record_id`` if present."""
