@@ -16,7 +16,7 @@ from .learning_engine import LearningEngine
 from .unified_learning_engine import UnifiedLearningEngine
 from .action_learning_engine import ActionLearningEngine
 from .self_learning_coordinator import SelfLearningCoordinator
-from .gpt_memory import GPTMemory
+from .gpt_memory import GPTMemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def main(
     code_db = CodeDB(event_bus=bus)
     roi_db = ROIDB()
 
-    gpt_mem = GPTMemory(mm)
+    gpt_mem = GPTMemoryManager(event_bus=bus)
 
     le = LearningEngine(pdb, mm)
     ule = UnifiedLearningEngine(pdb, mm, code_db, roi_db)
@@ -51,15 +51,18 @@ def main(
 
     def _prune_task() -> None:
         last = 0
-        tags = ["general", *GPTMemory.ALLOWED_TAGS]
         while stop_event is None or not stop_event.is_set():
-            if mm._log_count - last >= PRUNE_INTERVAL:
-                for t in tags:
-                    try:
-                        gpt_mem.summarize_and_prune(t)
-                    except Exception:  # pragma: no cover - defensive
-                        logger.exception("scheduled prune failed for %s", t)
-                last = mm._log_count
+            try:
+                cur = gpt_mem.conn.execute("SELECT COUNT(*) FROM interactions")
+                count = cur.fetchone()[0]
+            except Exception:
+                count = 0
+            if count - last >= PRUNE_INTERVAL:
+                try:
+                    gpt_mem.compact(PRUNE_INTERVAL)
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("scheduled prune failed")
+                last = count
             time.sleep(1)
 
     prune_thread = Thread(target=_prune_task, daemon=True)

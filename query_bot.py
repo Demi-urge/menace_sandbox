@@ -26,7 +26,7 @@ except Exception:  # pragma: no cover - optional
 logger = logging.getLogger(__name__)
 
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemory
+from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
 
 
@@ -125,7 +125,7 @@ class QueryBot:
         fetcher: DataFetcher | None = None,
         store: ContextStore | None = None,
         nlu: SimpleNLU | None = None,
-        gpt_memory: GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai

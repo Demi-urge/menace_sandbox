@@ -20,7 +20,7 @@ from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemoryManager, GPTMemory
+from .gpt_memory import GPTMemoryManager
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -68,7 +68,7 @@ class SelfCodingEngine:
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
-        gpt_memory: GPTMemoryManager | GPTMemory | None = None,
+        gpt_memory: GPTMemoryInterface | None = None,
         context_builder: ContextBuilder | None = None,
         **kwargs: Any,
     ) -> None:

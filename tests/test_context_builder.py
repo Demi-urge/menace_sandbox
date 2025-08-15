@@ -32,7 +32,7 @@ sys.modules.setdefault("menace.safety_monitor", types.SimpleNamespace(SafetyMoni
 sys.modules.setdefault("menace.advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
 sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 sys.modules.setdefault(
-    "menace.gpt_memory", types.SimpleNamespace(GPTMemoryManager=object, GPTMemory=object)
+    "menace.gpt_memory", types.SimpleNamespace(GPTMemoryManager=object)
 )
 sys.modules.setdefault("menace.rollback_manager", types.SimpleNamespace(RollbackManager=object))
 sys.modules.setdefault("menace.audit_trail", types.SimpleNamespace(AuditTrail=lambda *a, **k: object()))

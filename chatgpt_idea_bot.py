@@ -38,7 +38,7 @@ except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import INSIGHT  # type: ignore
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
-    from .gpt_memory import GPTMemory
+    from gpt_memory_interface import GPTMemoryInterface
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
@@ -59,7 +59,7 @@ class ChatGPTClient:
     offline_cache_path: str | None = field(default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE"))
     timeout: int = field(default_factory=lambda: int(os.getenv("OPENAI_TIMEOUT", "30")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("OPENAI_RETRIES", "1")))
-    gpt_memory: "GPTMemory | None" = None
+    gpt_memory: "GPTMemoryInterface | None" = None
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -89,7 +89,7 @@ class ChatGPTClient:
         knowledge: Any | None = None,
         retriever: "UniversalRetriever | None" = None,
         tags: Iterable[str] | None = None,
-        memory_manager: "GPTMemory | None" = None,
+        memory_manager: "GPTMemoryInterface | None" = None,
         use_memory: bool | None = None,
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
@@ -295,9 +295,12 @@ class ChatGPTClient:
         messages: List[Dict[str, str]] = [{"role": "user", "content": prompt}]
         if self.gpt_memory is not None:
             try:
-                context = self.gpt_memory.fetch_context(tags)
-                if context:
-                    messages = [{"role": "system", "content": context}] + messages
+                entries = self.gpt_memory.search_context("", tags=tags)
+                if entries:
+                    ctx = "\n".join(
+                        f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}" for e in entries
+                    )
+                    messages = [{"role": "system", "content": ctx}] + messages
             except Exception:
                 logger.exception("failed to fetch memory context")
         return messages
