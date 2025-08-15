@@ -212,6 +212,7 @@ class SelfCodingEngine:
         path: str | None,
         description: str,
         context: str,
+        retrieval_context: str | None = None,
         repo_layout: str | None = None,
     ) -> str:
         """Return a prompt formatted for :class:`VisualAgentClient`."""
@@ -227,6 +228,7 @@ class SelfCodingEngine:
                     path=path or "unknown file",
                     description=description,
                     context=context.strip(),
+                    retrieval_context=(retrieval_context or ""),
                     func=func,
                 )
             except Exception:
@@ -265,10 +267,14 @@ class SelfCodingEngine:
                     "Run `scripts/setup_tests.sh` then execute `pytest --cov`. "
                     "Report any failures."
                 ),
-                "",
-                "### Snippet context",
-                context.strip(),
             ]
+            if retrieval_context:
+                try:
+                    pretty_ctx = json.dumps(json.loads(retrieval_context), indent=2)
+                except Exception:
+                    pretty_ctx = retrieval_context
+                lines.extend(["", "### Retrieval context", pretty_ctx])
+            lines.extend(["", "### Snippet context", context.strip()])
             body = "\n".join(lines).strip() + "\n"
 
         prefix = VA_PROMPT_PREFIX
@@ -338,20 +344,19 @@ class SelfCodingEngine:
             return _fallback()
         repo_layout = self._get_repo_layout(VA_REPO_LAYOUT_LINES)
         builder = self.context_builder
-        retrieval_context = {}
+        retrieval_context = ""
         if builder is not None:
             try:
                 retrieval_context = builder.build_context(description)
             except Exception:
-                retrieval_context = {}
+                retrieval_context = ""
         prompt = self.build_visual_agent_prompt(
             str(path) if path else None,
             description,
             context,
+            retrieval_context=retrieval_context,
             repo_layout=repo_layout,
         )
-        if retrieval_context:
-            prompt += "\n\n### Retrieval context\n" + json.dumps(retrieval_context, indent=2)
 
         # Incorporate past patch outcomes from memory
         history = ""
