@@ -302,6 +302,9 @@ projected_lucrativity_gauge = Gauge(
 embedding_tokens_total = Gauge(
     "embedding_tokens_total", "Total tokens processed during embedding",
 )
+
+# Historical gauges retained for compatibility – represent the most recent
+# measurement rather than cumulative totals.
 embedding_wall_time_seconds = Gauge(
     "embedding_wall_time_seconds", "Wall time spent generating embeddings",
 )
@@ -311,6 +314,17 @@ embedding_store_latency_seconds = Gauge(
     "Latency of embedding storage operations",
 )
 vector_store_latency_seconds = embedding_store_latency_seconds
+
+# New cumulative counters for embedding operations
+embedding_wall_seconds_total = Gauge(
+    "embedding_wall_seconds_total",
+    "Total wall-clock seconds spent generating embeddings",
+)
+embedding_store_seconds_total = Gauge(
+    "embedding_store_seconds_total",
+    "Total seconds spent storing embeddings",
+)
+
 embedding_stale_cost_seconds = Gauge(
     "embedding_stale_cost_seconds", "Age in seconds of retrieved embedding", ["origin_db"],
 )
