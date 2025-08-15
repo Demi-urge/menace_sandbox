@@ -11,7 +11,7 @@ from .knowledge_graph import KnowledgeGraph
 from .automated_debugger import AutomatedDebugger
 from .self_coding_engine import SelfCodingEngine
 from .code_database import CodeDB
-from .menace_memory_manager import MenaceMemoryManager
+from gpt_memory import GPTMemoryManager
 from .rollback_manager import RollbackManager
 from .error_bot import ErrorDB
 from .unified_event_bus import UnifiedEventBus
@@ -31,7 +31,7 @@ class AutoEscalationManager:
     ) -> None:
         self.healer = healer or SelfHealingOrchestrator(KnowledgeGraph())
         if debugger is None:
-            engine = SelfCodingEngine(CodeDB(), MenaceMemoryManager())
+            engine = SelfCodingEngine(CodeDB(), GPTMemoryManager())
             debugger = AutomatedDebugger(ErrorDB(), engine)
         self.debugger = debugger
         self.rollback_mgr = rollback_mgr
