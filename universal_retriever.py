@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import math
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
@@ -62,6 +63,22 @@ _RETRIEVAL_SCORE = _me.Gauge(
     "retrieval_result_score",
     "Combined score for retrieval result",
     ["origin_db"],
+)
+
+_RETRIEVAL_QUERY_TIME = _me.Gauge(
+    "retrieval_query_time",
+    "Total time taken for retrieval queries",
+    [],
+)
+_RETRIEVAL_DB_TIME = _me.Gauge(
+    "retrieval_db_response_time",
+    "Time taken by each database to respond",
+    ["origin_db"],
+)
+_RETRIEVAL_HIT_RATE = _me.Gauge(
+    "retrieval_hit_rate",
+    "Fraction of retrieved results included in final prompt",
+    [],
 )
 
 logger = logging.getLogger(__name__)
@@ -301,6 +318,7 @@ class UniversalRetriever:
         self._dbs: dict[str, Any] = {}
         self._id_fields: dict[str, tuple[str, ...]] = {}
         self._encoder: Any | None = None
+        self._last_db_times: Dict[str, float] = {}
 
         # register known database types.  The first registration provides the
         # encoder used for free-form text queries.
@@ -388,19 +406,24 @@ class UniversalRetriever:
 
         candidates: List[tuple[str, Any, Any]] = []
         vector: List[float] | None = None
+        timings: Dict[str, float] = {}
 
         if self._dbs:
             vector = self._to_vector(query)
             for source, db in self._dbs.items():
+                start = time.perf_counter()
                 try:
                     matches = db.search_by_vector(vector, top_k)
                 except Exception:  # pragma: no cover - defensive
+                    timings[source] = time.perf_counter() - start
                     continue
+                timings[source] = time.perf_counter() - start
                 for m in matches:
                     rec_id = self._extract_id(m, self._id_fields[source])
                     candidates.append((source, rec_id, m))
 
         if self.code_db:
+            start = time.perf_counter()
             try:
                 if hasattr(self.code_db, "search_by_vector"):
                     if vector is None:
@@ -415,6 +438,7 @@ class UniversalRetriever:
                     matches = []
             except Exception:  # pragma: no cover - defensive
                 matches = []
+            timings["code"] = time.perf_counter() - start
             for m in matches:
                 rec_id = self._extract_id(m, ("id", "cid"))
                 candidates.append(("code", rec_id, m))
@@ -426,6 +450,7 @@ class UniversalRetriever:
             return float(getattr(item, "_distance", float("inf")))
 
         candidates.sort(key=_dist)
+        self._last_db_times = timings
         return candidates[:top_k]
 
     # ------------------------------------------------------------------
@@ -689,7 +714,9 @@ class UniversalRetriever:
         particular item ranked the way it did.
         """
 
+        start_time = time.perf_counter()
         raw_results = self._retrieve_candidates(query, top_k)
+        db_times = getattr(self, "_last_db_times", {})
         bias_map: Dict[str, float] = {}
         if roi_tracker is not None:
             try:
@@ -788,6 +815,12 @@ class UniversalRetriever:
             log_retrieval_metrics(
                 bundle.origin_db, bundle.record_id, rank, included, tokens, bundle.score
             )
+            logger.info(
+                "retrieval result rank=%d db=%s tokens=%d",
+                rank,
+                bundle.origin_db,
+                tokens,
+            )
             metrics_list.append(
                 {
                     "origin_db": bundle.origin_db,
@@ -800,6 +833,43 @@ class UniversalRetriever:
             )
 
         results = hits[:top_k]
+
+        total_candidates = len(hits)
+        hit_rate = len(results) / total_candidates if total_candidates else 0.0
+        try:
+            _RETRIEVAL_HIT_RATE.set(hit_rate)
+        except Exception:
+            pass
+        if MetricsDB is not None:
+            try:
+                MetricsDB().log_eval("retrieval_call", "hit_rate", hit_rate)
+            except Exception:
+                logger.exception("failed to persist hit rate")
+
+        for db_name, duration in db_times.items():
+            try:
+                _RETRIEVAL_DB_TIME.labels(origin_db=db_name).set(duration)
+            except Exception:
+                pass
+            if MetricsDB is not None:
+                try:
+                    MetricsDB().log_eval(db_name, "response_time", duration)
+                except Exception:
+                    logger.exception("failed to persist db timing")
+            logger.info("retrieval db=%s response_time=%.6f", db_name, duration)
+
+        total_time = time.perf_counter() - start_time
+        try:
+            _RETRIEVAL_QUERY_TIME.set(total_time)
+        except Exception:
+            pass
+        if MetricsDB is not None:
+            try:
+                MetricsDB().log_eval("retrieval_call", "query_time", total_time)
+            except Exception:
+                logger.exception("failed to persist query time")
+        logger.info("retrieval total_query_time=%.6f", total_time)
+
         if return_metrics:
             return results, metrics_list
         return results
