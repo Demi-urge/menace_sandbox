@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
 from . import database_manager
+try:  # canonical tag constant
+    from .log_tags import INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import INSIGHT  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 
 @dataclass
@@ -125,16 +133,21 @@ class QueryBot:
         fetcher: DataFetcher | None = None,
         store: ContextStore | None = None,
         nlu: SimpleNLU | None = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
     ) -> None:
         if client is None:
             api_key = get_config().api_keys.openai
-            client = ChatGPTClient(api_key)
+            client = ChatGPTClient(api_key, gpt_memory=GPT_MEMORY_MANAGER)
         self.client = client
         self.fetcher = fetcher or DataFetcher()
         self.store = store or ContextStore()
         self.nlu = nlu or SimpleNLU()
         self.gpt_memory = gpt_memory
+        if getattr(self.client, "gpt_memory", None) is None:
+            try:
+                self.client.gpt_memory = self.gpt_memory
+            except Exception:
+                logger.debug("failed to attach gpt_memory to client", exc_info=True)
 
     def process(self, query: str, context_id: str) -> QueryResult:
         parsed = self.nlu.parse(query)
@@ -145,7 +158,7 @@ class QueryBot:
         answer = self.client.ask(
             [{"role": "user", "content": prompt}],
             memory_manager=self.gpt_memory,
-            tags=["research"],
+            tags=[INSIGHT],
         )
         text = (
             answer.get("choices", [{}])[0].get("message", {}).get("content", "")

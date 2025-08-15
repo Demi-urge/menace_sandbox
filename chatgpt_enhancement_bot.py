@@ -17,6 +17,14 @@ from .override_policy import OverridePolicyManager
 from .chatgpt_idea_bot import ChatGPTClient
 from gpt_memory_interface import GPTMemoryInterface
 from . import RAISE_ERRORS
+try:  # canonical tag constants
+    from .log_tags import IMPROVEMENT_PATH, INSIGHT
+except Exception:  # pragma: no cover - fallback for flat layout
+    from log_tags import IMPROVEMENT_PATH, INSIGHT  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 from menace.embeddable_db_mixin import EmbeddableDBMixin
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
@@ -752,12 +760,17 @@ class ChatGPTEnhancementBot:
         client: ChatGPTClient,
         db: Optional[EnhancementDB] = None,
         override_manager: Optional[OverridePolicyManager] = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
     ) -> None:
         self.override_manager = override_manager
         self.client = client
         self.db = db or EnhancementDB(override_manager=override_manager)
         self.gpt_memory = gpt_memory
+        if getattr(self.client, "gpt_memory", None) is None:
+            try:
+                self.client.gpt_memory = self.gpt_memory
+            except Exception:
+                logger.debug("failed to attach gpt_memory to client", exc_info=True)
 
     def _feasible(self, enh: Enhancement) -> bool:
         return len(enh.rationale.split()) < FEASIBLE_WORD_LIMIT
@@ -776,12 +789,12 @@ class ChatGPTEnhancementBot:
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
             messages = self.client.build_prompt_with_memory(
-                ["performance_improvement"], prompt
+                [IMPROVEMENT_PATH], prompt
             )
             data = self.client.ask(
                 messages,
                 memory_manager=self.gpt_memory,
-                tags=["performance_improvement"],
+                tags=[IMPROVEMENT_PATH, INSIGHT],
             )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)

@@ -33,9 +33,13 @@ except Exception:  # pragma: no cover - optional dependency
 from . import database_manager, RAISE_ERRORS
 from .database_management_bot import DatabaseManagementBot
 try:  # canonical tag constants
-    from .log_tags import INSIGHT
+    from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 try:  # helper for GPT memory tagging
     from .memory_logging import log_with_tags
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -63,7 +67,9 @@ class ChatGPTClient:
     offline_cache_path: str | None = field(default_factory=lambda: os.environ.get("CHATGPT_CACHE_FILE"))
     timeout: int = field(default_factory=lambda: int(os.getenv("OPENAI_TIMEOUT", "30")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("OPENAI_RETRIES", "1")))
-    gpt_memory: "GPTMemoryInterface | None" = None
+    gpt_memory: "GPTMemoryInterface | None" = field(
+        default_factory=lambda: GPT_MEMORY_MANAGER
+    )
 
     def __post_init__(self) -> None:
         if not self.session:
@@ -296,12 +302,17 @@ class ChatGPTClient:
         messages: List[Dict[str, str]] = [{"role": "user", "content": prompt}]
         if self.gpt_memory is not None:
             try:
-                entries = self.gpt_memory.search_context("", tags=tags)
-                if entries:
-                    ctx = "\n".join(
-                        f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}" for e in entries
-                    )
-                    messages = [{"role": "system", "content": ctx}] + messages
+                if hasattr(self.gpt_memory, "search_context"):
+                    entries = self.gpt_memory.search_context("", tags=tags)
+                    if entries:
+                        ctx = "\n".join(
+                            f"{getattr(e, 'prompt', '')} {getattr(e, 'response', '')}" for e in entries
+                        )
+                        messages = [{"role": "system", "content": ctx}] + messages
+                elif hasattr(self.gpt_memory, "fetch_context"):
+                    ctx = self.gpt_memory.fetch_context(tags)
+                    if ctx:
+                        messages = [{"role": "system", "content": ctx}] + messages
             except Exception:
                 logger.exception("failed to fetch memory context")
         return messages
@@ -320,7 +331,7 @@ def build_prompt(
         " ".join(parts)
         + ". Respond in JSON list format with fields name, description and tags."
     )
-    base_tags = ["idea_generation", *tags]
+    base_tags = [IMPROVEMENT_PATH, *tags]
     return client.build_prompt_with_memory(base_tags, prompt)
 
 
@@ -423,7 +434,7 @@ def follow_up(client: ChatGPTClient, idea: Idea) -> str:
         }
     ]
     try:
-        data = client.ask(messages)
+        data = client.ask(messages, tags=[FEEDBACK, INSIGHT])
         idea.insight = (
             data.get("choices", [{}])[0]
             .get("message", {})
@@ -447,7 +458,10 @@ def generate_and_filter(
     """Generate ideas and filter them for novelty."""
     logger.info("requesting ideas for tags: %s", ", ".join(tags))
     messages = build_prompt(client, tags)
-    response = client.ask(messages, tags=["idea_generation", *tags])
+    response = client.ask(
+        messages,
+        tags=[IMPROVEMENT_PATH, INSIGHT, *tags],
+    )
     ideas = parse_ideas(response)
     novel: List[Idea] = []
     for idea in ideas:

@@ -20,7 +20,10 @@ from gpt_memory_interface import GPTMemoryInterface
 from .safety_monitor import SafetyMonitor
 from .advanced_error_management import FormalVerifier
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemoryManager
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 try:  # canonical tag constants
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -72,15 +75,13 @@ class SelfCodingEngine:
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
         event_bus: UnifiedEventBus | None = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         context_builder: ContextBuilder | None = None,
         **kwargs: Any,
     ) -> None:
-        if gpt_memory is None:
-            gpt_memory = kwargs.get("gpt_memory_manager")
         self.code_db = code_db
         self.memory_mgr = memory_mgr
-        self.gpt_memory = gpt_memory or GPTMemoryManager(event_bus=event_bus)
+        self.gpt_memory = gpt_memory or GPT_MEMORY_MANAGER
         self.gpt_memory_manager = self.gpt_memory  # backward compatibility
         self.pipeline = pipeline
         self.data_bot = data_bot
@@ -89,7 +90,9 @@ class SelfCodingEngine:
         self.bot_name = bot_name
         self.safety_monitor = safety_monitor
         if llm_client is None and os.getenv("OPENAI_API_KEY"):
-            llm_client = ChatGPTClient(os.getenv("OPENAI_API_KEY", ""))
+            llm_client = ChatGPTClient(
+                os.getenv("OPENAI_API_KEY", ""), gpt_memory=self.gpt_memory
+            )
         self.llm_client = llm_client
         if self.llm_client:
             self.llm_client.gpt_memory = self.gpt_memory

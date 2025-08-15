@@ -43,12 +43,15 @@ from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
 from .chatgpt_idea_bot import ChatGPTClient
-from .gpt_memory import GPTMemoryManager
 from gpt_memory_interface import GPTMemoryInterface
 try:  # canonical tag constants
-    from .log_tags import INSIGHT
+    from .log_tags import INSIGHT, FEEDBACK
 except Exception:  # pragma: no cover - fallback for flat layout
-    from log_tags import INSIGHT  # type: ignore
+    from log_tags import INSIGHT, FEEDBACK  # type: ignore
+try:  # shared GPT memory instance
+    from .shared_gpt_memory import GPT_MEMORY_MANAGER
+except Exception:  # pragma: no cover - fallback for flat layout
+    from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from sentence_transformers import SentenceTransformer, util as st_util
@@ -637,7 +640,7 @@ class ChatGPTPredictionBot:
         model_path: Path | str | None = None,
         threshold: float | None = None,
         client: ChatGPTClient | None = None,
-        gpt_memory: GPTMemoryInterface | None = None,
+        gpt_memory: GPTMemoryInterface | None = GPT_MEMORY_MANAGER,
         **model_kwargs,
     ) -> None:
         """Load a trained model or fall back to the internal pipeline.
@@ -650,7 +653,7 @@ class ChatGPTPredictionBot:
         self.threshold = float(threshold) if threshold is not None else CFG.threshold
         self.gpt_memory = gpt_memory
         if client is not None:
-            if gpt_memory is not None and getattr(client, "gpt_memory", None) is None:
+            if getattr(client, "gpt_memory", None) is None:
                 try:
                     client.gpt_memory = gpt_memory
                 except Exception:
@@ -820,7 +823,7 @@ class ChatGPTPredictionBot:
                     " Provide brief feedback."
                 )
                 messages = client.build_prompt_with_memory([INSIGHT], prompt)
-                client.ask(messages, tags=[INSIGHT])
+                client.ask(messages, tags=[FEEDBACK, INSIGHT])
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
         return EnhancementEvaluation(description=idea, reason=rationale, value=value)
