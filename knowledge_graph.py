@@ -27,14 +27,6 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     KMeans = None  # type: ignore
 
-try:  # tag constants shared across modules
-    from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
-except Exception:  # pragma: no cover - best effort fallback
-    FEEDBACK = "feedback"  # type: ignore
-    IMPROVEMENT_PATH = "improvement_path"  # type: ignore
-    ERROR_FIX = "error_fix"  # type: ignore
-    INSIGHT = "insight"  # type: ignore
-
 try:  # optional protocol used for runtime checks
     from gpt_memory_interface import GPTMemoryInterface  # type: ignore
 except Exception:  # pragma: no cover - interface may be absent
@@ -301,13 +293,12 @@ class KnowledgeGraph:
     def ingest_gpt_memory(self, memory_mgr: object) -> None:
         """Load GPT insights from ``memory_mgr``.
 
-        The function first attempts to read an ``interactions`` table containing
-        ``prompt``, ``response``, ``tags`` and ``ts`` columns.  When absent it
-        falls back to the legacy ``memory`` table keyed by ``key``.  Each tag is
-        mapped to a dedicated edge type – ``feedback``, ``improvement_path``,
-        ``error_fix`` and ``insight`` – while unrecognised tags use the generic
-        ``tag`` edge.  Legacy tag prefixes such as ``bot:``, ``code:`` and
-        ``error:`` are still supported for backward compatibility.
+        The method checks for a table named ``interactions`` with ``prompt`` and
+        ``tags`` columns.  Rows in this table are converted into ``insight`` nodes
+        and edges are created for tags beginning with ``bot:``, ``code:`` or
+        ``error:``.  If the table does not exist, the legacy ``memory`` table is
+        used instead with the same tag parsing to maintain backwards
+        compatibility.
         """
 
         if self.graph is None:
@@ -318,56 +309,23 @@ class KnowledgeGraph:
         if conn is None:
             return
 
-        rows: List[tuple] = []
-        used_interactions = False
         try:
             exists = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='interactions'"
             ).fetchone()
-            if exists:
-                rows = conn.execute(
-                    "SELECT prompt, response, tags, ts FROM interactions"
-                ).fetchall()
-                used_interactions = True
         except Exception:
-            rows = []
+            exists = None
 
-        if not used_interactions:
+        if exists:
             try:
-                rows = conn.execute("SELECT key, tags FROM memory").fetchall()
+                rows = conn.execute("SELECT prompt, tags FROM interactions").fetchall()
             except Exception:
-                return
-
-        if used_interactions:
-            tag_edge_map = {
-                FEEDBACK: FEEDBACK,
-                IMPROVEMENT_PATH: IMPROVEMENT_PATH,
-                ERROR_FIX: ERROR_FIX,
-                INSIGHT: INSIGHT,
-            }
-            for prompt, response, tag_str, _ts in rows:
-                inode = f"insight:{prompt}"
-                try:
-                    self.graph.add_node(inode, response=response)
-                except Exception:
-                    self.graph.add_node(inode)
+                rows = []
+            for prompt, tags in rows:
                 tag_list = [
                     t.strip()
-                    for t in str(tag_str or "").replace(",", " ").split()
+                    for t in str(tags or "").replace(",", " ").split()
                     if t.strip()
-                ]
-                for t in tag_list:
-                    tl = t.lower()
-                    edge_type = tag_edge_map.get(tl)
-                    tnode = f"tag:{tl}"
-                    self.graph.add_node(tnode)
-                    self.graph.add_edge(
-                        inode, tnode, type=edge_type if edge_type else "tag"
-                    )
-        else:  # legacy memory table
-            for key, tags in rows:
-                tag_list = [
-                    t.strip() for t in str(tags or "").replace(",", " ").split() if t.strip()
                 ]
                 bots: List[str] = []
                 codes: List[str] = []
@@ -377,14 +335,38 @@ class KnowledgeGraph:
                         bots.append(t.split(":", 1)[1])
                     elif t.startswith("code:"):
                         codes.append(t.split(":", 1)[1])
-                    elif t.startswith("error:") or t.startswith("error_category:"):
+                    elif t.startswith("error:"):
                         errs.append(t.split(":", 1)[1])
-                if bots or codes or errs:
-                    self.add_gpt_insight(
-                        key, bots=bots, code_paths=codes, error_categories=errs
-                    )
-                else:
-                    self.add_memory_entry(key, tag_list)
+                self.add_gpt_insight(
+                    prompt, bots=bots, code_paths=codes, error_categories=errs
+                )
+            return
+
+        try:
+            rows = conn.execute("SELECT key, tags FROM memory").fetchall()
+        except Exception:
+            return
+
+        for key, tags in rows:
+            tag_list = [
+                t.strip() for t in str(tags or "").replace(",", " ").split() if t.strip()
+            ]
+            bots: List[str] = []
+            codes: List[str] = []
+            errs: List[str] = []
+            for t in tag_list:
+                if t.startswith("bot:"):
+                    bots.append(t.split(":", 1)[1])
+                elif t.startswith("code:"):
+                    codes.append(t.split(":", 1)[1])
+                elif t.startswith("error:") or t.startswith("error_category:"):
+                    errs.append(t.split(":", 1)[1])
+            if bots or codes or errs:
+                self.add_gpt_insight(
+                    key, bots=bots, code_paths=codes, error_categories=errs
+                )
+            else:
+                self.add_memory_entry(key, tag_list)
 
     def add_code_snippet(self, summary: str, bots: Iterable[str] | None = None) -> None:
         if self.graph is None:
