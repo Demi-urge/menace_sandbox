@@ -42,6 +42,27 @@ _RETRIEVER_STALE_GAUGE = _me.Gauge(
     ["origin_db"],
 )
 
+_EMBED_MEAN_GAUGE = _me.Gauge(
+    "embedding_metric_mean",
+    "Aggregated mean of embedding metrics",
+    ["metric", "period"],
+)
+_EMBED_COUNT_GAUGE = _me.Gauge(
+    "embedding_metric_count",
+    "Aggregated count of embedding metrics",
+    ["metric", "period"],
+)
+_RETR_MEAN_GAUGE = _me.Gauge(
+    "retrieval_metric_mean",
+    "Aggregated mean of retrieval metrics",
+    ["metric", "period"],
+)
+_RETR_COUNT_GAUGE = _me.Gauge(
+    "retrieval_metric_count",
+    "Aggregated count of retrieval metrics",
+    ["metric", "period"],
+)
+
 
 def compute_retriever_stats(
     metrics_db: Path | str = "metrics.db", patch_db: Path | str = "patch_history.db"
@@ -160,6 +181,8 @@ class MetricsAggregator:
             return df
         if period == "week":
             df["period"] = df["ts"].dt.to_period("W").apply(lambda r: r.start_time.date())
+        elif period == "hour":
+            df["period"] = df["ts"].dt.floor("H")
         else:
             df["period"] = df["ts"].dt.date
         agg = df.groupby("period")[cols].agg(["mean", "count"])
@@ -190,6 +213,12 @@ class MetricsAggregator:
         plt.close()
         return out
 
+    def _store_aggregate(self, df: "pd.DataFrame", table: str) -> None:
+        if df.empty:
+            return
+        with self._connect() as conn:
+            df.to_sql(table, conn, if_exists="replace", index=False)
+
     def run(self, period: str = "day") -> Dict[str, Path | None]:
         results: Dict[str, Path | None] = {}
         # Update retriever KPIs before aggregation
@@ -201,14 +230,39 @@ class MetricsAggregator:
         emb = self._aggregate_table("embedding_metrics", emb_cols, period)
         results["embedding_csv"] = self._export_csv(emb, f"embedding_{period}")
         results["embedding_heatmap"] = self._heatmap(emb, f"embedding_{period}")
+        self._store_aggregate(emb, f"embedding_agg_{period}")
+        if not emb.empty:
+            latest = emb.iloc[-1]
+            for col, val in latest.items():
+                if col == "period":
+                    continue
+                if col.endswith("_mean"):
+                    metric = col[:-5]
+                    _EMBED_MEAN_GAUGE.labels(metric=metric, period=period).set(float(val))
+                elif col.endswith("_count"):
+                    metric = col[:-6]
+                    _EMBED_COUNT_GAUGE.labels(metric=metric, period=period).set(float(val))
         ret_cols = ["rank", "hit", "tokens", "score"]
         ret = self._aggregate_table("retrieval_metrics", ret_cols, period)
         results["retrieval_csv"] = self._export_csv(ret, f"retrieval_{period}")
         results["retrieval_heatmap"] = self._heatmap(ret, f"retrieval_{period}")
+        self._store_aggregate(ret, f"retrieval_agg_{period}")
+        if not ret.empty:
+            latest = ret.iloc[-1]
+            for col, val in latest.items():
+                if col == "period":
+                    continue
+                if col.endswith("_mean"):
+                    metric = col[:-5]
+                    _RETR_MEAN_GAUGE.labels(metric=metric, period=period).set(float(val))
+                elif col.endswith("_count"):
+                    metric = col[:-6]
+                    _RETR_COUNT_GAUGE.labels(metric=metric, period=period).set(float(val))
         kpi_cols = ["win_rate", "regret_rate", "stale_penalty"]
         kpi = self._aggregate_table("retriever_kpi", kpi_cols, period)
         results["retriever_kpi_csv"] = self._export_csv(kpi, f"retriever_kpi_{period}")
         results["retriever_kpi_heatmap"] = self._heatmap(kpi, f"retriever_kpi_{period}")
+        self._store_aggregate(kpi, f"retriever_kpi_agg_{period}")
         return results
 
 
@@ -219,7 +273,10 @@ def main() -> None:
         "--out-dir", default="analytics", help="Directory for CSV exports and heatmaps"
     )
     parser.add_argument(
-        "--period", choices=["day", "week"], default="day", help="Aggregation period"
+        "--period",
+        choices=["hour", "day", "week"],
+        default="day",
+        help="Aggregation period",
     )
     args = parser.parse_args()
     agg = MetricsAggregator(args.db, args.out_dir)
