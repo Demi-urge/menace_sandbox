@@ -36,8 +36,10 @@ concrete implementations.
 
 ```python
 from gpt_memory import GPTMemoryManager
+from unified_event_bus import UnifiedEventBus
 
-mgr = GPTMemoryManager("memory.db")
+bus = UnifiedEventBus()
+mgr = GPTMemoryManager("memory.db", event_bus=bus)
 mgr.log_interaction("user question", "assistant reply", tags=["note"])
 entries = mgr.search_context("question")
 ```
@@ -46,6 +48,8 @@ Key configuration options:
 
 - `db_path` – SQLite file used for storage (`"gpt_memory.db"` by default).
 - `embedder` – optional `SentenceTransformer` model enabling semantic search.
+- `event_bus` – optional `UnifiedEventBus` publishing a `"memory:new"` event for
+  each logged interaction.
 
 `get_similar_entries()` returns scored matches while `compact()` summarises and
 prunes old rows according to a retention policy.  Use `close()` when finished to

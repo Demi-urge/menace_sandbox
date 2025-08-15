@@ -20,9 +20,14 @@ import json
 import sqlite3
 import argparse
 import warnings
-from typing import Any, List, Sequence, Mapping, Dict
+from typing import Any, List, Sequence, Mapping, Dict, Optional
 
 from gpt_memory_interface import GPTMemoryInterface
+
+try:  # Optional dependency used for event publication
+    from unified_event_bus import UnifiedEventBus
+except Exception:  # pragma: no cover - optional
+    UnifiedEventBus = None  # type: ignore
 
 try:  # Optional dependency used for semantic embeddings
     from sentence_transformers import SentenceTransformer
@@ -84,6 +89,10 @@ class GPTMemoryManager(GPTMemoryInterface):
     embedder:
         Optional :class:`SentenceTransformer` instance.  When provided each
         prompt is embedded and semantic search can be performed.
+    event_bus:
+        Optional :class:`UnifiedEventBus`.  When supplied, each call to
+        :meth:`log_interaction` publishes a ``"memory:new"`` event containing
+        the interaction details.
     """
 
     def __init__(
@@ -91,10 +100,12 @@ class GPTMemoryManager(GPTMemoryInterface):
         db_path: str | Path = "gpt_memory.db",
         *,
         embedder: SentenceTransformer | None = None,
+        event_bus: Optional[UnifiedEventBus] = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.conn = sqlite3.connect(self.db_path)
         self.embedder = embedder
+        self.event_bus = event_bus
         self._ensure_schema()
 
     # ------------------------------------------------------------------ utils
@@ -138,6 +149,17 @@ class GPTMemoryManager(GPTMemoryInterface):
             (prompt, response, tag_str, timestamp, embedding),
         )
         self.conn.commit()
+        if self.event_bus:
+            try:
+                payload = {
+                    "prompt": prompt,
+                    "response": response,
+                    "tags": list(tags or []),
+                    "ts": timestamp,
+                }
+                self.event_bus.publish("memory:new", payload)
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     def search_context(
         self,
