@@ -136,6 +136,7 @@ __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
 logger = get_logger(__name__)
 
 GPT_MEMORY_MANAGER = None
+GPT_KNOWLEDGE_SERVICE = None
 
 ROOT = Path(__file__).resolve().parent
 
