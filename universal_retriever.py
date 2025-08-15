@@ -838,9 +838,9 @@ class UniversalRetriever:
             kpi = feedback_map.get(source, {})
             win_rate = kpi.get("win_rate", 0.0)
             regret_rate = kpi.get("regret_rate", 0.0)
-            stale_penalty = kpi.get("stale_penalty", 0.0)
+            stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
             feedback_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
-            feedback_bias *= math.exp(-STALE_COST * stale_penalty)
+            feedback_bias *= math.exp(-STALE_COST * stale_cost)
             combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
             combined_score *= bias_map.get(source, 1.0) * feedback_bias
             scored.append({
@@ -853,7 +853,7 @@ class UniversalRetriever:
                 "context": ctx_score,
                 "win_rate": win_rate,
                 "regret_rate": regret_rate,
-                "stale_penalty": stale_penalty,
+                "stale_cost": stale_cost,
                 **metrics,
             })
 
@@ -871,7 +871,7 @@ class UniversalRetriever:
             "complexity": "high code complexity",
             "win_rate": "high historical win rate",
             "regret_rate": "low regret rate",
-            "stale_penalty": "fresh embedding",
+            "stale_cost": "fresh embedding",
         }
 
         hits: List[ResultBundle] = []

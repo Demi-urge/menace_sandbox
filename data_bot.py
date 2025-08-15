@@ -180,6 +180,7 @@ class MetricsDB:
                 origin_db TEXT,
                 vector_id TEXT,
                 success INTEGER,
+                reverted INTEGER DEFAULT 0,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -301,6 +302,10 @@ class MetricsDB:
             if "vector_id" not in cols:
                 conn.execute(
                     "ALTER TABLE patch_outcomes ADD COLUMN vector_id TEXT"
+                )
+            if "reverted" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_outcomes ADD COLUMN reverted INTEGER DEFAULT 0"
                 )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
             if "revenue" not in cols:
@@ -583,7 +588,7 @@ class MetricsDB:
         origin_db: str,
         win_rate: float,
         regret_rate: float,
-        stale_penalty: float,
+        stale_cost: float,
         roi: float = 0.0,
     ) -> None:
         """Store aggregate KPIs for retrieval performance."""
@@ -598,7 +603,7 @@ class MetricsDB:
                     origin_db,
                     float(win_rate),
                     float(regret_rate),
-                    float(stale_penalty),
+                    float(stale_cost),
                     float(roi),
                     datetime.utcnow().isoformat(),
                 ),
@@ -608,7 +613,7 @@ class MetricsDB:
     def latest_retriever_kpi(self) -> Dict[str, Dict[str, float]]:
         """Return latest KPI metrics for each origin database.
 
-        The most recent ``win_rate``, ``regret_rate`` and ``stale_penalty``
+        The most recent ``win_rate``, ``regret_rate`` and ``stale_cost``
         values are retrieved from the ``retriever_kpi`` table.  Results are
         returned as a mapping of ``origin_db`` to the three metrics.  When no
         KPI data has been recorded an empty mapping is returned.
@@ -633,7 +638,7 @@ class MetricsDB:
             metrics[origin] = {
                 "win_rate": float(win),
                 "regret_rate": float(regret),
-                "stale_penalty": float(stale),
+                "stale_cost": float(stale),
             }
         return metrics
 
@@ -642,6 +647,8 @@ class MetricsDB:
         patch_id: str,
         success: bool,
         vectors: Iterable[tuple[str, str]] | None = None,
+        *,
+        reverted: bool = False,
     ) -> None:
         """Record the outcome of a patch deployment and associated vectors."""
 
@@ -651,14 +658,15 @@ class MetricsDB:
                 for origin_db, vec_id in entries:
                     conn.execute(
                         """
-                    INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, ts)
-                    VALUES(?,?,?,?,?)
+                    INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, reverted, ts)
+                    VALUES(?,?,?,?,?,?)
                     """,
                         (
                             patch_id,
                             origin_db,
                             vec_id,
                             1 if success else 0,
+                            1 if reverted else 0,
                             datetime.utcnow().isoformat(),
                         ),
                     )
@@ -675,14 +683,15 @@ class MetricsDB:
             else:
                 conn.execute(
                     """
-                INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, ts)
-                VALUES(?,?,?,?,?)
+                INSERT INTO patch_outcomes(patch_id, origin_db, vector_id, success, reverted, ts)
+                VALUES(?,?,?,?,?,?)
                 """,
                     (
                         patch_id,
                         None,
                         None,
                         1 if success else 0,
+                        1 if reverted else 0,
                         datetime.utcnow().isoformat(),
                     ),
                 )

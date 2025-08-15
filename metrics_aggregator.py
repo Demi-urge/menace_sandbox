@@ -4,6 +4,7 @@ import argparse
 import sqlite3
 from pathlib import Path
 from typing import List, Dict
+import os
 
 try:
     import pandas as pd  # type: ignore
@@ -37,8 +38,8 @@ _RETRIEVER_REGRET_GAUGE = _me.Gauge(
     "retriever_regret_rate", "Regret rate of retrieved patches", ["origin_db"]
 )
 _RETRIEVER_STALE_GAUGE = _me.Gauge(
-    "retriever_stale_penalty_hours",
-    "Average hours since embedding last use",
+    "retriever_stale_cost_seconds",
+    "Penalty seconds for stale embeddings beyond threshold",
     ["origin_db"],
 )
 _RETRIEVER_ROI_GAUGE = _me.Gauge(
@@ -82,13 +83,11 @@ def compute_retriever_stats(
         return {}
 
     with sqlite3.connect(m_path) as conn:
-        rm = pd.read_sql(
-            "SELECT origin_db, record_id, hit, ts FROM retrieval_stats",
-            conn,
-            parse_dates=["ts"],
-        )
         outcomes = pd.read_sql(
-            "SELECT patch_id, origin_db, success FROM patch_outcomes", conn
+            "SELECT patch_id, origin_db, success, reverted FROM patch_outcomes", conn
+        )
+        stale_df = pd.read_sql(
+            "SELECT origin_db, stale_seconds FROM embedding_staleness", conn
         )
 
     roi_path = Path(roi_db)
@@ -104,6 +103,7 @@ def compute_retriever_stats(
 
     merged = outcomes.merge(roi_df, on="patch_id", how="left")
     metrics: Dict[str, Dict[str, float]] = {}
+    threshold = float(os.getenv("EMBEDDING_STALE_THRESHOLD_SECONDS", "86400"))
 
     for origin, grp in merged.groupby("origin_db"):
         total = len(grp)
@@ -113,22 +113,17 @@ def compute_retriever_stats(
         regret_rate = regrets / total if total else 0.0
         roi_total = float(grp.get("roi", pd.Series()).fillna(0).sum())
 
-        stale_penalty = 0.0
-        if not rm.empty:
-            m = rm[rm["origin_db"] == origin]
-            if not m.empty:
-                m.sort_values(["record_id", "ts"], inplace=True)
-                m["prev_ts"] = m.groupby("record_id")["ts"].shift(1)
-                m["prev_ts"].fillna(m["ts"], inplace=True)
-                m["age_hours"] = (
-                    m["ts"] - m["prev_ts"]
-                ).dt.total_seconds() / 3600.0
-                stale_penalty = float(m["age_hours"].mean())
+        stale_cost = 0.0
+        if not stale_df.empty:
+            s = stale_df[stale_df["origin_db"] == origin]
+            if not s.empty:
+                excess = s["stale_seconds"] - threshold
+                stale_cost = float(excess.where(excess > 0, 0).sum())
 
         try:
             _RETRIEVER_WIN_GAUGE.labels(origin_db=origin).set(win_rate)
             _RETRIEVER_REGRET_GAUGE.labels(origin_db=origin).set(regret_rate)
-            _RETRIEVER_STALE_GAUGE.labels(origin_db=origin).set(stale_penalty)
+            _RETRIEVER_STALE_GAUGE.labels(origin_db=origin).set(stale_cost)
             _RETRIEVER_ROI_GAUGE.labels(origin_db=origin).set(roi_total)
         except Exception:
             pass
@@ -136,7 +131,7 @@ def compute_retriever_stats(
         if MetricsDB is not None:
             try:
                 MetricsDB(m_path).log_retriever_kpi(
-                    origin, win_rate, regret_rate, stale_penalty, roi_total
+                    origin, win_rate, regret_rate, stale_cost, roi_total
                 )
             except Exception:
                 pass
@@ -144,7 +139,7 @@ def compute_retriever_stats(
         metrics[origin] = {
             "win_rate": win_rate,
             "regret_rate": regret_rate,
-            "stale_penalty": stale_penalty,
+            "stale_cost": stale_cost,
             "roi": roi_total,
         }
 

@@ -67,6 +67,27 @@ def test_file_backend_store_and_fetch(tmp_path):
     assert rows == [("y", "ok")]
 
 
+def test_store_logs_outcome(monkeypatch, tmp_path):
+    captured = {}
+
+    class DummyMetrics:
+        def log_patch_outcome(self, patch_id, success, vectors, reverted=False):
+            captured.update(
+                patch_id=patch_id, success=success, vectors=list(vectors), reverted=reverted
+            )
+
+    monkeypatch.setattr(psb, "MetricsDB", lambda *_a, **_k: DummyMetrics())
+    be = psb.FilePatchScoreBackend(str(tmp_path))
+    rec = psb.attach_retrieval_info(
+        {"description": "p1", "result": "reverted"}, "s1", [("db", "v1")]
+    )
+    be.store(rec)
+    assert captured["patch_id"] == "p1"
+    assert captured["success"] is False
+    assert captured["vectors"] == [("db", "v1")]
+    assert captured["reverted"] is True
+
+
 def test_backend_from_url_file(tmp_path):
     url = f"file://{tmp_path}"  # path-like URL
     be = psb.backend_from_url(url)
