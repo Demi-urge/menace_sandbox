@@ -64,7 +64,9 @@ mgr.log_interaction("bug report", "fixed", tags=[ERROR_FIX])
 ```
 
 When an event bus is supplied every call also publishes a `memory:new` event.
-Other services may subscribe to react to new memories.
+The payload contains the original `prompt` and list of `tags` so consumers can
+filter or enrich the entry before persisting it elsewhere.  Other services may
+subscribe to react to new memories in real time.
 
 ### Knowledge graph ingestion
 
@@ -78,6 +80,31 @@ kg = KnowledgeGraph("kg.gpickle")
 kg.listen_to_memory(bus, mgr)  # ingests on each memory:new event
 # or import the current history manually
 kg.ingest_gpt_memory(mgr)
+```
+
+### Sample configuration for persistent learning
+
+The snippet below wires a persistent `GPTMemoryManager` and `KnowledgeGraph`
+through a shared `UnifiedEventBus`.  Each call to `log_interaction` emits a
+`memory:new` event which the graph listens for, allowing cross-session learning
+as both the SQLite database and graph file are reused across runs:
+
+```python
+from unified_event_bus import UnifiedEventBus
+from gpt_memory import GPTMemoryManager
+from knowledge_graph import KnowledgeGraph
+
+bus = UnifiedEventBus()
+memory = GPTMemoryManager("persistent.db", event_bus=bus)
+graph = KnowledgeGraph("kg.gpickle")
+graph.listen_to_memory(bus, memory)
+```
+
+Retention rules control how many entries are kept per tag when the maintenance
+thread compacts the store:
+
+```bash
+export GPT_MEMORY_RETENTION="insight=40,error_fix=20"
 ```
 
 ### Persisting across runs
