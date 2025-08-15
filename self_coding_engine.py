@@ -25,6 +25,10 @@ try:  # canonical tag constants
     from .log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, ERROR_FIX, IMPROVEMENT_PATH, INSIGHT  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .knowledge_retriever import get_feedback, get_error_fixes
+except Exception:  # pragma: no cover - fallback for flat layout
+    from knowledge_retriever import get_feedback, get_error_fixes  # type: ignore
 from .rollback_manager import RollbackManager
 from .audit_trail import AuditTrail
 from .access_control import READ, WRITE, check_permission
@@ -365,12 +369,7 @@ class SelfCodingEngine:
         # Incorporate past patch outcomes from memory
         history = ""
         try:
-            entries = self.gpt_memory.search_context(
-                description,
-                tags=[FEEDBACK],
-                limit=5,
-                use_embeddings=False,
-            )
+            entries = get_feedback(self.gpt_memory, description, limit=5)
             if entries:
                 summaries: List[str] = []
                 for ent in entries:
@@ -381,16 +380,30 @@ class SelfCodingEngine:
                 history = "\n".join(summaries)
         except Exception:
             history = ""
-        if history:
+        fix_history = ""
+        try:
+            fixes = get_error_fixes(self.gpt_memory, description, limit=3)
+            if fixes:
+                snippets = []
+                for fix in fixes:
+                    resp = (getattr(fix, "response", "") or "").strip()
+                    if resp:
+                        snippets.append(resp.splitlines()[0])
+                if snippets:
+                    fix_history = "\n".join(f"fix: {s}" for s in snippets)
+        except Exception:
+            fix_history = ""
+        combined_history = "\n".join([p for p in (history, fix_history) if p])
+        if combined_history:
             self.logger.info(
                 "patch history context",
                 extra={
                     "description": description,
-                    "history": history,
+                    "history": combined_history,
                     "tags": [INSIGHT],
                 },
             )
-            prompt += "\n\n### Patch history\n" + history
+            prompt += "\n\n### Patch history\n" + combined_history
 
         try:
             data = self.llm_client.ask(

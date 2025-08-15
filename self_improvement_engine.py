@@ -86,6 +86,22 @@ try:  # canonical tag constants
     from .log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT
 except Exception:  # pragma: no cover - fallback for flat layout
     from log_tags import FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .knowledge_retriever import (
+        get_feedback,
+        get_error_fixes,
+        recent_feedback,
+        recent_improvement_path,
+        recent_error_fix,
+    )
+except Exception:  # pragma: no cover - fallback for flat layout
+    from knowledge_retriever import (  # type: ignore
+        get_feedback,
+        get_error_fixes,
+        recent_feedback,
+        recent_improvement_path,
+        recent_error_fix,
+    )
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -967,12 +983,7 @@ class SelfImprovementEngine:
         """Return a summary of similar past actions from memory."""
         summaries: list[str] = []
         try:
-            entries = self.gpt_memory.search_context(
-                key,
-                tags=[FEEDBACK],
-                limit=5,
-                use_embeddings=False,
-            )
+            entries = get_feedback(self.gpt_memory, key, limit=5)
         except Exception:
             entries = []
         for ent in entries:
@@ -980,14 +991,33 @@ class SelfImprovementEngine:
             tag = "success" if "success" in resp.lower() else "failure"
             snippet = resp.splitlines()[0]
             summaries.append(f"{tag}: {snippet}")
+        try:
+            fixes = get_error_fixes(self.gpt_memory, key, limit=3)
+        except Exception:
+            fixes = []
+        for fix in fixes:
+            resp = (getattr(fix, "response", "") or "").strip()
+            if resp:
+                summaries.append(f"fix: {resp.splitlines()[0]}")
         if getattr(self, "knowledge_service", None):
-            for tag in (FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX):
-                try:
-                    insight = self.knowledge_service.get_recent_insights(tag)  # type: ignore[attr-defined]
-                except Exception:
-                    insight = ""
+            try:
+                insight = recent_feedback(self.knowledge_service)  # type: ignore[attr-defined]
                 if insight:
-                    summaries.append(f"{tag} insight: {insight}")
+                    summaries.append(f"{FEEDBACK} insight: {insight}")
+            except Exception:
+                pass
+            try:
+                insight = recent_improvement_path(self.knowledge_service)  # type: ignore[attr-defined]
+                if insight:
+                    summaries.append(f"{IMPROVEMENT_PATH} insight: {insight}")
+            except Exception:
+                pass
+            try:
+                insight = recent_error_fix(self.knowledge_service)  # type: ignore[attr-defined]
+                if insight:
+                    summaries.append(f"{ERROR_FIX} insight: {insight}")
+            except Exception:
+                pass
         return "\n".join(summaries)
 
     def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
