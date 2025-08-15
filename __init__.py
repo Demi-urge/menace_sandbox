@@ -113,6 +113,7 @@ __all__ = [
     "resource_allocation_bot",
     "ipo_bot",
     "data_bot",
+    "metrics_aggregator",
     "deployment_bot",
     "bot_database",
     "code_database",

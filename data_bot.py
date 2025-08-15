@@ -130,7 +130,7 @@ class MetricsDB:
                 wall_time REAL,
                 index_latency REAL,
                 source TEXT,
-                ts TEXT
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
             )
@@ -144,13 +144,33 @@ class MetricsDB:
                 hit INTEGER,
                 tokens INTEGER,
                 score REAL,
-                ts TEXT
+                ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_eval_cycle ON eval_metrics(cycle)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_embedding_ts ON embedding_metrics(ts)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_retrieval_ts ON retrieval_metrics(ts)"
+            )
+            cols = [
+                r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
+            ]
+            if "ts" not in cols:
+                conn.execute(
+                    "ALTER TABLE embedding_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                )
+            cols = [
+                r[1] for r in conn.execute("PRAGMA table_info(retrieval_metrics)").fetchall()
+            ]
+            if "ts" not in cols:
+                conn.execute(
+                    "ALTER TABLE retrieval_metrics ADD COLUMN ts TEXT DEFAULT CURRENT_TIMESTAMP"
+                )
             cols = [r[1] for r in conn.execute("PRAGMA table_info(metrics)").fetchall()]
             if "revenue" not in cols:
                 conn.execute("ALTER TABLE metrics ADD COLUMN revenue REAL DEFAULT 0")
