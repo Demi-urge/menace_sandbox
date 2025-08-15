@@ -1379,6 +1379,8 @@ def main(argv: List[str] | None = None) -> None:
         )
         mem_maint.start()
         cleanup_funcs.append(mem_maint.stop)
+    if GPT_KNOWLEDGE_SERVICE is not None:
+        cleanup_funcs.append(getattr(GPT_KNOWLEDGE_SERVICE, "close", lambda: None))
 
     meta_log_path = (
         Path(args.sandbox_data_dir or settings.sandbox_data_dir) / "sandbox_meta.log"
@@ -1787,15 +1789,15 @@ def main(argv: List[str] | None = None) -> None:
             )
             break
 
-    if agent_monitor is not None:
-        try:
-            agent_monitor.stop()
-        except Exception:
-            logger.exception("failed to shutdown visual agent")
+    _cleanup()
+    try:
+        atexit.unregister(_cleanup)
+    except Exception:
+        pass
+    cleanup_funcs.clear()
 
     if exporter_monitor is not None:
         try:
-            exporter_monitor.stop()
             logger.info(
                 "synergy exporter stopped after %d restarts", exporter_monitor.restart_count
             )
@@ -1811,7 +1813,6 @@ def main(argv: List[str] | None = None) -> None:
 
     if trainer_monitor is not None:
         try:
-            trainer_monitor.stop()
             logger.info(
                 "synergy auto trainer stopped after %d restarts", trainer_monitor.restart_count
             )
