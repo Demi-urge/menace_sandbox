@@ -57,9 +57,14 @@ def log_embedding_metrics(
     """Log embedding metrics to Prometheus and the metrics database."""
 
     if _EMBED_TOKENS:
-        _EMBED_TOKENS.labels(source=source).set(tokens)
-        _EMBED_WALL.labels(source=source).set(wall_time)
-        _EMBED_INDEX.labels(source=source).set(index_latency)
+        try:
+            _EMBED_TOKENS.labels(source=source).set(tokens)
+            _EMBED_WALL.labels(source=source).set(wall_time)
+            _EMBED_INDEX.labels(source=source).set(index_latency)
+        except ValueError:  # pragma: no cover - labels not configured
+            _EMBED_TOKENS.set(tokens)
+            _EMBED_WALL.set(wall_time)
+            _EMBED_INDEX.set(index_latency)
     try:
         MetricsDB().log_embedding_metrics(
             record_id, tokens, wall_time, index_latency, source=source
@@ -226,7 +231,20 @@ class EmbeddableDBMixin:
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
 
+        start = perf_counter()
         vec = self.vector(record)
+        wall_time = perf_counter() - start
+        tokens = getattr(self, "_last_embedding_tokens", 0)
+        if not tokens and isinstance(record, str):  # pragma: no cover - best effort
+            try:
+                tokenizer = getattr(self.model, "tokenizer", None)
+                if tokenizer:
+                    tokens = len(tokenizer.encode(record))
+            except Exception:  # pragma: no cover - best effort
+                tokens = 0
+        self._last_embedding_tokens = tokens
+        self._last_embedding_time = wall_time
+
         rid = str(record_id)
         if rid not in self._metadata:
             self._id_map.append(rid)
@@ -237,14 +255,14 @@ class EmbeddableDBMixin:
             "kind": kind,
             "source_id": source_id,
         }
-        index_start = perf_counter()
         self._rebuild_index()
+        save_start = perf_counter()
         self.save_index()
-        index_latency = perf_counter() - index_start
+        index_latency = perf_counter() - save_start
         log_embedding_metrics(
             rid,
-            getattr(self, "_last_embedding_tokens", 0),
-            getattr(self, "_last_embedding_time", 0.0),
+            tokens,
+            wall_time,
             index_latency,
             source=source_id,
         )
