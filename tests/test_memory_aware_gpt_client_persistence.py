@@ -43,7 +43,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     client.next_response = "Great success"
     ask_with_memory(
         client,
-        "lost credentials",
+        "auth.reset_password",
         "reset my password",
         memory=module,
         tags=[FEEDBACK],
@@ -52,7 +52,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     client.next_response = "This fixes the error."
     ask_with_memory(
         client,
-        "lost credentials",
+        "auth.reset_password",
         "credential bug encountered",
         memory=module,
         tags=[ERROR_FIX],
@@ -61,7 +61,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     client.next_response = "An improvement is to apply a patch."
     ask_with_memory(
         client,
-        "lost credentials",
+        "auth.reset_password",
         "any improvement suggestions?",
         memory=module,
         tags=[IMPROVEMENT_PATH],
@@ -72,18 +72,18 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
     module2 = LocalKnowledgeModule(manager=mgr2)
 
     assert mgr2.search_context(
-        "lost credentials", tags=[FEEDBACK], use_embeddings=False
+        "auth.reset_password", tags=[FEEDBACK], use_embeddings=False
     ) == []
 
-    fb = [e.response for e in get_feedback(mgr2, "lost credentials") if "insight" not in e.tags]
+    fb = [e.response for e in get_feedback(mgr2, "auth.reset_password") if "insight" not in e.tags]
     fixes = [
         e.response
-        for e in get_error_fixes(mgr2, "lost credentials")
+        for e in get_error_fixes(mgr2, "auth.reset_password")
         if "insight" not in e.tags
     ]
     improvs = [
         e.response
-        for e in get_improvement_paths(mgr2, "lost credentials")
+        for e in get_improvement_paths(mgr2, "auth.reset_password")
         if "insight" not in e.tags
     ]
 
@@ -93,7 +93,7 @@ def test_memory_aware_client_persists_across_runs(tmp_path):
 
     client2 = DummyClient()
     client2.next_response = "final"
-    ask_with_memory(client2, "lost credentials", "what next?", memory=module2)
+    ask_with_memory(client2, "auth.reset_password", "what next?", memory=module2)
     sent_prompt = client2.messages[0]["content"]
     assert "Great success" in sent_prompt
     assert "This fixes the error." in sent_prompt

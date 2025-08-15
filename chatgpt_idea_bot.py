@@ -150,9 +150,19 @@ class ChatGPTClient:
                 global_tags = [INSIGHT]
             try:
                 if memory:
-                    log_with_tags(memory, prompt_str, response, mem_tags)
+                    log_with_tags(
+                        memory,
+                        prompt_str,
+                        response,
+                        ["chatgpt_idea_bot.generate", *mem_tags],
+                    )
                 if self.gpt_memory and self.gpt_memory is not memory:
-                    log_with_tags(self.gpt_memory, prompt_str, response, global_tags)
+                    log_with_tags(
+                        self.gpt_memory,
+                        prompt_str,
+                        response,
+                        ["chatgpt_idea_bot.generate", *global_tags],
+                    )
             except Exception:
                 logger.exception("failed to log interaction")
 
