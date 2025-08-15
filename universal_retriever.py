@@ -5,7 +5,88 @@ import sqlite3
 import math
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Sequence
+from typing import Any, Iterable, List, Sequence, Tuple, Union
+import logging
+import sys
+
+_ALIASES = (
+    "universal_retriever",
+    "menace.universal_retriever",
+    "menace_sandbox.universal_retriever",
+)
+for _alias in _ALIASES:
+    _existing = sys.modules.get(_alias)
+    if _existing is not None and _existing is not sys.modules.get(__name__):
+        globals().update(_existing.__dict__)
+        sys.modules[__name__] = _existing
+        __package__ = _alias.rsplit(".", 1)[0]
+        break
+else:
+    _current = sys.modules[__name__]
+    for _alias in _ALIASES:
+        sys.modules.setdefault(_alias, _current)
+if not __package__:
+    __package__ = "menace"
+
+try:  # pragma: no cover - optional dependency
+    from . import metrics_exporter as _me
+except Exception:  # pragma: no cover - fallback when running directly
+    import metrics_exporter as _me  # type: ignore
+
+try:  # pragma: no cover - lightweight dependency
+    from .data_bot import MetricsDB
+except Exception:  # pragma: no cover - fallback when module unavailable
+    MetricsDB = None  # type: ignore
+
+_RETRIEVAL_RANK = _me.Gauge(
+    "retrieval_result_rank",
+    "Rank position for retrieval results",
+    ["origin_db"],
+)
+_RETRIEVAL_HIT = _me.Gauge(
+    "retrieval_result_hit",
+    "Whether retrieval result included in final prompt",
+    ["origin_db"],
+)
+_RETRIEVAL_TOKENS = _me.Gauge(
+    "retrieval_result_tokens",
+    "Tokens contributed by retrieval result",
+    ["origin_db"],
+)
+_RETRIEVAL_SCORE = _me.Gauge(
+    "retrieval_result_score",
+    "Combined score for retrieval result",
+    ["origin_db"],
+)
+
+logger = logging.getLogger(__name__)
+
+
+def log_retrieval_metrics(
+    origin_db: str,
+    record_id: Any,
+    rank: int,
+    hit: bool,
+    tokens: int,
+    score: float,
+) -> None:
+    """Log retrieval statistics to Prometheus and SQLite."""
+
+    try:
+        _RETRIEVAL_RANK.labels(origin_db=origin_db).set(rank)
+        _RETRIEVAL_HIT.labels(origin_db=origin_db).set(1 if hit else 0)
+        _RETRIEVAL_TOKENS.labels(origin_db=origin_db).set(tokens)
+        _RETRIEVAL_SCORE.labels(origin_db=origin_db).set(score)
+    except Exception:
+        pass  # best effort metrics
+
+    if MetricsDB is not None:
+        try:
+            MetricsDB().log_retrieval_metrics(
+                origin_db, str(record_id), rank, hit, tokens, score
+            )
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to persist retrieval metrics")
 
 
 @dataclass
@@ -43,6 +124,14 @@ class ResultBundle:
                 if key in self.metadata:
                     return self.metadata[key]
         return None
+
+    @property
+    def links(self) -> List[Any]:  # pragma: no cover - convenience accessor
+        """Return identifiers of linked records if present."""
+
+        if isinstance(self.metadata, dict):
+            return list(self.metadata.get("linked_records", []) or [])
+        return []
 
     def to_dict(self) -> dict[str, Any]:  # pragma: no cover - simple serialiser
         return {
@@ -581,8 +670,12 @@ class UniversalRetriever:
         return score, metrics
 
     def retrieve(
-        self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
-    ) -> List[ResultBundle]:
+        self,
+        query: Any,
+        top_k: int = 10,
+        link_multiplier: float = 1.1,
+        return_metrics: bool = False,
+    ) -> Union[List[ResultBundle], Tuple[List[ResultBundle], List[dict[str, Any]]]]:
         """Retrieve results with scores and reasons.
 
         Metadata for each hit includes the raw vector distance and a mapping
@@ -674,14 +767,50 @@ class UniversalRetriever:
             )
 
         hits.sort(key=lambda h: h.score, reverse=True)
-        return hits[:top_k]
+
+        metrics_list: List[dict[str, Any]] = []
+        for rank, bundle in enumerate(hits, start=1):
+            tokens = len(json.dumps(bundle.metadata, ensure_ascii=False)) // 4
+            included = rank <= top_k
+            log_retrieval_metrics(
+                bundle.origin_db, bundle.record_id, rank, included, tokens, bundle.score
+            )
+            metrics_list.append(
+                {
+                    "origin_db": bundle.origin_db,
+                    "record_id": bundle.record_id,
+                    "rank": rank,
+                    "hit": included,
+                    "tokens": tokens,
+                    "score": bundle.score,
+                }
+            )
+
+        results = hits[:top_k]
+        if return_metrics:
+            return results, metrics_list
+        return results
 
     # Backwards compatibility for older callers
     def retrieve_with_confidence(
-        self, query: Any, top_k: int = 10, link_multiplier: float = 1.1
-    ) -> List[dict[str, Any]]:
-        hits = self.retrieve(query, top_k=top_k, link_multiplier=link_multiplier)
-        return [
+        self,
+        query: Any,
+        top_k: int = 10,
+        link_multiplier: float = 1.1,
+        return_metrics: bool = False,
+    ) -> Union[List[dict[str, Any]], Tuple[List[dict[str, Any]], List[dict[str, Any]]]]:
+        res = self.retrieve(
+            query,
+            top_k=top_k,
+            link_multiplier=link_multiplier,
+            return_metrics=return_metrics,
+        )
+        if return_metrics:
+            hits, metrics_list = res  # type: ignore[misc]
+        else:
+            hits = res  # type: ignore[assignment]
+            metrics_list = []
+        formatted = [
             {
                 "source": h.origin_db,
                 "record_id": h.record_id,
@@ -691,3 +820,6 @@ class UniversalRetriever:
             }
             for h in hits
         ]
+        if return_metrics:
+            return formatted, metrics_list
+        return formatted
