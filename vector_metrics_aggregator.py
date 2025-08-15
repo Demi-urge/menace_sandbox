@@ -84,13 +84,22 @@ class VectorMetricsAggregator:
     def run(
         self,
         period: str = "hourly",
-        json_file: Path | str = "vector_metrics_heatmap.json",
-        csv_file: Path | str = "vector_metrics_heatmap.csv",
+        json_file: Path | str | None = None,
+        csv_file: Path | str | None = None,
     ) -> List[Dict[str, object]]:
         """Aggregate metrics and export them to files.
 
+        If ``json_file``/``csv_file`` are not provided the files are named
+        ``vector_metrics_heatmap_<period>.json`` and ``.csv`` so hourly and
+        daily jobs do not clobber each other's outputs.
+
         Returns the aggregated data for convenience.
         """
+        if json_file is None:
+            json_file = f"vector_metrics_heatmap_{period}.json"
+        if csv_file is None:
+            csv_file = f"vector_metrics_heatmap_{period}.csv"
+
         data = self.aggregate(period)
         self.export(data, json_file, csv_file)
         return data
@@ -111,10 +120,14 @@ def main() -> None:
         help="Aggregation period",
     )
     parser.add_argument(
-        "--json", default="vector_metrics_heatmap.json", help="JSON output file"
+        "--json",
+        default=None,
+        help="JSON output file (defaults to vector_metrics_heatmap_<period>.json)"
     )
     parser.add_argument(
-        "--csv", default="vector_metrics_heatmap.csv", help="CSV output file"
+        "--csv",
+        default=None,
+        help="CSV output file (defaults to vector_metrics_heatmap_<period>.csv)"
     )
     args = parser.parse_args()
 

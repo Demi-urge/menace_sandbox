@@ -53,13 +53,13 @@ trending topics.
 ## Vector Metrics Heatmaps
 
 `vector_metrics_aggregator.py` can summarise entries in
-`VectorMetricsDB` and write `vector_metrics_heatmap.json`. The dashboard
-serves this file at `/vector_heatmap`, providing ready‑made data for
-heatmap visualisations.
+`VectorMetricsDB` and write `vector_metrics_heatmap_<period>.json`. The
+dashboard serves these files at `/vector_heatmap/<period>`, providing
+ready‑made data for heatmap visualisations.
 
 ```bash
 python -m menace.vector_metrics_aggregator --period hourly
-curl http://localhost:8002/vector_heatmap
+curl http://localhost:8002/vector_heatmap/hourly
 ```
 
 ## Synergy Metrics
