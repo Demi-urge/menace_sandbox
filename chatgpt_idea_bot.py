@@ -48,6 +48,18 @@ try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
 except Exception:  # pragma: no cover - fallback for flat layout
     from memory_aware_gpt_client import ask_with_memory  # type: ignore
+try:  # contextual history retrieval
+    from .knowledge_retriever import (
+        get_feedback,
+        get_improvement_paths,
+        get_error_fixes,
+    )
+except Exception:  # pragma: no cover - fallback for flat layout
+    from knowledge_retriever import (  # type: ignore
+        get_feedback,
+        get_improvement_paths,
+        get_error_fixes,
+    )
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from gpt_memory_interface import GPTMemoryInterface
@@ -108,17 +120,25 @@ class ChatGPTClient:
         relevance_threshold: float = 0.0,
         max_summary_length: int = 500,
     ) -> Dict[str, object]:
-        memory: Any | None = memory_manager or self.gpt_memory or knowledge
+        memory: Any | None = memory_manager or knowledge or self.gpt_memory
         use_mem = use_memory if use_memory is not None else memory is not None
 
         def _log(request: List[Dict[str, str]], response: str) -> None:
             prompt_str = request[-1].get("content", "") if request else ""
-            log_tags = list(tags or [INSIGHT])
+            if tags is not None:
+                mem_tags = list(tags)
+                global_tags = list(tags)
+            elif memory is knowledge:
+                mem_tags = []
+                global_tags = [INSIGHT]
+            else:
+                mem_tags = [INSIGHT]
+                global_tags = [INSIGHT]
             try:
                 if memory:
-                    log_with_tags(memory, prompt_str, response, log_tags)
+                    log_with_tags(memory, prompt_str, response, mem_tags)
                 if self.gpt_memory and self.gpt_memory is not memory:
-                    log_with_tags(self.gpt_memory, prompt_str, response, log_tags)
+                    log_with_tags(self.gpt_memory, prompt_str, response, global_tags)
             except Exception:
                 logger.exception("failed to log interaction")
 
@@ -127,6 +147,42 @@ class ChatGPTClient:
         if use_mem:
             try:
                 ctx_parts: List[str] = []
+                if memory is not None:
+                    def _fmt(entries: Iterable[Any], title: str) -> str:
+                        parts: List[str] = []
+                        for e in entries:
+                            prompt = getattr(e, "prompt", "")
+                            response = getattr(e, "response", "")
+                            text = response or prompt
+                            if text:
+                                parts.append(f"- {text}")
+                        if not parts:
+                            return ""
+                        body = "\n".join(parts)
+                        return f"### {title}\n{body}"
+
+                    try:
+                        fb = get_feedback(memory, user_prompt, limit=5)
+                        ctx = _fmt(fb, "Feedback")
+                        if ctx:
+                            ctx_parts.append(ctx)
+                    except Exception:
+                        pass
+                    try:
+                        fixes = get_error_fixes(memory, user_prompt, limit=3)
+                        ctx = _fmt(fixes, "Error fixes")
+                        if ctx:
+                            ctx_parts.append(ctx)
+                    except Exception:
+                        pass
+                    try:
+                        improv = get_improvement_paths(memory, user_prompt, limit=3)
+                        ctx = _fmt(improv, "Improvement paths")
+                        if ctx:
+                            ctx_parts.append(ctx)
+                    except Exception:
+                        pass
+
                 if retriever is not None:
                     hits = retriever.retrieve_with_confidence(user_prompt, top_k=5)
                     for h in hits:
@@ -136,6 +192,7 @@ class ChatGPTClient:
                         else:
                             snippet = getattr(item, "summary", getattr(item, "message", str(item)))
                         ctx_parts.append(snippet)
+
                 if memory is not None:
                     entries: List[Any] = []
                     if hasattr(memory, "get_similar_entries"):
