@@ -56,14 +56,19 @@ class RankingModelScheduler:
         rr.save_model(tm, self.model_path)
 
         # Reload model and reliability scores in running services
-        for svc in self.services:
+        def _reload_all(svc: Any) -> None:
             try:
                 if hasattr(svc, "reload_ranker_model"):
                     svc.reload_ranker_model(self.model_path)
                 if hasattr(svc, "reload_reliability_scores"):
                     svc.reload_reliability_scores()
             except Exception:
-                continue
+                return
+            for dep in getattr(svc, "dependent_services", []) or []:
+                _reload_all(dep)
+
+        for svc in self.services:
+            _reload_all(svc)
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:

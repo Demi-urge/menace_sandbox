@@ -328,10 +328,12 @@ class RetrievalResult(list):
         items: Sequence[Any],
         session_id: str,
         vectors: List[Tuple[str, str]],
+        fallback_sources: Sequence[str] | None = None,
     ) -> None:
         super().__init__(items)
         self.session_id = session_id
         self.vectors = vectors
+        self.fallback_sources = list(fallback_sources or [])
 
 
 @dataclass
@@ -517,6 +519,7 @@ class UniversalRetriever:
         self._id_fields: dict[str, tuple[str, ...]] = {}
         self._encoder: Any | None = None
         self._last_db_times: Dict[str, float] = {}
+        self._last_fallback_sources: List[str] = []
 
         # register known database types.  The first registration provides the
         # encoder used for free-form text queries.
@@ -750,6 +753,7 @@ class UniversalRetriever:
         candidates: List[tuple[str, Any, Any, float, Dict[str, float]]] = []
         vector: List[float] | None = None
         timings: Dict[str, float] = {}
+        fallback_sources: List[str] = []
         reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
         kpi_map: Dict[str, Dict[str, float]] = {}
         if MetricsDB is not None:
@@ -801,12 +805,35 @@ class UniversalRetriever:
                         for kv in items
                         if reliabilities.get(kv[0], 0.0) >= self.reliability_threshold
                     ]
+            fallback_source: str | None = None
+            if self.reliability_threshold and self._reliability_stats and items:
+                top_name = items[0][0]
+                top_rel = self._reliability_stats.get(top_name, {}).get(
+                    "reliability", 0.0
+                )
+                if top_rel < self.reliability_threshold:
+                    for name, _ in items[1:]:
+                        if (
+                            self._reliability_stats.get(name, {}).get(
+                                "reliability", 0.0
+                            )
+                            >= self.reliability_threshold
+                        ):
+                            fallback_source = name
+                            break
+            processed: set[str] = set()
             for source, db in items:
                 start = time.perf_counter()
                 try:
                     matches = db.search_by_vector(vector, top_k)
                 except Exception:  # pragma: no cover - defensive
                     timings[source] = time.perf_counter() - start
+                    processed.add(source)
+                    if (
+                        len(candidates) >= top_k
+                        and (not fallback_source or fallback_source in processed)
+                    ):
+                        break
                     continue
                 timings[source] = time.perf_counter() - start
                 for m in matches:
@@ -868,8 +895,13 @@ class UniversalRetriever:
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
                     candidates.append((source, rec_id, m, base_score, feats))
-                if len(candidates) >= top_k:
+                processed.add(source)
+                if len(candidates) >= top_k and (
+                    not fallback_source or fallback_source in processed
+                ):
                     break
+            if fallback_source and fallback_source in processed:
+                fallback_sources.append(fallback_source)
 
         if self.code_db and len(candidates) < top_k:
             allow = True
@@ -964,6 +996,7 @@ class UniversalRetriever:
                     candidates.append(("code", rec_id, m, base_score, feats))
         candidates.sort(key=lambda entry: entry[3], reverse=True)
         self._last_db_times = timings
+        self._last_fallback_sources = fallback_sources
         return candidates[:top_k]
 
     # ------------------------------------------------------------------
@@ -1251,6 +1284,7 @@ class UniversalRetriever:
             self._load_reliability_stats()
         raw_results = self._retrieve_candidates(query, top_k, db_names=dbs)
         db_times = dict(getattr(self, "_last_db_times", {}))
+        fb_sources = list(getattr(self, "_last_fallback_sources", []))
         bias_map: Dict[str, float] = {}
         if roi_tracker is not None:
             try:
@@ -1355,10 +1389,12 @@ class UniversalRetriever:
                     )
                     fb_times = getattr(self, "_last_db_times", {})
                     db_times.update(fb_times)
+                    fb_sources.extend(getattr(self, "_last_fallback_sources", []))
                     _score_results(fb_results)
                     scored.sort(key=lambda e: e["confidence"], reverse=True)
 
         self._last_db_times = db_times
+        self._last_fallback_sources = list(dict.fromkeys(fb_sources))
 
         link_info = self._related_boost(
             scored,
@@ -1418,6 +1454,8 @@ class UniversalRetriever:
                 path, links = link_info[idx]
                 reason += f" linked via {path}"
                 meta["linked_records"] = links
+            if self._last_fallback_sources:
+                meta["fallback_sources"] = list(self._last_fallback_sources)
             hits.append(
                 ResultBundle(
                     origin_db=entry["source"],
@@ -1529,7 +1567,9 @@ class UniversalRetriever:
             if not vid:
                 vid = str(h.record_id)
             vector_info.append((h.origin_db, vid))
-        result_container = RetrievalResult(results, session_id, vector_info)
+        result_container = RetrievalResult(
+            results, session_id, vector_info, self._last_fallback_sources
+        )
 
         total_candidates = len(hits)
         hit_rate = len(results) / total_candidates if total_candidates else 0.0
@@ -1623,7 +1663,9 @@ class UniversalRetriever:
             }
             for h in hits
         ]
-        result_container = RetrievalResult(formatted, session_id, vectors)
+        result_container = RetrievalResult(
+            formatted, session_id, vectors, getattr(hits, "fallback_sources", [])
+        )
         if return_metrics:
             return result_container, session_id, vectors, metrics_list
         return result_container, session_id, vectors
