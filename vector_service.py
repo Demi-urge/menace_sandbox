@@ -1,0 +1,399 @@
+from __future__ import annotations
+
+"""Vector service wrappers adding logging and metrics.
+
+This module exposes small facades around existing retrieval and logging
+components.  Each wrapper performs structured logging, exports metrics via
+:mod:`metrics_exporter` and supports dependency injection for easy testing.
+
+It mirrors the behaviour of :mod:`semantic_service` but is intentionally
+light‑weight so other parts of the sandbox can depend on it without pulling in
+heavy modules.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable, TypeVar
+import functools
+import logging
+import time
+
+try:  # optional dependency
+    from universal_retriever import UniversalRetriever, ResultBundle  # type: ignore
+except Exception:  # pragma: no cover - fallback when running in isolation
+    UniversalRetriever = None  # type: ignore
+    ResultBundle = object  # type: ignore
+
+try:
+    from context_builder import ContextBuilder as _LegacyContextBuilder  # type: ignore
+except Exception:  # pragma: no cover
+    _LegacyContextBuilder = None  # type: ignore
+
+try:
+    from vector_metrics_db import VectorMetricsDB  # type: ignore
+except Exception:  # pragma: no cover
+    VectorMetricsDB = None  # type: ignore
+
+try:
+    from data_bot import MetricsDB  # type: ignore
+except Exception:  # pragma: no cover
+    MetricsDB = None  # type: ignore
+
+try:
+    from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
+except Exception:  # pragma: no cover
+    EmbeddableDBMixin = object  # type: ignore
+
+try:
+    import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - when running inside package
+    from . import metrics_exporter as _me  # type: ignore
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class VectorServiceError(RuntimeError):
+    """Base exception for vector service failures."""
+
+
+class RateLimitError(VectorServiceError):
+    """Raised when the underlying service rate limits requests."""
+
+
+class MalformedPromptError(ValueError):
+    """Raised when input prompts are malformed or empty."""
+
+
+# ---------------------------------------------------------------------------
+# Decorators
+# ---------------------------------------------------------------------------
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+_CALL_COUNT = _me.Gauge(
+    "vector_service_calls_total", "Number of times a function is invoked", ["function"]
+)
+_LATENCY_GAUGE = _me.Gauge(
+    "vector_service_latency_seconds", "Execution time of functions", ["function"]
+)
+_RESULT_SIZE_GAUGE = _me.Gauge(
+    "vector_service_result_size", "Size of results returned by functions", ["function"]
+)
+
+
+def _result_size(result: Any) -> int:
+    if hasattr(result, "__len__"):
+        try:
+            return len(result)  # type: ignore[arg-type]
+        except Exception:
+            return 0
+    return 0
+
+
+def log_and_time(func: F) -> F:
+    """Log structured information about a function call."""
+
+    logger = logging.getLogger(func.__module__)
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.get("session_id", "")
+        start = time.time()
+        try:
+            result = func(*args, **kwargs)
+            latency = time.time() - start
+            size = _result_size(result)
+            logger.info(
+                "%s executed", func.__qualname__,
+                extra={"session_id": session_id, "latency": latency, "result_size": size},
+            )
+            return result
+        except Exception:
+            latency = time.time() - start
+            logger.exception(
+                "%s failed", func.__qualname__,
+                extra={"session_id": session_id, "latency": latency, "result_size": 0},
+            )
+            raise
+
+    return wrapper  # type: ignore[return-value]
+
+
+def track_metrics(func: F) -> F:
+    """Update Prometheus-style metrics for the wrapped function."""
+
+    name = func.__qualname__
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start = time.time()
+        result = func(*args, **kwargs)
+        latency = time.time() - start
+        size = _result_size(result)
+        _CALL_COUNT.labels(name).inc()
+        _LATENCY_GAUGE.labels(name).set(latency)
+        _RESULT_SIZE_GAUGE.labels(name).set(size)
+        return result
+
+    return wrapper  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
+# Helper classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Retriever:
+    """Facade around :class:`UniversalRetriever` with optional fallback."""
+
+    retriever: UniversalRetriever | None = None
+    fallback_retriever: UniversalRetriever | None = None
+    top_k: int = 5
+    score_threshold: float = 0.0
+    _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
+
+    def _get_retriever(self) -> UniversalRetriever:
+        if self.retriever is None:
+            if UniversalRetriever is None:  # pragma: no cover - defensive
+                raise RuntimeError("UniversalRetriever unavailable")
+            self.retriever = UniversalRetriever()
+        return self.retriever
+
+    def _get_fallback(self) -> UniversalRetriever | None:
+        if self.fallback_retriever is not None:
+            return self.fallback_retriever
+        return None
+
+    def _normalise(self, hits: Iterable[Any]) -> List[Dict[str, Any]]:
+        results: List[Dict[str, Any]] = []
+        for h in hits:
+            try:
+                results.append(
+                    {
+                        "origin_db": getattr(h, "origin_db", ""),
+                        "record_id": getattr(h, "record_id", ""),
+                        "score": float(getattr(h, "score", 0.0)),
+                        "metadata": getattr(h, "metadata", {}),
+                        "reason": getattr(h, "reason", ""),
+                    }
+                )
+            except Exception:
+                continue
+        return results
+
+    def _retrieve(self, retriever: UniversalRetriever, query: str, k: int) -> List[Dict[str, Any]]:
+        try:
+            hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "rate limit" in msg or "too many requests" in msg or "429" in msg:
+                raise RateLimitError(str(exc)) from exc
+        
+            raise VectorServiceError(str(exc)) from exc
+        return self._normalise(hits)
+
+    @log_and_time
+    @track_metrics
+    def search(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        session_id: str = "",
+        min_score: float | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Perform semantic search and return normalised results.
+
+        The method performs a primary retrieval.  When no hits are returned or the
+        best score falls below ``min_score`` (or ``score_threshold``) a secondary
+        retrieval strategy is attempted using ``fallback_retriever`` when
+        provided.
+        """
+
+        if not isinstance(query, str) or not query.strip():
+            raise MalformedPromptError("query must be a non-empty string")
+
+        k = top_k or self.top_k
+        threshold = self.score_threshold if min_score is None else min_score
+        retriever = self._get_retriever()
+        results = self._retrieve(retriever, query, k)
+        top_score = results[0]["score"] if results else 0.0
+        if (not results or top_score < threshold) and self._get_fallback() is not None:
+            fb = self._get_fallback()
+            assert fb is not None
+            fb_results = self._retrieve(fb, query, k)
+            if fb_results:
+                for r in fb_results:
+                    r.setdefault("reason", "fallback")
+                results = fb_results
+        return results
+
+
+@dataclass
+class ContextBuilder:
+    """Thin wrapper around :func:`context_builder.ContextBuilder`."""
+
+    builder: _LegacyContextBuilder | None = None
+
+    def _get_builder(self) -> _LegacyContextBuilder:
+        if self.builder is None:
+            if _LegacyContextBuilder is None:  # pragma: no cover - defensive
+                raise RuntimeError("ContextBuilder unavailable")
+            self.builder = _LegacyContextBuilder()
+        return self.builder
+
+    @log_and_time
+    @track_metrics
+    def build(self, task_description: str, *, session_id: str = "", **kwargs: Any) -> str:
+        if not isinstance(task_description, str) or not task_description.strip():
+            raise MalformedPromptError("task_description must be a non-empty string")
+        builder = self._get_builder()
+        try:
+            return builder.build_context(task_description, **kwargs)
+        except Exception as exc:  # pragma: no cover - best effort
+            msg = str(exc).lower()
+            if "rate limit" in msg or "too many requests" in msg or "429" in msg:
+                raise RateLimitError(str(exc)) from exc
+            raise VectorServiceError(str(exc)) from exc
+
+
+@dataclass
+class PatchLogger:
+    """Record patch outcomes in metrics databases."""
+
+    metrics_db: MetricsDB | None = None
+    vector_metrics: VectorMetricsDB | None = None
+
+    def _parse_vectors(self, ids: Iterable[str]) -> List[Tuple[str, str]]:
+        pairs: List[Tuple[str, str]] = []
+        for vid in ids:
+            if ":" in vid:
+                db, vec = vid.split(":", 1)
+            else:
+                db, vec = "", vid
+            pairs.append((db, vec))
+        return pairs
+
+    @log_and_time
+    @track_metrics
+    def track_contributors(
+        self,
+        vector_ids: Sequence[str],
+        result: bool,
+        *,
+        patch_id: str = "",
+        session_id: str = "",
+    ) -> None:
+        pairs = self._parse_vectors(vector_ids)
+        if self.metrics_db is not None:
+            try:  # pragma: no cover - best effort
+                self.metrics_db.log_patch_outcome(
+                    patch_id or "", result, pairs, session_id=session_id
+                )
+            except Exception:
+                pass
+        elif self.vector_metrics is not None:
+            try:  # pragma: no cover - best effort
+                self.vector_metrics.update_outcome(
+                    session_id,
+                    pairs,
+                    contribution=0.0,
+                    patch_id=patch_id,
+                    win=result,
+                    regret=not result,
+                )
+            except Exception:
+                pass
+
+
+class EmbeddingBackfill:
+    """Trigger embedding backfills on all known database classes."""
+
+    def __init__(self, batch_size: int = 100, backend: str = "annoy") -> None:
+        self.batch_size = batch_size
+        self.backend = backend
+
+    def _load_known_dbs(self) -> List[type]:
+        modules = [
+            "bot_database",
+            "task_handoff_bot",
+            "error_bot",
+            "information_db",
+            "chatgpt_enhancement_bot",
+            "research_aggregator_bot",
+        ]
+        for name in modules:  # pragma: no cover - best effort imports
+            try:
+                __import__(name)
+            except Exception:
+                pass
+        try:
+            subclasses = [
+                cls
+                for cls in EmbeddableDBMixin.__subclasses__()  # type: ignore[attr-defined]
+                if hasattr(cls, "backfill_embeddings")
+            ]
+        except Exception:  # pragma: no cover - defensive
+            subclasses = []
+        return subclasses
+
+    @log_and_time
+    @track_metrics
+    def _process_db(
+        self,
+        db: EmbeddableDBMixin,
+        *,
+        batch_size: int,
+        session_id: str = "",
+    ) -> None:
+        try:
+            db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
+        except TypeError:
+            db.backfill_embeddings()  # type: ignore[call-arg]
+
+    @log_and_time
+    @track_metrics
+    def run(
+        self,
+        *,
+        session_id: str = "",
+        batch_size: int | None = None,
+        backend: str | None = None,
+    ) -> None:
+        bs = batch_size if batch_size is not None else self.batch_size
+        be = backend or self.backend
+        subclasses = self._load_known_dbs()
+        logger = logging.getLogger(__name__)
+        total = len(subclasses)
+        for idx, cls in enumerate(subclasses, 1):
+            try:
+                db = cls(vector_backend=be)  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - fallback
+                try:
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:
+                    continue
+            logger.info(
+                "Backfilling %s (%d/%d)",
+                cls.__name__,
+                idx,
+                total,
+                extra={"session_id": session_id},
+            )
+            try:
+                self._process_db(db, batch_size=bs, session_id=session_id)
+            except Exception:  # pragma: no cover - best effort
+                continue
+
+
+__all__ = [
+    "Retriever",
+    "ContextBuilder",
+    "PatchLogger",
+    "EmbeddingBackfill",
+    "VectorServiceError",
+    "RateLimitError",
+    "MalformedPromptError",
+]
