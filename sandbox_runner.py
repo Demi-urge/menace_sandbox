@@ -126,6 +126,7 @@ from menace.error_logger import ErrorLogger
 from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
+from relevancy_metrics_db import RelevancyMetricsDB
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -486,7 +487,12 @@ class _CycleMeta:
 
 
 class _SandboxMetaLogger:
-    def __init__(self, path: Path, module_index: "ModuleIndexDB" | None = None) -> None:
+    def __init__(
+        self,
+        path: Path,
+        module_index: "ModuleIndexDB" | None = None,
+        metrics_db: RelevancyMetricsDB | None = None,
+    ) -> None:
         self.path = path
         self.audit = AuditTrail(str(path))
         self.records: list[_CycleMeta] = []
@@ -494,6 +500,7 @@ class _SandboxMetaLogger:
         self.flagged_sections: set[str] = set()
         self.last_patch_id = 0
         self.module_index = module_index
+        self.metrics_db = metrics_db
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
@@ -503,6 +510,8 @@ class _SandboxMetaLogger:
         modules: list[str],
         reason: str,
         warnings: dict | None = None,
+        *,
+        exec_time: float = 0.0,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
@@ -518,6 +527,11 @@ class _SandboxMetaLogger:
             else:
                 gid = m
             self.module_deltas.setdefault(gid, []).append(delta)
+            if self.metrics_db:
+                try:
+                    self.metrics_db.record(m, exec_time, self.module_index)
+                except Exception:
+                    logger.exception("relevancy metrics record failed")
         try:
             record = {
                 "cycle": cycle,
@@ -705,7 +719,10 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     event_bus = UnifiedEventBus(persist_path=str(Path(tmp) / "events.db"))
     logger.info("event bus initialised")
 
+    relevancy_db = RelevancyMetricsDB(data_dir / "relevancy_metrics.db")
     meta_log = _SandboxMetaLogger(data_dir / "sandbox_meta.log")
+    meta_log.module_index = module_index
+    meta_log.metrics_db = relevancy_db
     metrics_db = MetricsDB(data_dir / "metrics.db")
     data_bot = DataBot(metrics_db)
     dd_bot = DiscrepancyDetectionBot()
@@ -1468,7 +1485,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                             (getattr(e, "response", "") or "").strip().splitlines()[0]
                             for e in entries
                         ]
-                            prompt = "\n".join(snips) + "\n\n" + prompt
+                        prompt = "\n".join(snips) + "\n\n" + prompt
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )
