@@ -79,7 +79,8 @@ def test_cross_db_search(tmp_path):
     # inspection and dataset generation
     for h in hits:
         assert "similarity" in h.metadata
-        assert "contextual_metrics" in h.metadata
+        cm = h.metadata.get("contextual_metrics", {})
+        assert cm.get("model_score", 0.0) > 0.0
 
 
 def test_metric_based_ranking(tmp_path):

@@ -105,6 +105,9 @@ def test_reliability_stats_alter_order(tmp_path):
     # regret rates should be logged even when zero
     assert m1.get("regret_rate") == pytest.approx(0.0)
     assert m2.get("regret_rate") == pytest.approx(0.0)
+    # model scoring still provided when reliability biasing is enabled
+    assert m1.get("model_score", 0.0) >= 0.0
+    assert m2.get("model_score", 0.0) >= 0.0
 
 
 @pytest.fixture()
