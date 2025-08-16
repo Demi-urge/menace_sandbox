@@ -216,11 +216,15 @@ class RelevancyRadar:
         info["executions"] += 1
         self._persist_metrics()
 
-    def evaluate_relevance(self, threshold: float) -> Dict[str, str]:
-        """Return modules with scores below ``threshold``.
+    def evaluate_relevance(
+        self, compress_threshold: float, replace_threshold: float
+    ) -> Dict[str, str]:
+        """Return modules with scores below the provided thresholds.
 
-        Modules with zero score are tagged ``retire`` while modules below the
-        threshold are tagged ``compress``.
+        Modules with zero score are tagged ``retire``. Modules with a score
+        less than or equal to ``compress_threshold`` are tagged ``compress``.
+        Modules with a score between ``compress_threshold`` and
+        ``replace_threshold`` (inclusive) are tagged ``replace``.
         """
 
         results: Dict[str, str] = {}
@@ -228,8 +232,10 @@ class RelevancyRadar:
             score = int(counts.get("imports", 0)) + int(counts.get("executions", 0))
             if score == 0:
                 results[mod] = "retire"
-            elif score < threshold:
+            elif score <= compress_threshold:
                 results[mod] = "compress"
+            elif score <= replace_threshold:
+                results[mod] = "replace"
 
         self._persist_metrics()
         return results
@@ -291,22 +297,26 @@ def track_usage(module_name: str) -> None:
     radar.track_usage(module_name)
 
 
-def evaluate_relevance(threshold: float) -> Dict[str, str]:
+def evaluate_relevance(
+    compress_threshold: float, replace_threshold: float
+) -> Dict[str, str]:
     """Evaluate relevancy of tracked modules using the default radar.
 
     Parameters
     ----------
-    threshold:
-        Combined import and execution score below which modules are flagged.
+    compress_threshold:
+        Score at or below which modules are flagged ``compress``.
+    replace_threshold:
+        Score at or below which modules are flagged ``replace``.
 
     Returns
     -------
     Dict[str, str]
-        Mapping of module names to relevancy status (``retire``/``compress``).
+        Mapping of module names to relevancy status (``retire``/``compress``/``replace``).
     """
 
     radar = _get_default_radar()
-    return radar.evaluate_relevance(threshold)
+    return radar.evaluate_relevance(compress_threshold, replace_threshold)
 
 
 def scan(
