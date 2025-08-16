@@ -176,6 +176,8 @@ def test_low_reliability_triggers_fallback(tmp_path):
     hits, _, _ = retriever.retrieve("x", top_k=1)
     assert hits[0].origin_db == "workflow"
     assert set(retriever._last_db_times) == {"bot", "workflow"}
+    assert hits.fallback_sources == ["workflow"]
+    assert hits[0].metadata.get("fallback_sources") == ["workflow"]
 
 
 @pytest.fixture()
