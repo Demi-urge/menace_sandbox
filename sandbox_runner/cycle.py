@@ -65,6 +65,7 @@ from metrics_exporter import (
     orphan_modules_legacy_total,
     orphan_modules_reclassified_total,
 )
+from relevancy_radar import RelevancyRadar
 
 from .environment import (
     SANDBOX_ENV_PRESETS,
@@ -1616,6 +1617,11 @@ def _sandbox_cycle_runner(
             ctx.synergy_needed = True
         logger.info("cycle %d complete", idx)
         logger.info("cycle roi", extra={"iteration": idx, "roi": roi})
+
+        try:
+            RelevancyRadar.flag_unused_modules(getattr(ctx, "module_map", []))
+        except Exception:
+            logger.exception("relevancy radar flagging failed")
 
         if (idx + 1) % ADAPTIVE_ROI_RETRAIN_INTERVAL == 0:
             logger.info(

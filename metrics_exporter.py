@@ -279,6 +279,12 @@ relevancy_flagged_modules_total = Gauge(
     ["status"],
 )
 
+# Gauge tracking modules considered irrelevant (zero usage)
+irrelevant_modules_total = Gauge(
+    "irrelevant_modules_total",
+    "Number of modules flagged as irrelevant by relevancy radar",
+)
+
 def update_relevancy_metrics(flags: Dict[str, str]) -> None:
     """Update gauges for modules flagged by the relevancy radar."""
     counts = Counter(flags.values())
@@ -286,6 +292,7 @@ def update_relevancy_metrics(flags: Dict[str, str]) -> None:
         relevancy_flagged_modules_total.labels(status=status).set(
             float(counts.get(status, 0))
         )
+    irrelevant_modules_total.set(float(counts.get("retire", 0)))
 
 # New gauges for extended metrics
 security_score_gauge = Gauge(
