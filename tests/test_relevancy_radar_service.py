@@ -72,3 +72,35 @@ def test_start_runs_initial_scan(monkeypatch, tmp_path):
 
     assert calls["count"] == 1
     assert service.flags() == {"init": "flag"}
+
+
+def test_start_populates_latest_flags(monkeypatch, tmp_path):
+    """start() triggers an immediate scan that updates latest_flags."""
+
+    def fake_flag_unused(mods, impact_stats=None):
+        return {m: "retire" for m in mods}
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "flag_unused_modules",
+        staticmethod(fake_flag_unused),
+    )
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    monkeypatch.setattr(service, "_modules", lambda: ["sample"])
+
+    service.start()
+    service.stop()
+
+    assert service.latest_flags == {"sample": "retire"}
