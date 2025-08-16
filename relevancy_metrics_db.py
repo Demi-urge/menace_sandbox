@@ -19,10 +19,18 @@ class RelevancyMetricsDB:
                     module_name TEXT,
                     call_count INTEGER DEFAULT 0,
                     total_time REAL DEFAULT 0.0,
+                    roi_delta REAL DEFAULT 0.0,
                     tags TEXT
                 )
                 """
             )
+            try:
+                conn.execute(
+                    "ALTER TABLE module_metrics ADD COLUMN roi_delta REAL DEFAULT 0.0"
+                )
+            except sqlite3.OperationalError:
+                # Column already exists – ignore migration errors
+                pass
 
     # --------------------------------------------------------------
     def record(
@@ -31,6 +39,7 @@ class RelevancyMetricsDB:
         elapsed: float,
         module_index: ModuleIndexDB | None = None,
         tags: Iterable[str] | None = None,
+        roi_delta: float | None = None,
     ) -> None:
         """Update metrics for ``module``.
 
@@ -50,28 +59,36 @@ class RelevancyMetricsDB:
                 pass
         with sqlite3.connect(self.path, check_same_thread=False) as conn:
             row = conn.execute(
-                "SELECT call_count, total_time, tags FROM module_metrics WHERE module_id=?",
+                "SELECT call_count, total_time, roi_delta, tags FROM module_metrics WHERE module_id=?",
                 (mid,),
             ).fetchone()
             if row:
-                count, total, existing = row
+                count, total, roi_val, existing = row
                 count = int(count) + 1
                 total = float(total) + float(elapsed)
+                roi_val = float(roi_val or 0.0) + float(roi_delta or 0.0)
                 current = set(json.loads(existing) if existing else [])
                 current.update(tag_set)
                 conn.execute(
-                    "UPDATE module_metrics SET module_name=?, call_count=?, total_time=?, tags=? WHERE module_id=?",
+                    "UPDATE module_metrics SET module_name=?, call_count=?, total_time=?, roi_delta=?, tags=? WHERE module_id=?",
                     (
                         module,
                         count,
                         total,
+                        roi_val,
                         json.dumps(sorted(current)),
                         mid,
                     ),
                 )
             else:
                 conn.execute(
-                    "INSERT INTO module_metrics(module_id, module_name, call_count, total_time, tags) VALUES (?, ?, 1, ?, ?)",
-                    (mid, module, float(elapsed), json.dumps(sorted(tag_set))),
+                    "INSERT INTO module_metrics(module_id, module_name, call_count, total_time, roi_delta, tags) VALUES (?, ?, 1, ?, ?, ?)",
+                    (
+                        mid,
+                        module,
+                        float(elapsed),
+                        float(roi_delta or 0.0),
+                        json.dumps(sorted(tag_set)),
+                    ),
                 )
             conn.commit()

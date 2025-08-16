@@ -396,9 +396,10 @@ def scan(
     The analysis uses simple heuristics:
 
     - ``retire``: modules invoked ``min_calls`` times or fewer.
-    - ``compress``: modules whose call *and* time ratios fall below
+    - ``compress``: modules whose call *and* ROI ratios fall below
       ``compress_ratio``.
-    - ``replace``: modules below ``replace_ratio`` for both metrics.
+    - ``replace``: modules below ``replace_ratio`` for both metrics
+      (call and ROI).
 
     Parameters
     ----------
@@ -427,26 +428,27 @@ def scan(
 
     with sqlite3.connect(str(db_path), check_same_thread=False) as conn:
         rows = conn.execute(
-            "SELECT module_name, call_count, total_time FROM module_metrics"
+            "SELECT module_name, call_count, roi_delta FROM module_metrics"
         ).fetchall()
 
     if not rows:
         return {}
 
     total_calls = sum(int(r[1] or 0) for r in rows)
-    total_time = sum(float(r[2] or 0.0) for r in rows)
+    total_roi = sum(max(float(r[2] or 0.0), 0.0) for r in rows)
     flags: Dict[str, str] = {}
-    for name, calls, elapsed in rows:
+    for name, calls, roi in rows:
         call_count = int(calls or 0)
-        elapsed_time = float(elapsed or 0.0)
+        roi_value = float(roi or 0.0)
         call_ratio = call_count / total_calls if total_calls else 0.0
-        time_ratio = elapsed_time / total_time if total_time else 0.0
+        roi_pos = max(roi_value, 0.0)
+        roi_ratio = roi_pos / total_roi if total_roi else 0.0
 
         if call_count <= min_calls:
             flags[str(name)] = "retire"
-        elif call_ratio <= compress_ratio and time_ratio <= compress_ratio:
+        elif call_ratio <= compress_ratio and roi_ratio <= compress_ratio:
             flags[str(name)] = "compress"
-        elif call_ratio <= replace_ratio and time_ratio <= replace_ratio:
+        elif call_ratio <= replace_ratio and roi_ratio <= replace_ratio:
             flags[str(name)] = "replace"
 
     return flags
