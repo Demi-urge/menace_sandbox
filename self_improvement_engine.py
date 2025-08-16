@@ -689,6 +689,7 @@ class SelfImprovementEngine:
                 self.logger.exception("policy load failed: %s", exc)
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
+        self.metrics_db = getattr(meta_logger, "metrics_db", None) if meta_logger else None
         self.auto_refresh_map = bool(auto_refresh_map)
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
@@ -1088,6 +1089,7 @@ class SelfImprovementEngine:
         *,
         tags: Sequence[str] | None = None,
     ) -> int | None:
+        start = time.perf_counter()
         history = self._memory_summaries(module)
         if history:
             self.logger.info(
@@ -1125,6 +1127,14 @@ class SelfImprovementEngine:
                     "gpt suggestion failed", extra=log_record(module=module)
                 )
         patch_id = generate_patch(module, self.self_coding_engine)
+        elapsed = time.perf_counter() - start
+        if self.metrics_db:
+            try:
+                self.metrics_db.record(module, elapsed, self.module_index, tags)
+            except Exception:
+                self.logger.exception(
+                    "relevancy metrics record failed", extra=log_record(module=module)
+                )
         try:
             log_tags = [
                 f"self_improvement_engine.{action}",
@@ -2706,6 +2716,7 @@ class SelfImprovementEngine:
         threshold = SandboxSettings().side_effect_threshold
 
         for m in all_modules:
+            start = time.perf_counter()
             path = Path(m)
             abs_path = path if path.is_absolute() else repo / path
             try:
@@ -2725,6 +2736,14 @@ class SelfImprovementEngine:
             info["redundant"] = cls != "candidate"
             info["side_effects"] = score
             classifications[rel] = {"classification": cls, "side_effects": score}
+            elapsed = time.perf_counter() - start
+            if self.metrics_db:
+                try:
+                    self.metrics_db.record(rel, elapsed, self.module_index)
+                except Exception:
+                    self.logger.exception(
+                        "relevancy metrics record failed", extra=log_record(module=rel)
+                    )
             if score > threshold:
                 info["heavy_side_effects"] = True
                 self.logger.info(
