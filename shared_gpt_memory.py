@@ -2,14 +2,10 @@ from __future__ import annotations
 
 """Shared GPT memory manager instance for all ChatGPT clients."""
 
-import os
-
 from gpt_memory import GPTMemoryManager
-from local_knowledge_module import init_local_knowledge
+from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE
 
-# Single global instance reused across bots
-GPT_MEMORY_MANAGER: GPTMemoryManager = init_local_knowledge(
-    os.getenv("GPT_MEMORY_DB", "gpt_memory.db")
-).memory
+# Single global GPT memory instance reused across bots
+GPT_MEMORY_MANAGER: GPTMemoryManager = LOCAL_KNOWLEDGE_MODULE.memory
 
 __all__ = ["GPT_MEMORY_MANAGER"]
