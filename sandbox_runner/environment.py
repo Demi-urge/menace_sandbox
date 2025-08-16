@@ -58,6 +58,31 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
+# Relevancy radar integration -------------------------------------------------
+try:  # pragma: no cover - optional dependency
+    from relevancy_radar import track_module_usage as _radar_track_module_usage
+except Exception:  # pragma: no cover - optional dependency
+    def _radar_track_module_usage(_module: str) -> None:  # type: ignore
+        return None
+
+import builtins
+
+_original_import = builtins.__import__
+
+
+def _tracking_import(
+    name, globals=None, locals=None, fromlist=(), level=0
+):  # pragma: no cover - thin wrapper
+    mod = _original_import(name, globals, locals, fromlist, level)
+    try:
+        _radar_track_module_usage(name)
+    except Exception:
+        pass
+    return mod
+
+
+builtins.__import__ = _tracking_import
+
 logger = get_logger(__name__)
 
 if os.name == "nt" and "fcntl" not in sys.modules:
@@ -5255,6 +5280,7 @@ def run_repo_section_simulations(
                             for stub in input_stubs:
                                 env_input = dict(preset)
                                 env_input.update(stub)
+                                _radar_track_module_usage(module)
 
                                 for _ in range(3):
                                     result = simulate_execution_environment(
@@ -5377,6 +5403,8 @@ def run_repo_section_simulations(
                     env_input = dict(preset)
                     env_input.update(stub)
                     logger.info("combined run for scenario %s", scenario)
+                    for m in all_modules:
+                        _radar_track_module_usage(m)
                     res, updates = await _section_worker(
                         "\n".join(combined),
                         env_input,
@@ -6181,6 +6209,7 @@ def run_workflow_simulations(
                 for preset in all_presets:
                     scenario = preset.get("SCENARIO_NAME", "")
                     env_input = dict(preset)
+                    _radar_track_module_usage(mod_name)
                     for _ in range(3):
                         result = simulate_execution_environment(snippet, env_input)
                         if not result.get("risk_flags_triggered"):
@@ -6265,6 +6294,8 @@ def run_workflow_simulations(
         for preset in all_presets:
             scenario = preset.get("SCENARIO_NAME", "")
             env_input = dict(preset)
+            for m in workflow_modules:
+                _radar_track_module_usage(m)
             res, updates = await _section_worker(
                 combined_snippet,
                 env_input,
