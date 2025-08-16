@@ -285,6 +285,16 @@ irrelevant_modules_total = Gauge(
     "Number of modules flagged as irrelevant by relevancy radar",
 )
 
+# Gauges tracking module retirement outcomes
+retired_modules_total = Gauge(
+    "retired_modules_total",
+    "Number of modules retired by module_retirement_service",
+)
+compressed_modules_total = Gauge(
+    "compressed_modules_total",
+    "Number of modules compressed by module_retirement_service",
+)
+
 def update_relevancy_metrics(flags: Dict[str, str]) -> None:
     """Update gauges for modules flagged by the relevancy radar."""
     counts = Counter(flags.values())
@@ -293,6 +303,15 @@ def update_relevancy_metrics(flags: Dict[str, str]) -> None:
             float(counts.get(status, 0))
         )
     irrelevant_modules_total.set(float(counts.get("retire", 0)))
+
+
+def update_module_retirement_metrics(results: Dict[str, str]) -> None:
+    """Increment gauges for module retirement actions."""
+    counts = Counter(results.values())
+    if counts.get("retired"):
+        retired_modules_total.inc(float(counts["retired"]))
+    if counts.get("compressed"):
+        compressed_modules_total.inc(float(counts["compressed"]))
 
 # New gauges for extended metrics
 security_score_gauge = Gauge(
