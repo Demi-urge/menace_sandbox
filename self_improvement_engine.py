@@ -4515,14 +4515,24 @@ class SelfImprovementEngine:
             replace_threshold = 20.0
             compress_threshold = 5.0
             auto_process = True
+        flags: dict[str, str] = dict(self.relevancy_flags)
         try:
-            flags = self.relevancy_radar.evaluate_final_contribution(
+            radar_flags = self.relevancy_radar.evaluate_final_contribution(
                 compress_threshold, replace_threshold
             )
+            flags.update(radar_flags)
         except Exception:
             self.logger.exception("relevancy evaluation failed")
-            return
-        if not flags:
+        try:
+            metrics_db = (
+                Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.db"
+            )
+            scan_flags = radar_scan(metrics_db)
+            if scan_flags:
+                flags.update(scan_flags)
+        except Exception:
+            self.logger.exception("relevancy scan failed")
+        if not flags or flags == self.relevancy_flags:
             return
         self.relevancy_flags = flags
         if self.event_bus:
