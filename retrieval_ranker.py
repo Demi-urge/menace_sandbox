@@ -119,7 +119,9 @@ def train(df: pd.DataFrame) -> TrainedModel:
             "label",
         }
     ]
-    X = pd.get_dummies(df[feature_cols], columns=["db_type"], dtype=float).fillna(0.0)
+    X = pd.get_dummies(
+        df[feature_cols], columns=["db_type"], prefix="db", dtype=float
+    ).fillna(0.0)
     y = df["label"].astype(int)
 
     model: object

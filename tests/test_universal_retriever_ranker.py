@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import MethodType
 import json
+import math
 
 import analytics.retrieval_ranker as arr
 from menace.bot_database import BotDB, BotRecord
@@ -154,4 +155,50 @@ def test_training_set_labeling(stats_file: Path, patch_labels_file: Path):
     ts = arr.build_training_set(stats_file, patch_labels_file)
     assert list(ts.y) == [1, 0]
     assert "db_bot" in ts.X.columns
-    assert {"age", "similarity", "win_rate", "regret_rate"}.issubset(ts.X.columns)
+    assert {
+        "age",
+        "similarity",
+        "exec_freq",
+        "roi_delta",
+        "prior_hits",
+        "win_rate",
+        "regret_rate",
+    }.issubset(ts.X.columns)
+
+
+def test_model_predict_uses_all_features(tmp_path):
+    model_path = tmp_path / "model.json"
+    model_path.write_text(
+        json.dumps(
+            {
+                "features": [
+                    "age",
+                    "similarity",
+                    "exec_freq",
+                    "roi_delta",
+                    "prior_hits",
+                    "db_bot",
+                ],
+                "coef": [[0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],
+                "intercept": [0.0],
+            }
+        )
+    )
+    class _DummyDB:
+        def encode_text(self, text: str):
+            return [0.0, 0.0]
+
+    retriever = UniversalRetriever(
+        bot_db=_DummyDB(),
+        weights=RetrievalWeights(similarity=1.0, context=0.0),
+        enable_model_ranking=True,
+        enable_reliability_bias=False,
+        model_path=model_path,
+    )
+    feats = {"age": 1, "similarity": 2, "exec_freq": 3, "roi_delta": 4, "prior_hits": 5}
+    p_bot = retriever._model_predict("bot", feats)
+    p_other = retriever._model_predict("workflow", feats)
+    expected_bot = 1 / (1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5 + 1)))
+    expected_other = 1 / (1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5)))
+    assert p_bot == pytest.approx(expected_bot)
+    assert p_other == pytest.approx(expected_other)
