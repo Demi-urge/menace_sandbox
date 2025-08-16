@@ -115,12 +115,34 @@ class MetricsDashboard:
             "container_creation_failures_total",
             "container_creation_alerts_total",
             "synergy_weight_update_failures_total",
+            "retired_modules_total",
+            "compressed_modules_total",
+            "replaced_modules_total",
         )
         if exporter is not None:
             for name in names:
                 gauge = getattr(exporter, name, None)
                 if gauge is not None:
                     metrics[name] = _get_value(gauge)
+
+            # Include per-status counts and impact totals from relevancy radar
+            flag_gauge = getattr(exporter, "relevancy_flagged_modules_total", None)
+            if flag_gauge is not None:
+                try:
+                    metrics["relevancy_flagged_modules_total"] = {
+                        k[0]: v.get() for k, v in getattr(flag_gauge, "_values", {}).items()
+                    }
+                except Exception:
+                    metrics["relevancy_flagged_modules_total"] = {}
+
+            impact_gauge = getattr(exporter, "relevancy_flagged_modules_impact_total", None)
+            if impact_gauge is not None:
+                try:
+                    metrics["relevancy_flagged_modules_impact_total"] = {
+                        k[0]: v.get() for k, v in getattr(impact_gauge, "_values", {}).items()
+                    }
+                except Exception:
+                    metrics["relevancy_flagged_modules_impact_total"] = {}
 
         try:
             from . import synergy_auto_trainer as sat
@@ -147,6 +169,33 @@ class MetricsDashboard:
             """
                 ).fetchall()
             metrics["roi_rankings"] = rows
+        except Exception:
+            pass
+
+        # Highlight modules recently flagged by relevancy radar with impact scores
+        try:
+            from .relevancy_radar import flagged_modules as rr_flagged
+
+            flags = rr_flagged()
+            impacts: dict[str, float] = {}
+            metrics_path = Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+            try:
+                data = json.loads(metrics_path.read_text())
+                if isinstance(data, dict):
+                    for mod, info in data.items():
+                        if isinstance(info, dict):
+                            impacts[str(mod)] = float(info.get("impact", 0.0))
+            except Exception:
+                pass
+            if flags:
+                metrics["relevancy_flags"] = [
+                    {
+                        "module": m,
+                        "status": s,
+                        "impact": impacts.get(m, 0.0),
+                    }
+                    for m, s in sorted(flags.items())
+                ]
         except Exception:
             pass
 

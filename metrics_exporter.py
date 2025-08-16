@@ -8,6 +8,8 @@ import sys
 
 import logging
 from collections import Counter
+import json
+from pathlib import Path
 
 # Ensure this module is a single instance regardless of import path
 _ALIASES = (
@@ -279,6 +281,20 @@ relevancy_flagged_modules_total = Gauge(
     ["status"],
 )
 
+# Total impact score aggregated by flag status
+relevancy_flagged_modules_impact_total = Gauge(
+    "relevancy_flagged_modules_impact_total",
+    "Total impact score for modules flagged by relevancy radar",
+    ["status"],
+)
+
+# Impact score per individual module
+relevancy_module_impact_score = Gauge(
+    "relevancy_module_impact_score",
+    "Impact score for individual modules flagged by relevancy radar",
+    ["module", "status"],
+)
+
 # Gauge tracking modules considered irrelevant (zero usage)
 irrelevant_modules_total = Gauge(
     "irrelevant_modules_total",
@@ -299,14 +315,50 @@ replaced_modules_total = Gauge(
     "Number of modules replaced by module_retirement_service",
 )
 
-def update_relevancy_metrics(flags: Dict[str, str]) -> None:
-    """Update gauges for modules flagged by the relevancy radar."""
+def update_relevancy_metrics(
+    flags: Dict[str, str],
+    impacts: Dict[str, float] | None = None,
+) -> None:
+    """Update gauges for modules flagged by the relevancy radar.
+
+    Parameters
+    ----------
+    flags:
+        Mapping of module names to their suggested action.
+    impacts:
+        Optional mapping of module names to impact scores. If omitted, the
+        function attempts to load impact information from
+        ``sandbox_data/relevancy_metrics.json``.
+    """
+
     counts = Counter(flags.values())
     for status in ("retire", "compress", "replace"):
         relevancy_flagged_modules_total.labels(status=status).set(
             float(counts.get(status, 0))
         )
     irrelevant_modules_total.set(float(counts.get("retire", 0)))
+
+    # Load impact scores if not provided
+    if impacts is None:
+        impacts = {}
+        try:
+            path = Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                for mod, info in data.items():
+                    if isinstance(info, dict):
+                        impacts[str(mod)] = float(info.get("impact", 0.0))
+        except Exception:
+            impacts = {}
+
+    impact_totals: Dict[str, float] = Counter()
+    for mod, status in flags.items():
+        impact = float(impacts.get(mod, 0.0))
+        relevancy_module_impact_score.labels(module=mod, status=status).set(impact)
+        impact_totals[status] += impact
+
+    for status, total in impact_totals.items():
+        relevancy_flagged_modules_impact_total.labels(status=status).set(total)
 
 
 def update_module_retirement_metrics(results: Dict[str, str]) -> None:

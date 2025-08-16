@@ -3,7 +3,10 @@ from __future__ import annotations
 """Command line interface for inspecting relevancy metrics and annotations.
 
 Use ``--retire``, ``--compress`` or ``--replace`` to annotate modules for
-subsequent review."""
+subsequent review.  Pass ``--show-impact`` to include the cumulative impact
+score for each module. Impact metrics are also exported to Prometheus via
+``metrics_exporter`` for dashboard visualisation.
+"""
 
 import argparse
 import json
@@ -66,6 +69,11 @@ def cli(argv: Iterable[str] | None = None) -> int:
         default=[],
         help="Modules to annotate for replacement",
     )
+    parser.add_argument(
+        "--show-impact",
+        action="store_true",
+        help="Include impact scores in the listing",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     metrics = _load_metrics()
@@ -92,20 +100,23 @@ def cli(argv: Iterable[str] | None = None) -> int:
     for mod, counts in metrics.items():
         imports = int(counts.get("imports", 0))
         executions = int(counts.get("executions", 0))
+        impact = float(counts.get("impact", 0.0))
         score = imports + executions
         annotation = str(counts.get("annotation", ""))
         if score < args.threshold or annotation:
-            rows.append((mod, score, annotation))
+            rows.append((mod, score, impact, annotation))
 
     if not rows:
         print("No modules below threshold.")
         return 0
 
-    for mod, score, annotation in sorted(rows, key=lambda r: r[1]):
+    for mod, score, impact, annotation in sorted(rows, key=lambda r: r[1]):
+        line = f"{mod}: {score}"
+        if args.show_impact:
+            line += f" impact={impact:.2f}"
         if annotation:
-            print(f"{mod}: {score} ({annotation})")
-        else:
-            print(f"{mod}: {score}")
+            line += f" ({annotation})"
+        print(line)
     return 0
 
 
