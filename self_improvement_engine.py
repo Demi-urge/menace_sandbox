@@ -789,6 +789,15 @@ class SelfImprovementEngine:
         self.knowledge_service = self.local_knowledge.knowledge
         self.relevancy_radar = relevancy_radar or RelevancyRadar()
         self.relevancy_flags: dict[str, str] = {}
+        # Track when the relevancy radar last ran so we can evaluate at intervals
+        self._last_relevancy_eval = 0.0
+        try:
+            # Allow settings to override the default cadence
+            self.relevancy_eval_interval = getattr(
+                settings, "relevancy_eval_interval", 3600.0
+            )
+        except Exception:  # pragma: no cover - fallback for minimal settings
+            self.relevancy_eval_interval = 3600.0
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -4463,6 +4472,14 @@ class SelfImprovementEngine:
                 "module flagged", extra=log_record(module=mod, status=status)
             )
             try:
+                audit_log_event(
+                    "relevancy_flag", {"module": mod, "status": status}
+                )
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "relevancy audit log failed", extra=log_record(module=mod)
+                )
+            try:
                 analyze_redundancy(repo / (mod.replace(".", "/") + ".py"))
             except Exception:
                 self.logger.exception(
@@ -4482,7 +4499,7 @@ class SelfImprovementEngine:
                 )
 
     def get_relevancy_flags(self) -> dict[str, str]:
-        """Return latest module relevancy flags."""
+        """Return latest module relevancy flags for downstream pipelines."""
         return dict(self.relevancy_flags)
 
     def run_cycle(self, energy: int = 1) -> AutomationResult:
@@ -4522,7 +4539,10 @@ class SelfImprovementEngine:
                     "post integration orphan update failed: %s", exc
                 )
             self._refresh_module_map()
-            self._evaluate_module_relevance()
+            now = time.time()
+            if now - self._last_relevancy_eval >= self.relevancy_eval_interval:
+                self._evaluate_module_relevance()
+                self._last_relevancy_eval = now
             self._process_preventative_queue()
             if self.error_bot:
                 try:
