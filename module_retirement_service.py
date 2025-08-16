@@ -92,7 +92,9 @@ class ModuleRetirementService:
             patch_id = generate_patch(str(path))
             if patch_id is not None:
                 replaced_modules_total.inc()
+                self.logger.info("generated replacement patch %s for %s", patch_id, module)
                 return True
+            self.logger.info("no replacement patch generated for %s", module)
         except Exception:  # pragma: no cover - patching issues
             self.logger.exception("replacement failed for %s", module)
         return False
@@ -116,6 +118,11 @@ class ModuleRetirementService:
                 success = self.replace_module(mod)
                 if success:
                     results[mod] = "replaced"
+                    self.logger.info("replaced %s", mod)
+                else:
+                    results[mod] = "skipped"
+                    self.logger.info("skipped %s", mod)
+                continue
             if not success:
                 results.setdefault(mod, "skipped")
         update_module_retirement_metrics(results)
