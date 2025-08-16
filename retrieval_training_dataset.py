@@ -55,6 +55,9 @@ def build_dataset(
 
     p_path = Path(patch_db)
     patch_df = pd.DataFrame()
+    stats_df = pd.DataFrame(
+        columns=["origin_db", "win_rate", "regret_rate", "stale_cost", "sample_count"]
+    )
     if p_path.exists():
         with sqlite3.connect(p_path) as pconn:
             patch_df = pd.read_sql(
@@ -65,9 +68,42 @@ def build_dataset(
                 """,
                 pconn,
             )
+            try:
+                stats_df = pd.read_sql(
+                    "SELECT origin_db, win_rate, regret_rate, stale_cost, sample_count FROM retriever_stats",
+                    pconn,
+                )
+            except Exception:
+                try:
+                    tmp = pd.read_sql(
+                        "SELECT origin_db, wins, regrets FROM retriever_stats",
+                        pconn,
+                    )
+                    total = tmp["wins"].fillna(0) + tmp["regrets"].fillna(0)
+                    tmp["win_rate"] = tmp["wins"].fillna(0) / total.where(total > 0, 1)
+                    tmp["regret_rate"] = tmp["regrets"].fillna(0) / total.where(total > 0, 1)
+                    tmp["stale_cost"] = 0.0
+                    tmp["sample_count"] = total
+                    stats_df = tmp[
+                        [
+                            "origin_db",
+                            "win_rate",
+                            "regret_rate",
+                            "stale_cost",
+                            "sample_count",
+                        ]
+                    ]
+                except Exception:
+                    pass
 
-    # Merge retrieval metrics with patch outcomes.
+    # Merge retrieval metrics with patch outcomes and reliability statistics.
     df = retrieval_df.merge(patch_df, on=["session_id", "vector_id"], how="left")
+    df = df.merge(
+        stats_df,
+        left_on="db_type",
+        right_on="origin_db",
+        how="left",
+    ).drop(columns=["origin_db"], errors="ignore")
     df["label"] = df["label"].fillna(0).astype(int)
 
     # Feature engineering
@@ -75,6 +111,10 @@ def build_dataset(
     df["similarity"] = df["similarity"].fillna(0)
     df["roi_delta"] = df["contribution"].fillna(0)
     df["hit"] = df["hit"].fillna(0).astype(int)
+    df["win_rate"] = df["win_rate"].fillna(0.0)
+    df["regret_rate"] = df["regret_rate"].fillna(0.0)
+    df["stale_cost"] = df["stale_cost"].fillna(0.0)
+    df["sample_count"] = df["sample_count"].fillna(0.0)
 
     df = df.sort_values("ts")
     grp = df.groupby("vector_id", sort=False)
@@ -92,6 +132,10 @@ def build_dataset(
             "exec_freq",
             "roi_delta",
             "prior_hits",
+            "win_rate",
+            "regret_rate",
+            "stale_cost",
+            "sample_count",
             "label",
         ]
     ]

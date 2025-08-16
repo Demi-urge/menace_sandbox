@@ -44,6 +44,10 @@ def test_training_and_serialisation(tmp_path):
             "exec_freq": [0, 1, 2, 3],
             "roi_delta": [0.1, 0.2, 0.3, 0.4],
             "prior_hits": [1, 0, 1, 0],
+            "win_rate": [0.5, 0.4, 0.3, 0.2],
+            "regret_rate": [0.1, 0.2, 0.3, 0.4],
+            "stale_cost": [1.0, 2.0, 3.0, 4.0],
+            "sample_count": [10.0, 20.0, 30.0, 40.0],
             "label": [1, 0, 1, 0],
         }
     )
@@ -53,9 +57,17 @@ def test_training_and_serialisation(tmp_path):
     data = rr.load_model(out)
     assert data["features"] == tm.feature_names
     assert "coef" in data or "booster" in data
-    assert {"age", "similarity", "exec_freq", "roi_delta", "prior_hits"}.issubset(
-        set(tm.feature_names)
-    )
+    assert {
+        "age",
+        "similarity",
+        "exec_freq",
+        "roi_delta",
+        "prior_hits",
+        "win_rate",
+        "regret_rate",
+        "stale_cost",
+        "sample_count",
+    }.issubset(set(tm.feature_names))
     assert {"db_bot", "db_error"}.issubset(set(tm.feature_names))
 
 
