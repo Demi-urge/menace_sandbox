@@ -60,11 +60,16 @@ except Exception:  # pragma: no cover - optional
 
 try:  # pragma: no cover - optional micro model
     from .micro_models.error_classifier import classify_error
+    from .micro_models.prefix_injector import inject_prefix
 except Exception:  # pragma: no cover - fallback when package layout differs
     try:
         from micro_models.error_classifier import classify_error  # type: ignore
+        from micro_models.prefix_injector import inject_prefix  # type: ignore
     except Exception:  # pragma: no cover - micro model unavailable
         classify_error = None  # type: ignore
+        inject_prefix = (
+            lambda prompt, prefix, conf, role="system": prompt
+        )  # type: ignore
 
 
 class TelemetryEvent(BaseModel):
@@ -249,6 +254,13 @@ class ErrorClassifier:
                 rows = cur.fetchall()
                 for row in rows:
                     category, fix, conf = classify_error(row["stack_trace"])  # type: ignore[arg-type]
+                    prompt = inject_prefix(
+                        row["stack_trace"],
+                        f"Error Category: {category}\nSuggested Fix: {fix}",
+                        conf,
+                        role="system",
+                    )
+                    self.logger.debug("codex prompt prepared: %s", prompt)
                     if conf > 0.8 and category:
                         db.conn.execute(
                             "UPDATE telemetry SET category = ?, inferred_cause = ? WHERE id = ?",
