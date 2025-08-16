@@ -1327,7 +1327,9 @@ Tune its sensitivity by setting environment variables or values in
 - `RELEVANCY_THRESHOLD` – minimum usage count before a module is considered
   for replacement (default `20`).
 - `RELEVANCY_WINDOW_DAYS` – number of days of history to inspect when
-  computing relevancy (default `30`).
+  computing relevancy (default `30`). Usage data older than this window is
+  discarded during statistics loading and evaluation, ensuring decisions
+  reflect recent activity only.
 - `RELEVANCY_WHITELIST` – comma-separated modules that the radar should
   never flag.
 
