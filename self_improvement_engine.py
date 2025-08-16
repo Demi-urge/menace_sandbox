@@ -1038,18 +1038,40 @@ class SelfImprovementEngine:
                 pass
         return "\n".join(summaries)
 
-    def _record_memory_outcome(self, module: str, action: str, success: bool) -> None:
+    def _record_memory_outcome(
+        self,
+        module: str,
+        action: str,
+        success: bool,
+        *,
+        tags: Sequence[str] | None = None,
+    ) -> None:
         try:
+            outcome_tags = [
+                f"self_improvement_engine.{action}",
+                FEEDBACK,
+                IMPROVEMENT_PATH,
+                ERROR_FIX,
+                INSIGHT,
+            ]
+            if tags:
+                outcome_tags.extend(tags)
             log_with_tags(
                 self.gpt_memory,
                 f"{action}:{module}",
                 "success" if success else "failure",
-                tags=[f"self_improvement_engine.{action}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                tags=outcome_tags,
             )
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
 
-    def _generate_patch_with_memory(self, module: str, action: str) -> int | None:
+    def _generate_patch_with_memory(
+        self,
+        module: str,
+        action: str,
+        *,
+        tags: Sequence[str] | None = None,
+    ) -> int | None:
         history = self._memory_summaries(module)
         if history:
             self.logger.info(
@@ -1059,12 +1081,15 @@ class SelfImprovementEngine:
         client = getattr(self.self_coding_engine, "llm_client", None)
         if client is not None:
             try:
+                ask_tags = [ERROR_FIX, IMPROVEMENT_PATH]
+                if tags:
+                    ask_tags.extend(tags)
                 data = ask_with_memory(
                     client,
                     f"self_improvement_engine.{action}",
                     f"{action}:{module}",
                     memory=self.local_knowledge,
-                    tags=[ERROR_FIX, IMPROVEMENT_PATH],
+                    tags=ask_tags,
                 )
                 text = (
                     data.get("choices", [{}])[0]
@@ -1085,17 +1110,28 @@ class SelfImprovementEngine:
                 )
         patch_id = generate_patch(module, self.self_coding_engine)
         try:
+            log_tags = [
+                f"self_improvement_engine.{action}",
+                FEEDBACK,
+                IMPROVEMENT_PATH,
+                ERROR_FIX,
+                INSIGHT,
+            ]
+            if tags:
+                log_tags.extend(tags)
             log_with_tags(
                 self.gpt_memory,
                 f"{action}:{module}",
                 f"patch_id={patch_id}",
-                tags=[f"self_improvement_engine.{action}", FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT],
+                tags=log_tags,
             )
         except Exception:
             self.logger.exception(
                 "memory logging failed", extra=log_record(module=module)
             )
-        self._record_memory_outcome(module, action, patch_id is not None)
+        self._record_memory_outcome(
+            module, action, patch_id is not None, tags=tags
+        )
         return patch_id
 
     # ------------------------------------------------------------------
