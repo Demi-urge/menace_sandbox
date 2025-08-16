@@ -58,6 +58,12 @@ class RelevancyRadarService:
     def start(self) -> None:
         if self.running:
             return
+        # Run an immediate scan so the service has up-to-date data before the
+        # background thread kicks in.
+        self.logger.info("performing initial relevancy scan")
+        self._scan_once()
+        self.logger.info("initial scan produced %d flags", len(self.latest_flags))
+
         self.running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()

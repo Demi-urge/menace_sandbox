@@ -54,3 +54,21 @@ def test_service_scan_updates_flags(monkeypatch, tmp_path):
     assert service.flags() == {"demo": "retire"}
     assert captured["flags"] == {"demo": "retire"}
     assert DummyRetirementService.flags == {"demo": "retire"}
+
+
+def test_start_runs_initial_scan(monkeypatch, tmp_path):
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+
+    calls = {"count": 0}
+
+    def fake_scan():
+        calls["count"] += 1
+        service.latest_flags = {"init": "flag"}
+
+    monkeypatch.setattr(service, "_scan_once", fake_scan)
+
+    service.start()
+    service.stop()
+
+    assert calls["count"] == 1
+    assert service.flags() == {"init": "flag"}
