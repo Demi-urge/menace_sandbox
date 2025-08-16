@@ -15,9 +15,10 @@ from __future__ import annotations
 import atexit
 import json
 import sqlite3
-from collections import Counter
+import time
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Iterable
+from typing import Dict, Iterable, List
 import builtins
 
 from metrics_exporter import update_relevancy_metrics
@@ -31,8 +32,8 @@ _RELEVANCY_METRICS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_metrics.json"
 # Default location of the SQLite metrics store consumed by :func:`scan`.
 _RELEVANCY_METRICS_DB = _BASE_DIR / "sandbox_data" / "relevancy_metrics.db"
 
-# In-memory counter for module usage.
-_module_usage_counter: Counter[str] = Counter()
+# In-memory counter for module usage storing timestamps for each call.
+_module_usage_counter: Dict[str, List[int]] = defaultdict(list)
 
 # In-memory store for relevancy flags produced by :func:`evaluate_relevancy`.
 _relevancy_flags: Dict[str, str] = {}
@@ -47,30 +48,57 @@ def track_module_usage(module: str) -> None:
         Name of the module to record.
     """
 
-    _module_usage_counter[module] += 1
+    _module_usage_counter[module].append(int(time.time()))
+
+
+def _relevancy_cutoff() -> float:
+    """Return the timestamp cutoff for relevancy calculations."""
+    try:  # pragma: no cover - optional dependency
+        from sandbox_settings import SandboxSettings
+
+        days = int(SandboxSettings().relevancy_window_days)
+    except Exception:  # pragma: no cover - default if settings unavailable
+        days = 30
+    return time.time() - days * 86400
 
 
 def load_usage_stats() -> Dict[str, int]:
     """Return usage statistics merged with any persisted counts."""
-    counts: Counter[str] = Counter()
+    cutoff = _relevancy_cutoff()
+    merged: Dict[str, List[int]] = defaultdict(list)
 
     if _MODULE_USAGE_FILE.exists():
         try:
             with _MODULE_USAGE_FILE.open("r", encoding="utf-8") as fh:
                 data = json.load(fh)
             if isinstance(data, dict):
-                counts.update({str(k): int(v) for k, v in data.items()})
+                for mod, timestamps in data.items():
+                    if isinstance(timestamps, list):
+                        merged[mod].extend(int(t) for t in timestamps)
         except json.JSONDecodeError:
-            # If the file is corrupt we ignore it to avoid raising during
-            # shutdown or normal operation.
+            # Ignore corrupt files during normal operation.
             pass
 
-    counts.update(_module_usage_counter)
-    return dict(counts)
+    for mod, ts_list in _module_usage_counter.items():
+        merged[mod].extend(ts_list)
+
+    # Filter out entries older than the cutoff
+    recent_counts: Dict[str, int] = {}
+    for mod, ts_list in merged.items():
+        recent = [ts for ts in ts_list if ts >= cutoff]
+        if recent:
+            recent_counts[mod] = len(recent)
+            merged[mod] = recent
+
+    return recent_counts
 
 
 def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
     """Return relevancy flags for modules based on ``usage_stats``.
+
+    ``usage_stats`` may map module names either to raw timestamp lists or to
+    pre-aggregated counts. Any entries older than ``relevancy_window_days`` are
+    discarded before evaluation.
 
     Modules absent from ``usage_stats`` are treated as having zero usage.
     Thresholds and module whitelists are sourced from
@@ -84,6 +112,16 @@ def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
     Results are persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in
     memory for access via :func:`flagged_modules`.
     """
+
+    cutoff = _relevancy_cutoff()
+    counts: Dict[str, int] = {}
+    for mod, data in usage_stats.items():
+        if isinstance(data, list):
+            counts[mod] = sum(int(ts) >= cutoff for ts in data)
+        else:
+            counts[mod] = int(data)
+
+    usage_stats = counts
 
     try:  # Import lazily to avoid heavy settings import on module load
         from sandbox_settings import SandboxSettings
@@ -135,11 +173,35 @@ def flagged_modules() -> Dict[str, str]:
 
 
 def _save_usage_counts() -> None:
-    """Persist merged usage statistics to disk."""
-    counts = load_usage_stats()
+    """Persist merged usage statistics to disk including timestamps."""
+    cutoff = _relevancy_cutoff()
+    merged: Dict[str, List[int]] = defaultdict(list)
+
+    if _MODULE_USAGE_FILE.exists():
+        try:
+            with _MODULE_USAGE_FILE.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                for mod, timestamps in data.items():
+                    if isinstance(timestamps, list):
+                        merged[mod].extend(int(t) for t in timestamps)
+        except json.JSONDecodeError:
+            pass
+
+    for mod, ts_list in _module_usage_counter.items():
+        merged[mod].extend(ts_list)
+
+    # Drop entries older than the cutoff to avoid unbounded growth
+    for mod, ts_list in list(merged.items()):
+        recent = [ts for ts in ts_list if ts >= cutoff]
+        if recent:
+            merged[mod] = recent
+        else:
+            merged.pop(mod)
+
     _MODULE_USAGE_FILE.parent.mkdir(parents=True, exist_ok=True)
     with _MODULE_USAGE_FILE.open("w", encoding="utf-8") as fh:
-        json.dump(counts, fh, indent=2, sort_keys=True)
+        json.dump({k: v for k, v in merged.items()}, fh, indent=2, sort_keys=True)
 
 
 # Ensure counters are persisted when the interpreter exits.

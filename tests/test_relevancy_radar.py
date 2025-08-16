@@ -4,6 +4,7 @@ import json
 import atexit
 import types
 import sqlite3
+import time
 from unittest import mock
 
 import pytest
@@ -51,7 +52,8 @@ def test_tracking_and_persistence(radar_env):
     assert stats == {"alpha": 2, "beta": 1}
 
     rr._save_usage_counts()
-    assert json.loads(usage_file.read_text()) == stats
+    data = json.loads(usage_file.read_text())
+    assert {k: len(v) for k, v in data.items()} == stats
 
     rr._module_usage_counter.clear()
     modules["alpha"].run()
@@ -77,6 +79,29 @@ def test_relevancy_evaluation_unused_flagged(radar_env):
 
     rr._relevancy_flags.clear()
     assert rr.flagged_modules() == expected
+
+
+def test_age_based_pruning(radar_env, monkeypatch):
+    """Old usage entries beyond the window are discarded."""
+
+    rr, modules, usage_file, _ = radar_env
+
+    monkeypatch.setenv("RELEVANCY_WINDOW_DAYS", "1")
+
+    now = int(time.time())
+    old = now - 3 * 86400
+
+    usage_file.write_text(json.dumps({
+        "alpha": [old, now],
+        "beta": [old],
+    }))
+
+    stats = rr.load_usage_stats()
+    assert stats == {"alpha": 1}
+
+    module_map = {"alpha": 1, "beta": 1}
+    flags = rr.evaluate_relevancy(module_map, {"alpha": [old, now], "beta": [old]})
+    assert flags == {"alpha": "compress", "beta": "retire"}
 
 
 @pytest.fixture()
