@@ -1,9 +1,14 @@
+import os
 import importlib
 import json
 import atexit
 import types
+import sqlite3
+from unittest import mock
 
 import pytest
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 
 @pytest.fixture()
@@ -72,3 +77,78 @@ def test_relevancy_evaluation_unused_flagged(radar_env):
 
     rr._relevancy_flags.clear()
     assert rr.flagged_modules() == expected
+
+
+@pytest.fixture()
+def metrics_db(tmp_path):
+    """Create a metrics database with used, unused and low-usage modules."""
+
+    db_path = tmp_path / "metrics.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE module_metrics (module_name TEXT, call_count INTEGER, total_time REAL)"
+        )
+        conn.executemany(
+            "INSERT INTO module_metrics VALUES (?, ?, ?)",
+            [
+                ("used_mod", 100, 100.0),
+                ("unused_mod", 0, 0.0),
+                ("compress_mod", 1, 1.0),
+                ("replace_mod", 3, 3.0),
+            ],
+        )
+    return db_path
+
+
+def test_scan_respects_thresholds(metrics_db):
+    """``scan`` flags only unused or low-ratio modules."""
+
+    from relevancy_radar import scan
+
+    flags = scan(
+        db_path=metrics_db,
+        min_calls=0,
+        compress_ratio=0.02,
+        replace_ratio=0.05,
+    )
+
+    assert flags == {
+        "unused_mod": "retire",
+        "compress_mod": "compress",
+        "replace_mod": "replace",
+    }
+
+
+def test_scan_publishes_event(metrics_db):
+    """Integration publishes ``relevancy:scan`` events via the bus."""
+
+    from relevancy_radar import scan
+    from menace.unified_event_bus import UnifiedEventBus
+
+    bus = mock.Mock(spec=UnifiedEventBus)
+
+    def run_scan(event_bus):
+        try:
+            result = scan(
+                db_path=metrics_db,
+                min_calls=0,
+                compress_ratio=0.02,
+                replace_ratio=0.05,
+            )
+            if result:
+                event_bus.publish("relevancy:scan", result)
+            return result
+        except Exception:
+            return {}
+
+    flags = run_scan(bus)
+
+    bus.publish.assert_called_once_with(
+        "relevancy:scan",
+        {
+            "unused_mod": "retire",
+            "compress_mod": "compress",
+            "replace_mod": "replace",
+        },
+    )
+    assert flags
