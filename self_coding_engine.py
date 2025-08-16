@@ -647,6 +647,34 @@ class SelfCodingEngine:
                     origin, vid = item
                 if origin is not None and vid is not None:
                     vectors.append((str(origin), str(vid)))
+        if not generated_code.strip():
+            self.logger.info("no code generated; skipping enhancement")
+            path.write_text(original, encoding="utf-8")
+            self._run_ci(path)
+            self._store_patch_memory(path, description, generated_code, False, 0.0)
+            if self.patch_db and session_id and vectors:
+                try:
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        vectors,
+                        patch_id=0,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                    )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
+            if self.data_bot:
+                try:
+                    self.data_bot.db.log_patch_outcome(
+                        description,
+                        False,
+                        vectors,
+                        session_id=session_id,
+                    )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
+            return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
