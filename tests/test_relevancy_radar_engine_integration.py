@@ -1,56 +1,52 @@
-import importlib
-import json
-import atexit
+from __future__ import annotations
+
+import sys
 import types
+from unittest import mock
 
-import pytest
+from tests.test_self_improvement_logging import _load_engine
 
 
-def test_radar_flags_and_engine_response(tmp_path, monkeypatch):
-    """Active modules are logged while inactive ones are flagged and surfaced."""
+class DummyLogger:
+    def info(self, *a, **k):
+        pass
 
-    monkeypatch.setattr(atexit, "register", lambda func: func)
+    def exception(self, *a, **k):
+        pass
 
-    rr_mod = importlib.reload(importlib.import_module("relevancy_radar"))
-    metrics_file = tmp_path / "metrics.json"
-    radar = rr_mod.RelevancyRadar(metrics_file=metrics_file)
 
-    radar.track_usage("active_mod")
-    radar.track_usage("mid_mod")
-    radar.track_usage("mid_mod")
-    radar._metrics["inactive_mod"] = {"imports": 0, "executions": 0}
+def test_replace_flag_triggers_refactor_and_event(monkeypatch):
+    class DummyMRS:
+        def __init__(self, *a, **k):
+            pass
 
-    data = json.loads(metrics_file.read_text())
-    assert data["active_mod"]["executions"] == 1
+        def process_flags(self, flags):
+            self.flags = flags
 
-    class DummyEngine:
-        def __init__(self, radar):
-            self.relevancy_radar = radar
-            self.relevancy_flags = {}
-            self.event_bus = None
-            self.logger = types.SimpleNamespace(
-                info=lambda *a, **k: None, exception=lambda *a, **k: None
-            )
+    stub = types.SimpleNamespace(ModuleRetirementService=DummyMRS)
+    monkeypatch.setitem(sys.modules, "module_retirement_service", stub)
 
-    engine = DummyEngine(radar)
+    sie = _load_engine()
+    engine = sie.SelfImprovementEngine.__new__(sie.SelfImprovementEngine)
+    engine.logger = DummyLogger()
+    engine.self_coding_engine = object()
+    bus = mock.Mock()
+    engine.event_bus = bus
 
-    def evaluate_module_relevance(self):
-        compress_threshold = 1
-        replace_threshold = 3
-        try:
-            flags = self.relevancy_radar.evaluate_relevance(
-                compress_threshold, replace_threshold
-            )
-        except Exception:
-            self.logger.exception("relevancy evaluation failed")
-            return
-        if flags:
-            self.relevancy_flags = flags
+    calls = []
 
-    evaluate_module_relevance(engine)
-    expected = {
-        "inactive_mod": "retire",
-        "active_mod": "compress",
-        "mid_mod": "replace",
-    }
-    assert engine.relevancy_flags == expected
+    def fake_generate_patch(mod, sce):
+        calls.append((mod, sce))
+        return 123
+
+    monkeypatch.setattr(sie, "generate_patch", fake_generate_patch)
+
+    engine._handle_relevancy_flags({"foo": "replace", "bar": "retain"})
+
+    assert calls == [("foo", engine.self_coding_engine)]
+    bus.publish.assert_any_call(
+        "relevancy:replace", {"module": "foo", "task_id": 123}
+    )
+    bus.publish.assert_any_call(
+        "relevancy:scan", {"foo": "replace", "bar": "retain"}
+    )
