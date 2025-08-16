@@ -254,13 +254,16 @@ class QuickFixEngine:
             raise
         if _VEC_METRICS is not None and session_id and vectors:
             try:
+                win = bool(patch_id) and tests_ok
+                regret = not win
+                contribution = 1.0 if win else 0.0
                 _VEC_METRICS.update_outcome(
                     session_id,
                     vectors,
-                    contribution=1.0 if (patch_id and tests_ok) else 0.0,
+                    contribution=contribution,
                     patch_id=str(patch_id or ""),
-                    win=bool(patch_id and tests_ok),
-                    regret=(not tests_ok) or not bool(patch_id),
+                    win=win,
+                    regret=regret,
                 )
             except Exception:
                 self.logger.exception("failed to log vector outcome")
@@ -365,13 +368,16 @@ class QuickFixEngine:
                 self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
             if _VEC_METRICS is not None and session_id and vectors:
                 try:
+                    win = bool(patch_id)
+                    regret = not win
+                    contribution = 1.0 if win else 0.0
                     _VEC_METRICS.update_outcome(
                         session_id,
                         vectors,
-                        contribution=1.0 if patch_id else 0.0,
+                        contribution=contribution,
                         patch_id=str(patch_id or ""),
-                        win=bool(patch_id),
-                        regret=not bool(patch_id),
+                        win=win,
+                        regret=regret,
                     )
                 except Exception:
                     self.logger.exception("failed to log vector outcome")

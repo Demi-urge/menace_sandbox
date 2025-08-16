@@ -1185,26 +1185,28 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         if _VEC_METRICS is not None and session_id and vectors:
                             try:
+                                win = False
                                 _VEC_METRICS.update_outcome(
                                     session_id,
                                     vectors,
                                     contribution=roi_delta,
                                     patch_id=str(patch_id),
-                                    win=False,
-                                    regret=True,
+                                    win=win,
+                                    regret=not win,
                                 )
                             except Exception:
                                 logger.exception("failed to log vector outcome")
                     else:
                         if _VEC_METRICS is not None and session_id and vectors and patch_id:
                             try:
+                                win = True
                                 _VEC_METRICS.update_outcome(
                                     session_id,
                                     vectors,
                                     contribution=roi_delta,
                                     patch_id=str(patch_id),
-                                    win=True,
-                                    regret=False,
+                                    win=win,
+                                    regret=not win,
                                 )
                             except Exception:
                                 logger.exception("failed to log vector outcome")
@@ -1213,13 +1215,14 @@ def _sandbox_cycle_runner(
                     logger.exception("patch from gpt failed for %s", mod)
                     if _VEC_METRICS is not None and session_id and vectors:
                         try:
+                            win = False
                             _VEC_METRICS.update_outcome(
                                 session_id,
                                 vectors,
                                 contribution=0.0,
                                 patch_id=str(patch_id or ""),
-                                win=False,
-                                regret=True,
+                                win=win,
+                                regret=not win,
                             )
                         except Exception:
                             logger.exception("failed to log vector outcome")
@@ -1227,13 +1230,14 @@ def _sandbox_cycle_runner(
                     continue
                 if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
                     try:
+                        win = False
                         _VEC_METRICS.update_outcome(
                             session_id,
                             vectors,
                             contribution=0.0,
                             patch_id=str(patch_id or ""),
-                            win=False,
-                            regret=True,
+                            win=win,
+                            regret=not win,
                         )
                     except Exception:
                         logger.exception("failed to log vector outcome")
@@ -1523,26 +1527,28 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         if _VEC_METRICS is not None and session_id and vectors:
                             try:
+                                win = False
                                 _VEC_METRICS.update_outcome(
                                     session_id,
                                     vectors,
                                     contribution=roi_delta,
                                     patch_id=str(patch_id),
-                                    win=False,
-                                    regret=True,
+                                    win=win,
+                                    regret=not win,
                                 )
                             except Exception:
                                 logger.exception("failed to log vector outcome")
                     else:
                         if _VEC_METRICS is not None and session_id and vectors and patch_id:
                             try:
+                                win = True
                                 _VEC_METRICS.update_outcome(
                                     session_id,
                                     vectors,
                                     contribution=roi_delta,
                                     patch_id=str(patch_id),
-                                    win=True,
-                                    regret=False,
+                                    win=win,
+                                    regret=not win,
                                 )
                             except Exception:
                                 logger.exception("failed to log vector outcome")
@@ -1551,13 +1557,14 @@ def _sandbox_cycle_runner(
                     logger.exception("offline suggestion failed for %s", mod)
                     if _VEC_METRICS is not None and session_id and vectors:
                         try:
+                            win = False
                             _VEC_METRICS.update_outcome(
                                 session_id,
                                 vectors,
                                 contribution=0.0,
                                 patch_id=str(patch_id or ""),
-                                win=False,
-                                regret=True,
+                                win=win,
+                                regret=not win,
                             )
                         except Exception:
                             logger.exception("failed to log vector outcome")
@@ -1565,13 +1572,14 @@ def _sandbox_cycle_runner(
                     continue
                 if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
                     try:
+                        win = False
                         _VEC_METRICS.update_outcome(
                             session_id,
                             vectors,
                             contribution=0.0,
                             patch_id=str(patch_id or ""),
-                            win=False,
-                            regret=True,
+                            win=win,
+                            regret=not win,
                         )
                     except Exception:
                         logger.exception("failed to log vector outcome")
