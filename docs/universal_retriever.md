@@ -70,14 +70,18 @@ maintaining rich scoring explanations for ranking and troubleshooting.
 ## Feedback weighting
 
 `UniversalRetriever` can bias ranking using aggregated feedback metrics stored
-in ``metrics.db``. The :class:`~menace.data_bot.MetricsDB` collects win rates,
-regret rates and embedding staleness for each origin database. During
-``retrieve()`` the latest KPI values are fetched and converted into a bias
-factor:
+in ``metrics.db``. The :class:`~menace.data_bot.MetricsDB` collects win and
+regret percentages, sample counts and embedding staleness for each origin
+database. During ``retrieve()`` the latest KPI values are fetched and converted
+into a bias factor:
 
 - **win_rate** – higher historical success increases rank.
 - **regret_rate** – high regret reduces confidence.
+- **sample_count** – more observations strengthen the bias.
 - **stale_penalty** – older embeddings are down-weighted.
+
+The derived reliability score is logged for each candidate and multiplied with
+model predictions when ranking results.
 
 These signals complement similarity and contextual metrics to encourage results
 that have performed well in past experiments.

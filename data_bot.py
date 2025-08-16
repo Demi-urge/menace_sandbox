@@ -174,6 +174,7 @@ class MetricsDB:
                 win_rate REAL,
                 regret_rate REAL,
                 stale_penalty REAL,
+                sample_count REAL DEFAULT 0,
                 roi REAL DEFAULT 0,
                 ts TEXT DEFAULT CURRENT_TIMESTAMP
             )
@@ -302,6 +303,10 @@ class MetricsDB:
             if "roi" not in cols:
                 conn.execute(
                     "ALTER TABLE retriever_kpi ADD COLUMN roi REAL DEFAULT 0"
+                )
+            if "sample_count" not in cols:
+                conn.execute(
+                    "ALTER TABLE retriever_kpi ADD COLUMN sample_count REAL DEFAULT 0"
                 )
             cols = [
                 r[1] for r in conn.execute("PRAGMA table_info(embedding_metrics)").fetchall()
@@ -623,20 +628,22 @@ class MetricsDB:
         regret_rate: float,
         stale_cost: float,
         roi: float = 0.0,
+        sample_count: float = 0.0,
     ) -> None:
         """Store aggregate KPIs for retrieval performance."""
 
         with self._connect() as conn:
             conn.execute(
                 """
-            INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, roi, ts)
-            VALUES(?,?,?,?,?,?)
+            INSERT INTO retriever_kpi(origin_db, win_rate, regret_rate, stale_penalty, sample_count, roi, ts)
+            VALUES(?,?,?,?,?,?,?)
             """,
                 (
                     origin_db,
                     float(win_rate),
                     float(regret_rate),
                     float(stale_cost),
+                    float(sample_count),
                     float(roi),
                     datetime.utcnow().isoformat(),
                 ),
@@ -646,18 +653,18 @@ class MetricsDB:
     def latest_retriever_kpi(self) -> Dict[str, Dict[str, float]]:
         """Return latest KPI metrics for each origin database.
 
-        The most recent ``win_rate``, ``regret_rate`` and ``stale_cost``
-        values are retrieved from the ``retriever_kpi`` table.  Results are
-        returned as a mapping of ``origin_db`` to the three metrics.  When no
-        KPI data has been recorded an empty mapping is returned.
+        The most recent ``win_rate``, ``regret_rate``, ``stale_cost`` and
+        ``sample_count`` values are retrieved from the ``retriever_kpi`` table.
+        Results are returned as a mapping of ``origin_db`` to these metrics.
+        When no KPI data has been recorded an empty mapping is returned.
         """
 
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                SELECT origin_db, win_rate, regret_rate, stale_penalty
+                SELECT origin_db, win_rate, regret_rate, stale_penalty, sample_count
                 FROM (
-                    SELECT origin_db, win_rate, regret_rate, stale_penalty, ts
+                    SELECT origin_db, win_rate, regret_rate, stale_penalty, sample_count, ts
                     FROM retriever_kpi
                     ORDER BY ts DESC
                 )
@@ -667,11 +674,12 @@ class MetricsDB:
             rows = cur.fetchall()
 
         metrics: Dict[str, Dict[str, float]] = {}
-        for origin, win, regret, stale in rows:
+        for origin, win, regret, stale, samples in rows:
             metrics[origin] = {
                 "win_rate": float(win),
                 "regret_rate": float(regret),
                 "stale_cost": float(stale),
+                "sample_count": float(samples),
             }
         return metrics
 
