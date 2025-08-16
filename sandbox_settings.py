@@ -133,6 +133,35 @@ class SandboxSettings(BaseSettings):
         description="Modules exempt from relevancy radar checks.",
     )
 
+    enable_relevancy_radar: bool = Field(
+        True,
+        env="ENABLE_RELEVANCY_RADAR",
+        description="Enable the relevancy radar during sandbox runs.",
+    )
+    relevancy_radar_min_calls: int = Field(
+        0,
+        env="RELEVANCY_RADAR_MIN_CALLS",
+        description="Minimum invocation count considered when analysing module relevance.",
+    )
+    relevancy_radar_compress_ratio: float = Field(
+        0.01,
+        env="RELEVANCY_RADAR_COMPRESS_RATIO",
+        description="Call and time ratio below which modules are flagged for compression.",
+    )
+    relevancy_radar_replace_ratio: float = Field(
+        0.05,
+        env="RELEVANCY_RADAR_REPLACE_RATIO",
+        description="Call and time ratio below which modules are suggested for replacement.",
+    )
+    relevancy_metrics_retention_days: int | None = Field(
+        None,
+        env="RELEVANCY_METRICS_RETENTION_DAYS",
+        description=(
+            "Days to retain relevancy metrics. Older records are purged during "
+            "on-demand radar scans when set."
+        ),
+    )
+
     synergy_weight_roi: float = Field(1.0, env="SYNERGY_WEIGHT_ROI")
     synergy_weight_efficiency: float = Field(1.0, env="SYNERGY_WEIGHT_EFFICIENCY")
     synergy_weight_resilience: float = Field(1.0, env="SYNERGY_WEIGHT_RESILIENCE")

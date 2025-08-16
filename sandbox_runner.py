@@ -127,6 +127,7 @@ from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
 from relevancy_metrics_db import RelevancyMetricsDB
+from relevancy_radar import scan as relevancy_radar_scan
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -242,6 +243,40 @@ def scan_repo_sections(
                 sections[rel] = {}
 
     return sections
+
+
+# ----------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------
+def run_relevancy_radar_scan(
+    settings: SandboxSettings | None = None,
+) -> Dict[str, str]:
+    """Run an on-demand relevancy radar scan and return flagged modules."""
+
+    settings = settings or SandboxSettings()
+    if not getattr(settings, "enable_relevancy_radar", True):
+        logger.info("relevancy radar disabled")
+        return {}
+
+    db_path = Path(settings.sandbox_data_dir) / "relevancy_metrics.db"
+    flags = relevancy_radar_scan(
+        db_path=db_path,
+        min_calls=settings.relevancy_radar_min_calls,
+        compress_ratio=settings.relevancy_radar_compress_ratio,
+        replace_ratio=settings.relevancy_radar_replace_ratio,
+    )
+
+    retention = settings.relevancy_metrics_retention_days
+    if retention is not None:
+        cutoff = time.time() - retention * 86400
+        try:
+            if db_path.exists() and db_path.stat().st_mtime < cutoff:
+                db_path.unlink()
+        except Exception:
+            logger.exception("failed to apply relevancy radar retention policy")
+
+    return flags
 
 
 # ----------------------------------------------------------------------
@@ -1595,6 +1630,7 @@ __all__ = [
     "_sandbox_cleanup",
     "_sandbox_main",
     "_run_sandbox",
+    "run_relevancy_radar_scan",
     "rank_scenarios",
     "main",
 ]
@@ -1602,4 +1638,19 @@ __all__ = [
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry
     setup_logging()
-    main()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument(
+        "--radar-scan",
+        action="store_true",
+        help="run a relevancy radar scan and print summary",
+    )
+    args, remaining = parser.parse_known_args()
+    if args.radar_scan:
+        flags = run_relevancy_radar_scan()
+        if not flags:
+            print("No modules flagged by relevancy radar")
+        else:
+            for mod, status in sorted(flags.items()):
+                print(f"{mod}: {status}")
+        raise SystemExit(0)
+    main(remaining)
