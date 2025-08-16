@@ -33,6 +33,8 @@
   `ResultBundle` objects with `origin_db`, record metadata, a final score and a
   reason backed by normalised metrics (error frequency, ROI uplift, workflow
   usage and bot deployment) with optional relation-based boosting.
+- Service layer wrappers in `semantic_service` expose `Retriever`, `ContextBuilder`, `PatchLogger` and `EmbeddingBackfill`
+  with structured logging and metrics ([docs/semantic_service.md](docs/semantic_service.md)).
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
   bot, workflow and code records for code-generation modules. Enable it in the
   self-improving sandbox by passing `context_builder=ContextBuilder()` to
