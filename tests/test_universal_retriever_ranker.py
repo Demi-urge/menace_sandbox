@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from types import MethodType
 from pathlib import Path
+from types import MethodType
 
 import analytics.retrieval_ranker as arr
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.universal_retriever import RetrievalWeights, UniversalRetriever
+
+import pytest
 
 
 def _const_encoder(self, text: str):
@@ -45,10 +47,16 @@ def test_model_ranking_changes_order(tmp_path):
     }
 
     baseline = [h.metadata["id"] for h in plain.retrieve("q", top_k=2)]
-    scored = [h.metadata["id"] for h in ranked.retrieve("q", top_k=2)]
+    scored_hits = ranked.retrieve("q", top_k=2)
+    scored = [h.metadata["id"] for h in scored_hits]
 
     assert baseline != scored
     assert scored[0] == second
+
+    # ensure contextual metrics are logged for feature inspection
+    cm = scored_hits[0].metadata.get("contextual_metrics", {})
+    assert cm.get("deploy", 0.0) > 0.0
+    assert cm.get("model_score", 0.0) > 0.5
 
 
 def test_reliability_stats_alter_order(tmp_path):
@@ -76,21 +84,37 @@ def test_reliability_stats_alter_order(tmp_path):
         "bot": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
         "workflow": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
     }
-    order1 = [h.origin_db for h in retriever.retrieve("x", top_k=2)]
+    order1_hits = retriever.retrieve("x", top_k=2)
+    order1 = [h.origin_db for h in order1_hits]
     retriever._reliability_stats = {
         "bot": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
         "workflow": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
     }
-    order2 = [h.origin_db for h in retriever.retrieve("x", top_k=2)]
+    order2_hits = retriever.retrieve("x", top_k=2)
+    order2 = [h.origin_db for h in order2_hits]
 
     assert order1[0] == "bot"
     assert order2[0] == "workflow"
 
+    # verify reliability metrics recorded in metadata
+    m1 = order1_hits[0].metadata["contextual_metrics"]
+    m2 = order2_hits[0].metadata["contextual_metrics"]
+    assert m1.get("win_rate") == pytest.approx(1.0)
+    assert m2.get("win_rate") == pytest.approx(1.0)
 
-def test_training_set_labeling():
-    base = Path(__file__).resolve().parent / "fixtures"
-    stats = base / "retrieval_ranker_stats.jsonl"
-    labels = base / "patch_outcomes.jsonl"
-    ts = arr.build_training_set(stats, labels)
+
+@pytest.fixture()
+def stats_file() -> Path:
+    return Path(__file__).resolve().parent / "fixtures" / "retrieval_ranker_stats.jsonl"
+
+
+@pytest.fixture()
+def patch_labels_file() -> Path:
+    return Path(__file__).resolve().parent / "fixtures" / "patch_outcomes.jsonl"
+
+
+def test_training_set_labeling(stats_file: Path, patch_labels_file: Path):
+    ts = arr.build_training_set(stats_file, patch_labels_file)
     assert list(ts.y) == [1, 0]
     assert "db_bot" in ts.X.columns
+    assert {"age", "similarity", "win_rate", "regret_rate"}.issubset(ts.X.columns)
