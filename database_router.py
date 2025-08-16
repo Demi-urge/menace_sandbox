@@ -303,7 +303,7 @@ class DatabaseRouter:
         """Search across configured databases using the shared retriever."""
 
         try:
-            hits = self._retriever.retrieve(query, top_k=top_k)
+            hits, _, _ = self._retriever.retrieve(query, top_k=top_k)
         except Exception as exc:
             logger.error("universal retrieval failed: %s", exc)
             return []
@@ -314,7 +314,7 @@ class DatabaseRouter:
         """Perform a semantic search via :class:`UniversalRetriever`."""
 
         try:
-            hits = self._retriever.retrieve(query_text, top_k=top_k)
+            hits, _, _ = self._retriever.retrieve(query_text, top_k=top_k)
         except Exception as exc:
             logger.error("semantic retrieval failed: %s", exc)
             return []

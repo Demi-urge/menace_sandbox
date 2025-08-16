@@ -220,7 +220,7 @@ class ContextBuilder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        hits = self.retriever.retrieve(query, top_k=top_k * 5)
+        hits, _, _ = self.retriever.retrieve(query, top_k=top_k * 5)
 
         buckets: Dict[str, List[_ScoredEntry]] = {
             "errors": [],

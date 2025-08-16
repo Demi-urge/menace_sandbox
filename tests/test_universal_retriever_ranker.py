@@ -46,8 +46,9 @@ def test_model_ranking_changes_order(tmp_path):
         "intercept": 0.0,
     }
 
-    baseline = [h.metadata["id"] for h in plain.retrieve("q", top_k=2)]
-    scored_hits = ranked.retrieve("q", top_k=2)
+    baseline_hits, _, _ = plain.retrieve("q", top_k=2)
+    baseline = [h.metadata["id"] for h in baseline_hits]
+    scored_hits, _, _ = ranked.retrieve("q", top_k=2)
     scored = [h.metadata["id"] for h in scored_hits]
 
     assert baseline != scored
@@ -84,13 +85,13 @@ def test_reliability_stats_alter_order(tmp_path):
         "bot": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
         "workflow": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
     }
-    order1_hits = retriever.retrieve("x", top_k=2)
+    order1_hits, _, _ = retriever.retrieve("x", top_k=2)
     order1 = [h.origin_db for h in order1_hits]
     retriever._reliability_stats = {
         "bot": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
         "workflow": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
     }
-    order2_hits = retriever.retrieve("x", top_k=2)
+    order2_hits, _, _ = retriever.retrieve("x", top_k=2)
     order2 = [h.origin_db for h in order2_hits]
 
     assert order1[0] == "bot"

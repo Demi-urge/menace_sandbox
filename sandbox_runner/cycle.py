@@ -1123,9 +1123,7 @@ def _sandbox_cycle_runner(
                 retriever = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     try:
-                        hits = retriever.retrieve(mod, top_k=1)
-                        session_id = getattr(hits, "session_id", "")
-                        vectors = getattr(hits, "vectors", [])
+                        _hits, session_id, vectors = retriever.retrieve(mod, top_k=1)
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None
@@ -1482,9 +1480,7 @@ def _sandbox_cycle_runner(
                 retriever = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     try:
-                        hits = retriever.retrieve(mod, top_k=1)
-                        session_id = getattr(hits, "session_id", "")
-                        vectors = getattr(hits, "vectors", [])
+                        _hits, session_id, vectors = retriever.retrieve(mod, top_k=1)
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None

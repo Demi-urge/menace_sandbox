@@ -38,9 +38,9 @@ def test_code_snippet_retrieval(tmp_path, monkeypatch):
 
     retriever = UniversalRetriever(code_db=code_db)
 
-    hits = retriever.retrieve("greeting", top_k=1)
+    hits, session_id, vectors = retriever.retrieve("greeting", top_k=1)
 
-    assert hits and hits[0].origin_db == "code"
+    assert hits and session_id and hits[0].origin_db == "code"
     assert "print('hello')" in hits[0].metadata["code"]
     metrics = hits[0].metadata["contextual_metrics"]
     assert "complexity" in metrics
