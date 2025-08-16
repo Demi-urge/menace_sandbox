@@ -663,7 +663,7 @@ class UniversalRetriever:
         """Return ranking model probability for candidate ``source``."""
 
         model = self._ranker_model
-        if not model:
+        if not model or not feats:
             return 1.0
         try:
             vec: List[float] = []
@@ -732,9 +732,8 @@ class UniversalRetriever:
         """Return candidate scores and feature maps for ``query``.
 
         Each candidate is described by a feature vector mirroring the
-        statistics used during model training.  The ranking model (when
-        enabled) scores the candidate and its prediction is blended with the
-        similarity and contextual metrics to form the initial score.
+        statistics used during model training.  The ranking model can later
+        score the candidate using these features.
         """
 
         candidates: List[tuple[str, Any, Any, float, Dict[str, float]]] = []
@@ -852,12 +851,7 @@ class UniversalRetriever:
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-                    model_score = (
-                        self._model_predict(source, feats) if self.use_ranker else 1.0
-                    )
-                    feats["model_score"] = model_score
-                    score = base_score * model_score
-                    candidates.append((source, rec_id, m, score, feats))
+                    candidates.append((source, rec_id, m, base_score, feats))
                 if len(candidates) >= top_k:
                     break
 
@@ -937,20 +931,15 @@ class UniversalRetriever:
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "stale_cost": stale_cost,
-                         "age": age,
-                         "exec_freq": exec_freq,
-                         "roi_delta": roi_delta,
-                         "prior_hits": prior_hits,
+                        "age": age,
+                        "exec_freq": exec_freq,
+                        "roi_delta": roi_delta,
+                        "prior_hits": prior_hits,
                         **extra,
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-                    model_score = (
-                        self._model_predict("code", feats) if self.use_ranker else 1.0
-                    )
-                    feats["model_score"] = model_score
-                    score = base_score * model_score
-                    candidates.append(("code", rec_id, m, score, feats))
+                    candidates.append(("code", rec_id, m, base_score, feats))
         candidates.sort(key=lambda entry: entry[3], reverse=True)
         self._last_db_times = timings
         return candidates[:top_k]
@@ -1269,7 +1258,7 @@ class UniversalRetriever:
 
         scored: List[dict[str, Any]] = []
         reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
-        for source, rec_id, item, pre_score, feats in raw_results:
+        for source, rec_id, item, base_score, feats in raw_results:
             dist = float(feats.get("distance", 0.0))
             similarity = float(feats.get("similarity", 0.0))
             ctx_score = float(feats.get("context_score", 0.0))
@@ -1289,14 +1278,18 @@ class UniversalRetriever:
                     "stale_cost",
                 }
             }
-            model_score = float(feats.get("model_score", 1.0))
-            combined_score = pre_score
 
+            combined_score = base_score
             combined_score *= bias_map.get(source, 1.0)
             if self.enable_reliability_bias:
                 reliability_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
                 reliability_bias *= math.exp(-STALE_COST * stale_cost)
                 combined_score *= reliability_bias
+
+            model_score = (
+                self._model_predict(source, feats) if self.use_ranker else 1.0
+            )
+            combined_score *= model_score
 
             scored.append(
                 {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import MethodType
+import json
 
 import analytics.retrieval_ranker as arr
 from menace.bot_database import BotDB, BotRecord
@@ -22,6 +23,14 @@ def test_model_ranking_changes_order(tmp_path):
     second = bot_db.add_bot(BotRecord(name="two", purpose="b"))
 
     weights = RetrievalWeights(similarity=1.0, context=0.0, win=0.0, regret=0.0)
+    model_path = tmp_path / "ranker.json"
+    model_path.write_text(
+        json.dumps({
+            "features": ["context_score"],
+            "coef": [[10.0]],
+            "intercept": [0.0],
+        })
+    )
     plain = UniversalRetriever(
         bot_db=bot_db,
         weights=weights,
@@ -33,6 +42,7 @@ def test_model_ranking_changes_order(tmp_path):
         weights=weights,
         enable_model_ranking=True,
         enable_reliability_bias=False,
+        model_path=model_path,
     )
 
     def fake_freq(self, bid: int) -> float:
@@ -40,11 +50,6 @@ def test_model_ranking_changes_order(tmp_path):
 
     plain._bot_deploy_freq = MethodType(fake_freq, plain)
     ranked._bot_deploy_freq = MethodType(fake_freq, ranked)
-    ranked._ranker_model = {
-        "features": ["context_score"],
-        "coef": [10.0],
-        "intercept": 0.0,
-    }
 
     baseline_hits, _, _ = plain.retrieve("q", top_k=2)
     baseline = [h.metadata["id"] for h in baseline_hits]
