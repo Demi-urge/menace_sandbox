@@ -12,6 +12,7 @@ import time
 import asyncio
 import sys
 import inspect
+import threading
 from typing import Any, Dict, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
@@ -65,7 +66,7 @@ from metrics_exporter import (
     orphan_modules_legacy_total,
     orphan_modules_reclassified_total,
 )
-from relevancy_radar import RelevancyRadar
+from relevancy_radar import RelevancyRadar, track_usage as _radar_track_usage
 
 from .environment import (
     SANDBOX_ENV_PRESETS,
@@ -86,6 +87,21 @@ from .orphan_discovery import (
 import orphan_analyzer
 import module_graph_analyzer
 
+_ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
+
+
+def _async_track_usage(module: str) -> None:
+    """Record ``module`` usage asynchronously if radar is enabled."""
+
+    if not _ENABLE_RELEVANCY_RADAR:
+        return
+    try:
+        threading.Thread(
+            target=_radar_track_usage, args=(module,), daemon=True
+        ).start()
+    except Exception:
+        pass
+
 
 def map_module_identifier(name: str, repo: Path) -> str:
     """Return canonical module identifier for ``name`` relative to ``repo``."""
@@ -94,7 +110,9 @@ def map_module_identifier(name: str, repo: Path) -> str:
         rel = Path(base).resolve().relative_to(repo)
     except Exception:
         rel = Path(base)
-    return rel.with_suffix("").as_posix()
+    module_id = rel.with_suffix("").as_posix()
+    _async_track_usage(module_id)
+    return module_id
 
 
 def _choose_suggestion(ctx: Any, module: str) -> str:
@@ -330,6 +348,9 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                 except Exception as exc:
                     record_error(exc)
                     continue
+                finally:
+                    for m in mods:
+                        _async_track_usage(m)
                 for k in tested:
                     tested[k].extend(cluster_tested.get(k, []))
                 if cluster_tracker:

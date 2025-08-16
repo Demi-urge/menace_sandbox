@@ -59,11 +59,25 @@ except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
 # Relevancy radar integration -------------------------------------------------
+_ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 try:  # pragma: no cover - optional dependency
-    from relevancy_radar import track_module_usage as _radar_track_module_usage
+    from relevancy_radar import track_usage as _radar_track_module_usage
 except Exception:  # pragma: no cover - optional dependency
     def _radar_track_module_usage(_module: str) -> None:  # type: ignore
         return None
+
+
+def _async_radar_track(module: str) -> None:
+    """Record ``module`` usage without blocking."""
+
+    if not _ENABLE_RELEVANCY_RADAR:
+        return
+    try:
+        threading.Thread(
+            target=_radar_track_module_usage, args=(module,), daemon=True
+        ).start()
+    except Exception:
+        pass
 
 import builtins
 
@@ -75,7 +89,7 @@ def _tracking_import(
 ):  # pragma: no cover - thin wrapper
     mod = _original_import(name, globals, locals, fromlist, level)
     try:
-        _radar_track_module_usage(name)
+        _async_radar_track(name)
     except Exception:
         pass
     try:  # lazily resolve helper to avoid early import cycles
@@ -167,6 +181,7 @@ def record_module_usage(module_name: str) -> None:
     """
 
     ts = datetime.utcnow().isoformat()
+    _async_radar_track(module_name)
     with _MODULE_USAGE_LOCK:
         try:
             if MODULE_USAGE_PATH.exists():
