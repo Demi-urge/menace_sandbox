@@ -23,6 +23,7 @@ EmbeddingBackfill
 
 import json
 import time
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
@@ -310,11 +311,12 @@ class PatchLogger:
 class EmbeddingBackfill:
     """Trigger embedding backfills on all known database classes."""
 
-    def __init__(self, batch_size: int = 100) -> None:
+    def __init__(self, batch_size: int = 100, backend: str = "annoy") -> None:
         self.batch_size = batch_size
+        self.backend = backend
 
-    def _load_known_dbs(self) -> None:
-        """Best-effort import of common database modules.
+    def _load_known_dbs(self) -> List[type]:
+        """Import common database modules and return discovered classes.
 
         Importing ensures their classes register as subclasses of
         :class:`EmbeddableDBMixin`.
@@ -333,23 +335,62 @@ class EmbeddingBackfill:
                 __import__(name)
             except Exception:
                 pass
+        try:
+            subclasses = [
+                cls for cls in EmbeddableDBMixin.__subclasses__()
+                if hasattr(cls, "backfill_embeddings")
+            ]
+        except Exception:  # pragma: no cover - defensive
+            subclasses = []
+        return subclasses
 
     @log_and_time
     @track_metrics
-    def run(self, *, session_id: str = "") -> None:
+    def _process_db(
+        self,
+        db: EmbeddableDBMixin,
+        *,
+        batch_size: int,
+        session_id: str = "",
+    ) -> None:
+        try:
+            db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
+        except TypeError:
+            db.backfill_embeddings()  # type: ignore[call-arg]
+
+    @log_and_time
+    @track_metrics
+    def run(
+        self,
+        *,
+        session_id: str = "",
+        batch_size: int | None = None,
+        backend: str | None = None,
+    ) -> None:
         """Backfill embeddings for all ``EmbeddableDBMixin`` subclasses."""
 
-        self._load_known_dbs()
-        try:
-            subclasses = list(EmbeddableDBMixin.__subclasses__())
-        except Exception:  # pragma: no cover - defensive
-            subclasses = []
-        for cls in subclasses:
-            if not hasattr(cls, "backfill_embeddings"):
-                continue
+        bs = batch_size if batch_size is not None else self.batch_size
+        be = backend or self.backend
+        subclasses = self._load_known_dbs()
+        logger = logging.getLogger(__name__)
+        total = len(subclasses)
+        for idx, cls in enumerate(subclasses, 1):
             try:
-                db = cls()  # type: ignore[call-arg]
-                db.backfill_embeddings(self.batch_size)
+                db = cls(vector_backend=be)  # type: ignore[call-arg]
+            except Exception:  # pragma: no cover - fallback
+                try:
+                    db = cls()  # type: ignore[call-arg]
+                except Exception:
+                    continue
+            logger.info(
+                "Backfilling %s (%d/%d)",
+                cls.__name__,
+                idx,
+                total,
+                extra={"session_id": session_id},
+            )
+            try:
+                self._process_db(db, batch_size=bs, session_id=session_id)
             except Exception:  # pragma: no cover - best effort
                 continue
 
