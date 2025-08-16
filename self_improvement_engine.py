@@ -1138,7 +1138,9 @@ class SelfImprovementEngine:
         elapsed = time.perf_counter() - start
         if self.metrics_db:
             try:
-                self.metrics_db.record(module, elapsed, self.module_index, tags)
+                self.metrics_db.record(
+                    module, elapsed, self.module_index, tags, roi_delta=0.0
+                )
             except Exception:
                 self.logger.exception(
                     "relevancy metrics record failed", extra=log_record(module=module)
@@ -2772,7 +2774,9 @@ class SelfImprovementEngine:
             elapsed = time.perf_counter() - start
             if getattr(self, "metrics_db", None):
                 try:
-                    self.metrics_db.record(rel, elapsed, self.module_index)
+                    self.metrics_db.record(
+                        rel, elapsed, self.module_index, roi_delta=0.0
+                    )
                 except Exception:
                     self.logger.exception(
                         "relevancy metrics record failed", extra=log_record(module=rel)
