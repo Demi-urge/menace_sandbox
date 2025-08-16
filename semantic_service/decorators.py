@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+import functools
+import time
+from typing import Any, Callable, TypeVar
+
+import logging
+
+try:
+    from .. import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - fallback when running as script
+    import metrics_exporter as _me  # type: ignore
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Gauges for tracking basic metrics per function
+_CALL_COUNT = _me.Gauge(
+    "semantic_service_calls_total", "Number of times a function is invoked", ["function"],
+)
+_LATENCY_GAUGE = _me.Gauge(
+    "semantic_service_latency_seconds", "Execution time of functions", ["function"],
+)
+_RESULT_SIZE_GAUGE = _me.Gauge(
+    "semantic_service_result_size", "Size of results returned by functions", ["function"],
+)
+
+
+def _result_size(result: Any) -> int:
+    if hasattr(result, "__len__"):
+        try:
+            return len(result)  # type: ignore[arg-type]
+        except Exception:
+            return 0
+    return 0
+
+
+def log_and_time(func: F) -> F:
+    """Log structured information about a function call."""
+
+    logger = logging.getLogger(func.__module__)
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.get("session_id", "")
+        start = time.time()
+        try:
+            result = func(*args, **kwargs)
+            latency = time.time() - start
+            size = _result_size(result)
+            logger.info(
+                "%s executed", func.__qualname__,
+                extra={"session_id": session_id, "latency": latency, "result_size": size},
+            )
+            return result
+        except Exception:
+            latency = time.time() - start
+            logger.exception(
+                "%s failed", func.__qualname__,
+                extra={"session_id": session_id, "latency": latency, "result_size": 0},
+            )
+            raise
+
+    return wrapper  # type: ignore[return-value]
+
+
+def track_metrics(func: F) -> F:
+    """Update Prometheus-style metrics for the wrapped function."""
+
+    name = func.__qualname__
+
+    @functools.wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        start = time.time()
+        result = func(*args, **kwargs)
+        latency = time.time() - start
+        size = _result_size(result)
+        _CALL_COUNT.labels(name).inc()
+        _LATENCY_GAUGE.labels(name).set(latency)
+        _RESULT_SIZE_GAUGE.labels(name).set(size)
+        return result
+
+    return wrapper  # type: ignore[return-value]
+
+
+__all__ = ["log_and_time", "track_metrics"]
