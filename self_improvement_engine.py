@@ -2766,6 +2766,29 @@ class SelfImprovementEngine:
             legacy[:] = [m for m in legacy if _ok(m)]
             redundant[:] = [m for m in redundant if _ok(m)]
 
+        radar_flags: dict[str, str] = {}
+        try:  # pragma: no cover - optional dependency
+            from relevancy_radar import load_usage_stats, evaluate_relevancy
+
+            usage_stats = load_usage_stats()
+            if usage_stats:
+                radar_flags = evaluate_relevancy(
+                    {m: 1 for m in all_modules}, usage_stats
+                )
+        except Exception:
+            radar_flags = {}
+
+        for mod, flag in radar_flags.items():
+            info = self.orphan_traces.setdefault(mod, {"parents": []})
+            info["radar_flag"] = flag
+
+        if not getattr(settings, "test_redundant_modules", False):
+            retired = {m for m, f in radar_flags.items() if f == "retire"}
+            if retired:
+                candidates[:] = [m for m in candidates if m not in retired]
+                legacy[:] = [m for m in legacy if m not in retired]
+                redundant[:] = [m for m in redundant if m not in retired]
+
         modules = (
             [*candidates, *legacy, *redundant]
             if getattr(settings, "test_redundant_modules", False)
