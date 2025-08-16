@@ -23,12 +23,11 @@ class TrainingSample:
     session_id: str
     vector_id: str
     db_type: str
-    embedding_age: float
-    vector_similarity: float
-    error_frequency: int
-    workflow_frequency: int
+    age: float
+    similarity: float
+    exec_freq: float
     roi_delta: float
-    prior_hit_count: int
+    prior_hits: int
     label: int
 
 
@@ -72,31 +71,27 @@ def build_dataset(
     df["label"] = df["label"].fillna(0).astype(int)
 
     # Feature engineering
-    df["embedding_age"] = df["age"].fillna(0)
-    df["vector_similarity"] = df["similarity"].fillna(0)
+    df["age"] = df["age"].fillna(0)
+    df["similarity"] = df["similarity"].fillna(0)
     df["roi_delta"] = df["contribution"].fillna(0)
     df["hit"] = df["hit"].fillna(0).astype(int)
 
     df = df.sort_values("ts")
     grp = df.groupby("vector_id", sort=False)
 
-    df["prior_hit_count"] = grp["hit"].cumsum() - df["hit"]
-    df["workflow_frequency"] = grp.cumcount()
-    df["error_frequency"] = (
-        grp["hit"].transform(lambda s: (1 - s).cumsum()) - (1 - df["hit"])
-    )
+    df["prior_hits"] = grp["hit"].cumsum() - df["hit"]
+    df["exec_freq"] = grp.cumcount()
 
     return df[
         [
             "session_id",
             "vector_id",
             "db_type",
-            "embedding_age",
-            "vector_similarity",
-            "error_frequency",
-            "workflow_frequency",
+            "age",
+            "similarity",
+            "exec_freq",
             "roi_delta",
-            "prior_hit_count",
+            "prior_hits",
             "label",
         ]
     ]

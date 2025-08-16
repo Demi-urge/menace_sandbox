@@ -667,11 +667,18 @@ class UniversalRetriever:
             return 1.0
         try:
             vec: List[float] = []
+            aliases = {
+                "embedding_age": "age",
+                "vector_similarity": "similarity",
+                "workflow_frequency": "exec_freq",
+                "prior_hit_count": "prior_hits",
+            }
             for name in model.get("features", []):
                 if name.startswith("db_"):
                     vec.append(1.0 if source == name[3:] else 0.0)
                 else:
-                    vec.append(float(feats.get(name, 0.0)))
+                    key = aliases.get(name, name)
+                    vec.append(float(feats.get(key, 0.0)))
             z = sum(c * v for c, v in zip(model.get("coef", []), vec)) + model.get(
                 "intercept", 0.0
             )

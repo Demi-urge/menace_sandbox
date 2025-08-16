@@ -56,10 +56,10 @@ def test_feature_extraction_and_labels(tmp_path):
 
     row1 = df[df["session_id"] == "s1"].iloc[0]
     assert row1.label == 1
-    assert row1.prior_hit_count == 0
-    assert row1.workflow_frequency == 0
+    assert row1.prior_hits == 0
+    assert row1.exec_freq == 0
 
     row2 = df[df["session_id"] == "s2"].iloc[0]
     assert row2.label == 0
-    assert row2.prior_hit_count == 1
-    assert row2.workflow_frequency == 1
+    assert row2.prior_hits == 1
+    assert row2.exec_freq == 1
