@@ -14,21 +14,22 @@ def test_instance_tracking_and_evaluation(tmp_path, monkeypatch):
     metrics_file = tmp_path / "relevancy_metrics.json"
     radar = rr.RelevancyRadar(metrics_file=metrics_file)
 
-    radar.track_usage("alpha")
-    radar.track_usage("alpha")
-    radar.track_usage("beta")
+    radar.track_usage("alpha", impact=0.0)
+    radar.track_usage("alpha", impact=0.0)
+    radar.track_usage("beta", impact=5.0)
 
     # Include a module with no activity to exercise the retire path
-    radar._metrics["gamma"] = {"imports": 0, "executions": 0}
+    radar._metrics["gamma"] = {"imports": 0, "executions": 0, "impact": 0.0}
 
     result = radar.evaluate_relevance(
-        compress_threshold=1.0, replace_threshold=5.0
+        compress_threshold=1.0, replace_threshold=5.0, impact_weight=1.0
     )
-    assert result == {"gamma": "retire", "beta": "compress", "alpha": "replace"}
+    assert result == {"gamma": "retire", "alpha": "replace"}
 
     saved = json.loads(metrics_file.read_text())
     assert saved["alpha"]["executions"] == 2
     assert saved["beta"]["executions"] == 1
+    assert saved["beta"]["impact"] == 5.0
 
 
 def test_metrics_persistence_keeps_annotations(tmp_path, monkeypatch):
@@ -43,7 +44,7 @@ def test_metrics_persistence_keeps_annotations(tmp_path, monkeypatch):
     )
 
     radar = rr.RelevancyRadar(metrics_file=metrics_file)
-    radar.track_usage("alpha")
+    radar.track_usage("alpha", impact=0.0)
 
     saved = json.loads(metrics_file.read_text())
     assert saved["alpha"]["annotation"] == "replace"

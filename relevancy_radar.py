@@ -93,33 +93,43 @@ def load_usage_stats() -> Dict[str, int]:
     return recent_counts
 
 
-def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
-    """Return relevancy flags for modules based on ``usage_stats``.
+def evaluate_relevancy(
+    module_map: dict, usage_stats: dict, impact_stats: dict | None = None
+) -> dict:
+    """Return relevancy flags for modules based on usage and impact data.
 
     ``usage_stats`` may map module names either to raw timestamp lists or to
     pre-aggregated counts. Any entries older than ``relevancy_window_days`` are
     discarded before evaluation.
 
-    Modules absent from ``usage_stats`` are treated as having zero usage.
+    ``impact_stats`` maps module names to cumulative impact scores such as ROI
+    deltas. These scores are added to the usage counts when computing the final
+    relevancy score for each module. Modules absent from either mapping are
+    treated as having zero usage/impact.
+
     Thresholds and module whitelists are sourced from
     :class:`~sandbox_settings.SandboxSettings` when available:
 
-    - ``retire``  – modules with no recorded usage.
-    - ``compress`` – modules used fewer than 25% of
+    - ``retire``  – modules with no recorded score.
+    - ``compress`` – modules with a score fewer than 25% of
       ``relevancy_threshold``.
-    - ``replace`` – modules used fewer than ``relevancy_threshold`` times.
+    - ``replace`` – modules with a score fewer than ``relevancy_threshold``.
 
     Results are persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in
     memory for access via :func:`flagged_modules`.
     """
 
     cutoff = _relevancy_cutoff()
-    counts: Dict[str, int] = {}
+    counts: Dict[str, float] = {}
     for mod, data in usage_stats.items():
         if isinstance(data, list):
-            counts[mod] = sum(int(ts) >= cutoff for ts in data)
+            counts[mod] = float(sum(int(ts) >= cutoff for ts in data))
         else:
-            counts[mod] = int(data)
+            counts[mod] = float(int(data))
+
+    impact_stats = impact_stats or {}
+    for mod, impact in impact_stats.items():
+        counts[mod] = counts.get(mod, 0.0) + float(impact)
 
     usage_stats = counts
 
@@ -139,12 +149,12 @@ def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
     for mod in module_map:
         if mod in whitelist:
             continue
-        count = int(usage_stats.get(mod, 0))
-        if count == 0:
+        score = float(usage_stats.get(mod, 0.0))
+        if score == 0:
             flags[mod] = "retire"
-        elif count <= compress_threshold:
+        elif score <= compress_threshold:
             flags[mod] = "compress"
-        elif count <= replace_threshold:
+        elif score <= replace_threshold:
             flags[mod] = "replace"
 
     _relevancy_flags.clear()
@@ -223,15 +233,15 @@ class RelevancyRadar:
 
     def __init__(self, metrics_file: Path | None = None) -> None:
         self.metrics_file = Path(metrics_file) if metrics_file else _RELEVANCY_METRICS_FILE
-        self._metrics: Dict[str, Dict[str, int | str]] = self._load_metrics()
+        self._metrics: Dict[str, Dict[str, int | float | str]] = self._load_metrics()
         self._install_import_hook()
         atexit.register(self._persist_metrics)
 
     # ------------------------------------------------------------------
     # Metrics persistence helpers
     # ------------------------------------------------------------------
-    def _load_metrics(self) -> Dict[str, Dict[str, int | str]]:
-        data: Dict[str, Dict[str, int | str]] = {}
+    def _load_metrics(self) -> Dict[str, Dict[str, int | float | str]]:
+        data: Dict[str, Dict[str, int | float | str]] = {}
         if self.metrics_file.exists():
             try:
                 with self.metrics_file.open("r", encoding="utf-8") as fh:
@@ -239,9 +249,10 @@ class RelevancyRadar:
                 if isinstance(raw, dict):
                     for mod, counts in raw.items():
                         if isinstance(counts, dict):
-                            entry: Dict[str, int | str] = {
+                            entry: Dict[str, int | float | str] = {
                                 "imports": int(counts.get("imports", 0)),
                                 "executions": int(counts.get("executions", 0)),
+                                "impact": float(counts.get("impact", 0.0)),
                             }
                             annotation = counts.get("annotation")
                             if isinstance(annotation, str) and annotation:
@@ -265,7 +276,9 @@ class RelevancyRadar:
 
         def tracked_import(name, globals=None, locals=None, fromlist=(), level=0):
             root = name.split(".")[0]
-            info = radar._metrics.setdefault(root, {"imports": 0, "executions": 0})
+            info = radar._metrics.setdefault(
+                root, {"imports": 0, "executions": 0, "impact": 0.0}
+            )
             info["imports"] += 1
             return original_import(name, globals, locals, fromlist, level)
 
@@ -275,17 +288,27 @@ class RelevancyRadar:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def track_usage(self, module_name: str) -> None:
+    def track_usage(self, module_name: str, impact: float = 0.0) -> None:
         """Record an execution event for ``module_name`` and persist metrics."""
 
-        info = self._metrics.setdefault(module_name, {"imports": 0, "executions": 0})
+        info = self._metrics.setdefault(
+            module_name, {"imports": 0, "executions": 0, "impact": 0.0}
+        )
         info["executions"] += 1
+        info["impact"] = float(info.get("impact", 0.0)) + float(impact)
         self._persist_metrics()
 
     def evaluate_relevance(
-        self, compress_threshold: float, replace_threshold: float
+        self,
+        compress_threshold: float,
+        replace_threshold: float,
+        impact_weight: float = 1.0,
     ) -> Dict[str, str]:
         """Return modules with scores below the provided thresholds.
+
+        The score combines import counts, execution counts and the cumulative
+        impact for each module. ``impact_weight`` scales the influence of the
+        impact score relative to usage counts.
 
         Modules with zero score are tagged ``retire``. Modules with a score
         less than or equal to ``compress_threshold`` are tagged ``compress``.
@@ -295,7 +318,11 @@ class RelevancyRadar:
 
         results: Dict[str, str] = {}
         for mod, counts in self._metrics.items():
-            score = int(counts.get("imports", 0)) + int(counts.get("executions", 0))
+            score = (
+                int(counts.get("imports", 0))
+                + int(counts.get("executions", 0))
+                + impact_weight * float(counts.get("impact", 0.0))
+            )
             if score == 0:
                 results[mod] = "retire"
             elif score <= compress_threshold:
@@ -307,7 +334,9 @@ class RelevancyRadar:
         return results
 
     @staticmethod
-    def flag_unused_modules(module_map: Iterable[str]) -> Dict[str, str]:
+    def flag_unused_modules(
+        module_map: Iterable[str], impact_stats: Dict[str, float] | None = None
+    ) -> Dict[str, str]:
         """Evaluate module usage and persist flags and orphan list.
 
         Parameters
@@ -317,7 +346,9 @@ class RelevancyRadar:
         """
 
         usage_stats = load_usage_stats()
-        flags = evaluate_relevancy(dict.fromkeys(module_map), usage_stats)
+        flags = evaluate_relevancy(
+            dict.fromkeys(module_map), usage_stats, impact_stats
+        )
         update_relevancy_metrics(flags)
 
         orphan_file = _BASE_DIR / "sandbox_data" / "orphan_modules.json"
@@ -356,15 +387,17 @@ def _get_default_radar() -> RelevancyRadar:
     return _DEFAULT_RADAR
 
 
-def track_usage(module_name: str) -> None:
+def track_usage(module_name: str, impact: float = 0.0) -> None:
     """Record an execution event for ``module_name`` using the default radar."""
 
     radar = _get_default_radar()
-    radar.track_usage(module_name)
+    radar.track_usage(module_name, impact)
 
 
 def evaluate_relevance(
-    compress_threshold: float, replace_threshold: float
+    compress_threshold: float,
+    replace_threshold: float,
+    impact_weight: float = 1.0,
 ) -> Dict[str, str]:
     """Evaluate relevancy of tracked modules using the default radar.
 
@@ -382,7 +415,9 @@ def evaluate_relevance(
     """
 
     radar = _get_default_radar()
-    return radar.evaluate_relevance(compress_threshold, replace_threshold)
+    return radar.evaluate_relevance(
+        compress_threshold, replace_threshold, impact_weight
+    )
 
 
 def scan(
@@ -390,16 +425,16 @@ def scan(
     min_calls: int = 0,
     compress_ratio: float = 0.01,
     replace_ratio: float = 0.05,
+    impact_weight: float = 1.0,
 ) -> Dict[str, str]:
     """Analyse the relevancy metrics database and return flags for modules.
 
     The analysis uses simple heuristics:
 
     - ``retire``: modules invoked ``min_calls`` times or fewer.
-    - ``compress``: modules whose call *and* ROI ratios fall below
+    - ``compress``: modules whose combined call and impact ratios fall below
       ``compress_ratio``.
-    - ``replace``: modules below ``replace_ratio`` for both metrics
-      (call and ROI).
+    - ``replace``: modules with combined ratios below ``replace_ratio``.
 
     Parameters
     ----------
@@ -410,10 +445,13 @@ def scan(
         Maximum number of invocations considered "unused" when evaluating
         retirement.
     compress_ratio:
-        Threshold ratio (relative to the totals) at which modules are flagged
-        for compression.
+        Threshold combined ratio (relative to the totals) at which modules are
+        flagged for compression.
     replace_ratio:
-        Threshold ratio at which modules are suggested for replacement.
+        Threshold combined ratio at which modules are suggested for replacement.
+    impact_weight:
+        Multiplier applied to the impact ratio when computing the combined
+        score.
 
     Returns
     -------
@@ -443,12 +481,13 @@ def scan(
         call_ratio = call_count / total_calls if total_calls else 0.0
         roi_pos = max(roi_value, 0.0)
         roi_ratio = roi_pos / total_roi if total_roi else 0.0
+        score = call_ratio + impact_weight * roi_ratio
 
         if call_count <= min_calls:
             flags[str(name)] = "retire"
-        elif call_ratio <= compress_ratio and roi_ratio <= compress_ratio:
+        elif score <= compress_ratio:
             flags[str(name)] = "compress"
-        elif call_ratio <= replace_ratio and roi_ratio <= replace_ratio:
+        elif score <= replace_ratio:
             flags[str(name)] = "replace"
 
     return flags
