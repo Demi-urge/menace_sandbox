@@ -124,7 +124,7 @@ class SelfCodingEngine:
             except Exception:  # pragma: no cover - optional dependency missing
                 formal_verifier = None
         self.formal_verifier = formal_verifier
-        self._active_patches: dict[str, tuple[Path, str]] = {}
+        self._active_patches: dict[str, tuple[Path, str, str, List[Tuple[str, str]]]] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
         path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
         key_b64 = audit_privkey or os.getenv("AUDIT_PRIVKEY")
@@ -634,6 +634,19 @@ class SelfCodingEngine:
                 before_complexity = 0.0
         original = path.read_text(encoding="utf-8")
         generated_code = self.patch_file(path, description, context_meta=context_meta)
+        vectors: List[Tuple[str, str]] = []
+        session_id = ""
+        if context_meta:
+            raw_vecs = context_meta.get("retrieval_vectors") or []
+            session_id = context_meta.get("retrieval_session_id", "")
+            for item in raw_vecs:
+                if isinstance(item, dict):
+                    origin = item.get("origin_db") or item.get("origin")
+                    vid = item.get("vector_id") or item.get("id")
+                else:
+                    origin, vid = item
+                if origin is not None and vid is not None:
+                    vectors.append((str(origin), str(vid)))
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
@@ -686,28 +699,28 @@ class SelfCodingEngine:
                 },
             )
             self._store_patch_memory(path, description, generated_code, False, roi_delta)
-            if self.patch_db and context_meta:
+            if self.patch_db and session_id and vectors and patch_id is not None:
                 try:
-                    vectors: List[Tuple[str, str]] = []
-                    session_id = context_meta.get("retrieval_session_id", "")
-                    raw_vecs = context_meta.get("retrieval_vectors") or []
-                    for item in raw_vecs:
-                        if isinstance(item, dict):
-                            origin = item.get("origin_db") or item.get("origin")
-                            vid = item.get("vector_id") or item.get("id")
-                        else:
-                            origin, vid = item
-                        if origin is not None and vid is not None:
-                            vectors.append((str(origin), str(vid)))
-                    if session_id and vectors and patch_id is not None:
-                        self.patch_db.record_vector_metrics(
-                            session_id,
-                            vectors,
-                            patch_id=patch_id,
-                            contribution=0.0,
-                            win=False,
-                            regret=True,
-                        )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        vectors,
+                        patch_id=patch_id,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                    )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
+            if self.data_bot:
+                try:
+                    pid = str(patch_id) if patch_id is not None else description
+                    self.data_bot.db.log_patch_outcome(
+                        pid,
+                        False,
+                        vectors,
+                        session_id=session_id,
+                        reverted=True,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             return patch_id, True, roi_delta
@@ -716,28 +729,26 @@ class SelfCodingEngine:
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
-            if self.patch_db and context_meta:
+            if self.patch_db and session_id and vectors:
                 try:
-                    vectors: List[Tuple[str, str]] = []
-                    session_id = context_meta.get("retrieval_session_id", "")
-                    raw_vecs = context_meta.get("retrieval_vectors") or []
-                    for item in raw_vecs:
-                        if isinstance(item, dict):
-                            origin = item.get("origin_db") or item.get("origin")
-                            vid = item.get("vector_id") or item.get("id")
-                        else:
-                            origin, vid = item
-                        if origin is not None and vid is not None:
-                            vectors.append((str(origin), str(vid)))
-                    if session_id and vectors:
-                        self.patch_db.record_vector_metrics(
-                            session_id,
-                            vectors,
-                            patch_id=0,
-                            contribution=0.0,
-                            win=False,
-                            regret=True,
-                        )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        vectors,
+                        patch_id=0,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                    )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
+            if self.data_bot:
+                try:
+                    self.data_bot.db.log_patch_outcome(
+                        description,
+                        False,
+                        vectors,
+                        session_id=session_id,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             return None, False, 0.0
@@ -745,28 +756,26 @@ class SelfCodingEngine:
             path.write_text(original, encoding="utf-8")
             self._run_ci(path)
             self._store_patch_memory(path, description, generated_code, False, 0.0)
-            if self.patch_db and context_meta:
+            if self.patch_db and session_id and vectors:
                 try:
-                    vectors: List[Tuple[str, str]] = []
-                    session_id = context_meta.get("retrieval_session_id", "")
-                    raw_vecs = context_meta.get("retrieval_vectors") or []
-                    for item in raw_vecs:
-                        if isinstance(item, dict):
-                            origin = item.get("origin_db") or item.get("origin")
-                            vid = item.get("vector_id") or item.get("id")
-                        else:
-                            origin, vid = item
-                        if origin is not None and vid is not None:
-                            vectors.append((str(origin), str(vid)))
-                    if session_id and vectors:
-                        self.patch_db.record_vector_metrics(
-                            session_id,
-                            vectors,
-                            patch_id=0,
-                            contribution=0.0,
-                            win=False,
-                            regret=True,
-                        )
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        vectors,
+                        patch_id=0,
+                        contribution=0.0,
+                        win=False,
+                        regret=True,
+                    )
+                except Exception:
+                    self.logger.exception("failed to log patch outcome")
+            if self.data_bot:
+                try:
+                    self.data_bot.db.log_patch_outcome(
+                        description,
+                        False,
+                        vectors,
+                        session_id=session_id,
+                    )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
             return None, False, 0.0
@@ -859,7 +868,7 @@ class SelfCodingEngine:
         patch_key = str(patch_id) if patch_id is not None else description
         if not reverted:
             if patch_id is not None:
-                self._active_patches[patch_key] = (path, original)
+                self._active_patches[patch_key] = (path, original, session_id, list(vectors))
                 if self.rollback_mgr:
                     self.rollback_mgr.register_patch(patch_key, self.bot_name)
             try:
@@ -899,19 +908,6 @@ class SelfCodingEngine:
         )
         self._store_patch_memory(path, description, generated_code, not reverted, roi_delta)
         try:
-            vectors: List[Tuple[str, str]] = []
-            session_id = ""
-            if context_meta:
-                raw_vecs = context_meta.get("retrieval_vectors") or []
-                session_id = context_meta.get("retrieval_session_id", "")
-                for item in raw_vecs:
-                    if isinstance(item, dict):
-                        origin = item.get("origin_db") or item.get("origin")
-                        vid = item.get("vector_id") or item.get("id")
-                    else:
-                        origin, vid = item
-                    if origin is not None and vid is not None:
-                        vectors.append((str(origin), str(vid)))
             if self.patch_db and session_id and patch_id is not None:
                 win_flag = not reverted and roi_delta > 0
                 regret_flag = reverted or roi_delta < 0
@@ -946,9 +942,20 @@ class SelfCodingEngine:
         info = self._active_patches.pop(patch_id, None)
         if not info:
             return
-        path, original = info
+        path, original, session_id, vectors = info
         path.write_text(original, encoding="utf-8")
         self._run_ci(path)
+        try:
+            if self.data_bot:
+                self.data_bot.db.log_patch_outcome(
+                    patch_id,
+                    False,
+                    vectors,
+                    session_id=session_id,
+                    reverted=True,
+                )
+        except Exception:
+            self.logger.exception("failed to log patch rollback")
 
     def top_patches(self, limit: int = 5) -> Iterable[PatchRecord]:
         """Return patches with highest ROI improvement."""
