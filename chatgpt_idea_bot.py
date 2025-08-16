@@ -144,24 +144,24 @@ class ChatGPTClient:
                 global_tags = list(tags)
             elif memory is knowledge:
                 mem_tags = []
-                global_tags = [INSIGHT]
+                global_tags = [IMPROVEMENT_PATH, INSIGHT]
             else:
-                mem_tags = [INSIGHT]
-                global_tags = [INSIGHT]
+                mem_tags = [IMPROVEMENT_PATH, INSIGHT]
+                global_tags = [IMPROVEMENT_PATH, INSIGHT]
             try:
-                if memory:
+                if memory and mem_tags:
                     log_with_tags(
                         memory,
                         prompt_str,
                         response,
-                        ["chatgpt_idea_bot.generate", *mem_tags],
+                        tags=["chatgpt_idea_bot.generate", *mem_tags],
                     )
                 if self.gpt_memory and self.gpt_memory is not memory:
                     log_with_tags(
                         self.gpt_memory,
                         prompt_str,
                         response,
-                        ["chatgpt_idea_bot.generate", *global_tags],
+                        tags=["chatgpt_idea_bot.generate", *global_tags],
                     )
             except Exception:
                 logger.exception("failed to log interaction")

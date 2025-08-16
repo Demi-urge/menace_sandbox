@@ -10,7 +10,7 @@ import difflib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Iterator
+from typing import Any, Iterable, List, Optional, Iterator, Sequence
 
 from .override_policy import OverridePolicyManager
 
@@ -785,6 +785,8 @@ class ChatGPTEnhancementBot:
         num_ideas: int = DEFAULT_NUM_IDEAS,
         context: str = "",
         ratio: float = DEFAULT_PROPOSE_RATIO,
+        *,
+        tags: Sequence[str] | None = None,
     ) -> List[Enhancement]:
         prompt = (
             f"{instruction} Provide {num_ideas} enhancement ideas as a JSON list with"
@@ -792,12 +794,15 @@ class ChatGPTEnhancementBot:
         )
         logger.debug("sending prompt to ChatGPT: %s", prompt)
         try:
+            base_tags = [IMPROVEMENT_PATH, INSIGHT]
+            if tags:
+                base_tags.extend(tags)
             data = ask_with_memory(
                 self.client,
                 "chatgpt_enhancement_bot.propose",
                 prompt,
                 memory=self.gpt_memory,
-                tags=[IMPROVEMENT_PATH, INSIGHT],
+                tags=base_tags,
             )
         except Exception as exc:
             logger.exception("chatgpt request failed: %s", exc)
