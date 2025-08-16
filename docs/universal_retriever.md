@@ -93,6 +93,15 @@ Two additional knobs influence candidate ordering:
   (``win_rate - regret_rate``) fetched from :class:`VectorMetricsDB`. Databases
   falling below this threshold are de‑prioritised or skipped during search.
 
+Model and reliability adjustments can be toggled at runtime with the
+``enable_model_ranking`` and ``enable_reliability_bias`` flags passed to
+``UniversalRetriever``.  Setting either flag to ``False`` disables the
+corresponding behaviour, leaving similarity and context scoring unaffected.
+
+Current per‑database win/regret rates are exposed via the
+``reliability_metrics`` property, enabling downstream systems to tune fallback
+orderings or apply additional redundancy checks.
+
 These settings make it possible to blend historical outcomes with real‑time
 signals, promoting trustworthy databases while still honouring similarity and
 context.

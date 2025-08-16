@@ -516,8 +516,18 @@ class UniversalRetriever:
 
     @property
     def reliability_metrics(self) -> Dict[str, Dict[str, float]]:
-        """Return last loaded reliability statistics per database."""
+        """Return reliability statistics for all registered databases.
 
+        The metrics are loaded from :class:`MetricsDB` on demand so that
+        callers can always access up‑to‑date win/regret rates even when
+        ``retrieve`` has not been invoked yet.
+        """
+
+        if not self._reliability_stats:
+            # ``_load_reliability_stats`` swallows any database errors and
+            # simply leaves ``_reliability_stats`` empty on failure.  This
+            # makes the property safe to call in best‑effort contexts.
+            self._load_reliability_stats()
         return dict(self._reliability_stats)
 
     def reload_ranker_model(self, model_path: str | Path) -> None:
