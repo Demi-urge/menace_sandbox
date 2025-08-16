@@ -1,8 +1,6 @@
 import pytest
 from types import MethodType
 
-import pytest
-
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
@@ -45,6 +43,9 @@ def test_retrieve(tmp_path):
         assert r.confidence >= 0.0
         assert isinstance(r.reason, str)
         assert isinstance(r.links, list)
+        # feature logging should expose similarity and contextual metrics
+        assert "similarity" in r.metadata
+        assert "contextual_metrics" in r.metadata
 
 
 def test_linked_boost(tmp_path):
@@ -71,6 +72,10 @@ def test_linked_boost(tmp_path):
 
     base = retriever.retrieve("q", top_k=5, link_multiplier=1.0)
     boosted = retriever.retrieve("q", top_k=5, link_multiplier=2.0)
+
+    for r in base + boosted:
+        assert "similarity" in r.metadata
+        assert "contextual_metrics" in r.metadata
 
     def _find(res, kind):
         for r in res:
