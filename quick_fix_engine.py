@@ -8,7 +8,8 @@ import subprocess
 import shutil
 import tempfile
 import json
-from typing import Tuple, Iterable, Dict, Any
+import os
+from typing import Tuple, Iterable, Dict, Any, List
 
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
@@ -151,6 +152,8 @@ class QuickFixEngine:
         predictor: ErrorClusterPredictor | None = None,
         retriever: "UniversalRetriever | None" = None,
         context_builder: ContextBuilder | None = None,
+        min_reliability: float | None = None,
+        redundancy_limit: int | None = None,
     ) -> None:
         self.db = error_db
         self.manager = manager
@@ -161,6 +164,18 @@ class QuickFixEngine:
         self.retriever = retriever
         self.context_builder = context_builder
         self.logger = logging.getLogger(self.__class__.__name__)
+        env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
+        env_red = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
+        self.min_reliability = (
+            float(min_reliability)
+            if min_reliability is not None
+            else env_min_rel
+        )
+        self.redundancy_limit = (
+            int(redundancy_limit)
+            if redundancy_limit is not None
+            else env_red
+        )
 
     # ------------------------------------------------------------------
     def _top_error(
@@ -174,6 +189,32 @@ class QuickFixEngine:
             return None
         etype, module, mods, count, _ = info
         return etype, module, mods, count
+
+    def _redundant_retrieve(self, query: str, top_k: int) -> Tuple[List[Any], str, List[Tuple[str, str]]]:
+        if self.retriever is None:
+            return [], "", []
+        reliabilities = self.retriever.reliability_metrics()
+        names = list(getattr(self.retriever, "_dbs", {}).keys())
+        names.sort(
+            key=lambda n: reliabilities.get(n, {}).get("reliability", 0.0),
+            reverse=True,
+        )
+        all_hits: List[Any] = []
+        session_id = ""
+        vectors: List[Tuple[str, str]] = []
+        queries = 0
+        for name in names:
+            try:
+                hits, session_id, vectors = self.retriever.retrieve(query, top_k=top_k, dbs=[name])
+            except Exception:
+                self.logger.debug("retriever lookup failed", exc_info=True)
+                continue
+            all_hits.extend(hits)
+            queries += 1
+            rel = reliabilities.get(name, {}).get("reliability", 0.0)
+            if rel >= self.min_reliability or queries >= self.redundancy_limit:
+                break
+        return all_hits, session_id, vectors
 
     def run(self, bot: str) -> None:
         """Attempt a quick patch for the most frequent error of ``bot``."""
@@ -220,10 +261,7 @@ class QuickFixEngine:
         session_id = ""
         vectors: list[tuple[str, str]] = []
         if self.retriever is not None:
-            try:
-                _hits, session_id, vectors = self.retriever.retrieve(module, top_k=1)
-            except Exception:
-                self.logger.debug("retriever lookup failed", exc_info=True)
+            _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
         if session_id:
             context_meta["retrieval_session_id"] = session_id
             context_meta["retrieval_vectors"] = vectors
@@ -322,10 +360,7 @@ class QuickFixEngine:
             session_id = ""
             vectors: list[tuple[str, str]] = []
             if self.retriever is not None:
-                try:
-                    _hits, session_id, vectors = self.retriever.retrieve(module, top_k=1)
-                except Exception:
-                    self.logger.debug("retriever lookup failed", exc_info=True)
+                _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
             if session_id:
                 meta["retrieval_session_id"] = session_id
                 meta["retrieval_vectors"] = vectors

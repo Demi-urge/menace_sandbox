@@ -729,7 +729,7 @@ class UniversalRetriever:
 
     # ------------------------------------------------------------------
     def _retrieve_candidates(
-        self, query: Any, top_k: int = 10
+        self, query: Any, top_k: int = 10, db_names: Sequence[str] | None = None
     ) -> List[tuple[str, Any, Any, float, Dict[str, float]]]:
         """Return candidate scores and feature maps for ``query``.
 
@@ -754,7 +754,10 @@ class UniversalRetriever:
 
         if self._dbs:
             vector = self._to_vector(query)
-            items = list(self._dbs.items())
+            if db_names is not None:
+                items = [(n, self._dbs[n]) for n in db_names if n in self._dbs]
+            else:
+                items = list(self._dbs.items())
             if self.enable_reliability_bias and self._reliability_stats:
                 items.sort(
                     key=lambda kv: self._reliability_stats.get(kv[0], {}).get(
@@ -1204,6 +1207,7 @@ class UniversalRetriever:
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
         adjust_weights: bool = False,
+        dbs: Sequence[str] | None = None,
     ) -> Union[
         Tuple["RetrievalResult", str, List[Tuple[str, str]]],
         Tuple["RetrievalResult", str, List[Tuple[str, str]], List[dict[str, Any]]],
@@ -1232,7 +1236,7 @@ class UniversalRetriever:
         session_id = uuid.uuid4().hex
         if self.enable_reliability_bias:
             self._load_reliability_stats()
-        raw_results = self._retrieve_candidates(query, top_k)
+        raw_results = self._retrieve_candidates(query, top_k, db_names=dbs)
         db_times = getattr(self, "_last_db_times", {})
         bias_map: Dict[str, float] = {}
         if roi_tracker is not None:

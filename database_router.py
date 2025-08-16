@@ -104,6 +104,8 @@ class DatabaseRouter:
         audit_privkey: bytes | None = None,
         error_db: "ErrorDB" | None = None,
         enhancement_db: "EnhancementDB" | None = None,
+        min_reliability: float | None = None,
+        redundancy_limit: int | None = None,
     ) -> None:
         from .research_aggregator_bot import InfoDB as _InfoDB
         from .error_bot import ErrorDB as _ErrorDB
@@ -169,6 +171,19 @@ class DatabaseRouter:
             error_db=self.error_db,
             enhancement_db=self.enhancement_db,
             information_db=self.info_db,
+        )
+
+        env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
+        env_redundancy = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
+        self.min_reliability = (
+            float(min_reliability)
+            if min_reliability is not None
+            else env_min_rel
+        )
+        self.redundancy_limit = (
+            int(redundancy_limit)
+            if redundancy_limit is not None
+            else env_redundancy
         )
 
     # ------------------------------------------------------------------
@@ -264,6 +279,28 @@ class DatabaseRouter:
         if not enabled:
             self.flush_cache()
 
+    def _redundant_retrieve(self, query: Any, top_k: int) -> List[ResultBundle]:
+        reliabilities = self._retriever.reliability_metrics()
+        names = list(getattr(self._retriever, "_dbs", {}).keys())
+        names.sort(
+            key=lambda n: reliabilities.get(n, {}).get("reliability", 0.0),
+            reverse=True,
+        )
+        results: List[ResultBundle] = []
+        queries = 0
+        for name in names:
+            try:
+                hits, _, _ = self._retriever.retrieve(query, top_k=top_k, dbs=[name])
+            except Exception as exc:
+                logger.error("retrieval failed for %s: %s", name, exc)
+                continue
+            results.extend(hits)
+            queries += 1
+            rel = reliabilities.get(name, {}).get("reliability", 0.0)
+            if rel >= self.min_reliability or queries >= self.redundancy_limit:
+                break
+        return results[:top_k]
+
     def query_all(self, term: str, *, requesting_bot: str | None = None) -> DBResult:
         self._check_permission(READ, requesting_bot)
         term_l = term.lower()
@@ -303,23 +340,20 @@ class DatabaseRouter:
         """Search across configured databases using the shared retriever."""
 
         try:
-            hits, _, _ = self._retriever.retrieve(query, top_k=top_k)
+            return self._redundant_retrieve(query, top_k)
         except Exception as exc:
             logger.error("universal retrieval failed: %s", exc)
             return []
-
-        return hits[:top_k]
 
     def semantic_search(self, query_text: str, top_k: int = 10) -> List[ResultBundle]:
         """Perform a semantic search via :class:`UniversalRetriever`."""
 
         try:
-            hits, _, _ = self._retriever.retrieve(query_text, top_k=top_k)
+            hits = self._redundant_retrieve(query_text, top_k)
         except Exception as exc:
             logger.error("semantic retrieval failed: %s", exc)
             return []
 
-        # Map legacy fields (kind/source_id/record) to the new dataclass
         results: List[ResultBundle] = []
         for h in hits:
             origin = "info" if h.origin_db == "information" else h.origin_db
