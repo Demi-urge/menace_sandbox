@@ -14,6 +14,7 @@ from .structural_evolution_bot import (
 )
 from .data_bot import MetricsDB
 from .relevancy_radar import flagged_modules
+from .relevancy_radar_service import RelevancyRadarService
 
 
 @dataclass
@@ -33,13 +34,23 @@ class RadarRefactor:
 class SystemEvolutionManager:
     """Coordinate GA evolution and structural predictions."""
 
-    def __init__(self, bots: Iterable[str], metrics_db: MetricsDB | None = None) -> None:
+    def __init__(
+        self,
+        bots: Iterable[str],
+        metrics_db: MetricsDB | None = None,
+        radar_service: RelevancyRadarService | None = None,
+    ) -> None:
         self.bots = list(bots)
         self.ga_manager = GALearningManager(self.bots)
         self.struct_bot = StructuralEvolutionBot()
         self.metrics_db = metrics_db or MetricsDB()
         self.last_error_rate = 0.0
         self.last_energy = 1.0
+        self.radar_service = radar_service or RelevancyRadarService()
+        try:
+            self.radar_service.start()
+        except Exception:  # pragma: no cover - best effort
+            logging.getLogger(__name__).exception("radar service start failed")
 
     def run_if_signals(
         self,
