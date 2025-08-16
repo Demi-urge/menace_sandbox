@@ -257,10 +257,10 @@ class QuickFixEngine:
                 _VEC_METRICS.update_outcome(
                     session_id,
                     vectors,
-                    contribution=1.0 if tests_ok else 0.0,
+                    contribution=1.0 if (patch_id and tests_ok) else 0.0,
                     patch_id=str(patch_id or ""),
-                    win=tests_ok,
-                    regret=not tests_ok,
+                    win=bool(patch_id and tests_ok),
+                    regret=(not tests_ok) or not bool(patch_id),
                 )
             except Exception:
                 self.logger.exception("failed to log vector outcome")
