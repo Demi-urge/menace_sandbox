@@ -128,6 +128,7 @@ from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
 from relevancy_metrics_db import RelevancyMetricsDB
 from relevancy_radar import scan as relevancy_radar_scan
+from sandbox_runner.cycle import _async_track_usage
 
 try:
     from menace.pre_execution_roi_bot import PreExecutionROIBot
@@ -573,6 +574,7 @@ class _SandboxMetaLogger:
                     )
                 except Exception:
                     logger.exception("relevancy metrics record failed")
+            _async_track_usage(gid, per_module_delta)
         try:
             record = {
                 "cycle": cycle,

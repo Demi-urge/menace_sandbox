@@ -94,14 +94,19 @@ import module_graph_analyzer
 _ENABLE_RELEVANCY_RADAR = os.getenv("SANDBOX_ENABLE_RELEVANCY_RADAR") == "1"
 
 
-def _async_track_usage(module: str) -> None:
-    """Record ``module`` usage asynchronously if radar is enabled."""
+def _async_track_usage(module: str, impact: float | None = None) -> None:
+    """Record ``module`` usage asynchronously if radar is enabled.
+
+    ``impact`` denotes the ROI delta attributable to ``module``.
+    """
 
     if not _ENABLE_RELEVANCY_RADAR:
         return
     try:
         threading.Thread(
-            target=_radar_track_usage, args=(module,), daemon=True
+            target=_radar_track_usage,
+            args=(module, 0.0 if impact is None else impact),
+            daemon=True,
         ).start()
     except Exception:
         pass
