@@ -58,6 +58,14 @@ except Exception:  # pragma: no cover - optional
     SentenceTransformer = None  # type: ignore
     util = None  # type: ignore
 
+try:  # pragma: no cover - optional micro model
+    from .micro_models.error_classifier import classify_error
+except Exception:  # pragma: no cover - fallback when package layout differs
+    try:
+        from micro_models.error_classifier import classify_error  # type: ignore
+    except Exception:  # pragma: no cover - micro model unavailable
+        classify_error = None  # type: ignore
+
 
 class TelemetryEvent(BaseModel):
     """Single error telemetry record."""
@@ -226,6 +234,30 @@ class ErrorClassifier:
             db: ``ErrorDB`` instance providing a ``conn`` attribute.
             min_count: minimum occurrences required before adding a rule.
         """
+
+        # First, allow the micro-model to annotate telemetry with high confidence
+        # predictions so that subsequent heuristic learning has richer data.
+        if classify_error is not None:
+            try:
+                cur = db.conn.execute(
+                    (
+                        "SELECT id, stack_trace FROM telemetry "
+                        "WHERE (category IS NULL OR TRIM(category) = '' OR category = 'Unknown') "
+                        "AND stack_trace IS NOT NULL AND TRIM(stack_trace) != ''"
+                    )
+                )
+                rows = cur.fetchall()
+                for row in rows:
+                    category, fix, conf = classify_error(row["stack_trace"])  # type: ignore[arg-type]
+                    if conf > 0.8 and category:
+                        db.conn.execute(
+                            "UPDATE telemetry SET category = ?, inferred_cause = ? WHERE id = ?",
+                            (category, fix, row["id"]),
+                        )
+                if rows:
+                    db.conn.commit()
+            except Exception as exc:  # pragma: no cover - micro model failures
+                self.logger.debug("micro-model classification skipped: %s", exc)
 
         try:
             cur = db.conn.execute(
