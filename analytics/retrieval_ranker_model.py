@@ -58,7 +58,10 @@ def _prepare_dataset() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     else:
         y = (df.get("prior_hits", 0) > 0).astype(int)
 
-    groups = df.get("session_id", pd.Series([0] * len(df)))
+    # Use ``session_id`` as the grouping key for cross-validation.  When the
+    # column is missing we still need an index-aligned placeholder series so
+    # that downstream splits work reliably.
+    groups = df.get("session_id", pd.Series([0] * len(df), index=df.index))
 
     df = pd.get_dummies(df, columns=["origin_db"], prefix="db", dtype=float)
     feature_cols = [
