@@ -28,11 +28,14 @@ def test_scheduler_trains_and_reloads(tmp_path, monkeypatch):
                                       interval=0)
 
     # stub heavy dependencies
-    monkeypatch.setattr(rms, "VectorMetricsDB", lambda path: object())
-    monkeypatch.setattr(rms.rr, "prepare_training_dataframe", lambda db: object())
+    monkeypatch.setattr(rms.rr, "load_training_data", lambda **kw: object())
     dummy_model = SimpleNamespace(coef_=[[1.0]], intercept_=[0.0], classes_=[0, 1])
-    monkeypatch.setattr(rms.rr, "train_retrieval_ranker", lambda df: (dummy_model, ["x"]))
-    monkeypatch.setattr(rms.rr, "save_model", lambda m, f, p: Path(p).write_text("{}"))
+    monkeypatch.setattr(
+        rms.rr, "train", lambda df: rms.rr.TrainedModel(dummy_model, ["x"])
+    )
+    monkeypatch.setattr(
+        rms.rr, "save_model", lambda tm, p: Path(p).write_text("{}")
+    )
 
     stats_called: list[Path] = []
     monkeypatch.setattr(rms, "compute_retriever_stats", lambda m: stats_called.append(Path(m)))

@@ -1,53 +1,76 @@
 import json
+import sqlite3
 
 import pandas as pd
-import menace.vector_metrics_db as vdb
 import menace.retrieval_ranker as rr
 
 
-def test_prepare_and_train(tmp_path):
-    db = vdb.VectorMetricsDB(tmp_path / "v.db")
-    db.add(
-        vdb.VectorMetric(
-            event_type="retrieval",
-            db="db1",
-            tokens=0,
-            wall_time_ms=0.0,
-            hit=True,
-            rank=1,
-            contribution=0.3,
-            win=True,
-            regret=False,
-        )
+def _make_dbs(tmp_path):
+    vdb = tmp_path / "vec.db"
+    pdb = tmp_path / "patch.db"
+
+    conn = sqlite3.connect(vdb)
+    conn.execute(
+        "CREATE TABLE vector_metrics (session_id TEXT, vector_id TEXT, db TEXT, age REAL, similarity REAL, contribution REAL, hit INTEGER, ts REAL, event_type TEXT)"
     )
-    db.add(
-        vdb.VectorMetric(
-            event_type="retrieval",
-            db="db1",
-            tokens=0,
-            wall_time_ms=0.0,
-            hit=False,
-            rank=2,
-            contribution=0.1,
-            win=False,
-            regret=True,
-        )
+    conn.execute(
+        "INSERT INTO vector_metrics VALUES ('s1','v1','db1',0,0,0,1,0,'retrieval')"
     )
-    extra = pd.DataFrame({"feat": [1.0, 0.5]})
-    df = rr.prepare_training_dataframe(db, extra_features=extra)
-    assert "feat" in df.columns
-    model, feats = rr.train_retrieval_ranker(df, target="win")
-    model_path = tmp_path / "model.json"
-    rr.save_model(model, feats, model_path)
-    saved = json.loads(model_path.read_text())
-    assert saved["features"] == feats
-    cli_path = tmp_path / "cli.json"
-    rr.main([
-        "--db-path",
-        str(tmp_path / "v.db"),
-        "--model-path",
-        str(cli_path),
-        "--target",
-        "win",
-    ])
-    assert cli_path.exists()
+    conn.execute(
+        "INSERT INTO vector_metrics VALUES ('s2','v2','db1',0,0,0,0,1,'retrieval')"
+    )
+    conn.commit()
+    conn.close()
+
+    conn = sqlite3.connect(pdb)
+    conn.execute(
+        "CREATE TABLE patch_outcomes (session_id TEXT, vector_id TEXT, success INTEGER, reverted INTEGER)"
+    )
+    conn.execute("INSERT INTO patch_outcomes VALUES ('s1','v1',1,0)")
+    conn.execute("INSERT INTO patch_outcomes VALUES ('s2','v2',0,0)")
+    conn.commit()
+    conn.close()
+    return vdb, pdb
+
+
+def test_training_and_serialisation(tmp_path):
+    df = pd.DataFrame(
+        {
+            "session_id": ["a", "b", "c", "d"],
+            "vector_id": [1, 2, 3, 4],
+            "db_type": ["x", "x", "y", "y"],
+            "embedding_age": [0.1, 0.2, 0.3, 0.4],
+            "vector_similarity": [0.9, 0.8, 0.7, 0.6],
+            "error_frequency": [0, 1, 0, 1],
+            "workflow_frequency": [0, 1, 2, 3],
+            "roi_delta": [0.1, 0.2, 0.3, 0.4],
+            "prior_hit_count": [1, 0, 1, 0],
+            "label": [1, 0, 1, 0],
+        }
+    )
+    tm = rr.train(df)
+    out = tmp_path / "model.json"
+    rr.save_model(tm, out)
+    data = rr.load_model(out)
+    assert data["features"] == tm.feature_names
+    assert "coef" in data or "booster" in data
+
+
+def test_cli_training(tmp_path):
+    vdb, pdb = _make_dbs(tmp_path)
+    out = tmp_path / "model.json"
+    rr.main(
+        [
+            "train",
+            "--vector-db",
+            str(vdb),
+            "--patch-db",
+            str(pdb),
+            "--model-path",
+            str(out),
+        ]
+    )
+    assert out.exists()
+    data = json.loads(out.read_text())
+    assert data["features"]
+

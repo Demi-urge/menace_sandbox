@@ -1,111 +1,199 @@
-from __future__ import annotations
+"""Utilities for training a lightweight retrieval ranking model.
 
-"""Training utilities for retrieval ranking models.
+This module builds a training dataframe from
+``retrieval_training_dataset.build_dataset`` and fits a small binary
+classifier.  The preferred implementation uses
+``sklearn.linear_model.LogisticRegression``; if that is unavailable the code
+falls back to ``lightgbm.LGBMClassifier`` when installed and finally to a very
+small NumPy based logistic regression variant.  The resulting model weights are
+serialised to JSON so that other components can consume them without a heavy
+machine learning dependency.
 
-This module pulls training samples from :mod:`vector_metrics_analytics`,
-optionally augments them with extra features and trains a simple logistic
-regression classifier to predict whether a retrieval results in a
-*win* (or regret).  Model weights are exported to JSON so other
-components can reuse them without depending on scikit-learn.
+Example
+-------
 
-A small CLI is provided for periodic retraining from fresh logs::
+Retrain the model and store it under ``analytics/retrieval_ranker.model``::
 
-    python -m menace.retrieval_ranker --db-path metrics.db \
-        --model-path ranker.json
+    python retrieval_ranker.py train \
+        --vector-db vector_metrics.db \
+        --patch-db metrics.db \
+        --model-path analytics/retrieval_ranker.model
+
+The JSON file contains ``coef``, ``intercept`` and ``features`` fields that are
+compatible with :func:`menace.universal_retriever.load_ranker`.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence, Any, Optional
 import argparse
 import json
+from typing import Iterable, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
 
-from .vector_metrics_db import VectorMetricsDB
-from . import vector_metrics_analytics as vma
+from retrieval_training_dataset import build_dataset
+
+try:  # optional dependencies
+    from sklearn.linear_model import LogisticRegression  # type: ignore
+except Exception:  # pragma: no cover - scikit-learn not installed
+    LogisticRegression = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
+    from lightgbm import LGBMClassifier  # type: ignore
+except Exception:  # pragma: no cover - lightgbm not installed
+    LGBMClassifier = None  # type: ignore
 
 
 # ---------------------------------------------------------------------------
-def prepare_training_dataframe(
-    db: VectorMetricsDB,
-    extra_features: Iterable[dict[str, Any]] | pd.DataFrame | None = None,
-    *,
-    limit: int | None = None,
+@dataclass
+class TrainedModel:
+    """Container for a fitted model and associated feature names."""
+
+    model: object
+    feature_names: list[str]
+
+
+# ---------------------------------------------------------------------------
+class _SimpleLogReg:
+    """Very small logistic regression implementation using NumPy.
+
+    It is intentionally tiny and only supports the subset of the scikit-learn
+    interface required by the tests.  The implementation uses a basic gradient
+    descent optimiser and therefore should only be used on small datasets.
+    """
+
+    def __init__(self, lr: float = 0.1, epochs: int = 2000) -> None:
+        self.lr = lr
+        self.epochs = epochs
+        self.coef_: np.ndarray | None = None
+        self.intercept_: np.ndarray | None = None
+        self.classes_ = np.array([0, 1])
+
+    def _sigmoid(self, z: np.ndarray) -> np.ndarray:
+        return 1 / (1 + np.exp(-z))
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "_SimpleLogReg":
+        n_samples, n_features = X.shape
+        w = np.zeros(n_features)
+        b = 0.0
+        for _ in range(self.epochs):
+            z = X @ w + b
+            preds = self._sigmoid(z)
+            dw = (preds - y) @ X / n_samples
+            db = float(np.mean(preds - y))
+            w -= self.lr * dw
+            b -= self.lr * db
+        self.coef_ = w.reshape(1, -1)
+        self.intercept_ = np.array([b])
+        return self
+
+    def predict_proba(self, X: np.ndarray) -> np.ndarray:
+        z = X @ self.coef_[0] + self.intercept_[0]
+        p = self._sigmoid(z)
+        return np.vstack([1 - p, p]).T
+
+
+# ---------------------------------------------------------------------------
+def load_training_data(
+    *, vector_db: Path | str = "vector_metrics.db", patch_db: Path | str = "metrics.db"
 ) -> pd.DataFrame:
-    """Load retrieval samples and return a DataFrame ready for training."""
+    """Load the training dataframe from the metrics databases."""
 
-    samples = vma.retrieval_training_samples(db, limit=limit)
-    df = pd.DataFrame(samples)
-    if extra_features is not None:
-        if isinstance(extra_features, pd.DataFrame):
-            extra_df = extra_features.reset_index(drop=True)
-        else:
-            extra_df = pd.DataFrame(list(extra_features))
-        df = pd.concat([df, extra_df.reindex(df.index)], axis=1)
-    df = pd.get_dummies(df, columns=["db"], dtype=float)
-    df = df.fillna(0.0)
-    for col in ["hit", "win", "regret"]:
-        if col in df:
-            df[col] = df[col].astype(int)
-    return df
+    return build_dataset(vector_db=vector_db, patch_db=patch_db)
 
 
 # ---------------------------------------------------------------------------
-def train_retrieval_ranker(
-    df: pd.DataFrame, *, target: str = "win"
-) -> tuple[LogisticRegression, list[str]]:
-    """Train a logistic-regression classifier on ``df``."""
+def train(df: pd.DataFrame) -> TrainedModel:
+    """Fit a ranking model on ``df`` and return the fitted model."""
 
-    if target not in {"win", "regret"}:
-        raise ValueError("target must be 'win' or 'regret'")
-    X = df.drop(columns=["win", "regret"], errors="ignore")
-    y = df[target]
-    model = LogisticRegression(max_iter=1000)
-    model.fit(X, y)
-    return model, list(X.columns)
+    feature_cols = [
+        c
+        for c in df.columns
+        if c
+        not in {
+            "session_id",
+            "vector_id",
+            "label",
+        }
+    ]
+    X = pd.get_dummies(df[feature_cols], columns=["db_type"], dtype=float).fillna(0.0)
+    y = df["label"].astype(int)
 
+    model: object
+    if LogisticRegression is not None:
+        model = LogisticRegression(max_iter=1000)
+        model.fit(X, y)
+    elif LGBMClassifier is not None:
+        model = LGBMClassifier()
+        model.fit(X, y)
+    else:  # pragma: no cover - exercised when dependencies missing
+        model = _SimpleLogReg().fit(X.to_numpy(), y.to_numpy())
 
-# ---------------------------------------------------------------------------
-def save_model(
-    model: LogisticRegression,
-    feature_names: Sequence[str],
-    path: str | Path,
-) -> None:
-    """Persist ``model`` coefficients to ``path`` as JSON."""
-
-    data = {
-        "coef": model.coef_.tolist(),
-        "intercept": model.intercept_.tolist(),
-        "classes": model.classes_.tolist(),
-        "features": list(feature_names),
-    }
-    Path(path).write_text(json.dumps(data))
+    return TrainedModel(model=model, feature_names=list(X.columns))
 
 
 # ---------------------------------------------------------------------------
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    """CLI entry point for model retraining."""
+def save_model(tm: TrainedModel, path: Path | str) -> Path:
+    """Persist ``tm`` to ``path`` in JSON format."""
 
-    p = argparse.ArgumentParser(description="Train retrieval ranking model")
-    p.add_argument("--db-path", default="vector_metrics.db")
-    p.add_argument("--model-path", default="retrieval_ranker.json")
-    p.add_argument("--target", choices=["win", "regret"], default="win")
-    p.add_argument("--limit", type=int, default=None)
-    p.add_argument(
-        "--extra-features", type=Path, help="Optional CSV file with extra features"
+    model = tm.model
+    if hasattr(model, "coef_") and hasattr(model, "intercept_"):
+        coef = getattr(model, "coef_")
+        intercept = getattr(model, "intercept_")
+        classes = getattr(model, "classes_", [0, 1])
+        data = {
+            "coef": np.asarray(coef).tolist(),
+            "intercept": np.asarray(intercept).tolist(),
+            "classes": np.asarray(classes).tolist(),
+            "features": tm.feature_names,
+        }
+    else:  # pragma: no cover - used for models that expose ``booster_`` etc.
+        data = {
+            "booster": getattr(model, "booster_", None),
+            "features": tm.feature_names,
+        }
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data))
+    return path
+
+
+# ---------------------------------------------------------------------------
+def load_model(path: Path | str) -> dict:
+    """Return the JSON model stored at ``path``."""
+
+    return json.loads(Path(path).read_text())
+
+
+# ---------------------------------------------------------------------------
+def main(argv: Sequence[str] | None = None) -> int:
+    """Command line interface for training the ranker."""
+
+    parser = argparse.ArgumentParser(description="Train retrieval ranking model")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    t = sub.add_parser("train", help="train model")
+    t.add_argument("--vector-db", default="vector_metrics.db")
+    t.add_argument("--patch-db", default="metrics.db")
+    t.add_argument(
+        "--model-path",
+        default="analytics/retrieval_ranker.model",
+        help="Where to store the serialized model",
     )
-    args = p.parse_args(argv)
 
-    db = VectorMetricsDB(args.db_path)
-    extra = None
-    if args.extra_features:
-        extra = pd.read_csv(args.extra_features)
-    df = prepare_training_dataframe(db, extra_features=extra, limit=args.limit)
-    model, feats = train_retrieval_ranker(df, target=args.target)
-    save_model(model, feats, args.model_path)
-    return 0
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.cmd == "train":
+        df = load_training_data(vector_db=args.vector_db, patch_db=args.patch_db)
+        tm = train(df)
+        save_model(tm, args.model_path)
+        return 0
+    return 1
 
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+

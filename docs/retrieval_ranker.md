@@ -1,30 +1,21 @@
 # Retrieval Ranker
 
-`analytics/retrieval_ranker.py` trains a lightweight model that estimates the
-chance a retrieved record will lead to a successful patch.  Training requires
-two JSONL datasets:
+`retrieval_ranker.py` trains a lightweight model that scores retrieval
+results.  The training data is assembled by
+`retrieval_training_dataset.build_dataset` from the metric databases.
 
-* `analytics/retrieval_outcomes.jsonl` – retrieval statistics including
-  ``origin_db``, ``age``, ``similarity``, ``roi_delta``, execution frequency,
-  prior hit counts and win/regret rates.
-* `analytics/patch_outcomes.jsonl` – patch outcome labels keyed by
-  ``session_id`` with a boolean ``win`` column.
+## Training
 
-Run a single training pass with:
+Run a single training pass with the default database locations:
 
 ```bash
-python analytics/retrieval_ranker.py \
-    --stats-path analytics/retrieval_outcomes.jsonl \
-    --labels-path analytics/patch_outcomes.jsonl \
-    --model-path analytics/retrieval_ranker.pkl
+python retrieval_ranker.py train \
+    --vector-db vector_metrics.db \
+    --patch-db metrics.db \
+    --model-path analytics/retrieval_ranker.model
 ```
 
-Periodic retraining can be scheduled by supplying ``--interval`` in seconds:
-
-```bash
-python analytics/retrieval_ranker.py --interval 3600
-```
-
-The generated ``retrieval_ranker.pkl`` file contains the fitted model and the
-feature names used during training.
+The produced `analytics/retrieval_ranker.model` file contains the model
+coefficients and the feature names used during training.  It is compatible with
+`menace.universal_retriever.load_ranker`.
 

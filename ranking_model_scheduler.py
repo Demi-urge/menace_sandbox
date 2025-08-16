@@ -17,11 +17,9 @@ from typing import Iterable, Sequence, Any, Optional
 try:  # pragma: no cover - package-relative import
     from . import retrieval_ranker as rr
     from .metrics_aggregator import compute_retriever_stats
-    from .vector_metrics_db import VectorMetricsDB
 except Exception:  # pragma: no cover - fallback when executed directly
     import retrieval_ranker as rr  # type: ignore
     from metrics_aggregator import compute_retriever_stats  # type: ignore
-    from vector_metrics_db import VectorMetricsDB  # type: ignore
 
 
 class RankingModelScheduler:
@@ -49,10 +47,11 @@ class RankingModelScheduler:
         """Retrain ranking model and notify services to reload."""
 
         # Train model from latest vector metrics
-        db = VectorMetricsDB(self.vector_db)
-        df = rr.prepare_training_dataframe(db)
-        model, feats = rr.train_retrieval_ranker(df)
-        rr.save_model(model, feats, self.model_path)
+        df = rr.load_training_data(
+            vector_db=self.vector_db, patch_db=self.metrics_db
+        )
+        tm = rr.train(df)
+        rr.save_model(tm, self.model_path)
 
         # Update win/regret KPIs
         compute_retriever_stats(self.metrics_db)
