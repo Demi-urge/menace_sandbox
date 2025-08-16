@@ -4477,11 +4477,15 @@ class SelfImprovementEngine:
         """Evaluate module usage and record relevancy recommendations."""
         try:
             settings = SandboxSettings()
-            threshold = float(getattr(settings, "relevancy_threshold", 20))
+            replace_threshold = float(getattr(settings, "relevancy_threshold", 20))
+            compress_threshold = max(1.0, replace_threshold / 4)
         except Exception:
-            threshold = 20.0
+            replace_threshold = 20.0
+            compress_threshold = 5.0
         try:
-            flags = self.relevancy_radar.evaluate_relevance(threshold)
+            flags = self.relevancy_radar.evaluate_relevance(
+                compress_threshold, replace_threshold
+            )
         except Exception:
             self.logger.exception("relevancy evaluation failed")
             return

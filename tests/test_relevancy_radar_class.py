@@ -21,8 +21,10 @@ def test_instance_tracking_and_evaluation(tmp_path, monkeypatch):
     # Include a module with no activity to exercise the retire path
     radar._metrics["gamma"] = {"imports": 0, "executions": 0}
 
-    result = radar.evaluate_relevance(threshold=5.0)
-    assert result == {"gamma": "retire", "alpha": "compress", "beta": "compress"}
+    result = radar.evaluate_relevance(
+        compress_threshold=1.0, replace_threshold=5.0
+    )
+    assert result == {"gamma": "retire", "beta": "compress", "alpha": "replace"}
 
     saved = json.loads(metrics_file.read_text())
     assert saved["alpha"]["executions"] == 2

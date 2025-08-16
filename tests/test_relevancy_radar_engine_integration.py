@@ -16,6 +16,8 @@ def test_radar_flags_and_engine_response(tmp_path, monkeypatch):
     radar = rr_mod.RelevancyRadar(metrics_file=metrics_file)
 
     radar.track_usage("active_mod")
+    radar.track_usage("mid_mod")
+    radar.track_usage("mid_mod")
     radar._metrics["inactive_mod"] = {"imports": 0, "executions": 0}
 
     data = json.loads(metrics_file.read_text())
@@ -33,9 +35,12 @@ def test_radar_flags_and_engine_response(tmp_path, monkeypatch):
     engine = DummyEngine(radar)
 
     def evaluate_module_relevance(self):
-        threshold = 2
+        compress_threshold = 1
+        replace_threshold = 3
         try:
-            flags = self.relevancy_radar.evaluate_relevance(threshold)
+            flags = self.relevancy_radar.evaluate_relevance(
+                compress_threshold, replace_threshold
+            )
         except Exception:
             self.logger.exception("relevancy evaluation failed")
             return
@@ -43,5 +48,9 @@ def test_radar_flags_and_engine_response(tmp_path, monkeypatch):
             self.relevancy_flags = flags
 
     evaluate_module_relevance(engine)
-    expected = {"inactive_mod": "retire", "active_mod": "compress"}
+    expected = {
+        "inactive_mod": "retire",
+        "active_mod": "compress",
+        "mid_mod": "replace",
+    }
     assert engine.relevancy_flags == expected
