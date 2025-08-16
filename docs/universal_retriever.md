@@ -20,7 +20,9 @@ retriever = UniversalRetriever(
     reliability_threshold=0.2,
 )
 
-hits = retriever.retrieve("upload failed", top_k=5, link_multiplier=1.2)
+hits, session_id, vectors = retriever.retrieve(
+    "upload failed", top_k=5, link_multiplier=1.2
+)
 ```
 
 `retrieve()` accepts a raw string, a record instance or an explicit vector. It

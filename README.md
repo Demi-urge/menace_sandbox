@@ -1265,7 +1265,7 @@ from menace.error_bot import ErrorDB
 from menace.universal_retriever import UniversalRetriever
 
 retriever = UniversalRetriever(bot_db=BotDB(), workflow_db=WorkflowDB(), error_db=ErrorDB())
-hits = retriever.retrieve("upload failed", top_k=3)
+hits, session_id, vectors = retriever.retrieve("upload failed", top_k=3)
 for hit in hits:
     print(f"{hit.origin_db} #{hit.record_id}: {hit.reason} (confidence {hit.confidence:.2f})")
 ```
