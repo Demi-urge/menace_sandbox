@@ -186,6 +186,42 @@ class EvaluationDashboard:
         }
 
     # ------------------------------------------------------------------
+    def relevancy_radar_panel(self, threshold: int = 5) -> List[Dict[str, Any]]:
+        """Return modules with low relevancy scores and annotations."""
+
+        metrics_path = (
+            Path(__file__).resolve().parent / "sandbox_data" / "relevancy_metrics.json"
+        )
+        if not metrics_path.exists():
+            return []
+        try:
+            with metrics_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except json.JSONDecodeError:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for mod, info in data.items():
+            if not isinstance(info, dict):
+                continue
+            imports = int(info.get("imports", 0))
+            executions = int(info.get("executions", 0))
+            score = imports + executions
+            annotation = str(info.get("annotation", ""))
+            if score < threshold or annotation:
+                rec: Dict[str, Any] = {
+                    "module": mod,
+                    "imports": imports,
+                    "executions": executions,
+                    "score": score,
+                }
+                if annotation:
+                    rec["annotation"] = annotation
+                results.append(rec)
+        results.sort(key=lambda r: r["score"])
+        return results
+
+    # ------------------------------------------------------------------
     def lineage_tree(self, workflow_id: int) -> List[Dict[str, Any]]:
         """Return the mutation lineage for ``workflow_id``.
 
