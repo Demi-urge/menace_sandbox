@@ -24,6 +24,16 @@ hits, session_id, vectors = retriever.retrieve(
     "upload failed", top_k=5, link_multiplier=1.2
 )
 ```
+Alternatively a lightweight wrapper is available via the service layer:
+
+```python
+from semantic_service import Retriever
+
+hits = Retriever().search("upload failed")
+```
+
+The wrapper emits structured logs and returns serialisable dictionaries while delegating to ``UniversalRetriever`` under the hood.
+
 
 `retrieve()` accepts a raw string, a record instance or an explicit vector. It
 returns a list of :class:`ResultBundle` objects containing the origin database,
