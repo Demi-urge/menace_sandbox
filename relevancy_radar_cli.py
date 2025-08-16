@@ -74,10 +74,30 @@ def cli(argv: Iterable[str] | None = None) -> int:
         action="store_true",
         help="Include impact scores in the listing",
     )
+    parser.add_argument(
+        "--final",
+        action="store_true",
+        help="Run dependency-aware evaluation before listing modules",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    flags = {}
+    if args.final:
+        try:  # Import lazily to avoid heavy dependencies if unused
+            from relevancy_radar import evaluate_final_contribution
+
+            compress = max(1, args.threshold // 2)
+            flags = evaluate_final_contribution(compress, args.threshold)
+        except Exception:  # pragma: no cover - best effort
+            flags = {}
 
     metrics = _load_metrics()
     changed = False
+    for mod, annotation in flags.items():
+        entry = metrics.setdefault(mod, {"imports": 0, "executions": 0})
+        if entry.get("annotation") != annotation:
+            entry["annotation"] = annotation
+            changed = True
     for mod in args.retire:
         entry = metrics.setdefault(mod, {"imports": 0, "executions": 0})
         if entry.get("annotation") != "retire":
