@@ -74,7 +74,7 @@ def test_reliability_stats_alter_order(tmp_path):
     bot_db.add_bot(BotRecord(name="a", purpose="b"))
     wf_db.add(WorkflowRecord(workflow=["x"], title="w"))
 
-    weights = RetrievalWeights(similarity=1.0, context=0.0)
+    weights = RetrievalWeights(similarity=0.0, context=1.0)
     retriever = UniversalRetriever(
         bot_db=bot_db,
         workflow_db=wf_db,
@@ -139,6 +139,43 @@ def test_reliability_stats_alter_order(tmp_path):
     # reliability score is included
     assert m1.get("reliability_score", 0.0) >= 0.0
     assert m2.get("reliability_score", 0.0) >= 0.0
+
+
+def test_low_reliability_triggers_fallback(tmp_path):
+    bot_db = BotDB(path=tmp_path / "bot.db", vector_index_path=tmp_path / "bot.idx")
+    wf_db = WorkflowDB(path=tmp_path / "wf.db", vector_index_path=tmp_path / "wf.idx")
+    for db in (bot_db, wf_db):
+        db.encode_text = MethodType(_const_encoder, db)
+    bot_db.add_bot(BotRecord(name="a", purpose="b"))
+    wf_db.add(WorkflowRecord(workflow=["x"], title="w"))
+
+    weights = RetrievalWeights(similarity=0.0, context=1.0)
+    retriever = UniversalRetriever(
+        bot_db=bot_db,
+        workflow_db=wf_db,
+        weights=weights,
+        enable_model_ranking=False,
+        enable_reliability_bias=False,
+        reliability_threshold=0.5,
+        fallback_on_low_reliability=True,
+    )
+
+    retriever._bot_deploy_freq = MethodType(lambda self, bid: 0.0, retriever)
+    retriever._workflow_usage = MethodType(lambda self, wf: 100.0, retriever)
+    retriever._load_reliability_stats = MethodType(lambda self: self._reliability_stats, retriever)
+    retriever._reliability_stats = {
+        "bot": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0, "sample_count": 1},
+        "workflow": {
+            "win_rate": 1.0,
+            "regret_rate": 0.0,
+            "reliability": 1.0,
+            "sample_count": 1,
+        },
+    }
+
+    hits, _, _ = retriever.retrieve("x", top_k=1)
+    assert hits[0].origin_db == "workflow"
+    assert set(retriever._last_db_times) == {"bot", "workflow"}
 
 
 @pytest.fixture()
