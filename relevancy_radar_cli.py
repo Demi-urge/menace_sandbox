@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-"""Command line interface for inspecting relevancy metrics and annotations."""
+"""Command line interface for inspecting relevancy metrics and annotations.
+
+Use ``--retire``, ``--compress`` or ``--replace`` to annotate modules for
+subsequent review."""
 
 import argparse
 import json
@@ -57,6 +60,12 @@ def cli(argv: Iterable[str] | None = None) -> int:
         default=[],
         help="Modules to annotate for compression",
     )
+    parser.add_argument(
+        "--replace",
+        nargs="*",
+        default=[],
+        help="Modules to annotate for replacement",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     metrics = _load_metrics()
@@ -70,6 +79,11 @@ def cli(argv: Iterable[str] | None = None) -> int:
         entry = metrics.setdefault(mod, {"imports": 0, "executions": 0})
         if entry.get("annotation") != "compress":
             entry["annotation"] = "compress"
+            changed = True
+    for mod in args.replace:
+        entry = metrics.setdefault(mod, {"imports": 0, "executions": 0})
+        if entry.get("annotation") != "replace":
+            entry["annotation"] = "replace"
             changed = True
     if changed:
         _save_metrics(metrics)

@@ -223,15 +223,15 @@ class RelevancyRadar:
 
     def __init__(self, metrics_file: Path | None = None) -> None:
         self.metrics_file = Path(metrics_file) if metrics_file else _RELEVANCY_METRICS_FILE
-        self._metrics: Dict[str, Dict[str, int]] = self._load_metrics()
+        self._metrics: Dict[str, Dict[str, int | str]] = self._load_metrics()
         self._install_import_hook()
         atexit.register(self._persist_metrics)
 
     # ------------------------------------------------------------------
     # Metrics persistence helpers
     # ------------------------------------------------------------------
-    def _load_metrics(self) -> Dict[str, Dict[str, int]]:
-        data: Dict[str, Dict[str, int]] = {}
+    def _load_metrics(self) -> Dict[str, Dict[str, int | str]]:
+        data: Dict[str, Dict[str, int | str]] = {}
         if self.metrics_file.exists():
             try:
                 with self.metrics_file.open("r", encoding="utf-8") as fh:
@@ -239,10 +239,14 @@ class RelevancyRadar:
                 if isinstance(raw, dict):
                     for mod, counts in raw.items():
                         if isinstance(counts, dict):
-                            data[str(mod)] = {
+                            entry: Dict[str, int | str] = {
                                 "imports": int(counts.get("imports", 0)),
                                 "executions": int(counts.get("executions", 0)),
                             }
+                            annotation = counts.get("annotation")
+                            if isinstance(annotation, str) and annotation:
+                                entry["annotation"] = annotation
+                            data[str(mod)] = entry
             except json.JSONDecodeError:
                 data = {}
         return data

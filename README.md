@@ -1343,6 +1343,16 @@ relevancy_whitelist:
   - legacy/analytics.py
 ```
 
+The ``relevancy_radar_cli.py`` helper can annotate modules for retirement,
+compression or replacement based on these metrics:
+
+```bash
+python relevancy_radar_cli.py --retire old_mod --compress slow_mod --replace alt_mod
+```
+
+Annotations are persisted to ``sandbox_data/relevancy_metrics.json`` for later
+review.
+
 ### New autonomous helpers
 - `VaultSecretProvider` fetches and caches secrets from an optional remote vault.
 - `EnvironmentRestorationService` periodically re-applies the bootstrap process after crashes.
