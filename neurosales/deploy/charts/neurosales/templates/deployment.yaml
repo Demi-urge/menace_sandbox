@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neurosales
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: neurosales
+  template:
+    metadata:
+      labels:
+        app: neurosales
+    spec:
+      containers:
+      - name: app
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        ports:
+        - containerPort: 8000
+        env:
+        - name: NEURO_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.apiKeySecret.name }}
+              key: {{ .Values.apiKeySecret.key }}
+        - name: NEURO_DB_URL
+          value: {{ .Values.env.NEURO_DB_URL | default (printf "sqlite:////%s/neuro.db" .Values.persistence.mountPath) | quote }}
+{{- range $k, $v := .Values.env }}
+{{- if ne $k "NEURO_DB_URL" }}
+        - name: {{ $k }}
+          value: "{{ $v }}"
+{{- end }}
+{{- end }}
+{{- if .Values.envFromConfigMap }}
+        envFrom:
+        - configMapRef:
+            name: {{ .Values.envFromConfigMap }}
+{{- end }}
+        resources: {{- toYaml .Values.resources | nindent 10 }}
+{{- if .Values.persistence.enabled }}
+        volumeMounts:
+        - name: data
+          mountPath: {{ .Values.persistence.mountPath }}
+{{- end }}
+      - name: envoy
+        image: envoyproxy/envoy:v1.29-latest
+        args: ["--config-path", "/etc/envoy/envoy.yaml"]
+        resources:
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: envoy-config
+{{- if .Values.persistence.enabled }}
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ .Values.persistence.name }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+data:
+  envoy.yaml: |
+    static_resources:
+      listeners:
+      - name: listener_0
+        address:
+          socket_address: { address: 0.0.0.0, port_value: 9901 }
+        filter_chains:
+        - filters:
+          - name: envoy.filters.network.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: backend
+                  domains: ["*"]
+                  routes:
+                  - match: { prefix: "/" }
+                    route: { cluster: service }
+              http_filters:
+              - name: envoy.filters.http.router
+                typed_config: {}
+      clusters:
+      - name: service
+        connect_timeout: 0.25s
+        type: logical_dns
+        lb_policy: round_robin
+        load_assignment:
+          cluster_name: service
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: 127.0.0.1
+                    port_value: 8000

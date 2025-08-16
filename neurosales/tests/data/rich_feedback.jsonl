@@ -1,0 +1,4 @@
+{"text": "Sale now on!", "feedback": "buy", "score": 1.0, "ctr": 0.2, "conversions": 1, "sentiment_shift": 0.3}
+{"text": "Learn more", "feedback": "info", "score": 0.5, "ctr": 0.15, "conversions": 0, "sentiment_shift": 0.1}
+{"text": "No thanks", "feedback": "dismiss", "score": -0.2, "ctr": 0.05, "conversions": 0, "sentiment_shift": -0.2}
+{"text": "Great deal!", "feedback": "buy", "score": 1.5, "ctr": 0.25, "conversions": 1, "sentiment_shift": 0.4}

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: neurosales
+version: 0.1.0
+description: Deployment for Neurosales gateway stack

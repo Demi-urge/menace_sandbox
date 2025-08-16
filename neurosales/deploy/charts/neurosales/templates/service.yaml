@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: neurosales
+spec:
+  selector:
+    app: neurosales
+  ports:
+  - port: 80
+    targetPort: 8000
