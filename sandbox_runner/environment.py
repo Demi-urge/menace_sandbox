@@ -78,6 +78,20 @@ def _tracking_import(
         _radar_track_module_usage(name)
     except Exception:
         pass
+    try:  # lazily resolve helper to avoid early import cycles
+        record_fn = globals().get("record_module_usage")
+        module_file = getattr(mod, "__file__", "")
+        if record_fn and module_file:
+            root = globals().get("ROOT")
+            path = Path(module_file).resolve()
+            if root:
+                try:
+                    path = path.relative_to(root)
+                except Exception:
+                    pass
+            record_fn(path.as_posix())
+    except Exception:
+        pass
     return mod
 
 
@@ -138,6 +152,32 @@ from knowledge_graph import KnowledgeGraph
 import sqlite3
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Persistent module usage tracking -------------------------------------------
+MODULE_USAGE_PATH = ROOT / "sandbox_data" / "module_usage.json"
+_MODULE_USAGE_LOCK = FileLock(str(MODULE_USAGE_PATH) + ".lock")
+
+
+def record_module_usage(module_name: str) -> None:
+    """Record *module_name* execution with a timestamp.
+
+    Entries are stored in :data:`MODULE_USAGE_PATH` as a mapping of module
+    paths to dictionaries of timestamp -> count. This lightweight log allows
+    external runners to track which modules contribute to sandbox runs.
+    """
+
+    ts = datetime.utcnow().isoformat()
+    with _MODULE_USAGE_LOCK:
+        try:
+            if MODULE_USAGE_PATH.exists():
+                data = json.loads(MODULE_USAGE_PATH.read_text())
+            else:
+                data = {}
+            module_map = data.setdefault(module_name, {})
+            module_map[ts] = module_map.get(ts, 0) + 1
+            MODULE_USAGE_PATH.write_text(json.dumps(data, indent=2))
+        except Exception:
+            logger.exception("module usage logging failed for %s", module_name)
 
 # path to cleanup log file
 _CLEANUP_LOG_PATH = Path(
