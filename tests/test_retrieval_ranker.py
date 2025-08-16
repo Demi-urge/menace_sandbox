@@ -51,7 +51,7 @@ def test_training_and_serialisation(tmp_path):
             "label": [1, 0, 1, 0],
         }
     )
-    tm = rr.train(df)
+    tm, metrics = rr.train(df)
     out = tmp_path / "model.json"
     rr.save_model(tm, out)
     data = rr.load_model(out)
@@ -69,6 +69,7 @@ def test_training_and_serialisation(tmp_path):
         "sample_count",
     }.issubset(set(tm.feature_names))
     assert {"db_bot", "db_error"}.issubset(set(tm.feature_names))
+    assert metrics and ("accuracy" in metrics or "auc" in metrics)
 
 
 def test_cli_training(tmp_path):

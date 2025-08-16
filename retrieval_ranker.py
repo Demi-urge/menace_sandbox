@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import argparse
 import json
+import logging
 from typing import Iterable, Sequence, Tuple
 
 import numpy as np
@@ -38,8 +39,12 @@ from retrieval_training_dataset import build_dataset
 
 try:  # optional dependencies
     from sklearn.linear_model import LogisticRegression  # type: ignore
+    from sklearn.model_selection import train_test_split  # type: ignore
+    from sklearn.metrics import roc_auc_score  # type: ignore
 except Exception:  # pragma: no cover - scikit-learn not installed
     LogisticRegression = None  # type: ignore
+    train_test_split = None  # type: ignore
+    roc_auc_score = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from lightgbm import LGBMClassifier  # type: ignore
@@ -106,8 +111,8 @@ def load_training_data(
 
 
 # ---------------------------------------------------------------------------
-def train(df: pd.DataFrame) -> TrainedModel:
-    """Fit a ranking model on ``df`` and return the fitted model."""
+def train(df: pd.DataFrame) -> Tuple[TrainedModel, dict[str, float]]:
+    """Fit a ranking model on ``df`` and return the fitted model and metrics."""
 
     feature_cols = [
         "db_type",
@@ -127,17 +132,41 @@ def train(df: pd.DataFrame) -> TrainedModel:
     ).fillna(0.0)
     y = df["label"].astype(int)
 
+    if len(df) < 3 or y.nunique() < 2:
+        X_train, X_val, y_train, y_val = X, X, y, y
+    elif train_test_split is not None:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+    else:  # pragma: no cover - fallback simple split
+        split = int(0.8 * len(X))
+        X_train, X_val = X.iloc[:split], X.iloc[split:]
+        y_train, y_val = y.iloc[:split], y.iloc[split:]
+
     model: object
     if LogisticRegression is not None:
         model = LogisticRegression(max_iter=1000)
-        model.fit(X, y)
+        model.fit(X_train, y_train)
     elif LGBMClassifier is not None:
         model = LGBMClassifier()
-        model.fit(X, y)
+        model.fit(X_train, y_train)
     else:  # pragma: no cover - exercised when dependencies missing
-        model = _SimpleLogReg().fit(X.to_numpy(), y.to_numpy())
+        model = _SimpleLogReg().fit(X_train.to_numpy(), y_train.to_numpy())
 
-    return TrainedModel(model=model, feature_names=list(X.columns))
+    probs = getattr(model, "predict_proba")(X_val)[:, 1]
+    preds = (probs >= 0.5).astype(int)
+    metrics: dict[str, float] = {
+        "accuracy": float(np.mean(preds == y_val))
+    }
+    if roc_auc_score is not None:
+        try:  # pragma: no cover - AUC undefined for single-class validation sets
+            metrics["auc"] = float(roc_auc_score(y_val, probs))
+        except Exception:
+            pass
+
+    logging.getLogger(__name__).info("Validation metrics: %s", metrics)
+
+    return TrainedModel(model=model, feature_names=list(X.columns)), metrics
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.cmd == "train":
         df = load_training_data(vector_db=args.vector_db, patch_db=args.patch_db)
-        tm = train(df)
+        tm, _ = train(df)
         save_model(tm, args.model_path)
         return 0
     return 1
