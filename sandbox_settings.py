@@ -117,6 +117,22 @@ class SandboxSettings(BaseSettings):
     synergy_std_threshold: float | None = Field(None, env="SYNERGY_STD_THRESHOLD")
     synergy_variance_confidence: float | None = Field(None, env="SYNERGY_VARIANCE_CONFIDENCE")
 
+    relevancy_threshold: int = Field(
+        20,
+        env="RELEVANCY_THRESHOLD",
+        description="Minimum usage count before a module is considered relevant.",
+    )
+    relevancy_window_days: int = Field(
+        30,
+        env="RELEVANCY_WINDOW_DAYS",
+        description="Days of history to consider when evaluating relevancy.",
+    )
+    relevancy_whitelist: list[str] = Field(
+        default_factory=list,
+        env="RELEVANCY_WHITELIST",
+        description="Modules exempt from relevancy radar checks.",
+    )
+
     synergy_weight_roi: float = Field(1.0, env="SYNERGY_WEIGHT_ROI")
     synergy_weight_efficiency: float = Field(1.0, env="SYNERGY_WEIGHT_EFFICIENCY")
     synergy_weight_resilience: float = Field(1.0, env="SYNERGY_WEIGHT_RESILIENCE")
