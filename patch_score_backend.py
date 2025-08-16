@@ -66,8 +66,19 @@ def _log_outcome(record: Dict[str, object]) -> None:
     if not patch_id or result is None:
         return
     vectors = record.get("vectors") or []
-    if not isinstance(vectors, list):
-        vectors = []
+    norm_vectors: List[Tuple[str, str]] = []
+    if isinstance(vectors, list):
+        for item in vectors:
+            if isinstance(item, dict):
+                origin = item.get("origin_db") or item.get("origin")
+                vid = item.get("vector_id") or item.get("id")
+            else:
+                try:
+                    origin, vid = item  # type: ignore[misc]
+                except Exception:  # pragma: no cover - best effort
+                    continue
+            if origin is not None and vid is not None:
+                norm_vectors.append((str(origin), str(vid)))
     result_str = str(result).lower()
     success = result_str == "ok"
     reverted = result_str == "reverted"
@@ -76,7 +87,7 @@ def _log_outcome(record: Dict[str, object]) -> None:
         MetricsDB().log_patch_outcome(
             str(patch_id),
             success,
-            vectors,
+            norm_vectors,
             session_id=str(session_id),
             reverted=reverted,
         )
