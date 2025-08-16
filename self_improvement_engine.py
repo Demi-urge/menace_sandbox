@@ -2745,7 +2745,7 @@ class SelfImprovementEngine:
             info["side_effects"] = score
             classifications[rel] = {"classification": cls, "side_effects": score}
             elapsed = time.perf_counter() - start
-            if self.metrics_db:
+            if getattr(self, "metrics_db", None):
                 try:
                     self.metrics_db.record(rel, elapsed, self.module_index)
                 except Exception:
