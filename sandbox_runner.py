@@ -551,6 +551,7 @@ class _SandboxMetaLogger:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
         self.records.append(_CycleMeta(cycle, roi, delta, modules, reason, warnings))
+        per_module_delta = delta / len(modules) if modules else 0.0
         for m in modules:
             if self.module_index:
                 try:
@@ -564,7 +565,12 @@ class _SandboxMetaLogger:
             self.module_deltas.setdefault(gid, []).append(delta)
             if self.metrics_db:
                 try:
-                    self.metrics_db.record(m, exec_time, self.module_index)
+                    self.metrics_db.record(
+                        m,
+                        exec_time,
+                        self.module_index,
+                        roi_delta=per_module_delta,
+                    )
                 except Exception:
                     logger.exception("relevancy metrics record failed")
         try:

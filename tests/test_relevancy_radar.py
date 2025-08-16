@@ -111,15 +111,16 @@ def metrics_db(tmp_path):
     db_path = tmp_path / "metrics.db"
     with sqlite3.connect(db_path) as conn:
         conn.execute(
-            "CREATE TABLE module_metrics (module_name TEXT, call_count INTEGER, total_time REAL)"
+            "CREATE TABLE module_metrics (module_name TEXT, call_count INTEGER, total_time REAL, roi_delta REAL)"
         )
         conn.executemany(
-            "INSERT INTO module_metrics VALUES (?, ?, ?)",
+            "INSERT INTO module_metrics VALUES (?, ?, ?, ?)",
             [
-                ("used_mod", 100, 100.0),
-                ("unused_mod", 0, 0.0),
-                ("compress_mod", 1, 1.0),
-                ("replace_mod", 3, 3.0),
+                ("used_mod", 100, 100.0, 100.0),
+                ("unused_mod", 0, 0.0, 0.0),
+                ("compress_mod", 1, 1.0, 0.1),
+                ("replace_mod", 3, 3.0, 0.2),
+                ("high_roi_mod", 1, 1.0, 50.0),
             ],
         )
     return db_path
@@ -142,6 +143,7 @@ def test_scan_respects_thresholds(metrics_db):
         "compress_mod": "compress",
         "replace_mod": "replace",
     }
+    assert "high_roi_mod" not in flags
 
 
 def test_scan_publishes_event(metrics_db):
@@ -177,3 +179,17 @@ def test_scan_publishes_event(metrics_db):
         },
     )
     assert flags
+
+
+def test_scan_skips_high_roi(metrics_db):
+    """Modules with high ROI are not flagged despite low call counts."""
+
+    from relevancy_radar import scan
+
+    flags = scan(
+        db_path=metrics_db,
+        min_calls=0,
+        compress_ratio=0.02,
+        replace_ratio=0.05,
+    )
+    assert "high_roi_mod" not in flags
