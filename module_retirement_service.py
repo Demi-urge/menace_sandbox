@@ -9,7 +9,12 @@ import shutil
 
 from module_graph_analyzer import build_import_graph
 from quick_fix_engine import generate_patch
-from metrics_exporter import update_module_retirement_metrics, retired_modules_total, compressed_modules_total
+from metrics_exporter import (
+    update_module_retirement_metrics,
+    retired_modules_total,
+    compressed_modules_total,
+    replaced_modules_total,
+)
 
 
 class ModuleRetirementService:
@@ -76,6 +81,22 @@ class ModuleRetirementService:
             self.logger.exception("compression failed for %s", module)
         return False
 
+    def replace_module(self, module: str) -> bool:
+        """Invoke quick fix tooling to propose replacement for ``module``."""
+
+        path = self.root / (module if module.endswith(".py") else f"{module}.py")
+        if not path.exists():
+            self.logger.error("module not found: %s", module)
+            return False
+        try:
+            patch_id = generate_patch(str(path))
+            if patch_id is not None:
+                replaced_modules_total.inc()
+                return True
+        except Exception:  # pragma: no cover - patching issues
+            self.logger.exception("replacement failed for %s", module)
+        return False
+
     # ------------------------------------------------------------------
     def process_flags(self, flags: Dict[str, str]) -> Dict[str, str]:
         """Process relevancy ``flags`` mapping modules to actions."""
@@ -91,6 +112,10 @@ class ModuleRetirementService:
                 success = self.compress_module(mod)
                 if success:
                     results[mod] = "compressed"
+            elif flag == "replace":
+                success = self.replace_module(mod)
+                if success:
+                    results[mod] = "replaced"
             if not success:
                 results.setdefault(mod, "skipped")
         update_module_retirement_metrics(results)
