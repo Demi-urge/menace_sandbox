@@ -163,6 +163,8 @@ def test_training_set_labeling(stats_file: Path, patch_labels_file: Path):
         "prior_hits",
         "win_rate",
         "regret_rate",
+        "stale_cost",
+        "sample_count",
     }.issubset(ts.X.columns)
 
 
@@ -177,9 +179,13 @@ def test_model_predict_uses_all_features(tmp_path):
                     "exec_freq",
                     "roi_delta",
                     "prior_hits",
+                    "win_rate",
+                    "regret_rate",
+                    "stale_cost",
+                    "sample_count",
                     "db_bot",
                 ],
-                "coef": [[0.1, 0.1, 0.1, 0.1, 0.1, 0.1]],
+                "coef": [[0.1] * 10],
                 "intercept": [0.0],
             }
         )
@@ -195,10 +201,24 @@ def test_model_predict_uses_all_features(tmp_path):
         enable_reliability_bias=False,
         model_path=model_path,
     )
-    feats = {"age": 1, "similarity": 2, "exec_freq": 3, "roi_delta": 4, "prior_hits": 5}
+    feats = {
+        "age": 1,
+        "similarity": 2,
+        "exec_freq": 3,
+        "roi_delta": 4,
+        "prior_hits": 5,
+        "win_rate": 6,
+        "regret_rate": 7,
+        "stale_cost": 8,
+        "sample_count": 9,
+    }
     p_bot = retriever._model_predict("bot", feats)
     p_other = retriever._model_predict("workflow", feats)
-    expected_bot = 1 / (1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5 + 1)))
-    expected_other = 1 / (1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5)))
+    expected_bot = 1 / (
+        1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 1))
+    )
+    expected_other = 1 / (
+        1 + math.exp(-0.1 * (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9))
+    )
     assert p_bot == pytest.approx(expected_bot)
     assert p_other == pytest.approx(expected_other)

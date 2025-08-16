@@ -110,17 +110,20 @@ def train(df: pd.DataFrame) -> TrainedModel:
     """Fit a ranking model on ``df`` and return the fitted model."""
 
     feature_cols = [
-        c
-        for c in df.columns
-        if c
-        not in {
-            "session_id",
-            "vector_id",
-            "label",
-        }
+        "db_type",
+        "age",
+        "similarity",
+        "exec_freq",
+        "roi_delta",
+        "prior_hits",
+        "win_rate",
+        "regret_rate",
+        "stale_cost",
+        "sample_count",
     ]
+    available = [c for c in feature_cols if c in df.columns]
     X = pd.get_dummies(
-        df[feature_cols], columns=["db_type"], prefix="db", dtype=float
+        df[available], columns=["db_type"], prefix="db", dtype=float
     ).fillna(0.0)
     y = df["label"].astype(int)
 

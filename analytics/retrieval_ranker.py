@@ -43,7 +43,8 @@ def build_training_set(
     stats file is expected to include columns such as ``origin_db`` (database
     type), ``age`` (seconds since last update), ``similarity``, ``roi_delta``,
     ``exec_freq`` (execution frequency), ``prior_hits`` (historical hit count),
-    and aggregate ``win_rate`` / ``regret_rate`` scores.  The labels file must
+    aggregate ``win_rate`` / ``regret_rate`` scores, and optional
+    ``stale_cost`` / ``sample_count`` reliability metrics.  The labels file must
     provide the training target under a ``win`` column.
     """
 
@@ -59,6 +60,8 @@ def build_training_set(
         "prior_hits",
         "win_rate",
         "regret_rate",
+        "stale_cost",
+        "sample_count",
     ]
     for col in numeric_features:
         if col not in df:

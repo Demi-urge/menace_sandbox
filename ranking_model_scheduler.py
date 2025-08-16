@@ -45,6 +45,8 @@ class RankingModelScheduler:
     # ------------------------------------------------------------------
     def retrain_and_reload(self) -> None:
         """Retrain ranking model and notify services to reload."""
+        # Update reliability KPIs before training so latest values are joined
+        compute_retriever_stats(self.metrics_db)
 
         # Train model from latest vector metrics
         df = rr.load_training_data(
@@ -52,9 +54,6 @@ class RankingModelScheduler:
         )
         tm = rr.train(df)
         rr.save_model(tm, self.model_path)
-
-        # Update win/regret KPIs
-        compute_retriever_stats(self.metrics_db)
 
         # Reload model and reliability scores in running services
         for svc in self.services:
