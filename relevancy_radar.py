@@ -17,6 +17,7 @@ import json
 from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable
+import builtins
 
 from metrics_exporter import update_relevancy_metrics
 
@@ -24,6 +25,8 @@ from metrics_exporter import update_relevancy_metrics
 _BASE_DIR = Path(__file__).resolve().parent
 _MODULE_USAGE_FILE = _BASE_DIR / "sandbox_data" / "module_usage.json"
 _RELEVANCY_FLAGS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_flags.json"
+# File used by :class:`RelevancyRadar` to persist detailed usage metrics.
+_RELEVANCY_METRICS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_metrics.json"
 
 # In-memory counter for module usage.
 _module_usage_counter: Counter[str] = Counter()
@@ -149,7 +152,82 @@ __all__ = [
 
 
 class RelevancyRadar:
-    """High level helpers for working with module relevancy data."""
+    """Track module usage and evaluate relevancy based on collected metrics."""
+
+    def __init__(self, metrics_file: Path | None = None) -> None:
+        self.metrics_file = Path(metrics_file) if metrics_file else _RELEVANCY_METRICS_FILE
+        self._metrics: Dict[str, Dict[str, int]] = self._load_metrics()
+        self._install_import_hook()
+        atexit.register(self._persist_metrics)
+
+    # ------------------------------------------------------------------
+    # Metrics persistence helpers
+    # ------------------------------------------------------------------
+    def _load_metrics(self) -> Dict[str, Dict[str, int]]:
+        data: Dict[str, Dict[str, int]] = {}
+        if self.metrics_file.exists():
+            try:
+                with self.metrics_file.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    for mod, counts in raw.items():
+                        if isinstance(counts, dict):
+                            data[str(mod)] = {
+                                "imports": int(counts.get("imports", 0)),
+                                "executions": int(counts.get("executions", 0)),
+                            }
+            except json.JSONDecodeError:
+                data = {}
+        return data
+
+    def _persist_metrics(self) -> None:
+        self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        with self.metrics_file.open("w", encoding="utf-8") as fh:
+            json.dump(self._metrics, fh, indent=2, sort_keys=True)
+
+    def _install_import_hook(self) -> None:
+        if getattr(builtins, "_relevancy_radar_original_import", None):
+            return
+
+        original_import = builtins.__import__
+        radar = self
+
+        def tracked_import(name, globals=None, locals=None, fromlist=(), level=0):
+            root = name.split(".")[0]
+            info = radar._metrics.setdefault(root, {"imports": 0, "executions": 0})
+            info["imports"] += 1
+            return original_import(name, globals, locals, fromlist, level)
+
+        builtins._relevancy_radar_original_import = original_import
+        builtins.__import__ = tracked_import
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def track_usage(self, module_name: str) -> None:
+        """Record an execution event for ``module_name`` and persist metrics."""
+
+        info = self._metrics.setdefault(module_name, {"imports": 0, "executions": 0})
+        info["executions"] += 1
+        self._persist_metrics()
+
+    def evaluate_relevance(self, threshold: float) -> Dict[str, str]:
+        """Return modules with scores below ``threshold``.
+
+        Modules with zero score are tagged ``retire`` while modules below the
+        threshold are tagged ``compress``.
+        """
+
+        results: Dict[str, str] = {}
+        for mod, counts in self._metrics.items():
+            score = int(counts.get("imports", 0)) + int(counts.get("executions", 0))
+            if score == 0:
+                results[mod] = "retire"
+            elif score < threshold:
+                results[mod] = "compress"
+
+        self._persist_metrics()
+        return results
 
     @staticmethod
     def flag_unused_modules(module_map: Iterable[str]) -> Dict[str, str]:
