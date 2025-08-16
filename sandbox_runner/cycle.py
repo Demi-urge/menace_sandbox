@@ -66,7 +66,11 @@ from metrics_exporter import (
     orphan_modules_legacy_total,
     orphan_modules_reclassified_total,
 )
-from relevancy_radar import RelevancyRadar, track_usage as _radar_track_usage
+from relevancy_radar import (
+    RelevancyRadar,
+    track_usage as _radar_track_usage,
+    evaluate_final_contribution,
+)
 
 from .environment import (
     SANDBOX_ENV_PRESETS,
@@ -1701,6 +1705,21 @@ def _sandbox_cycle_runner(
             )
         except Exception:
             logger.exception("preset adaptation failed")
+
+    settings = getattr(ctx, "settings", SandboxSettings())
+    if getattr(settings, "enable_relevancy_radar", False):
+        try:
+            flags = evaluate_final_contribution(
+                settings.relevancy_radar_compress_ratio,
+                settings.relevancy_radar_replace_ratio,
+            )
+            flag_path = ctx.repo / "sandbox_data" / "relevancy_flags.json"
+            flag_path.parent.mkdir(parents=True, exist_ok=True)
+            with flag_path.open("w", encoding="utf-8") as fh:
+                json.dump(flags, fh, indent=2, sort_keys=True)
+            logger.info("relevancy evaluation", extra=log_record(flags=flags))
+        except Exception:
+            logger.exception("relevancy radar final contribution evaluation failed")
 
     logger.info(
         "cycle summary",
