@@ -1206,6 +1206,11 @@ def main(argv: List[str] | None = None) -> None:
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
 
     sub.add_parser(
+        "relevancy-report",
+        help="print modules flagged by relevancy radar",
+    )
+
+    sub.add_parser(
         "cleanup",
         help="purge leftovers and retry previously failed cleanup",
     )
@@ -1478,6 +1483,19 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "synergy-metrics":
         synergy_metrics(args.file, window=args.window, plot=getattr(args, "plot", False))
+        return
+
+    if getattr(args, "cmd", None) == "relevancy-report":
+        from relevancy_radar import flagged_modules
+        from metrics_exporter import update_relevancy_metrics
+
+        flags = flagged_modules()
+        update_relevancy_metrics(flags)
+        if not flags:
+            print("No modules flagged.")
+        else:
+            for mod, flag in sorted(flags.items()):
+                print(f"{mod}: {flag}")
         return
 
     if getattr(args, "cmd", None) == "cleanup":
