@@ -1042,8 +1042,12 @@ class UniversalRetriever:
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
         adjust_weights: bool = False,
-    ) -> Union[List[ResultBundle], Tuple[List[ResultBundle], List[dict[str, Any]]]]:
+    ) -> Union["RetrievalResult", Tuple["RetrievalResult", List[dict[str, Any]]]]:
         """Retrieve results with scores and reasons.
+
+        The returned :class:`RetrievalResult` carries a ``session_id`` and a
+        ``vectors`` attribute containing ``(db_name, vector_id)`` tuples for all
+        retrieved items.
 
         Beyond returning :class:`ResultBundle` objects, this method records
         rich statistics for every candidate.  Each hit stores its rank
@@ -1351,7 +1355,7 @@ class UniversalRetriever:
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
         adjust_weights: bool = False,
-    ) -> Union[List[dict[str, Any]], Tuple[List[dict[str, Any]], List[dict[str, Any]]]]:
+    ) -> Union["RetrievalResult", Tuple["RetrievalResult", List[dict[str, Any]]]]:
         res = self.retrieve(
             query,
             top_k=top_k,

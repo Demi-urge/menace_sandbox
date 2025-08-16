@@ -1211,8 +1211,32 @@ def _sandbox_cycle_runner(
                         roi = new_roi
                 except Exception:
                     logger.exception("patch from gpt failed for %s", mod)
+                    if _VEC_METRICS is not None and session_id and vectors:
+                        try:
+                            _VEC_METRICS.update_outcome(
+                                session_id,
+                                vectors,
+                                contribution=0.0,
+                                patch_id=str(patch_id or ""),
+                                win=False,
+                                regret=True,
+                            )
+                        except Exception:
+                            logger.exception("failed to log vector outcome")
                     early_exit = True
                     continue
+                if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
+                    try:
+                        _VEC_METRICS.update_outcome(
+                            session_id,
+                            vectors,
+                            contribution=0.0,
+                            patch_id=str(patch_id or ""),
+                            win=False,
+                            regret=True,
+                        )
+                    except Exception:
+                        logger.exception("failed to log vector outcome")
                 if early_exit:
                     break
             if early_exit:
@@ -1525,8 +1549,32 @@ def _sandbox_cycle_runner(
                         roi = new_roi
                 except Exception:
                     logger.exception("offline suggestion failed for %s", mod)
+                    if _VEC_METRICS is not None and session_id and vectors:
+                        try:
+                            _VEC_METRICS.update_outcome(
+                                session_id,
+                                vectors,
+                                contribution=0.0,
+                                patch_id=str(patch_id or ""),
+                                win=False,
+                                regret=True,
+                            )
+                        except Exception:
+                            logger.exception("failed to log vector outcome")
                     early_exit = True
                     continue
+                if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
+                    try:
+                        _VEC_METRICS.update_outcome(
+                            session_id,
+                            vectors,
+                            contribution=0.0,
+                            patch_id=str(patch_id or ""),
+                            win=False,
+                            regret=True,
+                        )
+                    except Exception:
+                        logger.exception("failed to log vector outcome")
                 if early_exit:
                     break
             if early_exit:
