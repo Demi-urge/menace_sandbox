@@ -37,3 +37,33 @@ def test_retrieval_hit_rate(tmp_path):
     )
     assert db.retrieval_hit_rate() == 0.5
     assert db.retrieval_hit_rate("db1") == 0.5
+
+
+def test_retriever_rates_by_db(tmp_path):
+    db = vdb.VectorMetricsDB(tmp_path / "v.db")
+    db.add(
+        vdb.VectorMetric(
+            event_type="retrieval",
+            db="db1",
+            tokens=0,
+            wall_time_ms=0.0,
+            hit=True,
+            rank=1,
+            win=True,
+            regret=False,
+        )
+    )
+    db.add(
+        vdb.VectorMetric(
+            event_type="retrieval",
+            db="db2",
+            tokens=0,
+            wall_time_ms=0.0,
+            hit=False,
+            rank=1,
+            win=False,
+            regret=True,
+        )
+    )
+    assert db.retriever_win_rate_by_db() == {"db1": 1.0, "db2": 0.0}
+    assert db.retriever_regret_rate_by_db() == {"db1": 0.0, "db2": 1.0}

@@ -524,6 +524,17 @@ class UniversalRetriever:
         self.register_db("enhancement", enhancement_db, ("id",))
         self.register_db("information", information_db, ("id", "info_id", "item_id"))
 
+        self._load_reliability_stats()
+        if self.enable_reliability_bias and self._reliability_stats:
+            self._dbs = dict(
+                sorted(
+                    self._dbs.items(),
+                    key=lambda kv: self._reliability_stats.get(kv[0], {})
+                    .get("reliability", 0.0),
+                    reverse=True,
+                )
+            )
+
         if self._encoder is None and code_db is None:
             raise ValueError("At least one database instance is required")
 
@@ -678,28 +689,40 @@ class UniversalRetriever:
         mapping.
         """
 
-        if MetricsDB is None:
-            self._reliability_stats = {}
-            return {}
-        try:
-            mdb = MetricsDB()
-            with sqlite3.connect(mdb.path) as conn:
-                cur = conn.execute(
-                    "SELECT origin_db, wins, regrets FROM retriever_stats"
-                )
-                stats: Dict[str, Dict[str, float]] = {}
-                for origin, wins, regrets in cur.fetchall():
-                    total = float(wins) + float(regrets)
-                    win_rate = float(wins) / total if total else 0.0
-                    regret_rate = float(regrets) / total if total else 0.0
-                    stats[str(origin)] = {
+        stats: Dict[str, Dict[str, float]] = {}
+        if _VEC_METRICS is not None:
+            try:
+                win_map = _VEC_METRICS.retriever_win_rate_by_db()
+                regret_map = _VEC_METRICS.retriever_regret_rate_by_db()
+                for name in set(win_map) | set(regret_map):
+                    win_rate = float(win_map.get(name, 0.0))
+                    regret_rate = float(regret_map.get(name, 0.0))
+                    stats[name] = {
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "reliability": win_rate - regret_rate,
                     }
-            self._reliability_stats = stats
-        except Exception:
-            self._reliability_stats = {}
+            except Exception:
+                stats = {}
+        if not stats and MetricsDB is not None:
+            try:
+                mdb = MetricsDB()
+                with sqlite3.connect(mdb.path) as conn:
+                    cur = conn.execute(
+                        "SELECT origin_db, wins, regrets FROM retriever_stats"
+                    )
+                    for origin, wins, regrets in cur.fetchall():
+                        total = float(wins) + float(regrets)
+                        win_rate = float(wins) / total if total else 0.0
+                        regret_rate = float(regrets) / total if total else 0.0
+                        stats[str(origin)] = {
+                            "win_rate": win_rate,
+                            "regret_rate": regret_rate,
+                            "reliability": win_rate - regret_rate,
+                        }
+            except Exception:
+                stats = {}
+        self._reliability_stats = stats
         return self._reliability_stats
 
     # ------------------------------------------------------------------
@@ -835,8 +858,10 @@ class UniversalRetriever:
                     feats["model_score"] = model_score
                     score = base_score * model_score
                     candidates.append((source, rec_id, m, score, feats))
+                if len(candidates) >= top_k:
+                    break
 
-        if self.code_db:
+        if self.code_db and len(candidates) < top_k:
             allow = True
             if _VEC_METRICS is not None:
                 try:

@@ -385,6 +385,16 @@ retrieval_rank_histogram = Gauge(
 retrieval_win_rate = Gauge(
     "retrieval_win_rate", "Win rate of retrieval operations",
 )
+retriever_win_rate = Gauge(
+    "retriever_win_rate",
+    "Win rate of retrieval operations by database",
+    ["db"],
+)
+retriever_regret_rate = Gauge(
+    "retriever_regret_rate",
+    "Regret rate of retrieval operations by database",
+    ["db"],
+)
 patch_success_total = Gauge(
     "patch_success_total", "Number of successful patch applications",
 )

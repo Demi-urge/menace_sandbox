@@ -21,6 +21,16 @@ _RETRIEVAL_HIT_RATE = _me.Gauge(
     "retrieval_hit_rate",
     "Fraction of retrieval results included in final prompt",
 )
+_RETRIEVER_WIN_RATE = getattr(_me, "retriever_win_rate", _me.Gauge(
+    "retriever_win_rate",
+    "Win rate of retrieval operations by database",
+    ["db"],
+))
+_RETRIEVER_REGRET_RATE = getattr(_me, "retriever_regret_rate", _me.Gauge(
+    "retriever_regret_rate",
+    "Regret rate of retrieval operations by database",
+    ["db"],
+))
 
 
 @dataclass
@@ -239,6 +249,44 @@ class VectorMetricsDB:
         )
         res = cur.fetchone()
         return float(res[0]) if res and res[0] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    def retriever_win_rate_by_db(self) -> dict[str, float]:
+        cur = self.conn.execute(
+            """
+            SELECT db, AVG(win)
+              FROM vector_metrics
+             WHERE event_type='retrieval' AND win IS NOT NULL
+             GROUP BY db
+            """
+        )
+        rows = cur.fetchall()
+        rates = {str(db): float(rate) if rate is not None else 0.0 for db, rate in rows}
+        for name, rate in rates.items():
+            try:
+                _RETRIEVER_WIN_RATE.labels(db=name).set(rate)
+            except Exception:
+                pass
+        return rates
+
+    # ------------------------------------------------------------------
+    def retriever_regret_rate_by_db(self) -> dict[str, float]:
+        cur = self.conn.execute(
+            """
+            SELECT db, AVG(regret)
+              FROM vector_metrics
+             WHERE event_type='retrieval' AND regret IS NOT NULL
+             GROUP BY db
+            """
+        )
+        rows = cur.fetchall()
+        rates = {str(db): float(rate) if rate is not None else 0.0 for db, rate in rows}
+        for name, rate in rates.items():
+            try:
+                _RETRIEVER_REGRET_RATE.labels(db=name).set(rate)
+            except Exception:
+                pass
+        return rates
 
     # ------------------------------------------------------------------
     def update_outcome(
