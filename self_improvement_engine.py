@@ -1999,6 +1999,31 @@ class SelfImprovementEngine:
                     roi_est, category = 0.0, "unknown"
 
             if category == "marginal" and not allow_marginal:
+                ctx = getattr(self, "_current_context", {}) or {}
+                session_id = ""
+                vectors: list[tuple[str, str]] = []
+                if isinstance(ctx, dict):
+                    session_id = ctx.get("retrieval_session_id", "")
+                    raw_vecs = ctx.get("retrieval_vectors") or []
+                    for item in raw_vecs:
+                        if isinstance(item, dict):
+                            origin = item.get("origin_db") or item.get("origin")
+                            vec_id = item.get("vector_id") or item.get("id")
+                        else:
+                            origin, vec_id = item
+                        if origin is not None and vec_id is not None:
+                            vectors.append((str(origin), str(vec_id)))
+                if getattr(self, "data_bot", None):
+                    try:  # pragma: no cover - best effort
+                        self.data_bot.db.log_patch_outcome(
+                            f"roi_history_{idx}",
+                            False,
+                            vectors,
+                            session_id=session_id,
+                            reverted=False,
+                        )
+                    except Exception:
+                        self.logger.exception("failed to log patch outcome")
                 try:  # pragma: no cover - best effort
                     self._log_action(
                         "skip_candidate", f"roi_history_{idx}", roi_est, category
