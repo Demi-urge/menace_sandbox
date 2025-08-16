@@ -252,17 +252,22 @@ class QuickFixEngine:
             raise
         if _VEC_METRICS is not None and session_id and vectors:
             try:
-                win = bool(patch_id) and tests_ok
-                regret = not win
-                contribution = 1.0 if win else 0.0
-                _VEC_METRICS.update_outcome(
-                    session_id,
-                    vectors,
-                    contribution=contribution,
-                    patch_id=str(patch_id or ""),
-                    win=win,
-                    regret=regret,
-                )
+                if bool(patch_id) and tests_ok:
+                    _VEC_METRICS.update_outcome(
+                        session_id,
+                        vectors,
+                        contribution=1.0,
+                        patch_id=str(patch_id),
+                        win=True,
+                    )
+                else:
+                    _VEC_METRICS.update_outcome(
+                        session_id,
+                        vectors,
+                        contribution=0.0,
+                        patch_id=str(patch_id or ""),
+                        regret=True,
+                    )
             except Exception:
                 self.logger.exception("failed to log vector outcome")
 
@@ -364,17 +369,22 @@ class QuickFixEngine:
                 self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
             if _VEC_METRICS is not None and session_id and vectors:
                 try:
-                    win = bool(patch_id)
-                    regret = not win
-                    contribution = 1.0 if win else 0.0
-                    _VEC_METRICS.update_outcome(
-                        session_id,
-                        vectors,
-                        contribution=contribution,
-                        patch_id=str(patch_id or ""),
-                        win=win,
-                        regret=regret,
-                    )
+                    if patch_id:
+                        _VEC_METRICS.update_outcome(
+                            session_id,
+                            vectors,
+                            contribution=1.0,
+                            patch_id=str(patch_id),
+                            win=True,
+                        )
+                    else:
+                        _VEC_METRICS.update_outcome(
+                            session_id,
+                            vectors,
+                            contribution=0.0,
+                            patch_id=str(patch_id or ""),
+                            regret=True,
+                        )
                 except Exception:
                     self.logger.exception("failed to log vector outcome")
 

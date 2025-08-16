@@ -1326,6 +1326,9 @@ class UniversalRetriever:
                     "context",
                 }
             }
+            metrics.pop("exec_freq", None)
+            metrics.pop("prior_hits", None)
+            metrics.pop("roi_delta", None)
             meta.update(
                 {
                     "vector_distance": entry.get("distance", 0.0),
@@ -1440,7 +1443,16 @@ class UniversalRetriever:
             )
 
         results = hits[:top_k]
-        vector_info = [(h.origin_db, str(h.record_id)) for h in results]
+        vector_info = []
+        for h in results:
+            vid = ""
+            try:
+                vid = str(h.metadata.get("vector_id"))  # type: ignore[union-attr]
+            except Exception:
+                vid = ""
+            if not vid:
+                vid = str(h.record_id)
+            vector_info.append((h.origin_db, vid))
         result_container = RetrievalResult(results, session_id, vector_info)
 
         total_candidates = len(hits)

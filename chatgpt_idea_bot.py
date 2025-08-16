@@ -208,13 +208,21 @@ class ChatGPTClient:
                         pass
 
                 if retriever is not None:
-                    hits = retriever.retrieve_with_confidence(user_prompt, top_k=5)
+                    hits, _session, _vectors = retriever.retrieve_with_confidence(
+                        user_prompt, top_k=5
+                    )
                     for h in hits:
                         item = h.get("item")
                         if isinstance(item, dict):
-                            snippet = item.get("summary") or item.get("message") or str(item)
+                            snippet = (
+                                item.get("summary")
+                                or item.get("message")
+                                or str(item)
+                            )
                         else:
-                            snippet = getattr(item, "summary", getattr(item, "message", str(item)))
+                            snippet = getattr(
+                                item, "summary", getattr(item, "message", str(item))
+                            )
                         ctx_parts.append(snippet)
 
                 if memory is not None:
