@@ -37,9 +37,65 @@ class RelevancyRadarService:
 
     def _scan_once(self) -> None:
         try:
-            modules = self._modules()
-            flags = RelevancyRadar.flag_unused_modules(modules)
+            from .module_graph_analyzer import build_import_graph
+            from .relevancy_radar import load_usage_stats
+            from .relevancy_metrics_db import RelevancyMetricsDB
+            from .metrics_exporter import update_relevancy_metrics
+
+            try:
+                from .sandbox_settings import SandboxSettings
+
+                settings = SandboxSettings()
+                compress = float(settings.relevancy_radar_compress_ratio)
+                replace = float(settings.relevancy_radar_replace_ratio)
+            except Exception:
+                compress, replace = 0.01, 0.05
+
+            graph = build_import_graph(self.root)
+            module_names = {n.replace("/", ".") for n in graph.nodes}
+
+            radar = RelevancyRadar()
+            radar._metrics.clear()
+
+            usage_stats = load_usage_stats()
+            module_names.update(usage_stats.keys())
+
+            try:
+                db = RelevancyMetricsDB(
+                    self.root / "sandbox_data" / "relevancy_metrics.db"
+                )
+                roi_deltas = db.get_roi_deltas(module_names)
+            except Exception:
+                roi_deltas = {}
+
+            for mod in module_names:
+                count = int(usage_stats.get(mod, 0))
+                radar._metrics[mod] = {
+                    "imports": count,
+                    "executions": count,
+                    "impact": float(roi_deltas.get(mod, 0.0)),
+                }
+
+            import inspect
+
+            evaluator = getattr(radar, "evaluate_final_contribution")
+            if "graph" in inspect.signature(evaluator).parameters:
+                flags = evaluator(
+                    compress,
+                    replace,
+                    graph=graph,
+                    core_modules=["menace_master", "run_autonomous"],
+                )
+            else:
+                flags = radar.evaluate_relevance(
+                    compress,
+                    replace,
+                    dep_graph=graph,
+                    core_modules=["menace_master", "run_autonomous"],
+                )
+
             self.latest_flags = flags
+            update_relevancy_metrics(flags)
             if flags:
                 if self._retirement_service is None:
                     from .module_retirement_service import ModuleRetirementService
