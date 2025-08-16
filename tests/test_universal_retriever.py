@@ -47,7 +47,9 @@ def test_cross_db_merge(tmp_path):
     # feature logging: ensure each hit includes similarity and contextual metrics
     for h in hits:
         assert "similarity" in h.metadata
-        assert "contextual_metrics" in h.metadata
+        cm = h.metadata.get("contextual_metrics", {})
+        assert "model_score" in cm
+        assert cm["model_score"] > 0.0
 
 
 def test_metric_weighting_prioritises_frequent_errors(tmp_path):
