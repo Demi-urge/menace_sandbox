@@ -115,6 +115,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_improvement_path,
         recent_error_fix,
     )
+try:  # pragma: no cover - allow flat imports
+    from .relevancy_radar import RelevancyRadar
+except Exception:  # pragma: no cover - fallback for flat layout
+    from relevancy_radar import RelevancyRadar  # type: ignore
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -649,6 +653,7 @@ class SelfImprovementEngine:
         roi_tracker: ROITracker | None = None,
         gpt_memory: GPTMemoryInterface | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
+        relevancy_radar: RelevancyRadar | None = None,
         **kwargs: Any,
     ) -> None:
         if gpt_memory is None:
@@ -782,6 +787,8 @@ class SelfImprovementEngine:
             manager=self.gpt_memory, service=knowledge_service
         )
         self.knowledge_service = self.local_knowledge.knowledge
+        self.relevancy_radar = relevancy_radar or RelevancyRadar()
+        self.relevancy_flags: dict[str, str] = {}
 
         if synergy_learner_cls is SynergyWeightLearner:
             env_name = os.getenv("SYNERGY_LEARNER", "").lower()
@@ -4430,6 +4437,54 @@ class SelfImprovementEngine:
                 "high risk module prediction failed: %s", exc
             )
 
+    def _evaluate_module_relevance(self) -> None:
+        """Evaluate module usage and record relevancy recommendations."""
+        try:
+            settings = SandboxSettings()
+            threshold = float(getattr(settings, "relevancy_threshold", 20))
+        except Exception:
+            threshold = 20.0
+        try:
+            flags = self.relevancy_radar.evaluate_relevance(threshold)
+        except Exception:
+            self.logger.exception("relevancy evaluation failed")
+            return
+        if not flags:
+            return
+        self.relevancy_flags = flags
+        if self.event_bus:
+            try:
+                self.event_bus.publish("relevancy_flags", flags)
+            except Exception:  # pragma: no cover - best effort
+                self.logger.exception("relevancy flag publish failed")
+        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+        for mod, status in flags.items():
+            self.logger.info(
+                "module flagged", extra=log_record(module=mod, status=status)
+            )
+            try:
+                analyze_redundancy(repo / (mod.replace(".", "/") + ".py"))
+            except Exception:
+                self.logger.exception(
+                    "redundancy analysis failed", extra=log_record(module=mod)
+                )
+            try:
+                MutationLogger.log_mutation(
+                    change="relevancy",
+                    reason=status,
+                    trigger="relevancy_radar",
+                    performance=0.0,
+                    workflow_id=0,
+                )
+            except Exception:
+                self.logger.exception(
+                    "mutation logging failed", extra=log_record(module=mod)
+                )
+
+    def get_relevancy_flags(self) -> dict[str, str]:
+        """Return latest module relevancy flags."""
+        return dict(self.relevancy_flags)
+
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
@@ -4460,13 +4515,14 @@ class SelfImprovementEngine:
                         integrated = self._integrate_orphans(abs_paths)
                     except Exception as exc:  # pragma: no cover - best effort
                         self.logger.exception("orphan integration failed: %s", exc)
-                    try:
-                        self._update_orphan_modules()
-                    except Exception as exc:  # pragma: no cover - best effort
-                        self.logger.exception(
-                            "post integration orphan update failed: %s", exc
-                        )
+            try:
+                self._update_orphan_modules()
+            except Exception as exc:  # pragma: no cover - best effort
+                self.logger.exception(
+                    "post integration orphan update failed: %s", exc
+                )
             self._refresh_module_map()
+            self._evaluate_module_relevance()
             self._process_preventative_queue()
             if self.error_bot:
                 try:
