@@ -60,6 +60,11 @@ except Exception:  # pragma: no cover - optional dependency
 
 from . import vision_utils
 
+try:  # pragma: no cover - optional dependency
+    from .micro_models.tool_predictor import predict_tools  # type: ignore
+except Exception:  # pragma: no cover - allow running without predictor
+    predict_tools = lambda spec: []  # type: ignore
+
 try:
     import yaml  # type: ignore
     if not hasattr(yaml, "safe_dump"):
@@ -955,12 +960,24 @@ class BotDevelopmentBot:
             except Exception:
                 retrieval_context = ""
 
+        predicted_tool = ""
+        try:
+            preds = predict_tools(spec)
+            if preds:
+                predicted_tool = preds[0][0]
+        except Exception:
+            predicted_tool = ""
+
         problem_lines: list[str] = [
             f"# Bot specification: {spec.name}",
             f"Template version: v{self.prompt_templates_version}",
+        ]
+        if predicted_tool:
+            problem_lines.append(f"Suggested Tool: {predicted_tool}")
+        problem_lines.extend([
             "## Overview",
             f"Language: {spec.language}",
-        ]
+        ])
         if spec.level:
             problem_lines.append(f"Level: {spec.level}")
         if spec.io_format:
