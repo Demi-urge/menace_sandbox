@@ -483,6 +483,7 @@ class UniversalRetriever:
         model_path: str | Path | None = None,
         ranker: dict[str, Any] | None = None,
         reliability_threshold: float = 0.0,
+        fallback_on_low_reliability: bool = True,
         enable_model_ranking: bool = True,
         enable_reliability_bias: bool = True,
     ) -> None:
@@ -495,6 +496,7 @@ class UniversalRetriever:
         self.graph = knowledge_graph
         self.weights = weights or RetrievalWeights()
         self.reliability_threshold = float(reliability_threshold)
+        self.fallback_on_low_reliability = bool(fallback_on_low_reliability)
         self._ranker_model: dict[str, Any] | None = None
         self.use_ranker = bool(enable_model_ranking)
         if enable_model_ranking:
@@ -772,7 +774,7 @@ class UniversalRetriever:
                     ),
                     reverse=True,
                 )
-                if self.reliability_threshold:
+                if self.reliability_threshold and not self.fallback_on_low_reliability:
                     items = [
                         kv
                         for kv in items
@@ -793,7 +795,7 @@ class UniversalRetriever:
                 items.sort(
                     key=lambda kv: reliabilities.get(kv[0], 0.0), reverse=True
                 )
-                if self.reliability_threshold:
+                if self.reliability_threshold and not self.fallback_on_low_reliability:
                     items = [
                         kv
                         for kv in items
@@ -876,7 +878,11 @@ class UniversalRetriever:
                     win = _VEC_METRICS.retriever_win_rate("code")
                     regret = _VEC_METRICS.retriever_regret_rate("code")
                     rel = win - regret
-                    if self.reliability_threshold and rel < self.reliability_threshold:
+                    if (
+                        self.reliability_threshold
+                        and not self.fallback_on_low_reliability
+                        and rel < self.reliability_threshold
+                    ):
                         allow = False
                 except Exception:
                     pass
@@ -1244,7 +1250,7 @@ class UniversalRetriever:
         if self.enable_reliability_bias:
             self._load_reliability_stats()
         raw_results = self._retrieve_candidates(query, top_k, db_names=dbs)
-        db_times = getattr(self, "_last_db_times", {})
+        db_times = dict(getattr(self, "_last_db_times", {}))
         bias_map: Dict[str, float] = {}
         if roi_tracker is not None:
             try:
@@ -1267,61 +1273,92 @@ class UniversalRetriever:
                 logger.exception("failed to adjust retrieval weights")
 
         scored: List[dict[str, Any]] = []
-        for source, rec_id, item, base_score, feats in raw_results:
-            dist = float(feats.get("distance", 0.0))
-            similarity = float(feats.get("similarity", 0.0))
-            ctx_score = float(feats.get("context_score", 0.0))
-            win_rate = float(feats.get("win_rate", 0.0))
-            regret_rate = float(feats.get("regret_rate", 0.0))
-            stale_cost = float(feats.get("stale_cost", 0.0))
-            sample_count = float(feats.get("sample_count", 0.0))
-            metrics = {
-                k: v
-                for k, v in feats.items()
-                if k
-                not in {
-                    "distance",
-                    "similarity",
-                    "context_score",
-                    "win_rate",
-                    "regret_rate",
-                    "stale_cost",
-                    "sample_count",
+
+        def _score_results(raw: Iterable[tuple[str, Any, Any, float, Dict[str, float]]]) -> None:
+            for source, rec_id, item, base_score, feats in raw:
+                dist = float(feats.get("distance", 0.0))
+                similarity = float(feats.get("similarity", 0.0))
+                ctx_score = float(feats.get("context_score", 0.0))
+                win_rate = float(feats.get("win_rate", 0.0))
+                regret_rate = float(feats.get("regret_rate", 0.0))
+                stale_cost = float(feats.get("stale_cost", 0.0))
+                sample_count = float(feats.get("sample_count", 0.0))
+                metrics = {
+                    k: v
+                    for k, v in feats.items()
+                    if k
+                    not in {
+                        "distance",
+                        "similarity",
+                        "context_score",
+                        "win_rate",
+                        "regret_rate",
+                        "stale_cost",
+                        "sample_count",
+                    }
                 }
-            }
 
-            combined_score = base_score
-            combined_score *= bias_map.get(source, 1.0)
-            if self.enable_reliability_bias:
-                reliability_score = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
-                reliability_score *= math.exp(-STALE_COST * stale_cost)
-                combined_score *= reliability_score
-            else:
-                reliability_score = 1.0
+                combined_score = base_score
+                combined_score *= bias_map.get(source, 1.0)
+                if self.enable_reliability_bias:
+                    reliability_score = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
+                    reliability_score *= math.exp(-STALE_COST * stale_cost)
+                    combined_score *= reliability_score
+                else:
+                    reliability_score = 1.0
 
-            model_score = (
-                self._model_predict(source, feats) if self.use_ranker else 1.0
-            )
-            combined_score *= model_score
+                model_score = (
+                    self._model_predict(source, feats) if self.use_ranker else 1.0
+                )
+                combined_score *= model_score
 
-            scored.append(
-                {
-                    "source": source,
-                    "record_id": rec_id,
-                    "item": item,
-                    "confidence": combined_score,
-                    "distance": dist,
-                    "similarity": similarity,
-                    "context": ctx_score,
-                    "win_rate": win_rate,
-                    "regret_rate": regret_rate,
-                    "stale_cost": stale_cost,
-                    "sample_count": sample_count,
-                    "reliability_score": reliability_score,
-                    "model_score": model_score,
-                    **metrics,
-                }
-            )
+                scored.append(
+                    {
+                        "source": source,
+                        "record_id": rec_id,
+                        "item": item,
+                        "confidence": combined_score,
+                        "distance": dist,
+                        "similarity": similarity,
+                        "context": ctx_score,
+                        "win_rate": win_rate,
+                        "regret_rate": regret_rate,
+                        "stale_cost": stale_cost,
+                        "sample_count": sample_count,
+                        "reliability_score": reliability_score,
+                        "model_score": model_score,
+                        **metrics,
+                    }
+                )
+
+        _score_results(raw_results)
+        scored.sort(key=lambda e: e["confidence"], reverse=True)
+
+        if (
+            self.fallback_on_low_reliability
+            and self.reliability_threshold
+            and self._reliability_stats
+        ):
+            top_rels = [
+                self._reliability_stats.get(entry["source"], {}).get("reliability", 0.0)
+                for entry in scored[:top_k]
+            ]
+            if top_rels and all(r < self.reliability_threshold for r in top_rels):
+                high_rel_dbs = [
+                    name
+                    for name, stats in self._reliability_stats.items()
+                    if stats.get("reliability", 0.0) >= self.reliability_threshold
+                ]
+                if high_rel_dbs:
+                    fb_results = self._retrieve_candidates(
+                        query, top_k, db_names=high_rel_dbs
+                    )
+                    fb_times = getattr(self, "_last_db_times", {})
+                    db_times.update(fb_times)
+                    _score_results(fb_results)
+                    scored.sort(key=lambda e: e["confidence"], reverse=True)
+
+        self._last_db_times = db_times
 
         link_info = self._related_boost(
             scored,
