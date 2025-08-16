@@ -247,6 +247,21 @@ def _prior_hit_count(origin_db: str, record_id: Any) -> int:
         return 0
 
 
+def load_ranker(path: str | Path) -> dict[str, Any]:
+    """Load a serialized ranking model from ``path``.
+
+    The file must be in the JSON format produced by :mod:`retrieval_ranker`.
+    """
+
+    data = json.loads(Path(path).read_text())
+    return {
+        "coef": data.get("coef", [[0.0]])[0],
+        "intercept": float(data.get("intercept", [0.0])[0]),
+        "features": data.get("features", []),
+        "classes": data.get("classes", []),
+    }
+
+
 @dataclass
 class ResultBundle:
     """Container for retrieval results.
@@ -466,6 +481,7 @@ class UniversalRetriever:
         knowledge_graph: Any | None = None,
         weights: "RetrievalWeights | None" = None,
         model_path: str | Path | None = None,
+        ranker: dict[str, Any] | None = None,
         reliability_threshold: float = 0.0,
         enable_model_ranking: bool = True,
         enable_reliability_bias: bool = True,
@@ -480,18 +496,15 @@ class UniversalRetriever:
         self.weights = weights or RetrievalWeights()
         self.reliability_threshold = float(reliability_threshold)
         self._ranker_model: dict[str, Any] | None = None
-        if enable_model_ranking and model_path:
-            try:
-                data = json.loads(Path(model_path).read_text())
-                self._ranker_model = {
-                    "coef": data.get("coef", [[0.0]])[0],
-                    "intercept": float(data.get("intercept", [0.0])[0]),
-                    "features": data.get("features", []),
-                    "classes": data.get("classes", []),
-                }
-            except Exception:
-                logger.exception("failed to load ranking model from %s", model_path)
-        self.enable_model_ranking = bool(enable_model_ranking)
+        self.use_ranker = bool(enable_model_ranking)
+        if enable_model_ranking:
+            if ranker is not None:
+                self._ranker_model = ranker
+            elif model_path:
+                try:
+                    self._ranker_model = load_ranker(model_path)
+                except Exception:
+                    logger.exception("failed to load ranking model from %s", model_path)
         self.enable_reliability_bias = bool(enable_reliability_bias)
         self._reliability_stats: Dict[str, Dict[str, float]] = {}
         # lazy-instantiated DeploymentDB connection for bot deployment stats
@@ -538,13 +551,7 @@ class UniversalRetriever:
         ignored to keep the retriever operational.
         """
         try:
-            data = json.loads(Path(model_path).read_text())
-            self._ranker_model = {
-                "coef": data.get("coef", [[0.0]])[0],
-                "intercept": float(data.get("intercept", [0.0])[0]),
-                "features": data.get("features", []),
-                "classes": data.get("classes", []),
-            }
+            self._ranker_model = load_ranker(model_path)
         except Exception:
             logger.exception("failed to reload ranking model from %s", model_path)
 
@@ -690,12 +697,22 @@ class UniversalRetriever:
     # ------------------------------------------------------------------
     def _retrieve_candidates(
         self, query: Any, top_k: int = 10
-    ) -> List[tuple[str, Any, Any]]:
-        """Return raw candidates and their sources for ``query``."""
+    ) -> List[tuple[str, Any, Any, float, Dict[str, float]]]:
+        """Return candidates with preliminary scores for ``query``."""
 
-        candidates: List[tuple[str, Any, Any]] = []
+        candidates: List[tuple[str, Any, Any, float, Dict[str, float]]] = []
         vector: List[float] | None = None
         timings: Dict[str, float] = {}
+        reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
+        kpi_map: Dict[str, Dict[str, float]] = {}
+        if MetricsDB is not None:
+            try:
+                kpi_map = MetricsDB().latest_retriever_kpi()
+            except Exception:
+                kpi_map = {}
+
+        SIM_WEIGHT = self.weights.similarity
+        CTX_WEIGHT = self.weights.context
 
         if self._dbs:
             vector = self._to_vector(query)
@@ -744,7 +761,36 @@ class UniversalRetriever:
                 timings[source] = time.perf_counter() - start
                 for m in matches:
                     rec_id = self._extract_id(m, self._id_fields[source])
-                    candidates.append((source, rec_id, m))
+                    dist = (
+                        m.get("_distance", 0.0) if isinstance(m, dict) else getattr(m, "_distance", 0.0)
+                    )
+                    similarity = 1.0 / (1.0 + float(dist))
+                    ctx_score, extra = self._context_score(source, m)
+                    rel = reliability_map.get(source, {})
+                    win_rate = rel.get("win_rate", 0.0)
+                    regret_rate = rel.get("regret_rate", 0.0)
+                    kpi = kpi_map.get(source, {})
+                    stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    feats = {
+                        "similarity": similarity,
+                        "context_score": ctx_score,
+                        "win_rate": win_rate,
+                        "regret_rate": regret_rate,
+                        "stale_cost": stale_cost,
+                        **extra,
+                    }
+                    model_score = self._model_predict(source, feats) if self.use_ranker else 1.0
+                    base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
+                    base_score *= model_score
+                    candidates.append(
+                        (
+                            source,
+                            rec_id,
+                            m,
+                            base_score,
+                            {**feats, "model_score": model_score, "distance": dist},
+                        )
+                    )
 
         if self.code_db:
             allow = True
@@ -776,15 +822,38 @@ class UniversalRetriever:
                 timings["code"] = time.perf_counter() - start
                 for m in matches:
                     rec_id = self._extract_id(m, ("id", "cid"))
-                    candidates.append(("code", rec_id, m))
+                    dist = (
+                        m.get("_distance", 0.0) if isinstance(m, dict) else getattr(m, "_distance", 0.0)
+                    )
+                    similarity = 1.0 / (1.0 + float(dist))
+                    ctx_score, extra = self._context_score("code", m)
+                    rel = reliability_map.get("code", {})
+                    win_rate = rel.get("win_rate", 0.0)
+                    regret_rate = rel.get("regret_rate", 0.0)
+                    kpi = kpi_map.get("code", {})
+                    stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    feats = {
+                        "similarity": similarity,
+                        "context_score": ctx_score,
+                        "win_rate": win_rate,
+                        "regret_rate": regret_rate,
+                        "stale_cost": stale_cost,
+                        **extra,
+                    }
+                    model_score = self._model_predict("code", feats) if self.use_ranker else 1.0
+                    base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
+                    base_score *= model_score
+                    candidates.append(
+                        (
+                            "code",
+                            rec_id,
+                            m,
+                            base_score,
+                            {**feats, "model_score": model_score, "distance": dist},
+                        )
+                    )
 
-        def _dist(entry: tuple[str, Any, Any]) -> float:
-            item = entry[2]
-            if isinstance(item, dict):
-                return float(item.get("_distance", float("inf")))
-            return float(getattr(item, "_distance", float("inf")))
-
-        candidates.sort(key=_dist)
+        candidates.sort(key=lambda entry: entry[3], reverse=True)
         self._last_db_times = timings
         return candidates[:top_k]
 
@@ -1095,46 +1164,80 @@ class UniversalRetriever:
 
         scored: List[dict[str, Any]] = []
         reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
-        for source, rec_id, item in raw_results:
-            dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
-            similarity = 1.0 / (1.0 + float(dist))
-            ctx_score, metrics = self._context_score(source, item)
-            kpi = kpi_map.get(source, {})
-            rel = reliability_map.get(source, {})
-            win_rate = rel.get("win_rate", 0.0)
-            regret_rate = rel.get("regret_rate", 0.0)
-            stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
-            reliability_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
-            reliability_bias *= math.exp(-STALE_COST * stale_cost)
-            combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
+        for entry in raw_results:
+            if len(entry) == 5:
+                source, rec_id, item, base_score, feats = entry
+                dist = float(feats.get("distance", 0.0))
+                similarity = float(feats.get("similarity", 0.0))
+                ctx_score = float(feats.get("context_score", 0.0))
+                win_rate = float(feats.get("win_rate", 0.0))
+                regret_rate = float(feats.get("regret_rate", 0.0))
+                stale_cost = float(feats.get("stale_cost", 0.0))
+                model_score = float(feats.get("model_score", 1.0))
+                metrics = {
+                    k: v
+                    for k, v in feats.items()
+                    if k
+                    not in {
+                        "distance",
+                        "similarity",
+                        "context_score",
+                        "win_rate",
+                        "regret_rate",
+                        "stale_cost",
+                        "model_score",
+                    }
+                }
+                combined_score = base_score
+            else:
+                source, rec_id, item = entry[:3]
+                dist = item["_distance"] if isinstance(item, dict) else getattr(item, "_distance", 0.0)
+                similarity = 1.0 / (1.0 + float(dist))
+                ctx_score, metrics = self._context_score(source, item)
+                rel = reliability_map.get(source, {})
+                win_rate = rel.get("win_rate", 0.0)
+                regret_rate = rel.get("regret_rate", 0.0)
+                kpi = kpi_map.get(source, {})
+                stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                feats = {
+                    "similarity": similarity,
+                    "context_score": ctx_score,
+                    "win_rate": win_rate,
+                    "regret_rate": regret_rate,
+                    "stale_cost": stale_cost,
+                }
+                model_score = self._model_predict(source, feats) if self.use_ranker else 1.0
+                combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
+                combined_score *= model_score
+
             combined_score *= bias_map.get(source, 1.0)
             if self.enable_reliability_bias:
+                reliability_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
+                reliability_bias *= math.exp(-STALE_COST * stale_cost)
                 combined_score *= reliability_bias
-            feats = {
-                "similarity": similarity,
-                "context_score": ctx_score,
-                "win_rate": win_rate,
-                "regret_rate": regret_rate,
-            }
-            model_score = (
-                self._model_predict(source, feats) if self.enable_model_ranking else 1.0
+
+            scored.append(
+                {
+                    "source": source,
+                    "record_id": rec_id,
+                    "item": item,
+                    "confidence": combined_score,
+                    "distance": dist,
+                    "similarity": similarity,
+                    "context": ctx_score,
+                    "win_rate": win_rate,
+                    "regret_rate": regret_rate,
+                    "stale_cost": stale_cost,
+                    "model_score": model_score,
+                    "features": {
+                        "similarity": similarity,
+                        "context_score": ctx_score,
+                        "win_rate": win_rate,
+                        "regret_rate": regret_rate,
+                    },
+                    **metrics,
+                }
             )
-            combined_score *= model_score
-            scored.append({
-                "source": source,
-                "record_id": rec_id,
-                "item": item,
-                "confidence": combined_score,
-                "distance": dist,
-                "similarity": similarity,
-                "context": ctx_score,
-                "win_rate": win_rate,
-                "regret_rate": regret_rate,
-                "stale_cost": stale_cost,
-                "model_score": model_score,
-                "features": feats,
-                **metrics,
-            })
 
         link_info = self._related_boost(
             scored,
