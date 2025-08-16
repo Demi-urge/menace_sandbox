@@ -16,7 +16,9 @@ import atexit
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Iterable
+
+from metrics_exporter import update_relevancy_metrics
 
 # Path to the persistent usage statistics file.
 _BASE_DIR = Path(__file__).resolve().parent
@@ -129,4 +131,43 @@ __all__ = [
     "load_usage_stats",
     "evaluate_relevancy",
     "flagged_modules",
+    "RelevancyRadar",
 ]
+
+
+class RelevancyRadar:
+    """High level helpers for working with module relevancy data."""
+
+    @staticmethod
+    def flag_unused_modules(module_map: Iterable[str]) -> Dict[str, str]:
+        """Evaluate module usage and persist flags and orphan list.
+
+        Parameters
+        ----------
+        module_map:
+            Iterable of module identifiers to evaluate.
+        """
+
+        usage_stats = load_usage_stats()
+        flags = evaluate_relevancy(dict.fromkeys(module_map), usage_stats)
+        update_relevancy_metrics(flags)
+
+        orphan_file = _BASE_DIR / "sandbox_data" / "orphan_modules.json"
+        existing: list[str] = []
+        if orphan_file.exists():
+            try:
+                with orphan_file.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, list):
+                    existing = [str(m) for m in data]
+            except json.JSONDecodeError:
+                existing = []
+
+        retired = sorted(m for m, status in flags.items() if status == "retire")
+        merged = sorted({*existing, *retired})
+
+        orphan_file.parent.mkdir(parents=True, exist_ok=True)
+        with orphan_file.open("w", encoding="utf-8") as fh:
+            json.dump(merged, fh, indent=2, sort_keys=True)
+
+        return flags
