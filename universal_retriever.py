@@ -1356,7 +1356,7 @@ class UniversalRetriever:
             metrics_entry = {
                 "origin_db": bundle.origin_db,
                 "record_id": bundle.record_id,
-                 "vector_id": bundle.record_id,
+                "vector_id": str(bundle.record_id),
                 "db_type": db_type,
                 "rank": rank,
                 "rank_position": rank,
@@ -1380,7 +1380,7 @@ class UniversalRetriever:
                     "origin_db": bundle.origin_db,
                     "db_type": db_type,
                     "record_id": bundle.record_id,
-                    "vector_id": bundle.record_id,
+                    "vector_id": str(bundle.record_id),
                     "rank": rank,
                     "score": bundle.score,
                     "win_rate": win_rate,
