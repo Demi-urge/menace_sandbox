@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Service for archiving or compressing modules flagged for retirement."""
+"""Service for archiving, compressing, or replacing modules flagged for retirement."""
 
 from pathlib import Path
 from typing import Dict, Iterable
@@ -18,7 +18,7 @@ from metrics_exporter import (
 
 
 class ModuleRetirementService:
-    """Handle archival or compression of modules based on relevancy flags."""
+    """Handle archival, compression, or replacement of modules based on relevancy flags."""
 
     def __init__(self, repo_root: Path | str = ".") -> None:
         self.root = Path(repo_root)

@@ -310,7 +310,7 @@ def update_relevancy_metrics(flags: Dict[str, str]) -> None:
 
 
 def update_module_retirement_metrics(results: Dict[str, str]) -> None:
-    """Increment gauges for module retirement actions."""
+    """Increment gauges for module retirement actions, including replacements."""
     counts = Counter(results.values())
     if counts.get("retired"):
         retired_modules_total.inc(float(counts["retired"]))

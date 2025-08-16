@@ -49,13 +49,23 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module_retirement_service, "build_import_graph", _stub_build_graph)
 
-    service = ModuleRetirementService(tmp_path)
+    called = {}
 
-    def fake_replace(mod):
-        assert mod == "demo"
-        return True
+    def fake_generate_patch(path):
+        called['path'] = path
+        return 1
 
-    monkeypatch.setattr(service, "replace_module", fake_replace)
+    monkeypatch.setattr(module_retirement_service, "generate_patch", fake_generate_patch)
+
+    class DummyGauge:
+        def __init__(self):
+            self.count = 0
+
+        def inc(self, amount: float = 1.0):
+            self.count += amount
+
+    gauge = DummyGauge()
+    monkeypatch.setattr(module_retirement_service, "replaced_modules_total", gauge)
 
     captured = {}
 
@@ -64,6 +74,9 @@ def test_process_flags_replace(monkeypatch, tmp_path):
 
     monkeypatch.setattr(module_retirement_service, "update_module_retirement_metrics", fake_update)
 
+    service = ModuleRetirementService(tmp_path)
     res = service.process_flags({"demo": "replace"})
     assert res == {"demo": "replaced"}
+    assert called['path'] == str(module)
     assert captured['results'] == {"demo": "replaced"}
+    assert gauge.count == 1.0
