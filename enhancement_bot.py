@@ -13,7 +13,12 @@ from difflib import SequenceMatcher
 import libcst as cst
 
 from .code_database import CodeDB
-from .chatgpt_enhancement_bot import EnhancementDB, EnhancementHistory
+from .chatgpt_enhancement_bot import (
+    EnhancementDB,
+    EnhancementHistory,
+    Enhancement,
+)
+from .micro_models.diff_summarizer import summarize_diff
 
 
 @dataclass
@@ -78,6 +83,31 @@ class EnhancementBot:
         return time.perf_counter() - start
 
     # ------------------------------------------------------------------
+    def _codex_summarize(self, before: str, after: str) -> str:
+        """Fallback summarisation using Codex or OpenAI if available."""
+        try:  # pragma: no cover - optional dependency
+            import os
+            import openai  # type: ignore
+        except Exception:
+            return ""
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            return ""
+        openai.api_key = api_key
+        prompt = (
+            "Summarize the code change.\nBefore:\n" + before + "\nAfter:\n" + after
+        )
+        try:
+            resp = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return resp["choices"][0]["message"]["content"].strip()
+        except Exception:
+            return ""
+
+    # ------------------------------------------------------------------
     def evaluate(self, proposal: RefactorProposal) -> bool:
         orig_text = proposal.file_path.read_text()
         if not self._logic_preserved(orig_text, proposal.new_code):
@@ -93,6 +123,10 @@ class EnhancementBot:
 
         orig_hash = self._hash(orig_text)
         new_hash = self._hash(proposal.new_code)
+        summary = summarize_diff(orig_text, proposal.new_code)
+        if len(summary.strip()) < 10:
+            summary = self._codex_summarize(orig_text, proposal.new_code)
+
         proposal.file_path.write_text(proposal.new_code)
 
         subprocess.run(["pytest", "-q"], check=False)
@@ -104,6 +138,19 @@ class EnhancementBot:
                 enhanced_hash=new_hash,
                 metric_delta=delta,
                 author_bot=proposal.author_bot,
+            )
+        )
+        # store summary and code for future training
+        self.enh_db.add(
+            Enhancement(
+                idea="",
+                rationale="",
+                summary=summary,
+                score=delta,
+                timestamp=datetime.utcnow().isoformat(),
+                before_code=orig_text,
+                after_code=proposal.new_code,
+                triggered_by=proposal.author_bot,
             )
         )
         return True
