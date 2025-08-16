@@ -2620,6 +2620,32 @@ class SelfImprovementEngine:
             except Exception as exc:
                 self.logger.exception("failed to process pathway record: %s", exc)
 
+    def _compress_module(self, module_path: Path) -> Path | None:
+        """Compress ``module_path`` into a zip archive.
+
+        The resulting archive is stored under ``SANDBOX_DATA_DIR`` in the
+        ``compressed_modules`` directory. ``None`` is returned on failure.
+        """
+
+        try:
+            if not module_path.exists():
+                return None
+            out_dir = (
+                Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                / "compressed_modules"
+            )
+            out_dir.mkdir(parents=True, exist_ok=True)
+            archive_base = out_dir / module_path.stem
+            archive = shutil.make_archive(
+                str(archive_base),
+                "zip",
+                root_dir=module_path.parent,
+                base_dir=module_path.name,
+            )
+            return Path(archive)
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     def _test_orphan_modules(self, paths: Iterable[str]) -> set[str]:
         """Run self tests for ``paths`` and return modules that succeed.
@@ -2778,9 +2804,60 @@ class SelfImprovementEngine:
         except Exception:
             radar_flags = {}
 
+        retire_modules: list[str] = []
+        compress_modules: list[str] = []
+        replace_modules: list[str] = []
         for mod, flag in radar_flags.items():
             info = self.orphan_traces.setdefault(mod, {"parents": []})
             info["radar_flag"] = flag
+            if flag == "retire":
+                retire_modules.append(mod)
+            elif flag == "compress":
+                compress_modules.append(mod)
+            elif flag == "replace":
+                replace_modules.append(mod)
+
+        audit_fn = globals().get("audit_log_event")
+        gen_patch = globals().get("generate_patch")
+
+        for mod in retire_modules:
+            path = repo / mod if not Path(mod).is_absolute() else Path(mod)
+            try:
+                cls = classify_module(path)
+            except Exception:
+                cls = "error"
+            if audit_fn:
+                audit_fn("radar_retire", {"module": mod, "classification": cls})
+
+        for mod in compress_modules:
+            path = repo / mod if not Path(mod).is_absolute() else Path(mod)
+            archive = None
+            compress_fn = getattr(self, "_compress_module", None)
+            if callable(compress_fn):
+                archive = compress_fn(path)
+            if audit_fn:
+                audit_fn(
+                    "radar_compress",
+                    {"module": mod, "archive": str(archive) if archive else None},
+                )
+
+        for mod in replace_modules:
+            path = repo / mod if not Path(mod).is_absolute() else Path(mod)
+            try:
+                cls = classify_module(path)
+            except Exception:
+                cls = "error"
+            patch_id = None
+            if callable(gen_patch):
+                try:
+                    patch_id = gen_patch(str(path))
+                except Exception:
+                    patch_id = None
+            if audit_fn:
+                audit_fn(
+                    "radar_replace",
+                    {"module": mod, "classification": cls, "patch_id": patch_id},
+                )
 
         if not getattr(settings, "test_redundant_modules", False):
             retired = {m for m, f in radar_flags.items() if f == "retire"}
