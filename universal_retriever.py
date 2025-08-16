@@ -705,12 +705,13 @@ class UniversalRetriever:
     # ------------------------------------------------------------------
     def _retrieve_candidates(
         self, query: Any, top_k: int = 10
-    ) -> List[tuple[str, Any, Any, Dict[str, float]]]:
-        """Return candidate feature maps for ``query``.
+    ) -> List[tuple[str, Any, Any, float, Dict[str, float]]]:
+        """Return candidate scores and feature maps for ``query``.
 
-        The initial database lookups rank results only by the weighted
-        similarity/context score so that ``retrieve`` can later apply the
-        trained model and reliability biasing uniformly to all candidates.
+        Each candidate is described by a feature vector mirroring the
+        statistics used during model training.  The ranking model (when
+        enabled) scores the candidate and its prediction is blended with the
+        similarity and contextual metrics to form the initial score.
         """
 
         candidates: List[tuple[str, Any, Any, float, Dict[str, float]]] = []
@@ -784,17 +785,56 @@ class UniversalRetriever:
                     regret_rate = rel.get("regret_rate", 0.0)
                     kpi = kpi_map.get(source, {})
                     stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    created_at = (
+                        m.get("created_at")
+                        if isinstance(m, dict)
+                        else getattr(m, "created_at", None)
+                    ) or (
+                        m.get("ts")
+                        if isinstance(m, dict)
+                        else getattr(m, "ts", None)
+                    ) or (
+                        m.get("timestamp")
+                        if isinstance(m, dict)
+                        else getattr(m, "timestamp", None)
+                    )
+                    age = 0.0
+                    if created_at:
+                        try:
+                            age = (
+                                datetime.utcnow() - datetime.fromisoformat(str(created_at))
+                            ).total_seconds()
+                        except Exception:
+                            age = 0.0
+                    exec_freq = float(
+                        extra.get("frequency")
+                        or extra.get("usage")
+                        or extra.get("deploy")
+                        or extra.get("exec_freq")
+                        or 0.0
+                    )
+                    roi_delta = float(extra.get("roi") or extra.get("roi_delta") or 0.0)
+                    prior_hits = float(_prior_hit_count(source, rec_id))
                     feats = {
                         "similarity": similarity,
                         "context_score": ctx_score,
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "stale_cost": stale_cost,
+                        "age": age,
+                        "exec_freq": exec_freq,
+                        "roi_delta": roi_delta,
+                        "prior_hits": prior_hits,
                         **extra,
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-                    candidates.append((source, rec_id, m, base_score, feats))
+                    model_score = (
+                        self._model_predict(source, feats) if self.use_ranker else 1.0
+                    )
+                    feats["model_score"] = model_score
+                    score = base_score * model_score
+                    candidates.append((source, rec_id, m, score, feats))
 
         if self.code_db:
             allow = True
@@ -836,21 +876,59 @@ class UniversalRetriever:
                     regret_rate = rel.get("regret_rate", 0.0)
                     kpi = kpi_map.get("code", {})
                     stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    created_at = (
+                        m.get("created_at")
+                        if isinstance(m, dict)
+                        else getattr(m, "created_at", None)
+                    ) or (
+                        m.get("ts")
+                        if isinstance(m, dict)
+                        else getattr(m, "ts", None)
+                    ) or (
+                        m.get("timestamp")
+                        if isinstance(m, dict)
+                        else getattr(m, "timestamp", None)
+                    )
+                    age = 0.0
+                    if created_at:
+                        try:
+                            age = (
+                                datetime.utcnow() - datetime.fromisoformat(str(created_at))
+                            ).total_seconds()
+                        except Exception:
+                            age = 0.0
+                    exec_freq = float(
+                        extra.get("frequency")
+                        or extra.get("usage")
+                        or extra.get("deploy")
+                        or extra.get("exec_freq")
+                        or 0.0
+                    )
+                    roi_delta = float(extra.get("roi") or extra.get("roi_delta") or 0.0)
+                    prior_hits = float(_prior_hit_count("code", rec_id))
                     feats = {
                         "similarity": similarity,
                         "context_score": ctx_score,
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "stale_cost": stale_cost,
+                         "age": age,
+                         "exec_freq": exec_freq,
+                         "roi_delta": roi_delta,
+                         "prior_hits": prior_hits,
                         **extra,
                         "distance": dist,
                     }
                     base_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-                    candidates.append(("code", rec_id, m, base_score, feats))
-
+                    model_score = (
+                        self._model_predict("code", feats) if self.use_ranker else 1.0
+                    )
+                    feats["model_score"] = model_score
+                    score = base_score * model_score
+                    candidates.append(("code", rec_id, m, score, feats))
         candidates.sort(key=lambda entry: entry[3], reverse=True)
         self._last_db_times = timings
-        return [(s, rid, itm, feats) for s, rid, itm, _score, feats in candidates[:top_k]]
+        return candidates[:top_k]
 
     # ------------------------------------------------------------------
     def _error_frequency(self, error_id: int) -> float:
@@ -1166,7 +1244,7 @@ class UniversalRetriever:
 
         scored: List[dict[str, Any]] = []
         reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
-        for source, rec_id, item, feats in raw_results:
+        for source, rec_id, item, pre_score, feats in raw_results:
             dist = float(feats.get("distance", 0.0))
             similarity = float(feats.get("similarity", 0.0))
             ctx_score = float(feats.get("context_score", 0.0))
@@ -1186,9 +1264,8 @@ class UniversalRetriever:
                     "stale_cost",
                 }
             }
-            model_score = self._model_predict(source, feats) if self.use_ranker else 1.0
-            combined_score = similarity * SIM_WEIGHT + ctx_score * CTX_WEIGHT
-            combined_score *= model_score
+            model_score = float(feats.get("model_score", 1.0))
+            combined_score = pre_score
 
             combined_score *= bias_map.get(source, 1.0)
             if self.enable_reliability_bias:

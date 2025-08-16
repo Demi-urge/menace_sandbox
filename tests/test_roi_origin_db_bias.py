@@ -29,8 +29,8 @@ def test_origin_db_contribution_and_bias():
 
         def _retrieve_candidates(self, query, top_k):
             return [
-                ("A", 1, {}, {"_distance": 1.0}),
-                ("B", 2, {}, {"_distance": 1.0}),
+                ("A", 1, {}, 1.0, {"distance": 1.0, "similarity": 1.0, "context_score": 0.0}),
+                ("B", 2, {}, 1.0, {"distance": 1.0, "similarity": 1.0, "context_score": 0.0}),
             ]
 
         def _context_score(self, kind, record):
