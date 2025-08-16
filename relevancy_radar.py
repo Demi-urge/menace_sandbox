@@ -21,9 +21,13 @@ from typing import Dict
 # Path to the persistent usage statistics file.
 _BASE_DIR = Path(__file__).resolve().parent
 _MODULE_USAGE_FILE = _BASE_DIR / "sandbox_data" / "module_usage.json"
+_RELEVANCY_FLAGS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_flags.json"
 
 # In-memory counter for module usage.
 _module_usage_counter: Counter[str] = Counter()
+
+# In-memory store for relevancy flags produced by :func:`evaluate_relevancy`.
+_relevancy_flags: Dict[str, str] = {}
 
 
 def track_module_usage(module: str) -> None:
@@ -57,6 +61,58 @@ def load_usage_stats() -> Dict[str, int]:
     return dict(counts)
 
 
+def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
+    """Return relevancy flags for modules based on ``usage_stats``.
+
+    Modules absent from ``usage_stats`` are treated as having zero usage.
+    The current heuristics are intentionally simple:
+
+    - ``retire``  – modules with no recorded usage.
+    - ``compress`` – modules used fewer than ``_COMPRESS_THRESHOLD`` times.
+    - ``replace`` – modules used fewer than ``_REPLACE_THRESHOLD`` times.
+
+    Results are persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in
+    memory for access via :func:`flagged_modules`.
+    """
+
+    _COMPRESS_THRESHOLD = 5
+    _REPLACE_THRESHOLD = 20
+
+    flags: Dict[str, str] = {}
+    for mod in module_map:
+        count = int(usage_stats.get(mod, 0))
+        if count == 0:
+            flags[mod] = "retire"
+        elif count <= _COMPRESS_THRESHOLD:
+            flags[mod] = "compress"
+        elif count <= _REPLACE_THRESHOLD:
+            flags[mod] = "replace"
+
+    _relevancy_flags.clear()
+    _relevancy_flags.update(flags)
+
+    _RELEVANCY_FLAGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with _RELEVANCY_FLAGS_FILE.open("w", encoding="utf-8") as fh:
+        json.dump(flags, fh, indent=2, sort_keys=True)
+
+    return flags
+
+
+def flagged_modules() -> Dict[str, str]:
+    """Return the current relevancy recommendations."""
+
+    if not _relevancy_flags and _RELEVANCY_FLAGS_FILE.exists():
+        try:
+            with _RELEVANCY_FLAGS_FILE.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                _relevancy_flags.update({str(k): str(v) for k, v in data.items()})
+        except json.JSONDecodeError:
+            pass
+
+    return dict(_relevancy_flags)
+
+
 def _save_usage_counts() -> None:
     """Persist merged usage statistics to disk."""
     counts = load_usage_stats()
@@ -68,4 +124,9 @@ def _save_usage_counts() -> None:
 # Ensure counters are persisted when the interpreter exits.
 atexit.register(_save_usage_counts)
 
-__all__ = ["track_module_usage", "load_usage_stats"]
+__all__ = [
+    "track_module_usage",
+    "load_usage_stats",
+    "evaluate_relevancy",
+    "flagged_modules",
+]
