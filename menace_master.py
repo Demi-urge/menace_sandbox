@@ -89,7 +89,7 @@ from menace.diagnostic_manager import DiagnosticManager
 from menace.idea_search_bot import KeywordBank
 from menace.newsreader_bot import NewsDB
 from menace.chatgpt_idea_bot import ChatGPTClient
-from menace.shared_gpt_memory import GPT_MEMORY_MANAGER
+from menace.shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE
 from menace.self_learning_service import main as learning_service_main
 from menace.self_service_override import SelfServiceOverride
 from menace.resource_allocation_optimizer import ROIDB
@@ -317,7 +317,7 @@ def _auto_service_setup() -> None:
 def _init_unused_bots() -> None:
     """Instantiate helper bots that are not used elsewhere."""
     api_key = os.environ.get("OPENAI_API_KEY", "")
-    client = ChatGPTClient(api_key, gpt_memory=GPT_MEMORY_MANAGER)
+    client = ChatGPTClient(api_key, gpt_memory=LOCAL_KNOWLEDGE_MODULE.memory)
     bot_classes = [
         BotDevelopmentBot,
         BotTestingBot,

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
-from local_knowledge_module import init_local_knowledge, LocalKnowledgeModule
+from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -138,20 +138,9 @@ if TYPE_CHECKING:  # pragma: no cover
 __path__ = [os.path.join(os.path.dirname(__file__), "sandbox_runner")]
 logger = get_logger(__name__)
 
-GPT_MEMORY_MANAGER = None
-GPT_KNOWLEDGE_SERVICE = None
-LOCAL_KNOWLEDGE_MODULE: "LocalKnowledgeModule | None" = None
-
-
 def _get_local_knowledge() -> LocalKnowledgeModule:
-    """Return the global :class:`LocalKnowledgeModule` instance."""
+    """Return the process-wide :class:`LocalKnowledgeModule` instance."""
 
-    global LOCAL_KNOWLEDGE_MODULE, GPT_MEMORY_MANAGER, GPT_KNOWLEDGE_SERVICE
-    if LOCAL_KNOWLEDGE_MODULE is None:
-        module = init_local_knowledge(os.getenv("GPT_MEMORY_DB", "gpt_memory.db"))
-        LOCAL_KNOWLEDGE_MODULE = module
-        GPT_MEMORY_MANAGER = module.memory
-        GPT_KNOWLEDGE_SERVICE = module.knowledge
     return LOCAL_KNOWLEDGE_MODULE
 LOCAL_KNOWLEDGE_REFRESH_EVERY = int(
     os.getenv("LOCAL_KNOWLEDGE_REFRESH_EVERY", "10")
