@@ -1,11 +1,21 @@
 from types import MethodType
 import os
+import sys
+import types
 
 import pytest
 
 from menace.bot_database import BotDB, BotRecord
 from menace.task_handoff_bot import WorkflowDB, WorkflowRecord
 from menace.error_bot import ErrorDB
+
+# ``chatgpt_enhancement_bot`` pulls in ``run_autonomous`` which performs
+# system dependency checks during import.  Stub that module to avoid requiring
+# ffmpeg/qemu/tesseract in the test environment.
+sys.modules.setdefault(
+    "menace.run_autonomous", types.SimpleNamespace(_verify_required_dependencies=lambda: None, LOCAL_KNOWLEDGE_MODULE=None)
+)
+
 from menace.chatgpt_enhancement_bot import EnhancementDB, Enhancement
 from menace.information_db import InformationDB, InformationRecord
 from menace.universal_retriever import UniversalRetriever, boost_linked_candidates
@@ -64,6 +74,11 @@ def test_cross_db_search(tmp_path):
 
     hits = retriever.retrieve("bot", top_k=5, link_multiplier=1.0)
     assert {h.origin_db for h in hits} == {"bot", "workflow", "error", "enhancement", "information"}
+    # every hit should now expose similarity and contextual metrics for feature
+    # inspection and dataset generation
+    for h in hits:
+        assert "similarity" in h.metadata
+        assert "contextual_metrics" in h.metadata
 
 
 def test_metric_based_ranking(tmp_path):
@@ -80,6 +95,9 @@ def test_metric_based_ranking(tmp_path):
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
     assert hits[0].confidence > hits[1].confidence
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert metrics["frequency"] == pytest.approx(10.0)
+    assert metrics["model_score"] == pytest.approx(1.0)
 
 
 def test_enhancement_roi_metric(tmp_path):
@@ -96,6 +114,8 @@ def test_enhancement_roi_metric(tmp_path):
     assert [h.record_id for h in hits] == [str(high_id), str(low_id)]
     assert hits[0].reason.startswith("high ROI uplift")
     assert hits[0].confidence > hits[1].confidence
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert metrics["roi"] == pytest.approx(8.0)
 
 
 def test_workflow_usage_metric(tmp_path):
@@ -110,6 +130,8 @@ def test_workflow_usage_metric(tmp_path):
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("heavy usage")
     assert hits[0].confidence > hits[1].confidence
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert metrics["usage"] == pytest.approx(3.0)
 
 
 def test_bot_deploy_frequency_metric(tmp_path):
@@ -142,6 +164,8 @@ def test_bot_deploy_frequency_metric(tmp_path):
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("widely deployed bot")
     assert hits[0].confidence > hits[1].confidence
+    metrics = hits[0].metadata["contextual_metrics"]
+    assert metrics["deploy"] == pytest.approx(3.0)
 
 
 def test_link_based_boosting(tmp_path):
