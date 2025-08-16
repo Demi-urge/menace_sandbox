@@ -4533,6 +4533,52 @@ class SelfImprovementEngine:
         """Return latest module relevancy flags for downstream pipelines."""
         return dict(self.relevancy_flags)
 
+    def _handle_relevancy_flags(self, flags: dict[str, str]) -> None:
+        """Process relevancy radar flags and trigger follow-up actions."""
+        service = ModuleRetirementService(Path(os.getenv("SANDBOX_REPO_PATH", ".")))
+        try:
+            service.process_flags(flags)
+        except Exception:
+            self.logger.exception("flag processing failed")
+        if append_orphan_classifications:
+            repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+            retire_entries = {
+                m: {"classification": "retired"}
+                for m, status in flags.items()
+                if status == "retire"
+            }
+            if retire_entries:
+                try:
+                    append_orphan_classifications(repo, retire_entries)
+                except Exception:
+                    self.logger.exception("orphan classification failed")
+        replace_mods = [m for m, status in flags.items() if status == "replace"]
+        for mod in replace_mods:
+            task_id: int | None = None
+            if self.self_coding_engine:
+                try:
+                    task_id = generate_patch(mod, self.self_coding_engine)
+                except Exception:
+                    self.logger.exception(
+                        "replacement generation failed",
+                        extra=log_record(module=mod),
+                    )
+            if self.event_bus:
+                try:
+                    self.event_bus.publish(
+                        "relevancy:replace", {"module": mod, "task_id": task_id}
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "relevancy replace event publish failed",
+                        extra=log_record(module=mod),
+                    )
+        if self.event_bus:
+            try:
+                self.event_bus.publish("relevancy:scan", flags)
+            except Exception:
+                self.logger.exception("relevancy scan event publish failed")
+
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
@@ -5201,32 +5247,7 @@ class SelfImprovementEngine:
             try:
                 flags = radar_scan()
                 if flags:
-                    service = ModuleRetirementService(
-                        Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                    )
-                    try:
-                        service.process_flags(flags)
-                    except Exception:
-                        self.logger.exception("flag processing failed")
-                    if append_orphan_classifications:
-                        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
-                        retire_entries = {
-                            m: {"classification": "retired"}
-                            for m, status in flags.items()
-                            if status == "retire"
-                        }
-                        if retire_entries:
-                            try:
-                                append_orphan_classifications(repo, retire_entries)
-                            except Exception:
-                                self.logger.exception("orphan classification failed")
-                    if self.event_bus:
-                        try:
-                            self.event_bus.publish("relevancy:scan", flags)
-                        except Exception:
-                            self.logger.exception(
-                                "relevancy scan event publish failed"
-                            )
+                    self._handle_relevancy_flags(flags)
             except Exception:
                 self.logger.exception("relevancy radar scan failed")
             self.logger.info(
