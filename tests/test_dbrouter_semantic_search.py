@@ -15,6 +15,7 @@ mods = {
         "update_profitability_threshold",
     ],
     "menace.capital_management_bot": ["CapitalManagementBot"],
+    "menace.run_autonomous": ["LOCAL_KNOWLEDGE_MODULE"],
 }
 for name, attrs in mods.items():
     module = types.ModuleType(name)
@@ -25,6 +26,8 @@ for name, attrs in mods.items():
             setattr(module, attr, lambda path: None)
         elif attr == "DB_PATH":
             setattr(module, attr, ":memory:")
+        elif attr == "LOCAL_KNOWLEDGE_MODULE":
+            setattr(module, attr, None)
         else:
             setattr(module, attr, type(attr, (), {}))
     sys.modules.setdefault(name, module)
@@ -57,10 +60,12 @@ def test_semantic_search_delegates_to_retriever(tmp_path):
 
     def fake_retrieve(query, top_k=10):
         called["args"] = (query, top_k)
-        return [
+        hits = [
             ResultBundle(origin_db="bot", metadata={"id": 1}, score=0.5, reason="a"),
             ResultBundle(origin_db="information", metadata={"id": 2}, score=0.4, reason="b"),
         ]
+        vectors = [(h.origin_db, str(h.metadata["id"])) for h in hits]
+        return hits, "sess", vectors
 
     router._retriever.retrieve = fake_retrieve  # type: ignore
 

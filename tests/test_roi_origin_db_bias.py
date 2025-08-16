@@ -28,11 +28,14 @@ def test_origin_db_contribution_and_bias():
             super().__init__(bot_db=DummyDB())
 
         def _retrieve_candidates(self, query, top_k):
-            return [("A", 1, {"_distance": 1.0}), ("B", 2, {"_distance": 1.0})]
+            return [
+                ("A", 1, {}, {"_distance": 1.0}),
+                ("B", 2, {}, {"_distance": 1.0}),
+            ]
 
         def _context_score(self, kind, record):
             return 0.0, {}
 
     retriever = DummyRetriever()
-    results = retriever.retrieve("q", top_k=2, link_multiplier=1.0, roi_tracker=tracker)
+    results, _, _ = retriever.retrieve("q", top_k=2, link_multiplier=1.0, roi_tracker=tracker)
     assert results[0].origin_db == "A"

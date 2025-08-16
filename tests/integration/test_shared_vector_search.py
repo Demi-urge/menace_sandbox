@@ -106,7 +106,8 @@ def test_search_by_vector_shared_backend(tmp_path, shared_embedder):
         enhancement_db=enhancement_db,
         information_db=info_db,
     )
-    hits = retriever.retrieve("alpha", top_k=5)
+    hits, session_id, vectors = retriever.retrieve("alpha", top_k=5)
+    assert session_id and vectors
     assert {h.origin_db for h in hits} == {"bot", "workflow", "error", "enhancement", "information"}
 
     # ensure shared embedder was used across databases

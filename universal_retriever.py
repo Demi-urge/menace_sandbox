@@ -1106,12 +1106,19 @@ class UniversalRetriever:
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
         adjust_weights: bool = False,
-    ) -> Union["RetrievalResult", Tuple["RetrievalResult", List[dict[str, Any]]]]:
+    ) -> Union[
+        Tuple["RetrievalResult", str, List[Tuple[str, str]]],
+        Tuple["RetrievalResult", str, List[Tuple[str, str]], List[dict[str, Any]]],
+    ]:
         """Retrieve results with scores and reasons.
 
-        The returned :class:`RetrievalResult` carries a ``session_id`` and a
-        ``vectors`` attribute containing ``(db_name, vector_id)`` tuples for all
-        retrieved items.
+        Returns
+        -------
+        ``(results, session_id, vectors)`` or
+        ``(results, session_id, vectors, metrics)`` when ``return_metrics`` is
+        true.  ``vectors`` is a list of ``(db_name, vector_id)`` tuples for all
+        retrieved items.  ``session_id`` uniquely identifies the retrieval
+        session.
 
         Beyond returning :class:`ResultBundle` objects, this method records
         rich statistics for every candidate.  Each hit stores its rank
@@ -1412,8 +1419,8 @@ class UniversalRetriever:
         logger.info("retrieval total_query_time=%.6f", total_time)
 
         if return_metrics:
-            return result_container, metrics_list
-        return result_container
+            return result_container, session_id, vector_info, metrics_list
+        return result_container, session_id, vector_info
 
     # Backwards compatibility for older callers
     def retrieve_with_confidence(
@@ -1424,7 +1431,10 @@ class UniversalRetriever:
         return_metrics: bool = False,
         roi_tracker: "ROITracker | None" = None,
         adjust_weights: bool = False,
-    ) -> Union["RetrievalResult", Tuple["RetrievalResult", List[dict[str, Any]]]]:
+    ) -> Union[
+        Tuple["RetrievalResult", str, List[Tuple[str, str]]],
+        Tuple["RetrievalResult", str, List[Tuple[str, str]], List[dict[str, Any]]],
+    ]:
         res = self.retrieve(
             query,
             top_k=top_k,
@@ -1434,9 +1444,9 @@ class UniversalRetriever:
             adjust_weights=adjust_weights,
         )
         if return_metrics:
-            hits, metrics_list = res  # type: ignore[misc]
+            hits, session_id, vectors, metrics_list = res
         else:
-            hits = res  # type: ignore[assignment]
+            hits, session_id, vectors = res
             metrics_list = []
         formatted = [
             {
@@ -1448,7 +1458,7 @@ class UniversalRetriever:
             }
             for h in hits
         ]
-        result_container = RetrievalResult(formatted, hits.session_id, hits.vectors)
+        result_container = RetrievalResult(formatted, session_id, vectors)
         if return_metrics:
-            return result_container, metrics_list
-        return result_container
+            return result_container, session_id, vectors, metrics_list
+        return result_container, session_id, vectors

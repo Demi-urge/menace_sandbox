@@ -72,7 +72,8 @@ def test_cross_db_search(tmp_path):
         information_db=info_db,
     )
 
-    hits = retriever.retrieve("bot", top_k=5, link_multiplier=1.0)
+    hits, session_id, vectors = retriever.retrieve("bot", top_k=5, link_multiplier=1.0)
+    assert session_id and vectors
     assert {h.origin_db for h in hits} == {"bot", "workflow", "error", "enhancement", "information"}
     # every hit should now expose similarity and contextual metrics for feature
     # inspection and dataset generation
@@ -91,7 +92,7 @@ def test_metric_based_ranking(tmp_path):
     err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (2, low_id))
 
     retriever = UniversalRetriever(error_db=err_db)
-    hits = retriever.retrieve("anything", top_k=2)
+    hits, _, _ = retriever.retrieve("anything", top_k=2)
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
     assert hits[0].confidence > hits[1].confidence
@@ -110,7 +111,7 @@ def test_enhancement_roi_metric(tmp_path):
     low_id = enh_db.add(low)
 
     retriever = UniversalRetriever(enhancement_db=enh_db)
-    hits = retriever.retrieve("anything", top_k=2)
+    hits, _, _ = retriever.retrieve("anything", top_k=2)
     assert [h.record_id for h in hits] == [str(high_id), str(low_id)]
     assert hits[0].reason.startswith("high ROI uplift")
     assert hits[0].confidence > hits[1].confidence
@@ -126,7 +127,7 @@ def test_workflow_usage_metric(tmp_path):
     low_id = wf_db.add(WorkflowRecord(workflow=["a"], title="y", assigned_bots=["1"]))
 
     retriever = UniversalRetriever(workflow_db=wf_db)
-    hits = retriever.retrieve("anything", top_k=2)
+    hits, _, _ = retriever.retrieve("anything", top_k=2)
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("heavy usage")
     assert hits[0].confidence > hits[1].confidence
@@ -157,7 +158,7 @@ def test_bot_deploy_frequency_metric(tmp_path):
         dep_db.conn.commit()
 
         retriever = UniversalRetriever(bot_db=bot_db)
-        hits = retriever.retrieve("anything", top_k=2)
+        hits, _, _ = retriever.retrieve("anything", top_k=2)
     finally:
         os.chdir(cwd)
 

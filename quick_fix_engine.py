@@ -221,9 +221,7 @@ class QuickFixEngine:
         vectors: list[tuple[str, str]] = []
         if self.retriever is not None:
             try:
-                hits = self.retriever.retrieve(module, top_k=1)
-                session_id = getattr(hits, "session_id", "")
-                vectors = getattr(hits, "vectors", [])
+                _hits, session_id, vectors = self.retriever.retrieve(module, top_k=1)
             except Exception:
                 self.logger.debug("retriever lookup failed", exc_info=True)
         if session_id:
@@ -320,9 +318,7 @@ class QuickFixEngine:
             vectors: list[tuple[str, str]] = []
             if self.retriever is not None:
                 try:
-                    hits = self.retriever.retrieve(module, top_k=1)
-                    session_id = getattr(hits, "session_id", "")
-                    vectors = getattr(hits, "vectors", [])
+                    _hits, session_id, vectors = self.retriever.retrieve(module, top_k=1)
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
             if session_id:

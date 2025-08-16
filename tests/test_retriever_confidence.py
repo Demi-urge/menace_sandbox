@@ -37,8 +37,8 @@ def test_retrieve(tmp_path):
         error_db=err_db,
     )
 
-    res = retriever.retrieve("bot", top_k=5)
-    assert res
+    res, session_id, vectors = retriever.retrieve("bot", top_k=5)
+    assert res and session_id
     for r in res:
         assert r.confidence >= 0.0
         assert isinstance(r.reason, str)
@@ -70,8 +70,8 @@ def test_linked_boost(tmp_path):
         bot_db=bot_db, workflow_db=wf_db, error_db=err_db
     )
 
-    base = retriever.retrieve("q", top_k=5, link_multiplier=1.0)
-    boosted = retriever.retrieve("q", top_k=5, link_multiplier=2.0)
+    base, _, _ = retriever.retrieve("q", top_k=5, link_multiplier=1.0)
+    boosted, _, _ = retriever.retrieve("q", top_k=5, link_multiplier=2.0)
 
     for r in base + boosted:
         assert "similarity" in r.metadata

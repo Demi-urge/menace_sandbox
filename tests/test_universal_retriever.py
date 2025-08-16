@@ -40,8 +40,9 @@ def test_cross_db_merge(tmp_path):
     wf_db.add(WorkflowRecord(workflow=["workflow"], title="alpha"))
 
     retriever = UniversalRetriever(bot_db=bot_db, workflow_db=wf_db)
-    hits = retriever.retrieve("alpha", top_k=5, link_multiplier=1.0)
+    hits, session_id, vectors = retriever.retrieve("alpha", top_k=5, link_multiplier=1.0)
 
+    assert session_id and vectors
     assert {h.origin_db for h in hits} == {"bot", "workflow"}
     # feature logging: ensure each hit includes similarity and contextual metrics
     for h in hits:
@@ -61,7 +62,7 @@ def test_metric_weighting_prioritises_frequent_errors(tmp_path):
     err_db.conn.execute("UPDATE errors SET frequency=? WHERE id=?", (1, low_id))
 
     retriever = UniversalRetriever(error_db=err_db)
-    hits = retriever.retrieve("anything", top_k=2)
+    hits, _, _ = retriever.retrieve("anything", top_k=2)
 
     assert [h.record_id for h in hits] == [high_id, low_id]
     assert hits[0].reason.startswith("frequent error recurrence")
@@ -94,8 +95,8 @@ def test_relationship_boosting(tmp_path):
 
     retriever = UniversalRetriever(bot_db=bot_db, workflow_db=wf_db, error_db=err_db)
 
-    baseline = retriever.retrieve("bot", top_k=3, link_multiplier=1.0)
-    boosted = retriever.retrieve("bot", top_k=3, link_multiplier=1.5)
+    baseline, _, _ = retriever.retrieve("bot", top_k=3, link_multiplier=1.0)
+    boosted, _, _ = retriever.retrieve("bot", top_k=3, link_multiplier=1.5)
 
     assert all(isinstance(h, ResultBundle) for h in boosted)
     assert {h.origin_db for h in boosted} == {"bot", "workflow", "error"}
