@@ -3,9 +3,10 @@ from __future__ import annotations
 """Build training data for the retrieval ranker.
 
 This utility inspects ``vector_metrics.db`` and companion databases to assemble
-feature rows per ``(session_id, vector_id)`` pair. The dataset includes
-similarity, record age, execution frequency, ROI delta and historical hit
-counts and can be written to CSV or returned as a NumPy array.
+feature rows per ``(session_id, vector_id)`` pair.  For each retrieval the
+dataset includes the origin database, similarity score, record age, execution
+frequency, ROI delta derived from ``roi.db`` and prior hit counts.  The result
+can be written to CSV or returned as a NumPy array.
 """
 
 from dataclasses import dataclass
@@ -22,7 +23,6 @@ from ..error_bot import ErrorDB  # type: ignore
 from ..task_handoff_bot import WorkflowDB  # type: ignore
 from ..bot_database import BotDB  # type: ignore
 from ..universal_retriever import UniversalRetriever  # type: ignore
-from ..code_database import PatchHistoryDB  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -93,17 +93,39 @@ def _exec_metric(
 
 
 # ---------------------------------------------------------------------------
-def _roi_delta(patch_db: PatchHistoryDB, patch_id: Any) -> float:
-    if not patch_id:
+def _roi_delta(conn: sqlite3.Connection, action_id: Any) -> float:
+    """Return ROI delta for ``action_id`` from ``roi.db``.
+
+    The function first attempts to read from a ``roi_events`` table which
+    stores ``roi_before``/``roi_after`` pairs.  If that table is absent it falls
+    back to the ``action_roi`` table and computes the delta between the two most
+    recent ROI entries for the action.
+    """
+
+    if not action_id:
         return 0.0
     try:
-        pid = int(patch_id)
-    except Exception:
-        return 0.0
-    try:
-        rec = patch_db.get(pid)
-        if rec is not None:
-            return float(getattr(rec, "roi_delta", 0.0) or 0.0)
+        aid = str(action_id)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='roi_events'"
+        )
+        if cur.fetchone():
+            cur = conn.execute(
+                "SELECT roi_after - roi_before FROM roi_events WHERE action=? ORDER BY ts DESC LIMIT 1",
+                (aid,),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+        cur = conn.execute(
+            "SELECT revenue - api_cost FROM action_roi WHERE action=? ORDER BY ts DESC LIMIT 2",
+            (aid,),
+        )
+        vals = [float(r[0] or 0.0) for r in cur.fetchall()]
+        if len(vals) >= 2:
+            return float(vals[0] - vals[1])
+        if vals:
+            return float(vals[0])
     except Exception:
         return 0.0
     return 0.0
@@ -113,6 +135,7 @@ def _roi_delta(patch_db: PatchHistoryDB, patch_id: Any) -> float:
 def build_dataset(
     *,
     vec_db_path: str | Path = "vector_metrics.db",
+    roi_path: str | Path = "roi.db",
     output_csv: str | Path | None = None,
     as_numpy: bool = False,
 ) -> pd.DataFrame | Any:
@@ -122,6 +145,8 @@ def build_dataset(
     ----------
     vec_db_path:
         Location of ``vector_metrics.db``.
+    roi_path:
+        Path to ROI history database used to derive ``roi_delta``.
     output_csv:
         Optional path to write the dataset as CSV.
     as_numpy:
@@ -135,7 +160,7 @@ def build_dataset(
     retriever = UniversalRetriever(
         error_db=error_db, workflow_db=wf_db, bot_db=bot_db
     )
-    patch_db = PatchHistoryDB(path="patch_history.db")
+    roi_conn = sqlite3.connect(roi_path)
 
     now = datetime.utcnow()
     cur = vmdb.conn.execute(
@@ -155,7 +180,7 @@ def build_dataset(
             hit_counts[str(vec_id)] = prior + 1
         age = _record_age(str(origin), str(vec_id), now=now)
         freq = _exec_metric(retriever, str(origin), str(vec_id), wf_db)
-        roi = _roi_delta(patch_db, patch_id)
+        roi = _roi_delta(roi_conn, patch_id)
         rows.append(
             FeatureRow(
                 session_id=str(session_id),
@@ -173,19 +198,29 @@ def build_dataset(
     if output_csv is not None:
         df.to_csv(output_csv, index=False)
     if as_numpy:
-        return df.to_numpy()
-    return df
+        result: Any = df.to_numpy()
+    else:
+        result = df
+    try:
+        roi_conn.close()
+    except Exception:
+        pass
+    return result
 
 
 # ---------------------------------------------------------------------------
 def main(argv: Iterable[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Build retrieval ranker dataset")
     p.add_argument("--vec-db", default="vector_metrics.db")
+    p.add_argument("--roi-db", default="roi.db")
     p.add_argument("--output-csv", default=None)
     p.add_argument("--as-numpy", action="store_true", help="Return numpy array")
     args = p.parse_args(list(argv) if argv is not None else None)
     data = build_dataset(
-        vec_db_path=args.vec_db, output_csv=args.output_csv, as_numpy=args.as_numpy
+        vec_db_path=args.vec_db,
+        roi_path=args.roi_db,
+        output_csv=args.output_csv,
+        as_numpy=args.as_numpy,
     )
     if args.as_numpy:
         print(getattr(data, "shape", None))
