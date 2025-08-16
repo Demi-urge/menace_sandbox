@@ -19,6 +19,7 @@ from .chatgpt_enhancement_bot import (
     Enhancement,
 )
 from .micro_models.diff_summarizer import summarize_diff
+from .micro_models.prefix_injector import inject_prefix
 
 
 @dataclass
@@ -83,8 +84,15 @@ class EnhancementBot:
         return time.perf_counter() - start
 
     # ------------------------------------------------------------------
-    def _codex_summarize(self, before: str, after: str) -> str:
-        """Fallback summarisation using Codex or OpenAI if available."""
+    def _codex_summarize(
+        self, before: str, after: str, *, hint: str = "", confidence: float = 0.0
+    ) -> str:
+        """Summarise the code change via Codex/OpenAI.
+
+        ``hint`` is optional prior knowledge from a micro-model that will be
+        injected into the system prefix when ``confidence`` exceeds the
+        configured threshold.
+        """
         try:  # pragma: no cover - optional dependency
             import os
             import openai  # type: ignore
@@ -97,10 +105,18 @@ class EnhancementBot:
         prompt = (
             "Summarize the code change.\nBefore:\n" + before + "\nAfter:\n" + after
         )
+        messages = [{"role": "user", "content": prompt}]
+        if hint:
+            messages = inject_prefix(
+                messages,
+                f"Diff summary hint: {hint}",
+                confidence,
+                role="system",
+            )
         try:
             resp = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 temperature=0.2,
             )
             return resp["choices"][0]["message"]["content"].strip()
@@ -124,8 +140,15 @@ class EnhancementBot:
         orig_hash = self._hash(orig_text)
         new_hash = self._hash(proposal.new_code)
         summary = summarize_diff(orig_text, proposal.new_code)
-        if len(summary.strip()) < 10:
-            summary = self._codex_summarize(orig_text, proposal.new_code)
+        confidence = 0.9 if summary.strip() else 0.0
+        codex_summary = self._codex_summarize(
+            orig_text,
+            proposal.new_code,
+            hint=summary,
+            confidence=confidence,
+        )
+        if codex_summary:
+            summary = codex_summary
 
         proposal.file_path.write_text(proposal.new_code)
 
