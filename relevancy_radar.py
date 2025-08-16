@@ -148,6 +148,8 @@ __all__ = [
     "evaluate_relevancy",
     "flagged_modules",
     "RelevancyRadar",
+    "track_usage",
+    "evaluate_relevance",
 ]
 
 
@@ -262,3 +264,43 @@ class RelevancyRadar:
             json.dump(merged, fh, indent=2, sort_keys=True)
 
         return flags
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience helpers
+# ---------------------------------------------------------------------------
+_DEFAULT_RADAR: RelevancyRadar | None = None
+
+
+def _get_default_radar() -> RelevancyRadar:
+    """Return a lazily instantiated :class:`RelevancyRadar` instance."""
+
+    global _DEFAULT_RADAR
+    if _DEFAULT_RADAR is None:
+        _DEFAULT_RADAR = RelevancyRadar()
+    return _DEFAULT_RADAR
+
+
+def track_usage(module_name: str) -> None:
+    """Record an execution event for ``module_name`` using the default radar."""
+
+    radar = _get_default_radar()
+    radar.track_usage(module_name)
+
+
+def evaluate_relevance(threshold: float) -> Dict[str, str]:
+    """Evaluate relevancy of tracked modules using the default radar.
+
+    Parameters
+    ----------
+    threshold:
+        Combined import and execution score below which modules are flagged.
+
+    Returns
+    -------
+    Dict[str, str]
+        Mapping of module names to relevancy status (``retire``/``compress``).
+    """
+
+    radar = _get_default_radar()
+    return radar.evaluate_relevance(threshold)
