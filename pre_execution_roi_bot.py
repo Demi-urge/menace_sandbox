@@ -54,6 +54,8 @@ class ROIResult:
     roi: float
     margin: float
     predicted_class: str = ""
+    roi_pct: float = 0.0
+    npv: float = 0.0
 
 
 class ROIHistoryDB:
@@ -367,13 +369,22 @@ class PreExecutionROIBot:
         base = sum(t.complexity * t.frequency for t in tasks)
         return base + avgs["time"]
 
-    def forecast_roi(self, tasks: Iterable[BuildTask], projected_income: float) -> ROIResult:
+    def forecast_roi(
+        self,
+        tasks: Iterable[BuildTask],
+        projected_income: float,
+        *,
+        discount_rate: float = 0.0,
+    ) -> ROIResult:
         data = list(tasks)
         cost = self.estimate_cost(data)
         time = self.estimate_time(data)
-        income = projected_income / (1 + len(data) / 10)
+        discounted_income = projected_income / ((1 + discount_rate) ** max(time, 1.0))
+        income = discounted_income / (1 + len(data) / 10)
         roi = income - cost
         margin = abs(roi) * 0.1
+        roi_pct = (roi / cost * 100) if cost else 0.0
+        npv = discounted_income - cost
         predicted_class = ""
         if self.predictor is not None:
             try:
@@ -400,6 +411,8 @@ class PreExecutionROIBot:
             roi=roi,
             margin=margin,
             predicted_class=predicted_class,
+            roi_pct=roi_pct,
+            npv=npv,
         )
 
     # ------------------------------------------------------------------
@@ -410,12 +423,20 @@ class PreExecutionROIBot:
 
         return 1.0 - math.exp(-k * amount)
 
-    def forecast_roi_diminishing(self, tasks: Iterable[BuildTask], projected_income: float) -> ROIResult:
+    def forecast_roi_diminishing(
+        self,
+        tasks: Iterable[BuildTask],
+        projected_income: float,
+        *,
+        discount_rate: float = 0.0,
+    ) -> ROIResult:
         """Forecast ROI with diminishing returns as funding increases."""
-        base = self.forecast_roi(tasks, projected_income)
+        base = self.forecast_roi(tasks, projected_income, discount_rate=discount_rate)
         factor = self._diminishing_factor(projected_income)
         income = base.income * factor
         roi = income - base.cost
+        roi_pct = (roi / base.cost * 100) if base.cost else 0.0
+        npv = (base.npv + base.cost) * factor - base.cost
         return ROIResult(
             income=income,
             cost=base.cost,
@@ -423,10 +444,20 @@ class PreExecutionROIBot:
             roi=roi,
             margin=abs(roi) * 0.1,
             predicted_class=base.predicted_class,
+            roi_pct=roi_pct,
+            npv=npv,
         )
 
-    def predict_model_roi(self, model: str, tasks: Iterable[BuildTask]) -> ROIResult:
-        result = self.forecast_roi(tasks, sum(t.expected_income for t in tasks))
+    def predict_model_roi(
+        self,
+        model: str,
+        tasks: Iterable[BuildTask],
+        *,
+        discount_rate: float = 0.0,
+    ) -> ROIResult:
+        result = self.forecast_roi(
+            tasks, sum(t.expected_income for t in tasks), discount_rate=discount_rate
+        )
         profit = (
             self._avg_model_roi(model)
             + self._avg_workflow_profit()
@@ -437,6 +468,8 @@ class PreExecutionROIBot:
         final_income = result.income + profit - complexity
         final_roi = final_income - result.cost
         final_roi = self._apply_prediction_bots(final_roi, [profit, complexity])
+        roi_pct = (final_roi / result.cost * 100) if result.cost else 0.0
+        npv = final_income / ((1 + discount_rate) ** max(result.time, 1.0)) - result.cost
         final = ROIResult(
             income=final_income,
             cost=result.cost,
@@ -444,6 +477,8 @@ class PreExecutionROIBot:
             roi=final_roi,
             margin=abs(final_roi) * 0.1,
             predicted_class=result.predicted_class,
+            roi_pct=roi_pct,
+            npv=npv,
         )
         try:
             with sqlite3.connect(self.models_db) as conn:
@@ -512,7 +547,15 @@ class PreExecutionROIBotStub:
         logger.info("PreExecutionROIBotStub active")
 
     def forecast_roi(self, *args: Any, **kwargs: Any) -> ROIResult:
-        return ROIResult(income=0.0, cost=0.0, time=0.0, roi=0.0, margin=0.0)
+        return ROIResult(
+            income=0.0,
+            cost=0.0,
+            time=0.0,
+            roi=0.0,
+            margin=0.0,
+            roi_pct=0.0,
+            npv=0.0,
+        )
 
     def forecast_roi_diminishing(self, *a: Any, **kw: Any) -> ROIResult:
         return self.forecast_roi()
