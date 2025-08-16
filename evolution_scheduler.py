@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
+from typing import Optional, Sequence, Any
 import logging
+
+from analytics.retrain_retrieval_ranker import (
+    retrain_and_reload as retrain_ranker,
+)
 
 from .data_bot import DataBot
 from .capital_management_bot import CapitalManagementBot
@@ -27,6 +31,8 @@ class EvolutionScheduler:
         engagement_threshold: float = -0.2,
         anomaly_threshold: int = 1,
         engagement_window: int = 3,
+        retrain_ranker_every: int = 0,
+        ranker_services: Sequence[Any] | None = None,
     ) -> None:
         self.orchestrator = orchestrator
         self.data_bot = data_bot
@@ -36,11 +42,14 @@ class EvolutionScheduler:
         self.engagement_threshold = engagement_threshold
         self.anomaly_threshold = anomaly_threshold
         self.engagement_window = engagement_window
+        self.retrain_ranker_every = retrain_ranker_every
+        self._ranker_services = list(ranker_services or [])
         self._engagement_history: list[float] = []
         self.running = False
         self._thread: Optional[threading.Thread] = None
         self.logger = logging.getLogger(self.__class__.__name__)
         self.failure_count = 0
+        self._cycle_count = 0
 
     # ------------------------------------------------------------------
     def _loop(self) -> None:
@@ -95,6 +104,17 @@ class EvolutionScheduler:
                         self.logger.exception("improvement cycle failed: %s", exc)
                         self.failure_count += 1
                 self.orchestrator.run_cycle()
+                self._cycle_count += 1
+                if (
+                    self.retrain_ranker_every > 0
+                    and self._cycle_count >= self.retrain_ranker_every
+                ):
+                    try:
+                        retrain_ranker(self._ranker_services)
+                    except Exception as exc:
+                        self.logger.exception("ranker retrain failed: %s", exc)
+                        self.failure_count += 1
+                    self._cycle_count = 0
             except Exception as exc:
                 self.logger.exception("evolution cycle failed: %s", exc)
                 self.failure_count += 1
