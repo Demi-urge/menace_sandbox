@@ -63,7 +63,8 @@ def _prepare_dataset() -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
     # that downstream splits work reliably.
     groups = df.get("session_id", pd.Series([0] * len(df), index=df.index))
 
-    df = pd.get_dummies(df, columns=["origin_db"], prefix="db", dtype=float)
+    db_col = "db_type" if "db_type" in df.columns else "origin_db"
+    df = pd.get_dummies(df, columns=[db_col], prefix="db", dtype=float)
     feature_cols = [
         c
         for c in df.columns
