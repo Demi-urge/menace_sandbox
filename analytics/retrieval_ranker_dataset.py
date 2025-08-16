@@ -4,7 +4,7 @@ from __future__ import annotations
 
 This utility inspects ``vector_metrics.db`` and companion databases to assemble
 feature rows per ``(session_id, vector_id)`` pair.  For each retrieval the
-dataset includes the origin database, similarity score, record age, execution
+dataset captures the database type, similarity score, record age, execution
 frequency, ROI delta derived from ``roi.db`` and prior hit counts.  The result
 can be written to CSV or returned as a NumPy array.
 """
@@ -30,7 +30,7 @@ from ..universal_retriever import UniversalRetriever  # type: ignore
 class FeatureRow:
     session_id: str
     vector_id: str
-    origin_db: str
+    db_type: str
     similarity: float
     age: float
     exec_freq: float
@@ -174,18 +174,18 @@ def build_dataset(
 
     rows: list[FeatureRow] = []
     hit_counts: dict[str, int] = {}
-    for session_id, vec_id, origin, contrib, ts, patch_id, hit in cur.fetchall():
+    for session_id, vec_id, db, contrib, ts, patch_id, hit in cur.fetchall():
         prior = hit_counts.get(str(vec_id), 0)
         if hit:
             hit_counts[str(vec_id)] = prior + 1
-        age = _record_age(str(origin), str(vec_id), now=now)
-        freq = _exec_metric(retriever, str(origin), str(vec_id), wf_db)
+        age = _record_age(str(db), str(vec_id), now=now)
+        freq = _exec_metric(retriever, str(db), str(vec_id), wf_db)
         roi = _roi_delta(roi_conn, patch_id)
         rows.append(
             FeatureRow(
                 session_id=str(session_id),
                 vector_id=str(vec_id),
-                origin_db=str(origin),
+                db_type=str(db),
                 similarity=float(contrib or 0.0),
                 age=float(age),
                 exec_freq=float(freq),
