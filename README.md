@@ -1346,7 +1346,9 @@ relevancy_whitelist:
 ```
 
 The ``relevancy_radar_cli.py`` helper can annotate modules for retirement,
-compression or replacement based on these metrics:
+compression or replacement based on these metrics. Passing ``--final`` will run
+the dependency-aware evaluation step described in
+[docs/relevancy_radar.md](docs/relevancy_radar.md):
 
 ```bash
 python relevancy_radar_cli.py --retire old_mod --compress slow_mod --replace alt_mod
