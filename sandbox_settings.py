@@ -161,6 +161,13 @@ class SandboxSettings(BaseSettings):
             "on-demand radar scans when set."
         ),
     )
+    auto_process_relevancy_flags: bool = Field(
+        True,
+        env="AUTO_PROCESS_RELEVANCY_FLAGS",
+        description=(
+            "Automatically process relevancy flags with ModuleRetirementService."
+        ),
+    )
 
     synergy_weight_roi: float = Field(1.0, env="SYNERGY_WEIGHT_ROI")
     synergy_weight_efficiency: float = Field(1.0, env="SYNERGY_WEIGHT_EFFICIENCY")

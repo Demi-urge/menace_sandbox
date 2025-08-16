@@ -4504,9 +4504,13 @@ class SelfImprovementEngine:
             settings = SandboxSettings()
             replace_threshold = float(getattr(settings, "relevancy_threshold", 20))
             compress_threshold = max(1.0, replace_threshold / 4)
+            auto_process = getattr(
+                settings, "auto_process_relevancy_flags", True
+            )
         except Exception:
             replace_threshold = 20.0
             compress_threshold = 5.0
+            auto_process = True
         try:
             flags = self.relevancy_radar.evaluate_final_contribution(
                 compress_threshold, replace_threshold
@@ -4553,6 +4557,37 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "mutation logging failed", extra=log_record(module=mod)
                 )
+        if auto_process:
+            try:
+                service = ModuleRetirementService(
+                    Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                )
+                results = service.process_flags(flags)
+            except Exception:
+                self.logger.exception("relevancy flag processing failed")
+            else:
+                for mod, action in results.items():
+                    self.logger.info(
+                        "relevancy action",
+                        extra=log_record(module=mod, action=action),
+                    )
+                    if self.event_bus and action != "skipped":
+                        try:
+                            self.event_bus.publish(
+                                f"relevancy:{action}", {"module": mod}
+                            )
+                        except Exception:
+                            self.logger.exception(
+                                "relevancy action publish failed",
+                                extra=log_record(module=mod, action=action),
+                            )
+                if self.event_bus:
+                    try:
+                        self.event_bus.publish("relevancy_actions", results)
+                    except Exception:
+                        self.logger.exception(
+                            "relevancy actions publish failed"
+                        )
 
     def get_relevancy_flags(self) -> dict[str, str]:
         """Return latest module relevancy flags for downstream pipelines."""
@@ -4562,9 +4597,27 @@ class SelfImprovementEngine:
         """Process relevancy radar flags and trigger follow-up actions."""
         service = ModuleRetirementService(Path(os.getenv("SANDBOX_REPO_PATH", ".")))
         try:
-            service.process_flags(flags)
+            results = service.process_flags(flags)
         except Exception:
             self.logger.exception("flag processing failed")
+            results = {}
+        for mod, action in results.items():
+            self.logger.info(
+                "relevancy action", extra=log_record(module=mod, action=action)
+            )
+            if self.event_bus and action != "skipped":
+                try:
+                    self.event_bus.publish(f"relevancy:{action}", {"module": mod})
+                except Exception:
+                    self.logger.exception(
+                        "relevancy action publish failed",
+                        extra=log_record(module=mod, action=action),
+                    )
+        if self.event_bus:
+            try:
+                self.event_bus.publish("relevancy_actions", results)
+            except Exception:
+                self.logger.exception("relevancy actions publish failed")
         if append_orphan_classifications:
             repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
             retire_entries = {
