@@ -101,6 +101,9 @@ def test_reliability_stats_alter_order(tmp_path):
     m2 = order2_hits[0].metadata["contextual_metrics"]
     assert m1.get("win_rate") == pytest.approx(1.0)
     assert m2.get("win_rate") == pytest.approx(1.0)
+    # regret rates should be logged even when zero
+    assert m1.get("regret_rate") == pytest.approx(0.0)
+    assert m2.get("regret_rate") == pytest.approx(0.0)
 
 
 @pytest.fixture()
