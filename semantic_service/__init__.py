@@ -21,10 +21,17 @@ EmbeddingBackfill
     :class:`embeddable_db_mixin.EmbeddableDBMixin`.
 """
 
-from dataclasses import dataclass
+import json
+import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from .decorators import log_and_time, track_metrics
+from .exceptions import (
+    MalformedPromptError,
+    RateLimitError,
+    VectorServiceError,
+)
 
 try:  # Optional dependencies are imported lazily to avoid heavy startup cost
     from universal_retriever import UniversalRetriever, ResultBundle  # type: ignore
@@ -68,6 +75,7 @@ class Retriever:
 
     retriever: UniversalRetriever | None = None
     top_k: int = 5
+    _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     def _get_retriever(self) -> UniversalRetriever:
         if self.retriever is None:
@@ -99,12 +107,60 @@ class Retriever:
             Optional identifier used for structured logging.
         """
 
+        if not isinstance(query, str) or not query.strip():
+            raise MalformedPromptError("query must be a non-empty string")
+
         k = top_k or self.top_k
         retriever = self._get_retriever()
-        try:
-            hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
-        except AttributeError:  # pragma: no cover - older interface
-            hits = retriever.search(query)[:k]  # type: ignore[assignment]
+        attempts = 3
+        backoff = 1.0
+        hits: List[Any] = []
+        for attempt in range(attempts):
+            try:
+                try:
+                    hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
+                except AttributeError:  # pragma: no cover - older interface
+                    hits = retriever.search(query)[:k]  # type: ignore[assignment]
+                break
+            except Exception as exc:  # pragma: no cover - best effort
+                msg = str(exc).lower()
+                if ("rate" in msg and "limit" in msg) or "429" in msg:
+                    if attempt < attempts - 1:
+                        time.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    raise RateLimitError("vector search rate limited") from exc
+                raise VectorServiceError("vector search failed") from exc
+
+        if not hits:
+            cached = self._cache.get(query)
+            if cached is not None:
+                return cached
+            return [
+                {
+                    "origin_db": "heuristic",
+                    "record_id": None,
+                    "score": 0.0,
+                    "metadata": {},
+                    "reason": "no results",
+                }
+            ]
+
+        top_score = max(getattr(h, "score", 0.0) for h in hits)
+        if top_score < 0.1:
+            cached = self._cache.get(query)
+            if cached is not None:
+                return cached
+            return [
+                {
+                    "origin_db": "heuristic",
+                    "record_id": None,
+                    "score": 0.0,
+                    "metadata": {},
+                    "reason": "low similarity",
+                }
+            ]
+
         results: List[Dict[str, Any]] = []
         for h in hits:
             if isinstance(h, ResultBundle):
@@ -123,6 +179,7 @@ class Retriever:
                     "metadata": meta,
                 }
             results.append(item)
+        self._cache[query] = results
         return results
 
 
@@ -133,13 +190,61 @@ class ContextBuilder:
         if _LegacyContextBuilder is None:  # pragma: no cover - defensive
             raise RuntimeError("context_builder module unavailable")
         self._builder = _LegacyContextBuilder(*args, **kwargs)
+        self._cache: Dict[str, str] = {}
 
     @log_and_time
     @track_metrics
     def build(self, task_description: str, **kwargs: Any) -> str:
         """Return a compact JSON context for ``task_description``."""
 
-        return self._builder.build_context(task_description, **kwargs)
+        if not isinstance(task_description, str) or not task_description.strip():
+            raise MalformedPromptError("task_description must be a non-empty string")
+
+        retriever = getattr(self._builder, "retriever", None)
+        if retriever is None:  # pragma: no cover - defensive
+            raise VectorServiceError("retriever unavailable")
+
+        attempts = 3
+        backoff = 1.0
+        hits: List[Any] = []
+        for attempt in range(attempts):
+            try:
+                hits, _, _ = retriever.retrieve(task_description, top_k=1)
+                break
+            except Exception as exc:  # pragma: no cover - best effort
+                msg = str(exc).lower()
+                if ("rate" in msg and "limit" in msg) or "429" in msg:
+                    if attempt < attempts - 1:
+                        time.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    raise RateLimitError("vector search rate limited") from exc
+                raise VectorServiceError("vector search failed") from exc
+
+        if not hits or max(getattr(h, "score", 0.0) for h in hits) < 0.1:
+            cached = self._cache.get(task_description)
+            if cached is not None:
+                return cached
+            return json.dumps({"note": "insufficient context"})
+
+        context = ""
+        backoff = 1.0
+        for attempt in range(attempts):
+            try:
+                context = self._builder.build_context(task_description, **kwargs)
+                break
+            except Exception as exc:  # pragma: no cover - best effort
+                msg = str(exc).lower()
+                if ("rate" in msg and "limit" in msg) or "429" in msg:
+                    if attempt < attempts - 1:
+                        time.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    raise RateLimitError("vector search rate limited") from exc
+                raise VectorServiceError("context build failed") from exc
+
+        self._cache[task_description] = context
+        return context
 
 
 class PatchLogger:
@@ -254,4 +359,7 @@ __all__ = [
     "ContextBuilder",
     "PatchLogger",
     "EmbeddingBackfill",
+    "VectorServiceError",
+    "RateLimitError",
+    "MalformedPromptError",
 ]
