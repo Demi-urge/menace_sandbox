@@ -43,6 +43,10 @@ def test_cross_db_merge(tmp_path):
     hits = retriever.retrieve("alpha", top_k=5, link_multiplier=1.0)
 
     assert {h.origin_db for h in hits} == {"bot", "workflow"}
+    # feature logging: ensure each hit includes similarity and contextual metrics
+    for h in hits:
+        assert "similarity" in h.metadata
+        assert "contextual_metrics" in h.metadata
 
 
 def test_metric_weighting_prioritises_frequent_errors(tmp_path):
@@ -64,6 +68,7 @@ def test_metric_weighting_prioritises_frequent_errors(tmp_path):
     assert hits[0].score > hits[1].score
     metrics = hits[0].metadata["contextual_metrics"]
     assert metrics["model_score"] == pytest.approx(1.0)
+    assert metrics["frequency"] == pytest.approx(10.0)
 
 
 def test_relationship_boosting(tmp_path):
@@ -99,6 +104,7 @@ def test_relationship_boosting(tmp_path):
     boost = {h.origin_db: h.score for h in boosted}
     for src in ("bot", "workflow", "error"):
         assert boost[src] > base[src]
+        assert "contextual_metrics" in next(h.metadata for h in boosted if h.origin_db == src)
 
     reasons = {h.origin_db: h.reason for h in boosted}
     path = "linked via bot->workflow->error"
