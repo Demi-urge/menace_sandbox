@@ -106,7 +106,7 @@ try:  # pragma: no cover - allow flat imports
         recent_feedback,
         recent_improvement_path,
         recent_error_fix,
-    )
+)
 except Exception:  # pragma: no cover - fallback for flat layout
     from knowledge_retriever import (  # type: ignore
         get_feedback,
@@ -116,9 +116,17 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
     )
 try:  # pragma: no cover - allow flat imports
-    from .relevancy_radar import RelevancyRadar
+    from .relevancy_radar import RelevancyRadar, scan as radar_scan
 except Exception:  # pragma: no cover - fallback for flat layout
-    from relevancy_radar import RelevancyRadar  # type: ignore
+    from relevancy_radar import RelevancyRadar, scan as radar_scan  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .module_retirement_service import ModuleRetirementService
+except Exception:  # pragma: no cover - fallback for flat layout
+    from module_retirement_service import ModuleRetirementService  # type: ignore
+try:  # pragma: no cover - optional dependency
+    from sandbox_runner.orphan_discovery import append_orphan_classifications
+except Exception:  # pragma: no cover - best effort fallback
+    append_orphan_classifications = None  # type: ignore
 from .human_alignment_flagger import (
     HumanAlignmentFlagger,
     flag_improvement,
@@ -5186,6 +5194,37 @@ class SelfImprovementEngine:
                 mutation["performance"] = delta
                 mutation["roi"] = roi_value
             self._last_mutation_id = int(mutation["event_id"])
+            try:
+                flags = radar_scan()
+                if flags:
+                    service = ModuleRetirementService(
+                        Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                    )
+                    try:
+                        service.process_flags(flags)
+                    except Exception:
+                        self.logger.exception("flag processing failed")
+                    if append_orphan_classifications:
+                        repo = Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                        retire_entries = {
+                            m: {"classification": "retired"}
+                            for m, status in flags.items()
+                            if status == "retire"
+                        }
+                        if retire_entries:
+                            try:
+                                append_orphan_classifications(repo, retire_entries)
+                            except Exception:
+                                self.logger.exception("orphan classification failed")
+                    if self.event_bus:
+                        try:
+                            self.event_bus.publish("relevancy:scan", flags)
+                        except Exception:
+                            self.logger.exception(
+                                "relevancy scan event publish failed"
+                            )
+            except Exception:
+                self.logger.exception("relevancy radar scan failed")
             self.logger.info(
                 "cycle complete",
                 extra=log_record(roi=roi_value, predicted_roi=predicted),
