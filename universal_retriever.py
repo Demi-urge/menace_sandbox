@@ -558,11 +558,19 @@ class UniversalRetriever:
     def reload_reliability_scores(self) -> None:
         """Refresh reliability metrics used for ranking.
 
-        Reliability values are read on demand from
-        :class:`vector_metrics_db.VectorMetricsDB`, so this method simply
-        touches the metrics for all registered databases allowing external
-        schedulers to signal that scores have changed.
+        Both the win/regret rates stored in :class:`MetricsDB` and the
+        lightweight counters in :class:`vector_metrics_db.VectorMetricsDB`
+        may change over time as new retrieval results are observed.  This
+        helper reloads the cached values from :class:`MetricsDB` and, when
+        available, touches the vector metrics backend so external schedulers
+        can notify the retriever that updated statistics should be used.
         """
+
+        # Refresh the cached MetricsDB values so callers can observe the
+        # latest reliability information without needing to trigger a full
+        # retrieval cycle.
+        self._load_reliability_stats()
+
         if _VEC_METRICS is None:
             return
         for name in list(self._dbs):
