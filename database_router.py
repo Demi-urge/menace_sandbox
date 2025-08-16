@@ -44,7 +44,7 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
-from .universal_retriever import UniversalRetriever, ResultBundle
+from semantic_service import Retriever
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency
@@ -106,6 +106,7 @@ class DatabaseRouter:
         enhancement_db: "EnhancementDB" | None = None,
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
+        retriever: Retriever | None = None,
     ) -> None:
         from .research_aggregator_bot import InfoDB as _InfoDB
         from .error_bot import ErrorDB as _ErrorDB
@@ -165,13 +166,7 @@ class DatabaseRouter:
         self.cache_enabled = cache_seconds > 0
         self._cache: Dict[tuple, tuple[float, Any]] = {}
         self._query_encoder = _QueryEncoder()
-        self._retriever = UniversalRetriever(
-            bot_db=self.bot_db,
-            workflow_db=self.workflow_db,
-            error_db=self.error_db,
-            enhancement_db=self.enhancement_db,
-            information_db=self.info_db,
-        )
+        self._retriever = retriever or Retriever()
 
         env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
         env_redundancy = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
@@ -279,27 +274,15 @@ class DatabaseRouter:
         if not enabled:
             self.flush_cache()
 
-    def _redundant_retrieve(self, query: Any, top_k: int) -> List[ResultBundle]:
-        reliabilities = self._retriever.reliability_metrics()
-        names = list(getattr(self._retriever, "_dbs", {}).keys())
-        names.sort(
-            key=lambda n: reliabilities.get(n, {}).get("reliability", 0.0),
-            reverse=True,
-        )
-        results: List[ResultBundle] = []
-        queries = 0
-        for name in names:
-            try:
-                hits, _, _ = self._retriever.retrieve(query, top_k=top_k, dbs=[name])
-            except Exception as exc:
-                logger.error("retrieval failed for %s: %s", name, exc)
-                continue
-            results.extend(hits)
-            queries += 1
-            rel = reliabilities.get(name, {}).get("reliability", 0.0)
-            if rel >= self.min_reliability or queries >= self.redundancy_limit:
-                break
-        return results[:top_k]
+    def _redundant_retrieve(self, query: Any, top_k: int) -> List[Dict[str, Any]]:
+        if self._retriever is None:
+            return []
+        try:
+            hits = self._retriever.search(query, top_k=top_k)
+        except Exception as exc:
+            logger.error("retrieval failed: %s", exc)
+            return []
+        return hits[:top_k]
 
     def query_all(self, term: str, *, requesting_bot: str | None = None) -> DBResult:
         self._check_permission(READ, requesting_bot)
@@ -336,7 +319,7 @@ class DatabaseRouter:
         self._log_action(requesting_bot, "query_all", {"term": term})
         return result
 
-    def universal_search(self, query: Any, top_k: int = 10) -> List[ResultBundle]:
+    def universal_search(self, query: Any, top_k: int = 10) -> List[Dict[str, Any]]:
         """Search across configured databases using the shared retriever."""
 
         try:
@@ -345,8 +328,8 @@ class DatabaseRouter:
             logger.error("universal retrieval failed: %s", exc)
             return []
 
-    def semantic_search(self, query_text: str, top_k: int = 10) -> List[ResultBundle]:
-        """Perform a semantic search via :class:`UniversalRetriever`."""
+    def semantic_search(self, query_text: str, top_k: int = 10) -> List[Dict[str, Any]]:
+        """Perform a semantic search via :class:`Retriever`."""
 
         try:
             hits = self._redundant_retrieve(query_text, top_k)
@@ -354,18 +337,13 @@ class DatabaseRouter:
             logger.error("semantic retrieval failed: %s", exc)
             return []
 
-        results: List[ResultBundle] = []
+        results: List[Dict[str, Any]] = []
         for h in hits:
-            origin = "info" if h.origin_db == "information" else h.origin_db
-            meta = dict(h.metadata)
-            results.append(
-                ResultBundle(
-                    origin_db=origin,
-                    metadata=meta,
-                    score=h.score,
-                    reason=h.reason,
-                )
-            )
+            item = dict(h)
+            origin = item.get("origin_db")
+            if origin == "information":
+                item["origin_db"] = "info"
+            results.append(item)
 
         return results[:top_k]
 

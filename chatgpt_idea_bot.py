@@ -80,9 +80,9 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
-    from .universal_retriever import UniversalRetriever
+    from semantic_service import Retriever
 except Exception:  # pragma: no cover - missing dependency
-    UniversalRetriever = None  # type: ignore
+    Retriever = None  # type: ignore
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB)))
 
@@ -127,7 +127,7 @@ class ChatGPTClient:
         max_retries: int | None = None,
         validate: bool = True,
         knowledge: Any | None = None,
-        retriever: "UniversalRetriever | None" = None,
+        retriever: "Retriever | None" = None,
         tags: Iterable[str] | None = None,
         memory_manager: "GPTMemoryInterface | None" = None,
         use_memory: bool | None = None,
@@ -208,21 +208,13 @@ class ChatGPTClient:
                         pass
 
                 if retriever is not None:
-                    hits, _session, _vectors = retriever.retrieve_with_confidence(
-                        user_prompt, top_k=5
-                    )
+                    try:
+                        hits = retriever.search(user_prompt, top_k=5)
+                    except Exception:
+                        hits = []
                     for h in hits:
-                        item = h.get("item")
-                        if isinstance(item, dict):
-                            snippet = (
-                                item.get("summary")
-                                or item.get("message")
-                                or str(item)
-                            )
-                        else:
-                            snippet = getattr(
-                                item, "summary", getattr(item, "message", str(item))
-                            )
+                        meta = h.get("metadata", {})
+                        snippet = meta.get("summary") or meta.get("message") or str(meta)
                         ctx_parts.append(snippet)
 
                 if memory is not None:

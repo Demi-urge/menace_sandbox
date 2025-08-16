@@ -17,18 +17,14 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
 from .error_bot import ErrorDB
-
-try:  # pragma: no cover - optional dependency
-    from .universal_retriever import UniversalRetriever
-except Exception:  # pragma: no cover - missing dependency
-    UniversalRetriever = None  # type: ignore
+from semantic_service import Retriever
 
 
 class ErrorClusterPredictor:
     """Cluster module telemetry to identify high-risk modules."""
 
     def __init__(
-        self, graph: KnowledgeGraph, db: ErrorDB, retriever: "UniversalRetriever | None" = None
+        self, graph: KnowledgeGraph, db: ErrorDB, retriever: Retriever | None = None
     ) -> None:
         self.graph = graph
         self.db = db
@@ -102,7 +98,7 @@ class ErrorClusterPredictor:
         if self.retriever is not None:
             for mod in results:
                 try:
-                    self.retriever.retrieve_with_confidence(mod, top_k=1)
+                    self.retriever.search(mod, top_k=1)
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
         return results
