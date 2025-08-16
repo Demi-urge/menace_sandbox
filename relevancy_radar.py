@@ -18,12 +18,14 @@ import sqlite3
 import time
 from collections import defaultdict
 from pathlib import Path
+import os
 from typing import Dict, Iterable, List
 import builtins
 
 import networkx as nx
 from module_graph_analyzer import build_import_graph
 from metrics_exporter import update_relevancy_metrics
+from relevancy_metrics_db import RelevancyMetricsDB
 
 # Path to the persistent usage statistics file.
 _BASE_DIR = Path(__file__).resolve().parent
@@ -55,6 +57,12 @@ def track_module_usage(module: str) -> None:
 
 def _relevancy_cutoff() -> float:
     """Return the timestamp cutoff for relevancy calculations."""
+    try:
+        days_env = int(os.getenv("RELEVANCY_WINDOW_DAYS", "0"))
+        if days_env:
+            return time.time() - days_env * 86400
+    except Exception:
+        pass
     try:  # pragma: no cover - optional dependency
         from sandbox_settings import SandboxSettings
 
@@ -322,10 +330,11 @@ class RelevancyRadar:
 
         results: Dict[str, str] = {}
         for mod, counts in self._metrics.items():
+            impact_val = float(counts.get("impact", 0.0))
             score = (
                 int(counts.get("imports", 0))
                 + int(counts.get("executions", 0))
-                + impact_weight * float(counts.get("impact", 0.0))
+                + impact_weight * max(impact_val, 0.0)
             )
             if score == 0:
                 results[mod] = "retire"
@@ -380,9 +389,18 @@ class RelevancyRadar:
             Iterable of module identifiers to evaluate.
         """
 
+        modules = list(module_map)
         usage_stats = load_usage_stats()
+        try:
+            db = RelevancyMetricsDB(_RELEVANCY_METRICS_DB)
+            db_impacts = db.get_roi_deltas(modules)
+        except Exception:
+            db_impacts = {}
+        if impact_stats:
+            for mod, val in impact_stats.items():
+                db_impacts[mod] = db_impacts.get(mod, 0.0) + float(val)
         flags = evaluate_relevancy(
-            dict.fromkeys(module_map), usage_stats, impact_stats
+            dict.fromkeys(modules), usage_stats, db_impacts
         )
         update_relevancy_metrics(flags)
 

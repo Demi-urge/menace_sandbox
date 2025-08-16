@@ -1,9 +1,12 @@
 import json
 import sqlite3
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, TYPE_CHECKING, Any
 
-from module_index_db import ModuleIndexDB  # type: ignore
+if TYPE_CHECKING:  # pragma: no cover - only for type hints
+    from module_index_db import ModuleIndexDB  # type: ignore
+else:  # pragma: no cover - fallback when module_index_db is unavailable
+    ModuleIndexDB = Any  # type: ignore
 
 
 class RelevancyMetricsDB:
@@ -92,3 +95,23 @@ class RelevancyMetricsDB:
                     ),
                 )
             conn.commit()
+
+    # --------------------------------------------------------------
+    def get_roi_deltas(self, modules: Iterable[str] | None = None) -> dict[str, float]:
+        """Return cumulative ROI deltas for the given ``modules``.
+
+        When ``modules`` is ``None`` all entries in the database are returned.
+        Missing modules default to ``0.0`` and are simply omitted from the
+        result mapping.
+        """
+
+        query = "SELECT module_name, roi_delta FROM module_metrics"
+        params: tuple[str, ...] = ()
+        module_list = list(modules or [])
+        if module_list:
+            placeholders = ",".join("?" for _ in module_list)
+            query += f" WHERE module_name IN ({placeholders})"
+            params = tuple(module_list)
+        with sqlite3.connect(self.path, check_same_thread=False) as conn:
+            rows = conn.execute(query, params).fetchall()
+        return {str(name): float(delta or 0.0) for name, delta in rows}
