@@ -123,8 +123,11 @@ def test_estimate_cost(tmp_path):
 
 def test_forecast_roi(tmp_path):
     bot = prb.PreExecutionROIBot(prb.ROIHistoryDB(tmp_path / "hist.csv"))
-    result = bot.forecast_roi(_tasks(), projected_income=30.0)
+    result = bot.forecast_roi(_tasks(), projected_income=30.0, discount_rate=0.1)
     assert abs(result.roi - (result.income - result.cost)) < 1e-5
+    assert result.roi_pct == pytest.approx((result.roi / result.cost) * 100)
+    no_disc = bot.forecast_roi(_tasks(), projected_income=30.0)
+    assert result.income < no_disc.income
 
 
 def test_run_scenario(tmp_path):
