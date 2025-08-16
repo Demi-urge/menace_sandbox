@@ -1581,3 +1581,8 @@ __all__ = [
     "rank_scenarios",
     "main",
 ]
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry
+    setup_logging()
+    main()

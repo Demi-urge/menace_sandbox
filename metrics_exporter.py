@@ -7,6 +7,7 @@ from typing import Optional, List, Iterable, Dict, Sequence, Tuple
 import sys
 
 import logging
+from collections import Counter
 
 # Ensure this module is a single instance regardless of import path
 _ALIASES = (
@@ -270,6 +271,21 @@ prediction_reliability = Gauge(
     "Rolling reliability score for predictions",
     ["metric"],
 )
+
+# Gauge tracking modules flagged by relevancy radar
+relevancy_flagged_modules_total = Gauge(
+    "relevancy_flagged_modules_total",
+    "Number of modules flagged by relevancy radar",
+    ["status"],
+)
+
+def update_relevancy_metrics(flags: Dict[str, str]) -> None:
+    """Update gauges for modules flagged by the relevancy radar."""
+    counts = Counter(flags.values())
+    for status in ("retire", "compress", "replace"):
+        relevancy_flagged_modules_total.labels(status=status).set(
+            float(counts.get(status, 0))
+        )
 
 # New gauges for extended metrics
 security_score_gauge = Gauge(
@@ -672,6 +688,8 @@ __all__ = [
     "prediction_error",
     "prediction_mae",
     "prediction_reliability",
+    "relevancy_flagged_modules_total",
+    "update_relevancy_metrics",
     "error_bot_exceptions",
     "learning_engine_exceptions",
     "synergy_weight_updates_total",

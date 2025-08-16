@@ -28,6 +28,7 @@ _TEMPLATE = """
 <canvas id="security" width="400" height="200"></canvas>
 <canvas id="weights" width="400" height="200"></canvas>
 <canvas id="scenarios" width="400" height="200"></canvas>
+<canvas id="relevancy" width="400" height="200"></canvas>
 <div id="warnings"></div>
 <script>
 async function load() {
@@ -47,6 +48,12 @@ async function load() {
   const sdata = await fetch('/scenario_summary').then(r => r.json());
   if (!sdata.error && sdata.labels.length) {
     new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
+  }
+  const rdata = await fetch('/relevancy').then(r => r.json());
+  const rlabels = Object.keys(rdata.counts || {});
+  if (rlabels.length) {
+    const rvalues = rlabels.map(k => rdata.counts[k]);
+    new Chart(document.getElementById('relevancy'), {type:'bar',data:{labels:rlabels,datasets:[{label:'Flagged modules',data:rvalues}]}});
   }
   if (data.warnings && data.warnings.some(w => w)) {
     let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
@@ -83,6 +90,7 @@ class SandboxDashboard(MetricsDashboard):
         self.app.add_url_rule('/roi_data', 'roi_data', self.roi_data)
         self.app.add_url_rule('/weights', 'weights', self.weights_data)
         self.app.add_url_rule('/scenario_summary', 'scenario_summary', self.scenario_summary_data)
+        self.app.add_url_rule('/relevancy', 'relevancy', self.relevancy_data)
 
     # ------------------------------------------------------------------
     def _load_tracker(self) -> ROITracker:
@@ -159,6 +167,15 @@ class SandboxDashboard(MetricsDashboard):
         failures = [float(data[k].get('failures', 0)) for k in labels]
         successes = [float(data[k].get('successes', 0)) for k in labels]
         return jsonify({'labels': labels, 'roi': roi, 'failures': failures, 'successes': successes}), 200
+
+    def relevancy_data(self) -> tuple[str, int]:
+        from relevancy_radar import flagged_modules
+
+        flags = flagged_modules()
+        counts: dict[str, int] = {}
+        for status in flags.values():
+            counts[status] = counts.get(status, 0) + 1
+        return jsonify({'counts': counts}), 200
 
 
 __all__ = ["SandboxDashboard"]
