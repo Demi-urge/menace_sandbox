@@ -24,6 +24,8 @@ EmbeddingBackfill
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
+from .decorators import log_and_time, track_metrics
+
 try:  # Optional dependencies are imported lazily to avoid heavy startup cost
     from universal_retriever import UniversalRetriever, ResultBundle  # type: ignore
 except Exception:  # pragma: no cover - fallback when running in isolation
@@ -74,7 +76,11 @@ class Retriever:
             self.retriever = UniversalRetriever()
         return self.retriever
 
-    def search(self, query: str, *, top_k: int | None = None) -> List[Dict[str, Any]]:
+    @log_and_time
+    @track_metrics
+    def search(
+        self, query: str, *, top_k: int | None = None, session_id: str = ""
+    ) -> List[Dict[str, Any]]:
         """Perform semantic search and return normalised results.
 
         The underlying :class:`UniversalRetriever` returns ``ResultBundle``
@@ -82,6 +88,15 @@ class Retriever:
         a consistent shape:
 
         ``{"origin_db": ..., "record_id": ..., "score": ..., "metadata": ..., "reason": ...}``
+
+        Parameters
+        ----------
+        query:
+            Search query string.
+        top_k:
+            Optional limit for number of results.
+        session_id:
+            Optional identifier used for structured logging.
         """
 
         k = top_k or self.top_k
@@ -119,6 +134,8 @@ class ContextBuilder:
             raise RuntimeError("context_builder module unavailable")
         self._builder = _LegacyContextBuilder(*args, **kwargs)
 
+    @log_and_time
+    @track_metrics
     def build(self, task_description: str, **kwargs: Any) -> str:
         """Return a compact JSON context for ``task_description``."""
 
@@ -148,6 +165,8 @@ class PatchLogger:
             pairs.append((origin, vec_id))
         return pairs
 
+    @log_and_time
+    @track_metrics
     def track_contributors(
         self, vector_ids: Sequence[str], result: bool, *, patch_id: str = "", session_id: str = ""
     ) -> None:
@@ -210,7 +229,9 @@ class EmbeddingBackfill:
             except Exception:
                 pass
 
-    def run(self) -> None:
+    @log_and_time
+    @track_metrics
+    def run(self, *, session_id: str = "") -> None:
         """Backfill embeddings for all ``EmbeddableDBMixin`` subclasses."""
 
         self._load_known_dbs()
