@@ -3,7 +3,7 @@ from __future__ import annotations
 """System-wide GA-driven evolution manager."""
 
 from dataclasses import dataclass
-from typing import Iterable, Dict, Any
+from typing import Iterable, Dict, Any, List
 import logging
 
 from .ga_clone_manager import GALearningManager
@@ -13,12 +13,21 @@ from .structural_evolution_bot import (
     SystemSnapshot,
 )
 from .data_bot import MetricsDB
+from .relevancy_radar import flagged_modules
 
 
 @dataclass
 class EvolutionCycleResult:
     ga_results: Dict[str, float]
     predictions: Iterable[EvolutionRecord]
+
+
+@dataclass
+class RadarRefactor:
+    """Recommendation produced from relevancy radar data."""
+
+    module: str
+    action: str
 
 
 class SystemEvolutionManager:
@@ -53,6 +62,17 @@ class SystemEvolutionManager:
         self.last_energy = energy
         return None
 
+    def radar_refactors(self) -> List[RadarRefactor]:
+        """Return refactor proposals based on relevancy radar flags."""
+
+        proposals: List[RadarRefactor] = []
+        try:
+            for mod, action in flagged_modules().items():
+                proposals.append(RadarRefactor(module=mod, action=action))
+        except Exception:  # pragma: no cover - best effort logging
+            logging.getLogger(__name__).exception("radar query failed")
+        return proposals
+
     def run_cycle(self) -> EvolutionCycleResult:
         snap: SystemSnapshot = self.struct_bot.take_snapshot()
         preds = self.struct_bot.predict_changes(snap)
@@ -82,4 +102,4 @@ class SystemEvolutionManager:
         return EvolutionCycleResult(ga_results=ga_results, predictions=preds)
 
 
-__all__ = ["SystemEvolutionManager", "EvolutionCycleResult"]
+__all__ = ["SystemEvolutionManager", "EvolutionCycleResult", "RadarRefactor"]

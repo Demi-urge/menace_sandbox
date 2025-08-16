@@ -1319,6 +1319,28 @@ to publish metrics that Grafana can chart in real time. The dashboard examples i
 resource usage and latency statistics like the new median latency gauge over
 time.
 
+### Relevancy radar overrides
+The relevancy radar tracks how often each module is exercised during runs.
+Tune its sensitivity by setting environment variables or values in
+`sandbox_settings.py`:
+
+- `RELEVANCY_THRESHOLD` – minimum usage count before a module is considered
+  for replacement (default `20`).
+- `RELEVANCY_WINDOW_DAYS` – number of days of history to inspect when
+  computing relevancy (default `30`).
+- `RELEVANCY_WHITELIST` – comma-separated modules that the radar should
+  never flag.
+
+Example `sandbox_settings.yaml` snippet:
+
+```yaml
+relevancy_threshold: 10
+relevancy_window_days: 14
+relevancy_whitelist:
+  - critical_module.py
+  - legacy/analytics.py
+```
+
 ### New autonomous helpers
 - `VaultSecretProvider` fetches and caches secrets from an optional remote vault.
 - `EnvironmentRestorationService` periodically re-applies the bootstrap process after crashes.

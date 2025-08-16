@@ -67,27 +67,40 @@ def evaluate_relevancy(module_map: dict, usage_stats: dict) -> dict:
     """Return relevancy flags for modules based on ``usage_stats``.
 
     Modules absent from ``usage_stats`` are treated as having zero usage.
-    The current heuristics are intentionally simple:
+    Thresholds and module whitelists are sourced from
+    :class:`~sandbox_settings.SandboxSettings` when available:
 
     - ``retire``  – modules with no recorded usage.
-    - ``compress`` – modules used fewer than ``_COMPRESS_THRESHOLD`` times.
-    - ``replace`` – modules used fewer than ``_REPLACE_THRESHOLD`` times.
+    - ``compress`` – modules used fewer than 25% of
+      ``relevancy_threshold``.
+    - ``replace`` – modules used fewer than ``relevancy_threshold`` times.
 
     Results are persisted to :data:`_RELEVANCY_FLAGS_FILE` and cached in
     memory for access via :func:`flagged_modules`.
     """
 
-    _COMPRESS_THRESHOLD = 5
-    _REPLACE_THRESHOLD = 20
+    try:  # Import lazily to avoid heavy settings import on module load
+        from sandbox_settings import SandboxSettings
+
+        settings = SandboxSettings()
+        replace_threshold = int(settings.relevancy_threshold)
+        compress_threshold = max(1, replace_threshold // 4)
+        whitelist = set(settings.relevancy_whitelist)
+    except Exception:  # pragma: no cover - fall back to defaults
+        replace_threshold = 20
+        compress_threshold = 5
+        whitelist = set()
 
     flags: Dict[str, str] = {}
     for mod in module_map:
+        if mod in whitelist:
+            continue
         count = int(usage_stats.get(mod, 0))
         if count == 0:
             flags[mod] = "retire"
-        elif count <= _COMPRESS_THRESHOLD:
+        elif count <= compress_threshold:
             flags[mod] = "compress"
-        elif count <= _REPLACE_THRESHOLD:
+        elif count <= replace_threshold:
             flags[mod] = "replace"
 
     _relevancy_flags.clear()
