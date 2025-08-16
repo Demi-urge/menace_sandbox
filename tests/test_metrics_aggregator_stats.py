@@ -19,8 +19,11 @@ def test_compute_retriever_stats(tmp_path, monkeypatch):
     assert abs(res["db1"]["win_rate"] - 0.5) < 1e-6
     assert abs(res["db1"]["regret_rate"] - 0.5) < 1e-6
     assert res["db1"]["stale_cost"] == 90000 - float(os.getenv("EMBEDDING_STALE_THRESHOLD_SECONDS", "86400"))
+    assert res["db1"]["sample_count"] == 2
     assert res["db2"]["win_rate"] == 0.0
     assert res["db2"]["regret_rate"] == 1.0
     assert res["db2"]["stale_cost"] == 0.0
+    assert res["db2"]["sample_count"] == 1
     latest = metrics.latest_retriever_kpi()
     assert "db1" in latest and abs(latest["db1"]["win_rate"] - 0.5) < 1e-6
+    assert latest["db1"]["sample_count"] == 2

@@ -91,15 +91,13 @@ def compute_retriever_stats(
         )
 
     roi_path = Path(roi_db)
-    roi_df = pd.DataFrame()
+    roi_df = pd.DataFrame(columns=["patch_id", "revenue", "api_cost", "roi"])
     if roi_path.exists():
         with sqlite3.connect(roi_path) as conn:
             roi_df = pd.read_sql(
                 "SELECT action AS patch_id, revenue, api_cost FROM action_roi", conn
             )
-
-    if not roi_df.empty:
-        roi_df["roi"] = roi_df["revenue"].fillna(0) - roi_df["api_cost"].fillna(0)
+            roi_df["roi"] = roi_df["revenue"].fillna(0) - roi_df["api_cost"].fillna(0)
 
     merged = outcomes.merge(roi_df, on="patch_id", how="left")
     metrics: Dict[str, Dict[str, float]] = {}
@@ -131,7 +129,7 @@ def compute_retriever_stats(
         if MetricsDB is not None:
             try:
                 MetricsDB(m_path).log_retriever_kpi(
-                    origin, win_rate, regret_rate, stale_cost, roi_total
+                    origin, win_rate, regret_rate, stale_cost, roi_total, total
                 )
             except Exception:
                 pass
@@ -141,6 +139,7 @@ def compute_retriever_stats(
             "regret_rate": regret_rate,
             "stale_cost": stale_cost,
             "roi": roi_total,
+            "sample_count": float(total),
         }
 
     return metrics
@@ -330,7 +329,7 @@ class MetricsAggregator:
                 elif col.endswith("_count"):
                     metric = col[:-6]
                     _RETR_COUNT_GAUGE.labels(metric=metric, period=period).set(float(val))
-        kpi_cols = ["win_rate", "regret_rate", "stale_penalty"]
+        kpi_cols = ["win_rate", "regret_rate", "stale_penalty", "sample_count"]
         kpi = self._aggregate_table("retriever_kpi", kpi_cols, period)
         results["retriever_kpi_csv"] = self._export_csv(kpi, f"retriever_kpi_{period}")
         results["retriever_kpi_heatmap"] = self._heatmap(kpi, f"retriever_kpi_{period}")

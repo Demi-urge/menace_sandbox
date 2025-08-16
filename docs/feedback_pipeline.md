@@ -7,12 +7,13 @@ retrieval ranking. It consists of three stages:
    `MetricsDB.log_patch_outcome` capture per-result scores and deployment
    outcomes in `metrics.db`.
 2. **Aggregation** – `metrics_aggregator.compute_retriever_stats` joins the raw
-   metrics and computes win rate, regret rate and embedding staleness for each
-   origin database. The results are stored back into `retriever_kpi`.
+   metrics and computes win percentage, regret percentage, sample count and
+   embedding staleness for each origin database. The results are stored back
+   into `retriever_kpi`.
 3. **Consumption** – `UniversalRetriever` queries the latest KPI values via
    `MetricsDB.latest_retriever_kpi` and biases ranking accordingly. Databases
-   with higher win rates are promoted while stale or regretful sources are
-   down-weighted.
+   with higher win percentages and larger sample counts are promoted while
+   stale or regretful sources are down-weighted.
 
 Tuning is exposed through the `RetrievalWeights` dataclass. Adjust the
 `win`, `regret` and `stale_cost` fields to experiment with different feedback

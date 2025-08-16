@@ -87,14 +87,34 @@ def test_reliability_stats_alter_order(tmp_path):
     retriever._load_reliability_stats = MethodType(lambda self: self._reliability_stats, retriever)
 
     retriever._reliability_stats = {
-        "bot": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
-        "workflow": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
+        "bot": {
+            "win_rate": 1.0,
+            "regret_rate": 0.0,
+            "reliability": 1.0,
+            "sample_count": 5,
+        },
+        "workflow": {
+            "win_rate": 0.0,
+            "regret_rate": 0.0,
+            "reliability": 0.0,
+            "sample_count": 5,
+        },
     }
     order1_hits, _, _ = retriever.retrieve("x", top_k=2)
     order1 = [h.origin_db for h in order1_hits]
     retriever._reliability_stats = {
-        "bot": {"win_rate": 0.0, "regret_rate": 0.0, "reliability": 0.0},
-        "workflow": {"win_rate": 1.0, "regret_rate": 0.0, "reliability": 1.0},
+        "bot": {
+            "win_rate": 0.0,
+            "regret_rate": 0.0,
+            "reliability": 0.0,
+            "sample_count": 5,
+        },
+        "workflow": {
+            "win_rate": 1.0,
+            "regret_rate": 0.0,
+            "reliability": 1.0,
+            "sample_count": 5,
+        },
     }
     order2_hits, _, _ = retriever.retrieve("x", top_k=2)
     order2 = [h.origin_db for h in order2_hits]
@@ -110,9 +130,14 @@ def test_reliability_stats_alter_order(tmp_path):
     # regret rates should be logged even when zero
     assert m1.get("regret_rate") == pytest.approx(0.0)
     assert m2.get("regret_rate") == pytest.approx(0.0)
+    assert m1.get("sample_count") == pytest.approx(5.0)
+    assert m2.get("sample_count") == pytest.approx(5.0)
     # model scoring still provided when reliability biasing is enabled
     assert m1.get("model_score", 0.0) >= 0.0
     assert m2.get("model_score", 0.0) >= 0.0
+    # reliability score is included
+    assert m1.get("reliability_score", 0.0) >= 0.0
+    assert m2.get("reliability_score", 0.0) >= 0.0
 
 
 @pytest.fixture()

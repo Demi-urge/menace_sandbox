@@ -701,6 +701,7 @@ class UniversalRetriever:
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "reliability": win_rate - regret_rate,
+                        "sample_count": 0.0,
                     }
             except Exception:
                 stats = {}
@@ -719,6 +720,7 @@ class UniversalRetriever:
                             "win_rate": win_rate,
                             "regret_rate": regret_rate,
                             "reliability": win_rate - regret_rate,
+                            "sample_count": total,
                         }
             except Exception:
                 stats = {}
@@ -807,6 +809,7 @@ class UniversalRetriever:
                     regret_rate = rel.get("regret_rate", 0.0)
                     kpi = kpi_map.get(source, {})
                     stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    samples = rel.get("sample_count", kpi.get("sample_count", 0.0))
                     created_at = (
                         m.get("created_at")
                         if isinstance(m, dict)
@@ -843,6 +846,7 @@ class UniversalRetriever:
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "stale_cost": stale_cost,
+                        "sample_count": samples,
                         "age": age,
                         "exec_freq": exec_freq,
                         "roi_delta": roi_delta,
@@ -895,6 +899,7 @@ class UniversalRetriever:
                     regret_rate = rel.get("regret_rate", 0.0)
                     kpi = kpi_map.get("code", {})
                     stale_cost = kpi.get("stale_cost", kpi.get("stale_penalty", 0.0))
+                    samples = rel.get("sample_count", kpi.get("sample_count", 0.0))
                     created_at = (
                         m.get("created_at")
                         if isinstance(m, dict)
@@ -931,6 +936,7 @@ class UniversalRetriever:
                         "win_rate": win_rate,
                         "regret_rate": regret_rate,
                         "stale_cost": stale_cost,
+                        "sample_count": samples,
                         "age": age,
                         "exec_freq": exec_freq,
                         "roi_delta": roi_delta,
@@ -1234,13 +1240,6 @@ class UniversalRetriever:
                 bias_map = roi_tracker.retrieval_bias()
             except Exception:
                 bias_map = {}
-        kpi_map: Dict[str, Dict[str, float]] = {}
-        if MetricsDB is not None:
-            try:
-                kpi_map = MetricsDB().latest_retriever_kpi()
-            except Exception:
-                kpi_map = {}
-
         SIM_WEIGHT = self.weights.similarity
         CTX_WEIGHT = self.weights.context
         WIN_WEIGHT = self.weights.win
@@ -1257,7 +1256,6 @@ class UniversalRetriever:
                 logger.exception("failed to adjust retrieval weights")
 
         scored: List[dict[str, Any]] = []
-        reliability_map = self._reliability_stats if self.enable_reliability_bias else {}
         for source, rec_id, item, base_score, feats in raw_results:
             dist = float(feats.get("distance", 0.0))
             similarity = float(feats.get("similarity", 0.0))
@@ -1265,6 +1263,7 @@ class UniversalRetriever:
             win_rate = float(feats.get("win_rate", 0.0))
             regret_rate = float(feats.get("regret_rate", 0.0))
             stale_cost = float(feats.get("stale_cost", 0.0))
+            sample_count = float(feats.get("sample_count", 0.0))
             metrics = {
                 k: v
                 for k, v in feats.items()
@@ -1276,15 +1275,18 @@ class UniversalRetriever:
                     "win_rate",
                     "regret_rate",
                     "stale_cost",
+                    "sample_count",
                 }
             }
 
             combined_score = base_score
             combined_score *= bias_map.get(source, 1.0)
             if self.enable_reliability_bias:
-                reliability_bias = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
-                reliability_bias *= math.exp(-STALE_COST * stale_cost)
-                combined_score *= reliability_bias
+                reliability_score = 1.0 + WIN_WEIGHT * win_rate - REGRET_WEIGHT * regret_rate
+                reliability_score *= math.exp(-STALE_COST * stale_cost)
+                combined_score *= reliability_score
+            else:
+                reliability_score = 1.0
 
             model_score = (
                 self._model_predict(source, feats) if self.use_ranker else 1.0
@@ -1303,6 +1305,8 @@ class UniversalRetriever:
                     "win_rate": win_rate,
                     "regret_rate": regret_rate,
                     "stale_cost": stale_cost,
+                    "sample_count": sample_count,
+                    "reliability_score": reliability_score,
                     "model_score": model_score,
                     **metrics,
                 }
@@ -1397,6 +1401,8 @@ class UniversalRetriever:
             frequency = ctx_metrics.get("frequency")
             roi_delta = ctx_metrics.get("roi")
             usage = ctx_metrics.get("usage")
+            reliability_score = ctx_metrics.get("reliability_score")
+            sample_count = ctx_metrics.get("sample_count")
             db_type = bundle.metadata.get("db_type") or bundle.metadata.get("db_source") or ""
             prior_hits = _prior_hit_count(bundle.origin_db, bundle.record_id)
             log_retrieval_metrics(
@@ -1436,6 +1442,8 @@ class UniversalRetriever:
                 "roi_delta": roi_delta,
                 "usage": usage,
                 "prior_hits": prior_hits,
+                "reliability_score": reliability_score,
+                "sample_count": sample_count,
             }
             metrics_list.append(metrics_entry)
             dataset_entries.append(
@@ -1457,6 +1465,8 @@ class UniversalRetriever:
                     "roi_delta": roi_delta,
                     "usage": usage,
                     "prior_hits": prior_hits,
+                    "reliability_score": reliability_score,
+                    "sample_count": sample_count,
                 }
             )
 
