@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 import builtins
 
+import networkx as nx
+from module_graph_analyzer import build_import_graph
 from metrics_exporter import update_relevancy_metrics
 
 # Path to the persistent usage statistics file.
@@ -303,6 +305,8 @@ class RelevancyRadar:
         compress_threshold: float,
         replace_threshold: float,
         impact_weight: float = 1.0,
+        dep_graph: nx.DiGraph | None = None,
+        core_modules: Iterable[str] | None = None,
     ) -> Dict[str, str]:
         """Return modules with scores below the provided thresholds.
 
@@ -330,8 +334,39 @@ class RelevancyRadar:
             elif score <= replace_threshold:
                 results[mod] = "replace"
 
+        if dep_graph is not None:
+            core_modules = list(core_modules or ["menace_master", "run_autonomous"])
+            core_nodes = {m.replace(".", "/") for m in core_modules}
+            reachable: set[str] = set()
+            for core in core_nodes:
+                if core in dep_graph:
+                    reachable.add(core)
+                    reachable.update(nx.descendants(dep_graph, core))
+            for mod in list(results):
+                node = mod.replace(".", "/")
+                if node not in reachable:
+                    results[mod] = "retire"
+
         self._persist_metrics()
         return results
+
+    def evaluate_final_contribution(
+        self,
+        compress_threshold: float,
+        replace_threshold: float,
+        impact_weight: float = 1.0,
+        core_modules: Iterable[str] | None = None,
+    ) -> Dict[str, str]:
+        """Return dependency-aware relevancy flags for tracked modules."""
+
+        graph = build_import_graph(_BASE_DIR)
+        return self.evaluate_relevance(
+            compress_threshold,
+            replace_threshold,
+            impact_weight,
+            dep_graph=graph,
+            core_modules=core_modules,
+        )
 
     @staticmethod
     def flag_unused_modules(
@@ -417,6 +452,23 @@ def evaluate_relevance(
     radar = _get_default_radar()
     return radar.evaluate_relevance(
         compress_threshold, replace_threshold, impact_weight
+    )
+
+
+def evaluate_final_contribution(
+    compress_threshold: float,
+    replace_threshold: float,
+    impact_weight: float = 1.0,
+    core_modules: Iterable[str] | None = None,
+) -> Dict[str, str]:
+    """Evaluate relevancy with dependency tracing using the default radar."""
+
+    radar = _get_default_radar()
+    return radar.evaluate_final_contribution(
+        compress_threshold,
+        replace_threshold,
+        impact_weight,
+        core_modules=core_modules,
     )
 
 

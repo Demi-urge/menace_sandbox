@@ -4508,7 +4508,7 @@ class SelfImprovementEngine:
             replace_threshold = 20.0
             compress_threshold = 5.0
         try:
-            flags = self.relevancy_radar.evaluate_relevance(
+            flags = self.relevancy_radar.evaluate_final_contribution(
                 compress_threshold, replace_threshold
             )
         except Exception:
