@@ -104,3 +104,80 @@ def test_start_populates_latest_flags(monkeypatch, tmp_path):
     service.stop()
 
     assert service.latest_flags == {"sample": "retire"}
+
+
+def test_dependency_chain_not_flagged(monkeypatch, tmp_path):
+    """Dependencies of used modules are ignored by evaluate_final_contribution."""
+
+    # Create a small repository layout where ``core`` imports ``helper`` and an
+    # additional module ``loner`` is unused.
+    (tmp_path / "core.py").write_text("import helper\n")
+    (tmp_path / "helper.py").write_text("\n")
+    (tmp_path / "loner.py").write_text("\n")
+
+    # Build a minimal import graph: core -> helper, loner isolated.
+    import networkx as nx
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+    import menace_sandbox.metrics_exporter as metrics_exporter
+
+    def fake_build_graph(root):
+        g = nx.DiGraph()
+        g.add_edge("core", "helper")
+        g.add_node("loner")
+        return g
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", fake_build_graph)
+
+    # Only ``core`` has recorded usage.
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {"core": 1})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    # Propagate usage to dependencies via evaluate_final_contribution.
+    def fake_eval_final(self, compress, replace, *, graph, core_modules=None):
+        used = {m for m, d in self._metrics.items() if d.get("executions", 0) > 0}
+        reachable = set()
+        for mod in used:
+            node = mod.replace(".", "/")
+            if node in graph:
+                reachable.add(mod)
+                reachable.update(n.replace("/", ".") for n in nx.descendants(graph, node))
+        for mod in reachable:
+            stats = self._metrics.setdefault(mod, {"imports": 0, "executions": 0, "impact": 0.0})
+            if stats["imports"] == 0 and stats["executions"] == 0:
+                stats["imports"] = 1
+        return self.evaluate_relevance(
+            compress, replace, dep_graph=graph, core_modules=core_modules
+        )
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar, "evaluate_final_contribution", fake_eval_final
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    service._scan_once()
+
+    # ``helper`` is imported by ``core`` and thus not flagged. ``loner`` is
+    # isolated and should be marked for retirement.
+    assert service.flags() == {"loner": "retire"}
+    assert "helper" not in service.flags()
