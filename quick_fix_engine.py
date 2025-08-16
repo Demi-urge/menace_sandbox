@@ -7,8 +7,8 @@ import logging
 import subprocess
 import shutil
 import tempfile
-import json
 import os
+import uuid
 from typing import Tuple, Iterable, Dict, Any, List
 
 try:  # pragma: no cover - optional dependency
@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from .context_builder import ContextBuilder
+from semantic_service import ContextBuilder, Retriever, PatchLogger
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
 except Exception:  # pragma: no cover - fallback for tests
@@ -34,11 +34,6 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - fallback for tests
     def log_violation(*a, **k):
         return None
-
-try:  # pragma: no cover - optional dependency
-    from .universal_retriever import UniversalRetriever
-except Exception:  # pragma: no cover - missing dependency
-    UniversalRetriever = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .vector_metrics_db import VectorMetricsDB
@@ -77,11 +72,11 @@ def generate_patch(
     builder = context_builder or ContextBuilder()
     description = f"preemptive fix for {path.name}"
     try:
-        context_block = builder.build_context(description)
+        context_block = builder.build(description)
     except Exception:
-        context_block = {}
+        context_block = ""
     if context_block:
-        description += "\n\n" + json.dumps(context_block, indent=2)
+        description += "\n\n" + context_block
 
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
@@ -150,8 +145,9 @@ class QuickFixEngine:
         graph: KnowledgeGraph | None = None,
         risk_threshold: float = 0.5,
         predictor: ErrorClusterPredictor | None = None,
-        retriever: "UniversalRetriever | None" = None,
+        retriever: Retriever | None = None,
         context_builder: ContextBuilder | None = None,
+        patch_logger: PatchLogger | None = None,
         min_reliability: float | None = None,
         redundancy_limit: int | None = None,
     ) -> None:
@@ -163,6 +159,7 @@ class QuickFixEngine:
         self.predictor = predictor
         self.retriever = retriever
         self.context_builder = context_builder
+        self.patch_logger = patch_logger
         self.logger = logging.getLogger(self.__class__.__name__)
         env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
         env_red = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
@@ -193,28 +190,14 @@ class QuickFixEngine:
     def _redundant_retrieve(self, query: str, top_k: int) -> Tuple[List[Any], str, List[Tuple[str, str]]]:
         if self.retriever is None:
             return [], "", []
-        reliabilities = self.retriever.reliability_metrics()
-        names = list(getattr(self.retriever, "_dbs", {}).keys())
-        names.sort(
-            key=lambda n: reliabilities.get(n, {}).get("reliability", 0.0),
-            reverse=True,
-        )
-        all_hits: List[Any] = []
-        session_id = ""
-        vectors: List[Tuple[str, str]] = []
-        queries = 0
-        for name in names:
-            try:
-                hits, session_id, vectors = self.retriever.retrieve(query, top_k=top_k, dbs=[name])
-            except Exception:
-                self.logger.debug("retriever lookup failed", exc_info=True)
-                continue
-            all_hits.extend(hits)
-            queries += 1
-            rel = reliabilities.get(name, {}).get("reliability", 0.0)
-            if rel >= self.min_reliability or queries >= self.redundancy_limit:
-                break
-        return all_hits, session_id, vectors
+        session_id = uuid.uuid4().hex
+        try:
+            hits = self.retriever.search(query, top_k=top_k, session_id=session_id)
+        except Exception:
+            self.logger.debug("retriever lookup failed", exc_info=True)
+            return [], "", []
+        vectors = [(h.get("origin_db", ""), str(h.get("record_id", ""))) for h in hits]
+        return hits, session_id, vectors
 
     def run(self, bot: str) -> None:
         """Attempt a quick patch for the most frequent error of ``bot``."""
@@ -248,16 +231,16 @@ class QuickFixEngine:
             except Exception:
                 builder = None
             self.context_builder = builder
-        ctx_block = {}
+        ctx_block = ""
         if builder is not None:
             try:
                 query = f"{etype} in {module}"
-                ctx_block = builder.build_context(query)
+                ctx_block = builder.build(query)
             except Exception:
-                ctx_block = {}
+                ctx_block = ""
         desc = f"quick fix {etype}"
         if ctx_block:
-            desc += "\n\n" + json.dumps(ctx_block, indent=2)
+            desc += "\n\n" + ctx_block
         session_id = ""
         vectors: list[tuple[str, str]] = []
         if self.retriever is not None:
@@ -308,6 +291,17 @@ class QuickFixEngine:
                     )
             except Exception:
                 self.logger.exception("failed to log vector outcome")
+        if self.patch_logger is not None and session_id and vectors:
+            ids = [f"{o}:{v}" for o, v in vectors]
+            try:
+                self.patch_logger.track_contributors(
+                    ids,
+                    bool(patch_id) and tests_ok,
+                    patch_id=str(patch_id or ""),
+                    session_id=session_id,
+                )
+            except Exception:
+                self.logger.debug("patch logging failed", exc_info=True)
 
     # ------------------------------------------------------------------
     def preemptive_patch_modules(
@@ -347,16 +341,16 @@ class QuickFixEngine:
                 except Exception:
                     builder = None
                 self.context_builder = builder
-            ctx = {}
+            ctx = ""
             if builder is not None:
                 try:
                     query = f"preemptive patch {module}"
-                    ctx = builder.build_context(query)
+                    ctx = builder.build(query)
                 except Exception:
-                    ctx = {}
+                    ctx = ""
             desc = "preemptive_patch"
             if ctx:
-                desc += "\n\n" + json.dumps(ctx, indent=2)
+                desc += "\n\n" + ctx
             session_id = ""
             vectors: list[tuple[str, str]] = []
             if self.retriever is not None:
@@ -422,6 +416,17 @@ class QuickFixEngine:
                         )
                 except Exception:
                     self.logger.exception("failed to log vector outcome")
+            if self.patch_logger is not None and session_id and vectors:
+                ids = [f"{o}:{v}" for o, v in vectors]
+                try:
+                    self.patch_logger.track_contributors(
+                        ids,
+                        bool(patch_id),
+                        patch_id=str(patch_id or ""),
+                        session_id=session_id,
+                    )
+                except Exception:
+                    self.logger.debug("patch logging failed", exc_info=True)
 
     # ------------------------------------------------------------------
     def run_and_validate(self, bot: str) -> None:

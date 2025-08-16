@@ -1,9 +1,9 @@
 """Compact cross‑database context builder.
 
 This module exposes :class:`ContextBuilder` which gathers relevant records
-from the light‑weight SQLite databases used throughout the project.  It wraps
-``universal_retriever.UniversalRetriever`` and converts the returned
-``ResultBundle`` objects into a small JSON block ready to drop into language
+from the light‑weight SQLite databases used throughout the project.  It relies
+on :class:`semantic_service.Retriever` to gather relevant records and converts
+the returned dictionaries into a small JSON block ready to drop into language
 model prompts.  ROI or success metrics in the metadata are used to prefer
 high–value records and an optional in‑memory cache avoids repeated work.
 """
@@ -12,35 +12,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from universal_retriever import ResultBundle, UniversalRetriever
+from semantic_service import Retriever
 
 from .config import ContextBuilderConfig
-
-# Database wrappers ---------------------------------------------------------
-try:
-    from .error_bot import ErrorDB  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    ErrorDB = object  # type: ignore
-try:
-    from .bot_database import BotDB  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    BotDB = object  # type: ignore
-try:
-    from .task_handoff_bot import WorkflowDB  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    WorkflowDB = object  # type: ignore
-try:
-    from .code_database import CodeDB  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    CodeDB = object  # type: ignore
-
-try:  # Optional discrepancy database
-    from failure_learning_system import DiscrepancyDB
-except Exception:  # pragma: no cover - optional dependency
-    DiscrepancyDB = None  # type: ignore
 
 # Optional summariser -------------------------------------------------------
 try:  # pragma: no cover - heavy dependency
@@ -55,17 +31,6 @@ except Exception:  # pragma: no cover - tiny fallback helper
         return text[:117] + "..."
 
 
-# Utility ------------------------------------------------------------------
-def _resolve_db(obj: Any, cls: Any) -> Any:
-    """Return a database instance given ``obj`` which may be a path or instance."""
-
-    if obj is None:
-        return cls()
-    if isinstance(obj, (str, Path)):
-        return cls(obj)
-    return obj
-
-
 @dataclass
 class _ScoredEntry:
     entry: Dict[str, Any]
@@ -78,51 +43,16 @@ class ContextBuilder:
     def __init__(
         self,
         *,
-        bot_db: BotDB | str | Path | None = None,
-        workflow_db: WorkflowDB | str | Path | None = None,
-        error_db: ErrorDB | str | Path | None = None,
-        code_db: CodeDB | str | Path | None = None,
-        discrepancy_db: DiscrepancyDB | str | Path | None = None,
+        retriever: Retriever | None = None,
         memory_manager: Optional[MenaceMemoryManager] = None,
         db_weights: Dict[str, float] | None = None,
         max_tokens: int = ContextBuilderConfig().max_tokens,
     ) -> None:
-        self.bot_db = _resolve_db(bot_db, BotDB)
-        self.workflow_db = _resolve_db(workflow_db, WorkflowDB)
-        self.error_db = _resolve_db(error_db, ErrorDB)
-        self.code_db = _resolve_db(code_db, CodeDB)
-        self.discrepancy_db = (
-            _resolve_db(discrepancy_db, DiscrepancyDB)
-            if discrepancy_db is not None and DiscrepancyDB is not None
-            else None
-        )
-
+        self.retriever = retriever or Retriever()
         self.memory = memory_manager
         self._cache: Dict[Tuple[str, int], str] = {}
         self.db_weights = db_weights or {}
         self.max_tokens = max_tokens
-
-        # Assemble the universal retriever
-        self.retriever = UniversalRetriever(
-            bot_db=self.bot_db,
-            workflow_db=self.workflow_db,
-            error_db=self.error_db,
-        )
-
-        # Register optional databases on a best‑effort basis.
-        try:  # pragma: no cover - defensive
-            self.retriever.register_db("code", self.code_db, ("id", "cid"))
-        except Exception:
-            pass
-        if self.discrepancy_db is not None:
-            try:  # pragma: no cover - defensive
-                self.retriever.register_db(
-                    "discrepancy",
-                    self.discrepancy_db,
-                    ("id", "disc_id", "discrepancy_id"),
-                )
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     def _summarise(self, text: str) -> str:
@@ -167,12 +97,12 @@ class ContextBuilder:
         return None
 
     # ------------------------------------------------------------------
-    def _bundle_to_entry(self, bundle: ResultBundle) -> Tuple[str, _ScoredEntry]:
-        meta = bundle.metadata
-        origin = bundle.origin_db
+    def _bundle_to_entry(self, bundle: Dict[str, Any]) -> Tuple[str, _ScoredEntry]:
+        meta = bundle.get("metadata", {})
+        origin = bundle.get("origin_db", "")
 
         text = ""
-        entry: Dict[str, Any] = {"id": bundle.record_id}
+        entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
             text = meta.get("message") or meta.get("description") or ""
@@ -194,7 +124,7 @@ class ContextBuilder:
         if metric is not None:
             entry["metric"] = metric
 
-        score = bundle.score + (metric or 0.0)
+        score = float(bundle.get("score", 0.0)) + (metric or 0.0)
         score *= self.db_weights.get(origin, 1.0)
 
         key_map = {
@@ -220,7 +150,7 @@ class ContextBuilder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        hits, _, _ = self.retriever.retrieve(query, top_k=top_k * 5)
+        hits = self.retriever.search(query, top_k=top_k * 5)
 
         buckets: Dict[str, List[_ScoredEntry]] = {
             "errors": [],

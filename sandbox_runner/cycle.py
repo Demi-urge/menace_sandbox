@@ -13,6 +13,7 @@ import asyncio
 import sys
 import inspect
 import threading
+import uuid
 from typing import Any, Dict, TYPE_CHECKING
 from types import SimpleNamespace
 from sandbox_settings import SandboxSettings
@@ -1156,8 +1157,13 @@ def _sandbox_cycle_runner(
                 vectors: list[tuple[str, str]] = []
                 retriever = getattr(ctx, "retriever", None)
                 if retriever is not None:
+                    session_id = uuid.uuid4().hex
                     try:
-                        _hits, session_id, vectors = retriever.retrieve(mod, top_k=1)
+                        hits = retriever.search(mod, top_k=1, session_id=session_id)
+                        vectors = [
+                            (h.get("origin_db", ""), str(h.get("record_id", "")))
+                            for h in hits
+                        ]
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None
@@ -1175,6 +1181,18 @@ def _sandbox_cycle_runner(
                         trigger="sandbox_runner",
                         context_meta=context_meta,
                     )
+                    patch_logger = getattr(ctx, "patch_logger", None)
+                    if patch_logger and session_id and vectors:
+                        ids = [f"{o}:{v}" for o, v in vectors]
+                        try:
+                            patch_logger.track_contributors(
+                                ids,
+                                bool(patch_id),
+                                patch_id=str(patch_id or ""),
+                                session_id=session_id,
+                            )
+                        except Exception:
+                            logger.debug("patch logging failed", exc_info=True)
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
                     )
@@ -1517,8 +1535,13 @@ def _sandbox_cycle_runner(
                 vectors: list[tuple[str, str]] = []
                 retriever = getattr(ctx, "retriever", None)
                 if retriever is not None:
+                    session_id = uuid.uuid4().hex
                     try:
-                        _hits, session_id, vectors = retriever.retrieve(mod, top_k=1)
+                        hits = retriever.search(mod, top_k=1, session_id=session_id)
+                        vectors = [
+                            (h.get("origin_db", ""), str(h.get("record_id", "")))
+                            for h in hits
+                        ]
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None
@@ -1539,6 +1562,18 @@ def _sandbox_cycle_runner(
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
                     )
+                    patch_logger = getattr(ctx, "patch_logger", None)
+                    if patch_logger and session_id and vectors:
+                        ids = [f"{o}:{v}" for o, v in vectors]
+                        try:
+                            patch_logger.track_contributors(
+                                ids,
+                                bool(patch_id),
+                                patch_id=str(patch_id or ""),
+                                session_id=session_id,
+                            )
+                        except Exception:
+                            logger.debug("patch logging failed", exc_info=True)
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
                     raise
