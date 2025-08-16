@@ -557,6 +557,7 @@ def _sandbox_cycle_runner(
         "orphan_modules_legacy",
     )
     for idx in range(ctx.cycles):
+        cycle_start = time.perf_counter()
         # ensure orphan modules are processed before each cycle begins
         include_orphan_modules(ctx)
 
@@ -1009,7 +1010,14 @@ def _sandbox_cycle_runner(
                 )
             except Exception:
                 logger.exception("metric prediction failed")
-        ctx.meta_log.log_cycle(idx, roi, name_list, "self_improvement", warnings=warnings)
+        ctx.meta_log.log_cycle(
+            idx,
+            roi,
+            name_list,
+            "self_improvement",
+            warnings=warnings,
+            exec_time=time.perf_counter() - cycle_start,
+        )
         forecast, interval = tracker.forecast()
         mae = tracker.rolling_mae()
         reliability = tracker.reliability()
@@ -1195,7 +1203,13 @@ def _sandbox_cycle_runner(
                     roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo)
                     tracker.update(roi, new_roi, [mapped], resources)
-                    ctx.meta_log.log_cycle(idx, new_roi, [mapped], "gpt4")
+                    ctx.meta_log.log_cycle(
+                        idx,
+                        new_roi,
+                        [mapped],
+                        "gpt4",
+                        exec_time=0.0,
+                    )
                     if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
@@ -1384,7 +1398,13 @@ def _sandbox_cycle_runner(
             elif resilience_drop:
                 brainstorm_now = True
                 try:
-                    ctx.meta_log.log_cycle(idx, roi, name_list, "resilience_brainstorm")
+                    ctx.meta_log.log_cycle(
+                        idx,
+                        roi,
+                        name_list,
+                        "resilience_brainstorm",
+                        exec_time=0.0,
+                    )
                 except Exception:
                     logger.exception("resilience brainstorm logging failed")
             if brainstorm_now:
@@ -1527,7 +1547,13 @@ def _sandbox_cycle_runner(
                     roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo)
                     tracker.update(roi, new_roi, [mapped], resources)
-                    ctx.meta_log.log_cycle(idx, new_roi, [mapped], "offline")
+                    ctx.meta_log.log_cycle(
+                        idx,
+                        new_roi,
+                        [mapped],
+                        "offline",
+                        exec_time=0.0,
+                    )
                     if roi_delta <= tracker.diminishing() and patch_id:
                         logger.info(
                             "rolling back patch",
