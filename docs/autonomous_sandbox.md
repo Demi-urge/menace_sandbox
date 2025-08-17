@@ -86,6 +86,23 @@ scenarios. A low `synergy_resilience` during a `hostile_input` run highlights
 weak resistance to malicious stubs. The `sandbox_dashboard.py` utility and the
 metrics dashboard expose these per-scenario values.
 
+## Entropy delta tracking and module completion
+
+`ROITracker` derives a Shannon entropy ratio for each patched module by comparing
+the latest `synergy_shannon_entropy` metric with the change in code complexity.
+These ratios accumulate in `module_entropy_deltas` and are used to decide when a
+module has stabilised. If a module's ratios stay below `ENTROPY_PLATEAU_THRESHOLD`
+for `ENTROPY_PLATEAU_CONSECUTIVE` cycles, the section is marked complete and
+skipped in future improvement rounds.
+
+Tune the sensitivity with the `ENTROPY_PLATEAU_THRESHOLD` and
+`ENTROPY_PLATEAU_CONSECUTIVE` variables or rely on the default threshold returned
+by `ROITracker.diminishing()`. Additional gates such as `ROI_THRESHOLD`,
+`SYNERGY_THRESHOLD`, `ROI_CONFIDENCE` and `SYNERGY_CONFIDENCE` can further
+restrict automatic completion. When a module is flagged the runner emits a
+`sandbox diminishing` log listing the affected sections so you can review them or
+reset their history.
+
 ## Human alignment flagger
 
 Each autonomous cycle runs `HumanAlignmentFlagger` against the most recent
