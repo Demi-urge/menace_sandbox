@@ -73,6 +73,7 @@ from relevancy_radar import (
     track_usage as _radar_track_usage,
     evaluate_final_contribution,
     record_output_impact,
+    radar,
 )
 
 from .environment import (
@@ -136,7 +137,8 @@ def map_module_identifier(
     except Exception:
         rel = Path(base)
     module_id = rel.with_suffix("").as_posix()
-    _async_track_usage(module_id, impact)
+    record_output_impact(module_id, 0.0 if impact is None else float(impact))
+    _radar_track_usage(module_id, 0.0 if impact is None else float(impact))
     return module_id
 
 
@@ -183,6 +185,7 @@ async def _collect_plugin_metrics_async(
     return merged
 
 
+@radar.track
 def include_orphan_modules(ctx: "SandboxContext") -> None:
     """Discover orphan modules and feed viable ones into the workflow.
 
@@ -540,6 +543,7 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
         record_error(exc)
 
 
+@radar.track
 def _sandbox_cycle_runner(
     ctx: "SandboxContext",
     section: str | None,

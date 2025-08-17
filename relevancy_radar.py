@@ -19,13 +19,15 @@ import time
 from collections import defaultdict
 from pathlib import Path
 import os
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Callable, Any
 import builtins
 
 import math
 
 import networkx as nx
 import inspect
+import functools
+import contextlib
 from metrics_exporter import update_relevancy_metrics
 from relevancy_metrics_db import RelevancyMetricsDB
 
@@ -83,6 +85,32 @@ def _decay_factor(ts: int, *, now: float | None = None, window: float | None = N
         window = max(now - _relevancy_cutoff(), 1.0)
     age = max(0.0, now - float(ts))
     return math.exp(-age / window)
+
+
+def _extract_impact(value: Any) -> float | None:
+    """Best-effort extraction of an ROI/impact score from ``value``."""
+
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        for key in ("roi_delta", "impact", "roi"):
+            val = value.get(key)
+            if isinstance(val, (int, float)):
+                return float(val)
+    if isinstance(value, (list, tuple)) and value:
+        for item in reversed(value):
+            res = _extract_impact(item)
+            if res is not None:
+                return res
+    for attr in ("roi_delta", "impact", "roi"):
+        try:
+            val = getattr(value, attr)
+        except Exception:
+            continue
+        res = _extract_impact(val)
+        if res is not None:
+            return res
+    return None
 
 
 def load_usage_stats() -> Dict[str, float]:
@@ -255,9 +283,11 @@ __all__ = [
     "flagged_modules",
     "RelevancyRadar",
     "track_usage",
+    "track",
     "record_output_impact",
     "evaluate_relevance",
     "evaluate_final_contribution",
+    "radar",
 ]
 
 
@@ -381,6 +411,61 @@ class RelevancyRadar:
         )
         info["output_impact"] = float(info.get("output_impact", 0.0)) + float(impact)
         self._persist_metrics()
+
+    def track(self, arg: Callable[..., Any] | str | None = None, *, module_name: str | None = None):
+        """Return a decorator or context manager that records usage and impact."""
+
+        radar = self
+
+        class _Tracker(contextlib.ContextDecorator):
+            def __init__(self, mod: str):
+                self.mod = mod
+                self.impact = 0.0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                radar.track_usage(self.mod, float(self.impact))
+                radar.record_output_impact(self.mod, float(self.impact))
+
+            def record(self, impact: float) -> None:
+                self.impact += float(impact)
+
+        if callable(arg):
+            func = arg
+            name = module_name or f"{func.__module__}.{func.__qualname__}"
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                bound = sig.bind_partial(*args, **kwargs)
+                impact = bound.arguments.get("impact")
+                if impact is None:
+                    impact = bound.arguments.get("roi_delta") or bound.arguments.get("roi")
+                result = func(*args, **kwargs)
+                res_impact = _extract_impact(result)
+                final = impact if impact is not None else res_impact
+                if final is None:
+                    final = 0.0
+                radar.track_usage(name, float(final))
+                record_output_impact(name, float(final))
+                return result
+
+            return wrapper
+
+        if isinstance(arg, str) and module_name is None:
+            return _Tracker(arg)
+
+        if arg is None:
+            def decorator(func: Callable[..., Any]):
+                return radar.track(func, module_name=module_name)
+
+            if module_name is not None:
+                return decorator
+            return decorator
+
+        raise TypeError("Unsupported arguments for track")
 
     def evaluate_relevance(
         self,
@@ -538,6 +623,15 @@ def _get_default_radar() -> RelevancyRadar:
     if _DEFAULT_RADAR is None:
         _DEFAULT_RADAR = RelevancyRadar()
     return _DEFAULT_RADAR
+
+
+radar = _get_default_radar()
+
+
+def track(func: Callable[..., Any] | None = None, *, module_name: str | None = None):
+    """Proxy to :meth:`RelevancyRadar.track` on the default radar."""
+
+    return radar.track(func, module_name=module_name)
 
 
 def track_usage(module_name: str, impact: float = 0.0) -> None:

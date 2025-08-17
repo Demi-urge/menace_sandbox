@@ -127,7 +127,7 @@ from menace.knowledge_graph import KnowledgeGraph
 from menace.error_forecaster import ErrorForecaster
 from menace.quick_fix_engine import QuickFixEngine
 from relevancy_metrics_db import RelevancyMetricsDB
-from relevancy_radar import scan as relevancy_radar_scan
+from relevancy_radar import scan as relevancy_radar_scan, radar
 from sandbox_runner.cycle import _async_track_usage
 
 try:
@@ -1199,6 +1199,7 @@ def _sandbox_cleanup(ctx: SandboxContext) -> None:
         logger.exception("failed to refresh local knowledge module")
 
 
+@radar.track
 def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITracker":
     from menace.roi_tracker import ROITracker
 
@@ -1210,6 +1211,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         ctx.sandbox, "error_logger", ErrorLogger(knowledge_graph=graph)
     )
 
+    @radar.track
     def _cycle(
         section: str | None,
         snippet: str | None,

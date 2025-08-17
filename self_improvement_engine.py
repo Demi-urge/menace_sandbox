@@ -116,9 +116,9 @@ except Exception:  # pragma: no cover - fallback for flat layout
         recent_error_fix,
     )
 try:  # pragma: no cover - allow flat imports
-    from .relevancy_radar import RelevancyRadar, scan as radar_scan
+    from .relevancy_radar import RelevancyRadar, scan as radar_scan, radar
 except Exception:  # pragma: no cover - fallback for flat layout
-    from relevancy_radar import RelevancyRadar, scan as radar_scan  # type: ignore
+    from relevancy_radar import RelevancyRadar, scan as radar_scan, radar  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .module_retirement_service import ModuleRetirementService
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -1090,6 +1090,7 @@ class SelfImprovementEngine:
         except Exception:
             self.logger.exception("memory logging failed", extra=log_record(module=module))
 
+    @radar.track
     def _generate_patch_with_memory(
         self,
         module: str,
@@ -2537,6 +2538,7 @@ class SelfImprovementEngine:
                     self.logger.exception("alignment review agent audit failed")
         return warnings
 
+    @radar.track
     def _optimize_self(self) -> tuple[int | None, bool, float]:
         """Apply a patch to this engine via :class:`SelfCodingEngine`."""
         if not self.self_coding_engine:
@@ -4671,6 +4673,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.logger.exception("relevancy scan event publish failed")
 
+    @radar.track
     def run_cycle(self, energy: int = 1) -> AutomationResult:
         """Execute a self-improvement cycle."""
         self._cycle_running = True
