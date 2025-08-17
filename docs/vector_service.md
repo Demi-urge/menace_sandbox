@@ -41,12 +41,14 @@ from vector_service import PatchLogger
 
 logger = PatchLogger()
 logger.track_contributors(["bot:1", "workflow:2"], True,
-                          patch_id="42", session_id="abc123")
+                          patch_id="42", session_id="abc123",
+                          contribution=0.5)
 ```
 
 Vector identifiers may optionally specify the origin database using the
 `"origin:id"` format. Outcomes are forwarded to `data_bot.MetricsDB` when
-available or to `vector_metrics_db.VectorMetricsDB` as a fallback.
+available or to `vector_metrics_db.VectorMetricsDB` as a fallback.  An optional
+`contribution` parameter forwards a weighting to these databases.
 
 Metrics emitted by `PatchLogger.track_contributors`:
 
