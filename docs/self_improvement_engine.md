@@ -120,6 +120,15 @@ the tracker history. Comparing these values highlights which conditions trigger
 improvements. For example, rising `roi_delta_ema` during a `concurrency_spike`
 run indicates the bot is adapting to thread bursts.
 
+## Interpreting plateau logs
+
+During a cycle the sandbox logs a `sandbox diminishing` entry when ROI deltas or
+entropy ratios flatten out for a module. These entries list the affected sections
+and indicate that the engine has marked them complete, so subsequent cycles will
+skip their improvement steps. Adjust `ENTROPY_PLATEAU_THRESHOLD`,
+`ENTROPY_PLATEAU_CONSECUTIVE`, `ROI_THRESHOLD` or `SYNERGY_THRESHOLD` if modules
+stabilise too early, or clear their history files to force reevaluation.
+
 ## Example: running with a custom preset
 
 ```bash

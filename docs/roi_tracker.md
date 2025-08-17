@@ -34,6 +34,16 @@ high-ROI databases.
 
 `ROITracker` can incorporate CPU, memory, disk and time usage when predicting the next delta. Pass a `ROIHistoryDB` instance to the constructor and provide the `resources` argument to `update()`. These values act as exogenous variables for ARIMA or as additional regression features.
 
+## Entropy delta tracking
+
+Each prediction records the change in `synergy_shannon_entropy` relative to the complexity delta of the last patch. The ratio for each module is appended to `module_entropy_deltas`. `entropy_delta_history(name)` returns the stored ratios while `entropy_plateau(threshold, consecutive)` identifies modules whose entropy change stays below a threshold for a given number of samples. Inside the autonomous sandbox these flags are controlled by the `ENTROPY_PLATEAU_THRESHOLD` and `ENTROPY_PLATEAU_CONSECUTIVE` variables and cause modules to be marked complete and skipped in later cycles.
+
+```python
+tracker.record_prediction(0.1, 0.1)
+print(tracker.entropy_delta_history("m.py"))
+print(tracker.entropy_plateau(0.01, 3))
+```
+
 ## Adaptive ROI Prediction
 
 Longer term ROI trends can be estimated with the lightweight
