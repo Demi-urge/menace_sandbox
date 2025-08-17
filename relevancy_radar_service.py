@@ -49,7 +49,9 @@ class RelevancyRadarService:
                 from .relevancy_metrics_db import RelevancyMetricsDB
                 from .metrics_exporter import (
                     update_relevancy_metrics,
-                    relevancy_flags_total,
+                    relevancy_flags_retire_total,
+                    relevancy_flags_compress_total,
+                    relevancy_flags_replace_total,
                 )
             except Exception:  # pragma: no cover - executed when run as script
                 from module_graph_analyzer import build_import_graph
@@ -57,7 +59,9 @@ class RelevancyRadarService:
                 from relevancy_metrics_db import RelevancyMetricsDB
                 from metrics_exporter import (
                     update_relevancy_metrics,
-                    relevancy_flags_total,
+                    relevancy_flags_retire_total,
+                    relevancy_flags_compress_total,
+                    relevancy_flags_replace_total,
                 )
 
             try:
@@ -121,11 +125,12 @@ class RelevancyRadarService:
             from collections import Counter
 
             counts = Counter(flags.values())
-            for action in ("retire", "compress", "replace"):
-                if counts.get(action):
-                    relevancy_flags_total.labels(action=action).inc(
-                        float(counts[action])
-                    )
+            if counts.get("retire"):
+                relevancy_flags_retire_total.inc(float(counts["retire"]))
+            if counts.get("compress"):
+                relevancy_flags_compress_total.inc(float(counts["compress"]))
+            if counts.get("replace"):
+                relevancy_flags_replace_total.inc(float(counts["replace"]))
             if flags:
                 if self._retirement_service is None:
                     try:
