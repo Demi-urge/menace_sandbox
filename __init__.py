@@ -1,17 +1,22 @@
-"""Menace package initialization logic."""
+"""Menace package initialization logic.
+
+This module also exposes :class:`ROICalculator` whose profiles live in
+``configs/roi_profiles.yaml``.
+"""
 
 import importlib.util
 import logging
 import os
 import sys
 
+from .roi_calculator import ROICalculator
+
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
 # If production mode is used with the default SQLite database, fall back to test
-if (
-    os.getenv("MENACE_MODE", "test").lower() == "production"
-    and os.getenv("DATABASE_URL", "").startswith("sqlite")
-):
+if os.getenv("MENACE_MODE", "test").lower() == "production" and os.getenv(
+    "DATABASE_URL", ""
+).startswith("sqlite"):
     logging.warning(
         "MENACE_MODE=production with SQLite database; switching to test mode"
     )
@@ -19,6 +24,7 @@ if (
 
 if not os.getenv("MENACE_LIGHT_IMPORTS"):
     from . import menace_db as _menace_db
+
     sys.modules.setdefault("menace.menace", _menace_db)
 else:
     import types
@@ -85,6 +91,7 @@ if not os.getenv("MENACE_LIGHT_IMPORTS"):
 
 __all__ = [
     "__version__",
+    "ROICalculator",
     "newsreader_bot",
     "preliminary_research_bot",
     "passive_discovery_bot",
