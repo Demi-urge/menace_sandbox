@@ -193,3 +193,21 @@ def test_scan_skips_high_roi(metrics_db):
         replace_ratio=0.05,
     )
     assert "high_roi_mod" not in flags
+
+
+def test_negative_roi_retire_flag(tmp_path, monkeypatch):
+    """Modules with negative ROI are retired when the total score is non-positive."""
+
+    monkeypatch.setattr(atexit, "register", lambda func: func)
+    rr = importlib.reload(importlib.import_module("relevancy_radar"))
+    metrics_file = tmp_path / "metrics.json"
+    radar = rr.RelevancyRadar(metrics_file=metrics_file)
+
+    radar.track_usage("loss_mod", impact=-5.0)
+    radar.track_usage("loss_mod", impact=0.0)
+
+    flags = radar.evaluate_relevance(
+        compress_threshold=1.0, replace_threshold=2.0, impact_weight=1.0
+    )
+
+    assert flags == {"loss_mod": "retire"}

@@ -377,8 +377,9 @@ class RelevancyRadar:
         impact for each module. ``impact_weight`` scales the influence of the
         impact score relative to usage counts.
 
-        Modules with zero score are tagged ``retire``. Modules with a score
-        less than or equal to ``compress_threshold`` are tagged ``compress``.
+        Modules with a score of zero or less are tagged ``retire``. Modules with
+        a score less than or equal to ``compress_threshold`` are tagged
+        ``compress``.
         Modules with a score between ``compress_threshold`` and
         ``replace_threshold`` (inclusive) are tagged ``replace``.
         """
@@ -389,9 +390,9 @@ class RelevancyRadar:
             score = (
                 int(counts.get("imports", 0))
                 + int(counts.get("executions", 0))
-                + impact_weight * max(impact_val, 0.0)
+                + impact_weight * impact_val
             )
-            if score == 0:
+            if score <= 0:
                 results[mod] = "retire"
             elif score <= compress_threshold:
                 results[mod] = "compress"
@@ -431,9 +432,9 @@ class RelevancyRadar:
             score = (
                 int(counts.get("imports", 0))
                 + int(counts.get("executions", 0))
-                + impact_weight * max(impact_val, 0.0)
+                + impact_weight * impact_val
             )
-            if score == 0:
+            if score <= 0:
                 results[mod] = "retire"
             elif score <= compress_threshold:
                 results[mod] = "compress"
