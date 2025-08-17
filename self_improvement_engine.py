@@ -808,6 +808,7 @@ class SelfImprovementEngine:
         self.knowledge_service = self.local_knowledge.knowledge
         self.relevancy_radar = relevancy_radar or RelevancyRadar()
         self.relevancy_flags: dict[str, str] = {}
+        self.entropy_ceiling_modules: set[str] = set()
         # Track when the relevancy radar last ran so we can evaluate at intervals
         self._last_relevancy_eval = 0.0
         try:
@@ -1865,7 +1866,7 @@ class SelfImprovementEngine:
         avg_roi = avg_complex = revert_rate = 0.0
         module_idx = 0
         module_trend = 0.0
-        dim_flag = 0
+        entropy_flag = 0
         tracker = getattr(self, "tracker", None)
         syn_roi = syn_eff = syn_res = syn_af = 0.0
         if tracker is not None:
@@ -1922,9 +1923,8 @@ class SelfImprovementEngine:
                         module_trend = 0.0
                     if self.meta_logger:
                         try:
-                            dim_flag = (
-                                1 if mod_name in self.meta_logger.diminishing() else 0
-                            )
+                            if Path(mod_name).as_posix() in self.entropy_ceiling_modules:
+                                entropy_flag = 1
                             if module_trend == 0.0:
                                 module_trend = dict(self.meta_logger.rankings()).get(
                                     mod_name, 0.0
@@ -1966,7 +1966,7 @@ class SelfImprovementEngine:
             int(round(revert_rate * 10)),
             int(module_idx),
             int(round(module_trend * 10)),
-            int(dim_flag),
+            int(entropy_flag),
             int(kw_count),
             int(kw_recent),
             int(round(avg_roi_delta * 10)),
@@ -2182,8 +2182,11 @@ class SelfImprovementEngine:
         predictor is unavailable or fails, the candidate receives zero weight.
         """
 
+        completed = {Path(m).as_posix() for m in self.entropy_ceiling_modules}
         scored: list[tuple[str, float, str, float]] = []
         for mod in modules:
+            if Path(mod).as_posix() in completed:
+                continue
             features = self._candidate_features(mod)
             roi_est = 0.0
             category = "unknown"
@@ -4719,6 +4722,22 @@ class SelfImprovementEngine:
                     except Exception:
                         flagged = []
                     if flagged:
+                        norm = [Path(m).as_posix() for m in flagged]
+                        self.entropy_ceiling_modules.update(norm)
+                        for m in norm:
+                            self.logger.info(
+                                "module flagged", extra=log_record(module=m, status="entropy_ceiling")
+                            )
+                            try:
+                                audit_log_event(
+                                    "entropy_ceiling",
+                                    {"module": m, "status": "entropy_ceiling"},
+                                )
+                            except Exception:  # pragma: no cover - best effort
+                                self.logger.exception(
+                                    "entropy ceiling audit log failed",
+                                    extra=log_record(module=m),
+                                )
                         try:
                             service = ModuleRetirementService(
                                 Path(os.getenv("SANDBOX_REPO_PATH", "."))
