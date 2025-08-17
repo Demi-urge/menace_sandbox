@@ -105,6 +105,12 @@ class SandboxSettings(BaseSettings):
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
     synergy_confidence: float | None = Field(None, env="SYNERGY_CONFIDENCE")
+    entropy_plateau_threshold: float | None = Field(
+        None, env="ENTROPY_PLATEAU_THRESHOLD"
+    )
+    entropy_plateau_consecutive: int | None = Field(
+        None, env="ENTROPY_PLATEAU_CONSECUTIVE"
+    )
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",

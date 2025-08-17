@@ -35,6 +35,8 @@ def setup_stubs(monkeypatch):
         def __init__(self, *a, **k):
             self.module_deltas = {}
             self.metrics_history = {}
+            self.module_entropy_deltas = {}
+            self.roi_history = []
 
         def load_history(self, p):
             pass
@@ -85,18 +87,32 @@ def test_cli_overrides_env(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setattr(mod, "full_autonomous_run", lambda args, **k: None)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
+    monkeypatch.setenv("ENABLE_RELEVANCY_RADAR", "0")
     captured = {}
 
     def capture(*a, **k):
         captured["roi"] = a[2]
+        captured["entropy_threshold"] = k.get("entropy_threshold")
+        captured["entropy_consecutive"] = k.get("entropy_consecutive")
         return set(), None
 
     monkeypatch.setattr(mod.sandbox_runner.cli, "_diminishing_modules", capture)
     monkeypatch.setenv("ROI_THRESHOLD", "1.5")
+    monkeypatch.setenv("ENTROPY_PLATEAU_THRESHOLD", "0.2")
+    monkeypatch.setenv("ENTROPY_PLATEAU_CONSECUTIVE", "5")
 
-    mod.main(["--roi-threshold", "2.5"])
+    mod.main([
+        "--roi-threshold",
+        "2.5",
+        "--entropy-plateau-threshold",
+        "0.3",
+        "--entropy-plateau-consecutive",
+        "4",
+    ])
 
     assert captured.get("roi") == 2.5
+    assert captured.get("entropy_threshold") == 0.3
+    assert captured.get("entropy_consecutive") == 4
 
 
 def test_get_env_override(monkeypatch):

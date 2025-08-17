@@ -358,6 +358,8 @@ def _diminishing_modules(
     *,
     confidence: float = 0.95,
     entropy_history: dict[str, list[float]] | None = None,
+    entropy_threshold: float | None = None,
+    entropy_consecutive: int | None = None,
 ) -> tuple[list[str], dict[str, float]]:
     """Return modules with ROI or entropy deltas that plateau within ``threshold``.
 
@@ -387,11 +389,13 @@ def _diminishing_modules(
             confidences[mod] = conf
 
     if entropy_history:
+        e_thr = thr if entropy_threshold is None else float(entropy_threshold)
+        e_consec = consecutive if entropy_consecutive is None else int(entropy_consecutive)
         for mod, vals in entropy_history.items():
-            if mod in flagged or mod in flags or len(vals) < consecutive:
+            if mod in flagged or mod in flags or len(vals) < e_consec:
                 continue
-            window = vals[-consecutive:]
-            if all(abs(v) <= thr for v in window):
+            window = vals[-e_consec:]
+            if all(abs(v) <= e_thr for v in window):
                 flags.append(mod)
                 confidences[mod] = 1.0
 
@@ -657,6 +661,20 @@ def full_autonomous_run(
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
+    entropy_threshold = getattr(args, "entropy_plateau_threshold", None)
+    env_val = os.getenv("ENTROPY_PLATEAU_THRESHOLD")
+    if entropy_threshold is None and env_val is not None:
+        try:
+            entropy_threshold = float(env_val)
+        except Exception:
+            entropy_threshold = None
+    entropy_consecutive = getattr(args, "entropy_plateau_consecutive", None)
+    env_val = os.getenv("ENTROPY_PLATEAU_CONSECUTIVE")
+    if entropy_consecutive is None and env_val is not None:
+        try:
+            entropy_consecutive = int(env_val)
+        except Exception:
+            entropy_consecutive = None
     synergy_threshold_window = getattr(args, "synergy_threshold_window", None)
     env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
     if synergy_threshold_window is None and env_val is not None:
@@ -797,6 +815,8 @@ def full_autonomous_run(
                 consecutive=roi_cycles,
                 confidence=roi_confidence or 0.95,
                 entropy_history=module_entropy_history,
+                entropy_threshold=entropy_threshold,
+                entropy_consecutive=entropy_consecutive,
             )
             flagged.update(new_flags)
         if last_tracker and getattr(args, "auto_thresholds", False):
@@ -1266,6 +1286,16 @@ def main(argv: List[str] | None = None) -> None:
         "--roi-confidence",
         type=float,
         help="confidence level for ROI convergence",
+    )
+    p_autorun.add_argument(
+        "--entropy-plateau-threshold",
+        type=float,
+        help="threshold for entropy delta plateau detection",
+    )
+    p_autorun.add_argument(
+        "--entropy-plateau-consecutive",
+        type=int,
+        help="entropy delta samples below threshold before module convergence",
     )
     p_autorun.add_argument(
         "--synergy-cycles",

@@ -1094,7 +1094,9 @@ def _sandbox_cycle_runner(
             },
         )
         thr = tracker.diminishing()
-        entropy_flags = tracker.entropy_plateau(thr, 3)
+        e_thr = ctx.settings.entropy_plateau_threshold or thr
+        e_consec = ctx.settings.entropy_plateau_consecutive or 3
+        entropy_flags = tracker.entropy_plateau(e_thr, e_consec)
         try:
             flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
         except TypeError:  # pragma: no cover - compatibility
@@ -1782,7 +1784,9 @@ def _sandbox_cycle_runner(
     if ctx.adapt_presets:
         try:
             thr = tracker.diminishing()
-            entropy_flags = tracker.entropy_plateau(thr, 3)
+            e_thr = ctx.settings.entropy_plateau_threshold or thr
+            e_consec = ctx.settings.entropy_plateau_consecutive or 3
+            entropy_flags = tracker.entropy_plateau(e_thr, e_consec)
             try:
                 flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
             except TypeError:  # pragma: no cover - compatibility
