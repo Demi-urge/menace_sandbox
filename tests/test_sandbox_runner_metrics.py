@@ -1996,3 +1996,100 @@ def test_synergy_variance_stable(monkeypatch):
         variance_confidence=0.95,
     )
     assert ok is False
+
+def test_modules_marked_complete_skip_improvement(monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: "/usr/bin/ffmpeg")
+
+    _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyEngine)
+    _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.data_bot", DataBot=DummyDataBot, MetricsDB=DummyBot)
+    _stub_module(monkeypatch, "menace.discrepancy_detection_bot", DiscrepancyDetectionBot=DummyBot)
+    _stub_module(monkeypatch, "menace.pre_execution_roi_bot", PreExecutionROIBot=DummyBot)
+    _stub_module(monkeypatch, "menace.quick_fix_engine", QuickFixEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.self_debugger_sandbox", SelfDebuggerSandbox=DummySandbox)
+    _stub_module(monkeypatch, "adaptive_roi_predictor", load_training_data=lambda *a, **k: None)
+    _stub_module(
+        monkeypatch,
+        "menace.self_improvement_engine",
+        SelfImprovementEngine=lambda *a, **k: DummyImprover(),
+    )
+    _stub_module(monkeypatch, "menace.self_test_service", SelfTestService=DummyTester)
+    _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=DummyPolicy)
+    _stub_module(monkeypatch, "menace.menace_orchestrator", MenaceOrchestrator=DummyOrch)
+    _stub_module(monkeypatch, "menace.unified_event_bus", UnifiedEventBus=DummyBot)
+    _stub_module(monkeypatch, "jinja2", Template=lambda *a, **k: None)
+    _stub_module(monkeypatch, "networkx", DiGraph=object)
+    sqla = types.ModuleType("sqlalchemy")
+    sqla_engine = types.ModuleType("sqlalchemy.engine")
+    sqla_engine.Engine = object
+    monkeypatch.setitem(sys.modules, "sqlalchemy", sqla)
+    monkeypatch.setitem(sys.modules, "sqlalchemy.engine", sqla_engine)
+
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "sandbox_runner",
+        str(Path(__file__).resolve().parents[1] / "sandbox_runner.py"),
+        submodule_search_locations=[
+            str(Path(__file__).resolve().parents[1] / "sandbox_runner")
+        ],
+    )
+    sandbox_runner = importlib.util.module_from_spec(spec)
+    sys.modules["sandbox_runner"] = sandbox_runner
+    spec.loader.exec_module(sandbox_runner)
+
+    calls = []
+
+    def fake_cycle(ctx, section, snippet, tracker, scenario=None):
+        calls.append(section)
+
+    monkeypatch.setattr(sandbox_runner, "_sandbox_cycle_runner", fake_cycle)
+
+    class Meta:
+        def __init__(self):
+            self.flagged_sections = set()
+            self.module_deltas = {"m.py:sec": [0.0, 0.0, 0.0]}
+            self.last_patch_id = 0
+
+        def log_cycle(self, *a, **k):
+            pass
+
+        def rankings(self):
+            return []
+
+        def diminishing(self, threshold=None, entropy_flags=None):
+            self.flagged_sections.add("m.py:sec")
+            return ["m.py:sec"]
+
+    ctx = types.SimpleNamespace(
+        meta_log=Meta(),
+        sections={"m.py": {"sec": ["pass"]}},
+        all_section_names={"m.py:sec"},
+        tracker=DummyTracker(),
+        settings=types.SimpleNamespace(
+            entropy_plateau_threshold=None, entropy_plateau_consecutive=None
+        ),
+    )
+
+    for mod, sec_map in ctx.sections.items():
+        for name, lines in sec_map.items():
+            section_name = f"{mod}:{name}"
+            if section_name in ctx.meta_log.flagged_sections:
+                continue
+            sandbox_runner._sandbox_cycle_runner(ctx, section_name, "", ctx.tracker)
+            ctx.meta_log.diminishing()
+
+    for mod, sec_map in ctx.sections.items():
+        for name, lines in sec_map.items():
+            section_name = f"{mod}:{name}"
+            if section_name in ctx.meta_log.flagged_sections:
+                continue
+            sandbox_runner._sandbox_cycle_runner(ctx, section_name, "", ctx.tracker)
+
+    assert calls == ["m.py:sec"]
