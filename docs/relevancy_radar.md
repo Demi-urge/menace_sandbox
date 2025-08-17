@@ -27,13 +27,28 @@ output, call `record_output_impact` so the radar can attribute the delta.
 ```python
 from pathlib import Path
 from sandbox_runner.cycle import map_module_identifier
-from relevancy_radar import record_output_impact
+from relevancy_radar import record_output_impact, radar
 
 repo = Path("/workspace/menace_sandbox")
 module_id = map_module_identifier("analytics/stats.py", repo, 0.8)
 
 # when analytics/stats contributes to the result
 record_output_impact(module_id, 0.8)
+```
+
+### Decorator-based tracking
+
+Wrap high-level functions with `@radar.track` to automatically record usage and
+forward any ROI deltas to the radar. The decorator inspects return values and
+``impact``/``roi_delta`` arguments to attribute output impact.
+
+```python
+from relevancy_radar import radar
+
+@radar.track
+def run_cycle() -> float:
+    # ... perform work and return ROI delta ...
+    return 1.2
 ```
 
 ### Example flows

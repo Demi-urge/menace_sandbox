@@ -20,9 +20,10 @@ def test_map_module_identifier_records_output_impact(tmp_path, monkeypatch):
 
     # Use isolated radar instance for module level helpers
     monkeypatch.setattr(rr, "_get_default_radar", lambda: radar)
+    monkeypatch.setattr(rr, "radar", radar)
 
     record_mock = MagicMock(side_effect=radar.record_output_impact)
-    monkeypatch.setattr(rr, "record_output_impact", record_mock)
+    monkeypatch.setattr(radar, "record_output_impact", record_mock)
 
     monkeypatch.setenv("SANDBOX_ENABLE_RELEVANCY_RADAR", "1")
 
