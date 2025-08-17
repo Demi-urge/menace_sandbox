@@ -12,7 +12,7 @@ heavy modules.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable, TypeVar
+from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable, TypeVar, Union
 import functools
 import logging
 import time
@@ -32,11 +32,6 @@ try:
     from vector_metrics_db import VectorMetricsDB  # type: ignore
 except Exception:  # pragma: no cover
     VectorMetricsDB = None  # type: ignore
-
-try:
-    from data_bot import MetricsDB  # type: ignore
-except Exception:  # pragma: no cover
-    MetricsDB = None  # type: ignore
 
 try:
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
@@ -61,7 +56,7 @@ class RateLimitError(VectorServiceError):
     """Raised when the underlying service rate limits requests."""
 
 
-class MalformedPromptError(ValueError):
+class MalformedPromptError(VectorServiceError):
     """Raised when input prompts are malformed or empty."""
 
 
@@ -183,16 +178,27 @@ class Retriever:
                 continue
         return results
 
-    def _retrieve(self, retriever: UniversalRetriever, query: str, k: int) -> List[Dict[str, Any]]:
+    def _retrieve(
+        self,
+        retriever: UniversalRetriever,
+        query: str,
+        k: int,
+        include_confidence: bool,
+    ) -> Tuple[List[Dict[str, Any]], float]:
         try:
-            hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
+            if include_confidence and hasattr(retriever, "retrieve_with_confidence"):
+                hits, _, _ = retriever.retrieve_with_confidence(query, top_k=k)  # type: ignore[arg-type]
+            else:
+                hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
         except Exception as exc:
             msg = str(exc).lower()
             if "rate limit" in msg or "too many requests" in msg or "429" in msg:
                 raise RateLimitError(str(exc)) from exc
-        
+
             raise VectorServiceError(str(exc)) from exc
-        return self._normalise(hits)
+        normalised = self._normalise(hits)
+        top_score = normalised[0]["score"] if normalised else 0.0
+        return normalised, top_score
 
     @log_and_time
     @track_metrics
@@ -203,13 +209,15 @@ class Retriever:
         top_k: int | None = None,
         session_id: str = "",
         min_score: float | None = None,
-    ) -> List[Dict[str, Any]]:
-        """Perform semantic search and return normalised results.
+        include_confidence: bool = False,
+    ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], float]]:
+        """Perform semantic search and optionally return a confidence score.
 
         The method performs a primary retrieval.  When no hits are returned or the
         best score falls below ``min_score`` (or ``score_threshold``) a secondary
         retrieval strategy is attempted using ``fallback_retriever`` when
-        provided.
+        provided.  When ``include_confidence`` is true the highest score of the
+        selected results is returned alongside the hits.
         """
 
         if not isinstance(query, str) or not query.strip():
@@ -218,16 +226,17 @@ class Retriever:
         k = top_k or self.top_k
         threshold = self.score_threshold if min_score is None else min_score
         retriever = self._get_retriever()
-        results = self._retrieve(retriever, query, k)
-        top_score = results[0]["score"] if results else 0.0
+        results, top_score = self._retrieve(retriever, query, k, include_confidence)
         if (not results or top_score < threshold) and self._get_fallback() is not None:
             fb = self._get_fallback()
             assert fb is not None
-            fb_results = self._retrieve(fb, query, k)
+            fb_results, fb_score = self._retrieve(fb, query, k, include_confidence)
             if fb_results:
                 for r in fb_results:
                     r.setdefault("reason", "fallback")
-                results = fb_results
+                results, top_score = fb_results, fb_score
+        if include_confidence:
+            return results, top_score
         return results
 
 
@@ -261,9 +270,8 @@ class ContextBuilder:
 
 @dataclass
 class PatchLogger:
-    """Record patch outcomes in metrics databases."""
+    """Record patch outcomes in :class:`VectorMetricsDB`."""
 
-    metrics_db: MetricsDB | None = None
     vector_metrics: VectorMetricsDB | None = None
 
     def _parse_vectors(self, ids: Iterable[str]) -> List[Tuple[str, str]]:
@@ -276,6 +284,13 @@ class PatchLogger:
             pairs.append((db, vec))
         return pairs
 
+    def _get_db(self) -> VectorMetricsDB:
+        if self.vector_metrics is None:
+            if VectorMetricsDB is None:  # pragma: no cover - defensive
+                raise VectorServiceError("VectorMetricsDB unavailable")
+            self.vector_metrics = VectorMetricsDB()
+        return self.vector_metrics
+
     @log_and_time
     @track_metrics
     def track_contributors(
@@ -286,26 +301,21 @@ class PatchLogger:
         patch_id: str = "",
         session_id: str = "",
     ) -> None:
+        if not all(isinstance(v, str) for v in vector_ids):
+            raise MalformedPromptError("vector_ids must be a sequence of strings")
+        db = self._get_db()
         pairs = self._parse_vectors(vector_ids)
-        if self.metrics_db is not None:
-            try:  # pragma: no cover - best effort
-                self.metrics_db.log_patch_outcome(
-                    patch_id or "", result, pairs, session_id=session_id
-                )
-            except Exception:
-                pass
-        elif self.vector_metrics is not None:
-            try:  # pragma: no cover - best effort
-                self.vector_metrics.update_outcome(
-                    session_id,
-                    pairs,
-                    contribution=0.0,
-                    patch_id=patch_id,
-                    win=result,
-                    regret=not result,
-                )
-            except Exception:
-                pass
+        try:
+            db.update_outcome(
+                session_id,
+                pairs,
+                contribution=0.0,
+                patch_id=patch_id,
+                win=result,
+                regret=not result,
+            )
+        except Exception as exc:  # pragma: no cover - best effort
+            raise VectorServiceError(str(exc)) from exc
 
 
 class EmbeddingBackfill:
