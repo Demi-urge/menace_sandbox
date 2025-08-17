@@ -6513,6 +6513,20 @@ def auto_include_modules(
     except Exception:  # pragma: no cover - fallback import
         import metrics_exporter as _me  # type: ignore
 
+    # Retrieve modules flagged by relevancy radar and track retire candidates
+    retired_flags: set[str] = set()
+    try:  # pragma: no cover - optional dependency
+        from relevancy_radar import flagged_modules as _rr_flagged
+
+        for _mod, _flag in _rr_flagged().items():
+            if _flag == "retire":
+                rel = _mod.replace(".", "/")
+                if not rel.endswith(".py"):
+                    rel += ".py"
+                retired_flags.add(Path(rel).as_posix())
+    except Exception:
+        pass
+
     mod_paths = {Path(m).as_posix() for m in modules}
     isolated_mods: set[str] = set()
 
@@ -6633,6 +6647,14 @@ def auto_include_modules(
                     pass
         except Exception:
             pass
+
+    if retired_flags:
+        retired_present = sorted(retired_flags.intersection(mod_paths))
+        if retired_present:
+            for m in retired_present:
+                logger.info("skipping %s due to retirement flag", m)
+            mod_paths.difference_update(retired_present)
+            candidate_paths.difference_update(retired_present)
 
     new_paths = set(mod_paths) - candidate_paths
     derived_mods = set(mod_paths)
