@@ -21,6 +21,27 @@ Persisting cycle data across runs is possible by providing `state_path` when cre
 
 Each engine may use its own databases, event bus and automation pipeline allowing multiple bots to improve in parallel.
 
+## Usage Notes
+
+Invoke `run_cycle()` to process a single improvement step or register the engine
+with `ImprovementEngineRegistry` and call `run_all_cycles()` to iterate over all
+registered bots.  Provide `state_path` to persist ROI history between runs and
+set environment variables like `SANDBOX_ENV_PRESETS` when running inside the
+sandbox to reuse scenario presets.
+
+## Algorithm Details
+
+`SelfImprovementEngine` orchestrates a short loop during each cycle:
+
+1. inspect recent metrics to decide whether the bot should evolve;
+2. optionally apply helper patches through `SelfCodingEngine`;
+3. execute the supplied `ModelAutomationPipeline` to retrain and evaluate the
+   model;
+4. record ROI deltas, update the exponential moving average and write state to
+   disk;
+5. consult `_SandboxMetaLogger` to flag modules that hit entropy ceilings or
+   exhibit diminishing returns.
+
 ## Alignment flagger integration
 
 After applying a commit the engine invokes `HumanAlignmentFlagger` on the latest

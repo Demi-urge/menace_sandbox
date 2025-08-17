@@ -8,6 +8,33 @@ The sandbox uses the existing repository defined by `SANDBOX_REPO_PATH`. This is
 expected to be a checkout of `https://github.com/Demi-urge/menace_sandbox` and
 is modified and evaluated directly.
 
+## Usage Notes
+
+Run the runner against the current repository by setting `SANDBOX_REPO_PATH`
+and specifying how many cycles to execute:
+
+```bash
+SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
+```
+
+Use `--preset-file` or the `SANDBOX_ENV_PRESETS` environment variable to supply
+scenario presets. When omitted the runner generates a small set of defaults.
+
+## Algorithm Overview
+
+Each cycle proceeds through a consistent set of stages:
+
+1. load or generate environment presets;
+2. execute the target modules inside an isolated copy of the repository or a
+   container/VM for full-environment mode;
+3. collect ROI and entropy deltas for every module;
+4. persist metrics via `_SandboxMetaLogger`, which also detects entropy ceilings
+   and diminishing returns;
+5. rank modules and terminate once all sections are flagged.
+
+This high level flow mirrors production behaviour while keeping runs
+self-contained and reproducible.
+
 ## GPT Memory Persistence
 
 `sandbox_runner` and associated bots can persist previous GPT interactions using
