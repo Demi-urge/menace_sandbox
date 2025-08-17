@@ -166,7 +166,7 @@ class DatabaseRouter:
         self.cache_enabled = cache_seconds > 0
         self._cache: Dict[tuple, tuple[float, Any]] = {}
         self._query_encoder = _QueryEncoder()
-        self._retriever = retriever or Retriever()
+        self._retriever = retriever
 
         env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))
         env_redundancy = int(os.getenv("DB_REDUNDANCY_LIMIT", "1"))
