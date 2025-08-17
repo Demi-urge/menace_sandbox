@@ -71,3 +71,27 @@ Metrics emitted by `EmbeddingBackfill.run`:
   backfill runs.
 - `embedding_backfill_run_duration_seconds` – duration of each run in seconds.
 
+## HTTP API configuration
+
+The accompanying `vector_service_api` module exposes these helpers through a
+FastAPI application.  Basic authentication and rate limiting can be configured
+via environment variables:
+
+- `VECTOR_SERVICE_API_TOKEN` – if set, clients must supply the same value in the
+  `X-API-Token` header (or `token` query parameter).
+- `VECTOR_SERVICE_RATE_LIMIT` – maximum number of requests allowed per
+  `VECTOR_SERVICE_RATE_WINDOW` seconds for each API token or source IP.  Both
+  variables default to `60` seconds and `60` requests respectively.
+
+Example usage:
+
+```bash
+export VECTOR_SERVICE_API_TOKEN="secret"
+export VECTOR_SERVICE_RATE_LIMIT=30
+uvicorn vector_service_api:app
+
+# Authenticated request
+curl -H "X-API-Token: secret" -d '{"query": "upload failed"}' \
+    http://localhost:8000/search
+```
+
