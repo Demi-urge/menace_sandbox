@@ -32,8 +32,35 @@ sys.modules.setdefault("menace.safety_monitor", types.SimpleNamespace(SafetyMoni
 sys.modules.setdefault("menace.advanced_error_management", types.SimpleNamespace(FormalVerifier=object))
 sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 sys.modules.setdefault(
-    "menace.gpt_memory", types.SimpleNamespace(GPTMemoryManager=object)
+    "menace.gpt_memory",
+    types.SimpleNamespace(
+        GPTMemoryManager=object,
+        STANDARD_TAGS=[],
+        INSIGHT="insight",
+        _summarise_text=lambda *a, **k: "",
+    ),
 )
+sys.modules.setdefault(
+    "menace.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace.shared_knowledge_module",
+    types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None),
+)
+sys.modules.setdefault(
+    "menace.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=object, init_local_knowledge=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
+)
+for name in [
+    "shared_gpt_memory",
+    "shared_knowledge_module",
+    "local_knowledge_module",
+    "gpt_knowledge_service",
+]:
+    sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 sys.modules.setdefault("menace.rollback_manager", types.SimpleNamespace(RollbackManager=object))
 sys.modules.setdefault("menace.audit_trail", types.SimpleNamespace(AuditTrail=lambda *a, **k: object()))
 sys.modules.setdefault(
@@ -66,7 +93,7 @@ for name in [
 ]:
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
-from menace.context_builder import ContextBuilder
+from menace.vector_service import ContextBuilder
 from menace.self_coding_engine import SelfCodingEngine
 from menace.bot_development_bot import BotDevelopmentBot, BotSpec
 from universal_retriever import ResultBundle
@@ -133,7 +160,7 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
         {"id": 201, "summary": "tweak", "roi": 1},
         {"id": 200, "summary": "fix", "roi": 9},
     ]
-    import menace.context_builder as cb_mod
+    import menace.vector_service.context_builder as cb_mod
     monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
 
     builder = ContextBuilder(
@@ -200,7 +227,7 @@ def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
 
 
 def test_weighted_ordering(monkeypatch):
-    import menace.context_builder as cb_mod
+    import menace.vector_service.context_builder as cb_mod
 
     monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
 

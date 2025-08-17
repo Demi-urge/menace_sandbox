@@ -421,7 +421,7 @@ class SelfCodingEngine:
         retrieval_context = ""
         if builder is not None:
             try:
-                retrieval_context = builder.build(description)
+                retrieval_context = builder.build_context(description)
                 if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
                     retrieval_context = ""
                 elif not isinstance(retrieval_context, str):

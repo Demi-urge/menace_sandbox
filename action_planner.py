@@ -458,7 +458,7 @@ class ActionPlanner:
         ctx: Dict[str, Any] = {}
         if self.context_builder:
             try:
-                result = self.context_builder.build(current)
+                result = self.context_builder.build_context(current)
                 if isinstance(result, (ErrorResult, FallbackResult)):
                     ctx = {}
                 else:
