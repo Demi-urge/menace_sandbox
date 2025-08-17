@@ -1324,6 +1324,12 @@ to publish metrics that Grafana can chart in real time. The dashboard examples i
 resource usage and latency statistics like the new median latency gauge over
 time.
 
+### Maintenance tooling
+Automated module maintenance is handled by the relevancy radar suite. See
+[docs/relevancy_radar.md](docs/relevancy_radar.md) for how the radar,
+background service and retirement service collaborate on retirement,
+compression and replacement actions.
+
 ### Relevancy radar overrides
 The relevancy radar tracks how often each module is exercised during runs.
 Tune its sensitivity by setting environment variables or values in
