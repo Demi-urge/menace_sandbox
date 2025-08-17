@@ -1666,6 +1666,7 @@ def main(argv: List[str] | None = None) -> None:
                 )
         relevancy_radar = RelevancyRadarService(_pkg_dir, int(radar_interval))
         relevancy_radar.start()
+        atexit.register(relevancy_radar.stop)
         cleanup_funcs.append(relevancy_radar.stop)
 
     module_history: dict[str, list[float]] = {}
