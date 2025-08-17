@@ -40,7 +40,7 @@ class RelevancyRadarService:
             from .module_graph_analyzer import build_import_graph
             from .relevancy_radar import load_usage_stats
             from .relevancy_metrics_db import RelevancyMetricsDB
-            from .metrics_exporter import update_relevancy_metrics
+            from .metrics_exporter import update_relevancy_metrics, relevancy_flags_total
 
             try:
                 from .sandbox_settings import SandboxSettings
@@ -96,6 +96,15 @@ class RelevancyRadarService:
 
             self.latest_flags = flags
             update_relevancy_metrics(flags)
+
+            from collections import Counter
+
+            counts = Counter(flags.values())
+            for action in ("retire", "compress", "replace"):
+                if counts.get(action):
+                    relevancy_flags_total.labels(action=action).inc(
+                        float(counts[action])
+                    )
             if flags:
                 if self._retirement_service is None:
                     from .module_retirement_service import ModuleRetirementService

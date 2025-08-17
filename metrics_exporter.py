@@ -301,6 +301,13 @@ irrelevant_modules_total = Gauge(
     "Number of modules flagged as irrelevant by relevancy radar",
 )
 
+# Gauge tracking total flags produced across scans
+relevancy_flags_total = Gauge(
+    "relevancy_flags_total",
+    "Total number of relevancy flags produced",
+    ["action"],
+)
+
 # Gauges tracking module retirement outcomes
 retired_modules_total = Gauge(
     "retired_modules_total",

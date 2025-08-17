@@ -14,22 +14,38 @@ import menace_sandbox.relevancy_radar_service as relevancy_radar_service
 
 
 def test_service_scan_updates_flags(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
     captured = {}
 
-    def fake_update(flags):
-        captured["flags"] = flags
+    monkeypatch.setattr(
+        metrics_exporter, "update_relevancy_metrics", lambda flags: captured.update(flags=flags)
+    )
 
-    monkeypatch.setattr(relevancy_radar, "update_relevancy_metrics", fake_update)
+    class DummyGraph:
+        nodes = ["demo"]
 
-    def fake_flag_unused_modules(mods, impact_stats=None):
-        flags = {m: "retire" for m in mods}
-        relevancy_radar.update_relevancy_metrics(flags)
-        return flags
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {"demo": "retire"}
 
     monkeypatch.setattr(
         relevancy_radar.RelevancyRadar,
-        "flag_unused_modules",
-        staticmethod(fake_flag_unused_modules),
+        "evaluate_final_contribution",
+        fake_eval,
     )
 
     class DummyRetirementService:
@@ -47,7 +63,6 @@ def test_service_scan_updates_flags(monkeypatch, tmp_path):
     )
 
     service = relevancy_radar_service.RelevancyRadarService(tmp_path, interval=0)
-    monkeypatch.setattr(service, "_modules", lambda: ["demo"])
 
     service._scan_once()
 
@@ -77,13 +92,31 @@ def test_start_runs_initial_scan(monkeypatch, tmp_path):
 def test_start_populates_latest_flags(monkeypatch, tmp_path):
     """start() triggers an immediate scan that updates latest_flags."""
 
-    def fake_flag_unused(mods, impact_stats=None):
-        return {m: "retire" for m in mods}
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    class DummyGraph:
+        nodes = ["sample"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {"sample": "retire"}
 
     monkeypatch.setattr(
         relevancy_radar.RelevancyRadar,
-        "flag_unused_modules",
-        staticmethod(fake_flag_unused),
+        "evaluate_final_contribution",
+        fake_eval,
     )
 
     class DummyRetirementService:
@@ -98,7 +131,6 @@ def test_start_populates_latest_flags(monkeypatch, tmp_path):
     )
 
     service = relevancy_radar_service.RelevancyRadarService(tmp_path)
-    monkeypatch.setattr(service, "_modules", lambda: ["sample"])
 
     service.start()
     service.stop()
@@ -181,3 +213,63 @@ def test_dependency_chain_not_flagged(monkeypatch, tmp_path):
     # isolated and should be marked for retirement.
     assert service.flags() == {"loner": "retire"}
     assert "helper" not in service.flags()
+
+
+def test_metrics_increment_on_flags(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    # Reset gauge values
+    for action in ["retire", "compress", "replace"]:
+        metrics_exporter.relevancy_flags_total.labels(action=action).set(0)
+
+    class DummyGraph:
+        nodes = ["a", "b", "c"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {"a": "retire", "b": "compress", "c": "replace"}
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "evaluate_final_contribution",
+        fake_eval,
+    )
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    service._scan_once()
+
+    def gauge_value(action: str) -> float:
+        child = metrics_exporter.relevancy_flags_total.labels(action=action)
+        getter = getattr(child, "get", None)
+        if getter:
+            return getter()
+        return child._value.get()  # type: ignore[attr-defined]
+
+    assert gauge_value("retire") == 1.0
+    assert gauge_value("compress") == 1.0
+    assert gauge_value("replace") == 1.0
