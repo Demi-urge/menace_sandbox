@@ -18,6 +18,24 @@ resulting cleanup.
   are archived, low‑value modules are compressed via the quick fix engine and
   replaceable modules receive a generated patch proposal.
 
+### Recording Output Impact
+
+Use `map_module_identifier` with an ROI delta to register how much a module
+changed the run's return on investment. When that module influences the final
+output, call `record_output_impact` so the radar can attribute the delta.
+
+```python
+from pathlib import Path
+from sandbox_runner.cycle import map_module_identifier
+from relevancy_radar import record_output_impact
+
+repo = Path("/workspace/menace_sandbox")
+module_id = map_module_identifier("analytics/stats.py", repo, 0.8)
+
+# when analytics/stats contributes to the result
+record_output_impact(module_id, 0.8)
+```
+
 ### Example flows
 
 **Retirement**
