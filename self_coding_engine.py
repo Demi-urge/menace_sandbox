@@ -59,9 +59,12 @@ from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
 
 try:  # pragma: no cover - optional dependency
-    from .context_builder import ContextBuilder
+    from vector_service import ContextBuilder, ErrorResult
 except Exception:  # pragma: no cover - defensive fallback
     ContextBuilder = None  # type: ignore
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when vector service is unavailable."""
+        pass
 from semantic_service import PatchLogger
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
@@ -400,8 +403,10 @@ class SelfCodingEngine:
         retrieval_context = ""
         if builder is not None:
             try:
-                retrieval_context = builder.build_context(description)
-                if not isinstance(retrieval_context, str):
+                retrieval_context = builder.build(description)
+                if isinstance(retrieval_context, ErrorResult):
+                    retrieval_context = ""
+                elif not isinstance(retrieval_context, str):
                     retrieval_context = json.dumps(retrieval_context)
             except Exception:
                 retrieval_context = ""

@@ -35,7 +35,13 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
-from .context_builder import ContextBuilder
+from vector_service import ContextBuilder
+try:  # pragma: no cover - allow missing dependency
+    from vector_service import ErrorResult
+except Exception:  # pragma: no cover - compatibility fallback
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when vector service is unavailable."""
+        pass
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog
@@ -958,7 +964,9 @@ class BotDevelopmentBot:
         if builder is not None:
             try:
                 query = spec.description or spec.purpose or spec.name
-                retrieval_context = builder.build_context(query)
+                retrieval_context = builder.build(query)
+                if isinstance(retrieval_context, ErrorResult):
+                    retrieval_context = ""
             except Exception:
                 retrieval_context = ""
 

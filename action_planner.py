@@ -32,7 +32,13 @@ from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
-from semantic_service import ContextBuilder
+from vector_service import ContextBuilder
+try:  # pragma: no cover - allow missing dependency
+    from vector_service import ErrorResult
+except Exception:  # pragma: no cover - compatibility fallback
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when vector service is unavailable."""
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +179,11 @@ class ActionPlanner:
                 }
         self.growth_multipliers = growth_multipliers
         self.priority_weights: Dict[str, float] = {}
+        if context_builder is None:
+            try:
+                context_builder = ContextBuilder()
+            except Exception:  # pragma: no cover - optional dependency
+                context_builder = None
         self.context_builder = context_builder
         if self.event_bus:
             try:
@@ -446,7 +457,11 @@ class ActionPlanner:
         ctx: Dict[str, Any] = {}
         if self.context_builder:
             try:
-                ctx = json.loads(self.context_builder.build_context(current))
+                result = self.context_builder.build(current)
+                if isinstance(result, ErrorResult):
+                    ctx = {}
+                else:
+                    ctx = json.loads(result)
             except Exception:
                 ctx = {}
         scored: list[tuple[str, float, float, str]] = []
