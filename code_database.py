@@ -1166,6 +1166,56 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
+    # ------------------------------------------------------------------
+    def list_patches(self, limit: int | None = None) -> List[tuple[int, PatchRecord]]:
+        """Return ``(id, PatchRecord)`` tuples for recent patches."""
+
+        def op(conn: sqlite3.Connection) -> List[tuple[int, PatchRecord]]:
+            base = (
+                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, "
+                "roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, "
+                "predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history ORDER BY id DESC"
+            )
+            rows = conn.execute(base + (" LIMIT ?" if limit is not None else ""),
+                                 (() if limit is None else (limit,))).fetchall()
+            return [(row[0], PatchRecord(*row[1:])) for row in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    # ------------------------------------------------------------------
+    def search_with_ids(self, term: str) -> List[tuple[int, PatchRecord]]:
+        """Search patches and include their IDs."""
+        pattern = f"%{term}%"
+
+        def op(conn: sqlite3.Connection) -> List[tuple[int, PatchRecord]]:
+            rows = conn.execute(
+                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
+                (pattern, pattern),
+            ).fetchall()
+            return [(row[0], PatchRecord(*row[1:])) for row in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    # ------------------------------------------------------------------
+    def find_by_vector(self, vector: str) -> List[tuple[int, PatchRecord]]:
+        """Return patches that include ``vector`` in their provenance."""
+
+        def op(conn: sqlite3.Connection) -> List[tuple[int, PatchRecord]]:
+            if ":" in vector:
+                origin, vid = vector.split(":", 1)
+                rows = conn.execute(
+                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.origin=? AND p.vector_id=?",
+                    (origin, vid),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT h.id, h.filename, h.description, h.roi_before, h.roi_after, h.errors_before, h.errors_after, h.roi_delta, h.complexity_before, h.complexity_after, h.complexity_delta, h.entropy_before, h.entropy_after, h.entropy_delta, h.predicted_roi, h.predicted_errors, h.reverted, h.trending_topic, h.ts, h.code_id, h.code_hash, h.source_bot, h.version, h.parent_patch_id, h.reason, h.trigger FROM patch_provenance p JOIN patch_history h ON h.id=p.patch_id WHERE p.vector_id=?",
+                    (vector,),
+                ).fetchall()
+            return [(row[0], PatchRecord(*row[1:])) for row in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
     def store_weights(
         self, weights: tuple[float, float, float, float, float, float]
     ) -> None:
