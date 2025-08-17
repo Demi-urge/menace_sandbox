@@ -111,13 +111,13 @@ class RelevancyRadarService:
 
             for mod in module_names:
                 count = int(usage_stats.get(mod, 0))
+                prev = existing_metrics.get(mod, {})
                 info = {
                     "imports": count,
                     "executions": count,
-                    "impact": float(roi_deltas.get(mod, 0.0)),
-                    "output_impact": float(
-                        existing_metrics.get(mod, {}).get("output_impact", 0.0)
-                    ),
+                    "impact": float(prev.get("impact", 0.0))
+                    + float(roi_deltas.get(mod, 0.0)),
+                    "output_impact": float(prev.get("output_impact", 0.0)),
                 }
                 radar._metrics[mod] = info
 

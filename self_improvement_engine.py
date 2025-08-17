@@ -123,6 +123,10 @@ try:  # pragma: no cover - allow flat imports
     from .module_retirement_service import ModuleRetirementService
 except Exception:  # pragma: no cover - fallback for flat layout
     from module_retirement_service import ModuleRetirementService  # type: ignore
+try:  # pragma: no cover - allow flat imports
+    from .relevancy_metrics_db import RelevancyMetricsDB
+except Exception:  # pragma: no cover - fallback for flat layout
+    from relevancy_metrics_db import RelevancyMetricsDB  # type: ignore
 try:  # pragma: no cover - optional dependency
     from sandbox_runner.orphan_discovery import append_orphan_classifications
 except Exception:  # pragma: no cover - best effort fallback
@@ -698,6 +702,12 @@ class SelfImprovementEngine:
         self.optimize_self_flag = optimize_self
         self.meta_logger = meta_logger
         self.metrics_db = getattr(meta_logger, "metrics_db", None) if meta_logger else None
+        if self.metrics_db is None:
+            try:
+                data_dir = Path(os.getenv("SANDBOX_DATA_DIR", "sandbox_data"))
+                self.metrics_db = RelevancyMetricsDB(data_dir / "relevancy_metrics.db")
+            except Exception:
+                self.metrics_db = None
         self.auto_refresh_map = bool(auto_refresh_map)
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
@@ -2592,11 +2602,17 @@ class SelfImprovementEngine:
                     return None, False, 0.0
 
             with tempfile.TemporaryDirectory() as before_dir, tempfile.TemporaryDirectory() as after_dir:
-                src = Path(__file__)
+                repo = Path(os.getenv("SANDBOX_REPO_PATH", ".")).resolve()
+                src = Path(__file__).resolve()
+                try:
+                    module_rel = src.relative_to(repo).as_posix()
+                except Exception:
+                    module_rel = src.name
                 rel = src.name
                 before_target = Path(before_dir) / rel
                 before_target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, before_target)
+                start_time = time.perf_counter()
                 patch_id, reverted, delta = self.self_coding_engine.apply_patch(
                     Path(__file__),
                     "self_improvement",
@@ -2644,16 +2660,24 @@ class SelfImprovementEngine:
                 self._flag_patch_alignment(
                     patch_id, {"trigger": "optimize_self", "patch_id": patch_id}
                 )
+            roi_delta = after_metric - before_metric
             if tracker:
                 try:
                     tracker.update(
                         before_metric,
                         after_metric,
+                        modules=[module_rel],
                         category=growth,
                         confidence=confidence,
                     )
                 except Exception:
                     self.logger.exception("roi tracker update failed")
+            if self.metrics_db:
+                try:
+                    elapsed = time.perf_counter() - start_time
+                    self.metrics_db.record(module_rel, elapsed, roi_delta=roi_delta)
+                except Exception:
+                    self.logger.exception("relevancy metrics record failed")
             if predictor and use_adaptive:
                 self._log_action(
                     "self_optimize", bot_name, roi_est, growth, confidence
@@ -4938,8 +4962,10 @@ class SelfImprovementEngine:
                         "applying helper patch",
                         extra=log_record(trending_topic=trending_topic),
                     )
+                    mod_path = Path("auto_helpers.py")
+                    start_patch = time.perf_counter()
                     patch_id, reverted, delta = self.self_coding_engine.apply_patch(
-                        Path("auto_helpers.py"),
+                        mod_path,
                         "helper",
                         trending_topic=trending_topic,
                         parent_patch_id=self._last_patch_id,
@@ -4981,6 +5007,27 @@ class SelfImprovementEngine:
                             patch_id,
                             {"trigger": "automation_cycle", "patch_id": patch_id},
                         )
+                    roi_delta = after_metric - before_metric
+                    tracker = getattr(self, "roi_tracker", None)
+                    if tracker:
+                        try:
+                            tracker.update(
+                                before_metric,
+                                after_metric,
+                                modules=[mod_path.as_posix()],
+                            )
+                        except Exception:
+                            self.logger.exception("roi tracker update failed")
+                    if self.metrics_db:
+                        try:
+                            elapsed = time.perf_counter() - start_patch
+                            self.metrics_db.record(
+                                mod_path.as_posix(),
+                                elapsed,
+                                roi_delta=roi_delta,
+                            )
+                        except Exception:
+                            self.logger.exception("relevancy metrics record failed")
                     if self.policy:
                         try:
                             self.logger.info(
