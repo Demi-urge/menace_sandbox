@@ -35,6 +35,9 @@
   usage and bot deployment) with optional relation-based boosting.
 - Service layer wrappers in `semantic_service` expose `Retriever`, `ContextBuilder`, `PatchLogger` and `EmbeddingBackfill`
   with structured logging and metrics ([docs/semantic_service.md](docs/semantic_service.md)).
+- Examples and metrics/logging conventions for these APIs are in
+  [docs/vector_service.md](docs/vector_service.md) for remote agents and
+  development tooling.
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
   bot, workflow and code records for code-generation modules. Enable it in the
   self-improving sandbox by passing `context_builder=ContextBuilder()` to
