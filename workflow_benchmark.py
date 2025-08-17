@@ -245,7 +245,7 @@ def benchmark_registered_workflows(
                 if metric == "success":
                     success = val
 
-            _, _, stop = tracker.update(prev_success, success, modules=[name], metrics=metrics)
+            _, _, stop, _ = tracker.update(prev_success, success, modules=[name], metrics=metrics)
             # early stop when improvement is negligible or success rate stagnates
             if abs(success - prev_success) <= tracker.diminishing() and abs(metrics.get("latency_median", metrics.get("latency", 0.0)) - prev_lat) <= tracker.diminishing():
                 stop = True
