@@ -1,21 +1,16 @@
-from __future__ import annotations
+"""Compatibility wrappers for :mod:`vector_service.exceptions`.
 
+Import exceptions from :mod:`vector_service` instead. This module will be
+removed once all consumers migrate.
+"""
 
-class SemanticServiceError(RuntimeError):
-    """Base class for errors raised by :mod:`semantic_service`."""
-
-
-class VectorServiceError(SemanticServiceError):
-    """Base exception for vector service failures."""
-
-
-class RateLimitError(VectorServiceError):
-    """Raised when the underlying service rate limits requests."""
-
-
-class MalformedPromptError(SemanticServiceError, ValueError):
-    """Raised when input prompts are malformed or empty."""
-
+import warnings
+from vector_service.exceptions import (
+    SemanticServiceError,
+    VectorServiceError,
+    RateLimitError,
+    MalformedPromptError,
+)
 
 __all__ = [
     "SemanticServiceError",
@@ -23,3 +18,9 @@ __all__ = [
     "RateLimitError",
     "MalformedPromptError",
 ]
+
+warnings.warn(
+    "`semantic_service.exceptions` is deprecated; use `vector_service.exceptions`",
+    DeprecationWarning,
+    stacklevel=2,
+)

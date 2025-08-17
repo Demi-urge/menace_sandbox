@@ -1,91 +1,34 @@
-from __future__ import annotations
+"""Compatibility wrappers for :mod:`vector_service.decorators`.
 
-import functools
-import time
-from typing import Any, Callable, TypeVar
+Re-export decorators and metric gauges from :mod:`vector_service` with
+warnings. Attribute assignments also propagate to the underlying module so
+monkeypatching works as expected. This module will be removed once callers
+switch to ``vector_service``.
+"""
 
-import logging
+import warnings
+import sys
+import types
+import vector_service.decorators as _dec
 
-try:  # pragma: no cover - optional dependency not critical for tests
-    from .. import metrics_exporter as _me  # type: ignore
-except Exception:  # pragma: no cover - fallback when running as script
-    import metrics_exporter as _me  # type: ignore
+class _Proxy(types.ModuleType):
+    def __setattr__(self, name, value):  # pragma: no cover - simple forwarding
+        setattr(_dec, name, value)
+        super().__setattr__(name, value)
 
-F = TypeVar("F", bound=Callable[..., Any])
-
-# Gauges for tracking basic metrics per function
-_CALL_COUNT = _me.Gauge(
-    "semantic_service_calls_total", "Number of times a function is invoked", ["function"],
-)
-_LATENCY_GAUGE = _me.Gauge(
-    "semantic_service_latency_seconds", "Execution time of functions", ["function"],
-)
-_RESULT_SIZE_GAUGE = _me.Gauge(
-    "semantic_service_result_size", "Size of results returned by functions", ["function"],
-)
-
-
-def _result_size(result: Any) -> int:
-    if hasattr(result, "__len__"):
-        try:
-            return len(result)  # type: ignore[arg-type]
-        except Exception:
-            return 0
-    return 0
-
-
-def log_and_measure(func: F) -> F:
-    """Log start/end timestamps and emit metrics for ``func``."""
-
-    logger = logging.getLogger(func.__module__)
-    name = func.__qualname__
-
-    @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        session_id = kwargs.get("session_id", "")
-        start = time.time()
-        logger.info("%s start", name, extra={"session_id": session_id, "timestamp": start})
-        try:
-            result = func(*args, **kwargs)
-        except Exception:
-            end = time.time()
-            latency = end - start
-            _CALL_COUNT.labels(name).inc()
-            _LATENCY_GAUGE.labels(name).set(latency)
-            logger.exception(
-                "%s error", name,
-                extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": 0},
-            )
-            raise
-
-        end = time.time()
-        latency = end - start
-        size = _result_size(result)
-        _CALL_COUNT.labels(name).inc()
-        _LATENCY_GAUGE.labels(name).set(latency)
-        _RESULT_SIZE_GAUGE.labels(name).set(size)
-        logger.info(
-            "%s end", name,
-            extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": size},
-        )
-        return result
-
-    return wrapper  # type: ignore[return-value]
-
-
-# ---------------------------------------------------------------------------
-# Backwards compatibility helpers
-
-def log_and_time(func: F) -> F:  # pragma: no cover - compatibility shim
-    """Alias for :func:`log_and_measure` for older call sites."""
-
-    return log_and_measure(func)
-
-
-def track_metrics(func: F) -> F:  # pragma: no cover - compatibility shim
-    """No-op wrapper retained for backwards compatibility."""
-
-    return func
-
+module = sys.modules[__name__]
+module.__class__ = _Proxy
+module.log_and_measure = _dec.log_and_measure
+module.log_and_time = _dec.log_and_time
+module.track_metrics = _dec.track_metrics
+module._CALL_COUNT = _dec._CALL_COUNT
+module._LATENCY_GAUGE = _dec._LATENCY_GAUGE
+module._RESULT_SIZE_GAUGE = _dec._RESULT_SIZE_GAUGE
 
 __all__ = ["log_and_measure", "log_and_time", "track_metrics"]
+
+warnings.warn(
+    "`semantic_service.decorators` is deprecated; use `vector_service.decorators`",
+    DeprecationWarning,
+    stacklevel=2,
+)

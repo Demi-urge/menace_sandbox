@@ -1,27 +1,29 @@
-"""Public interface for the :mod:`semantic_service` package.
+"""Deprecated thin wrappers for :mod:`vector_service`.
 
-The individual helper classes live in their own modules in order to keep the
-implementations light‑weight and to avoid importing heavy dependencies at
-startup.  This ``__init__`` simply re‑exports the commonly used classes so
-callers can rely on ``semantic_service`` as a stable facade.
+This package now simply re-exports the public interface from
+:mod:`vector_service` and emits deprecation warnings on import.
+It will be removed once all consumers migrate to ``vector_service``.
 """
 
-from .retriever import Retriever, FallbackResult
-from .context_builder import ContextBuilder
-from .patch_logger import PatchLogger
-from .embedding_backfill import EmbeddingBackfill
-from .exceptions import (
+import warnings
+from vector_service import (
+    Retriever,
+    FallbackResult,
+    ContextBuilder,
+    PatchLogger,
+    EmbeddingBackfill,
+    EmbeddableDBMixin,
     SemanticServiceError,
     VectorServiceError,
     RateLimitError,
     MalformedPromptError,
 )
 
-try:  # pragma: no cover - optional dependency used in tests
-    from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
-except Exception:  # pragma: no cover - fallback when dependency missing
-    EmbeddableDBMixin = object  # type: ignore
-
+warnings.warn(
+    "`semantic_service` is deprecated; use `vector_service` instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 __all__ = [
     "Retriever",
@@ -35,4 +37,3 @@ __all__ = [
     "RateLimitError",
     "MalformedPromptError",
 ]
-
