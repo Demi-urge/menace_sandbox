@@ -23,7 +23,7 @@ from typing import Dict, Iterable, List
 import builtins
 
 import networkx as nx
-from module_graph_analyzer import build_import_graph
+import inspect
 from metrics_exporter import update_relevancy_metrics
 from relevancy_metrics_db import RelevancyMetricsDB
 
@@ -35,6 +35,8 @@ _RELEVANCY_FLAGS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_flags.json"
 _RELEVANCY_METRICS_FILE = _BASE_DIR / "sandbox_data" / "relevancy_metrics.json"
 # Default location of the SQLite metrics store consumed by :func:`scan`.
 _RELEVANCY_METRICS_DB = _BASE_DIR / "sandbox_data" / "relevancy_metrics.db"
+# File used to persist the call graph between runs.
+_RELEVANCY_CALL_GRAPH_FILE = _BASE_DIR / "sandbox_data" / "relevancy_call_graph.json"
 
 # In-memory counter for module usage storing timestamps for each call.
 _module_usage_counter: Dict[str, List[int]] = defaultdict(list)
@@ -244,6 +246,7 @@ class RelevancyRadar:
     def __init__(self, metrics_file: Path | None = None) -> None:
         self.metrics_file = Path(metrics_file) if metrics_file else _RELEVANCY_METRICS_FILE
         self._metrics: Dict[str, Dict[str, int | float | str]] = self._load_metrics()
+        self._call_graph: Dict[str, set[str]] = self._load_call_graph()
         self._install_import_hook()
         atexit.register(self._persist_metrics)
 
@@ -272,10 +275,30 @@ class RelevancyRadar:
                 data = {}
         return data
 
+    def _load_call_graph(self) -> Dict[str, set[str]]:
+        data: Dict[str, set[str]] = {}
+        if _RELEVANCY_CALL_GRAPH_FILE.exists():
+            try:
+                with _RELEVANCY_CALL_GRAPH_FILE.open("r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict):
+                    for caller, callees in raw.items():
+                        if isinstance(callees, list):
+                            data[str(caller)] = {str(c) for c in callees}
+            except json.JSONDecodeError:
+                data = {}
+        return data
+
     def _persist_metrics(self) -> None:
         self.metrics_file.parent.mkdir(parents=True, exist_ok=True)
         with self.metrics_file.open("w", encoding="utf-8") as fh:
             json.dump(self._metrics, fh, indent=2, sort_keys=True)
+        call_graph_serialized = {
+            caller: sorted(callees) for caller, callees in self._call_graph.items()
+        }
+        _RELEVANCY_CALL_GRAPH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _RELEVANCY_CALL_GRAPH_FILE.open("w", encoding="utf-8") as fh:
+            json.dump(call_graph_serialized, fh, indent=2, sort_keys=True)
 
     def _install_import_hook(self) -> None:
         if getattr(builtins, "_relevancy_radar_original_import", None):
@@ -306,6 +329,18 @@ class RelevancyRadar:
         )
         info["executions"] += 1
         info["impact"] = float(info.get("impact", 0.0)) + float(impact)
+        try:
+            caller_frame = inspect.stack()[1]
+            caller = caller_frame.frame.f_globals.get("__name__")
+        except Exception:
+            caller = None
+        finally:
+            try:
+                del caller_frame
+            except Exception:
+                pass
+        if caller:
+            self._call_graph.setdefault(caller, set()).add(module_name)
         self._persist_metrics()
 
     def evaluate_relevance(
@@ -366,16 +401,28 @@ class RelevancyRadar:
         impact_weight: float = 1.0,
         core_modules: Iterable[str] | None = None,
     ) -> Dict[str, str]:
-        """Return dependency-aware relevancy flags for tracked modules."""
+        """Return dependency-aware relevancy flags using the recorded call graph."""
 
-        graph = build_import_graph(_BASE_DIR)
-        return self.evaluate_relevance(
-            compress_threshold,
-            replace_threshold,
-            impact_weight,
-            dep_graph=graph,
-            core_modules=core_modules,
+        results = self.evaluate_relevance(
+            compress_threshold, replace_threshold, impact_weight
         )
+
+        graph = nx.DiGraph()
+        for caller, callees in self._call_graph.items():
+            for callee in callees:
+                graph.add_edge(caller, callee)
+
+        core_modules = list(core_modules or ["menace_master", "run_autonomous"])
+        reachable: set[str] = set(core_modules)
+        for core in core_modules:
+            if core in graph:
+                reachable.update(nx.descendants(graph, core))
+
+        for mod in list(results):
+            if mod not in reachable:
+                results[mod] = "retire"
+
+        return results
 
     @staticmethod
     def flag_unused_modules(
