@@ -287,6 +287,12 @@ class DatabaseRouter:
         try:
             hits = self._retriever.search(query, top_k=top_k)
             if isinstance(hits, (FallbackResult, ErrorResult)):
+                if isinstance(hits, FallbackResult):
+                    logger.debug(
+                        "retriever returned fallback for %s: %s",
+                        query,
+                        getattr(hits, "reason", ""),
+                    )
                 return []
         except Exception as exc:
             logger.error("retrieval failed: %s", exc)

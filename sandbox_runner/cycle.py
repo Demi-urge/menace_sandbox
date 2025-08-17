@@ -1233,6 +1233,12 @@ def _sandbox_cycle_runner(
                     try:
                         hits = retriever.search(mod, top_k=1, session_id=session_id)
                         if isinstance(hits, (FallbackResult, ErrorResult)):
+                            if isinstance(hits, FallbackResult):
+                                logger.debug(
+                                    "retriever returned fallback for %s: %s",
+                                    mod,
+                                    getattr(hits, "reason", ""),
+                                )
                             hits = []
                         vectors = [
                             (h.get("origin_db", ""), str(h.get("record_id", "")))
@@ -1613,6 +1619,12 @@ def _sandbox_cycle_runner(
                     try:
                         hits = retriever.search(mod, top_k=1, session_id=session_id)
                         if isinstance(hits, (FallbackResult, ErrorResult)):
+                            if isinstance(hits, FallbackResult):
+                                logger.debug(
+                                    "retriever returned fallback for %s: %s",
+                                    mod,
+                                    getattr(hits, "reason", ""),
+                                )
                             hits = []
                         vectors = [
                             (h.get("origin_db", ""), str(h.get("record_id", "")))

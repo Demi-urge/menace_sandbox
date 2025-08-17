@@ -219,6 +219,11 @@ class ChatGPTClient:
                     try:
                         hits = retriever.search(user_prompt, top_k=5)
                         if isinstance(hits, (FallbackResult, ErrorResult)):
+                            if isinstance(hits, FallbackResult):
+                                logger.debug(
+                                    "retriever returned fallback for prompt: %s",
+                                    getattr(hits, "reason", ""),
+                                )
                             hits = []
                     except Exception:
                         hits = []
