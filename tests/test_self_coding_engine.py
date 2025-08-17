@@ -3,6 +3,22 @@ import json
 import sys
 import types
 
+# Lightweight stub for vector_service to avoid heavy imports
+vec_mod = types.ModuleType("vector_service")
+
+
+class _VSError(Exception):
+    pass
+
+
+vec_mod.ContextBuilder = object  # type: ignore[attr-defined]
+vec_mod.ErrorResult = object  # type: ignore[attr-defined]
+vec_mod.PatchLogger = object  # type: ignore[attr-defined]
+vec_mod.VectorServiceError = _VSError
+sys.modules.setdefault("vector_service", vec_mod)
+
+from vector_service import VectorServiceError
+
 sys.modules.setdefault("bot_database", types.SimpleNamespace(BotDB=object))
 sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=object))
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
@@ -31,6 +47,10 @@ primitives.serialization = serialization
 sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
 sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///:memory:"))
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+sys.modules.setdefault("run_autonomous", types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None))
+sys.modules.setdefault(
+    "menace.run_autonomous", types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None)
+)
 
 import menace.self_coding_engine as sce  # noqa: E402
 import menace.code_database as cd  # noqa: E402
@@ -205,4 +225,21 @@ def test_retrieval_context_in_prompt(tmp_path, monkeypatch):
     assert "### Retrieval context" in DummyClient.prompt
     assert json.dumps(context, indent=2) in DummyClient.prompt
     assert "def auto_test" in code
+
+
+def test_patch_logger_vector_service_error(tmp_path):
+    mem = mm.MenaceMemoryManager(tmp_path / "m.db")
+
+    class BoomLogger:
+        def track_contributors(self, *a, **k):
+            raise VectorServiceError("nope")
+
+    engine = sce.SelfCodingEngine(
+        cd.CodeDB(tmp_path / "c.db"),
+        mem,
+        patch_logger=BoomLogger(),
+    )
+
+    # Should not raise despite logger failure
+    engine._track_contributors("s", [("o", "v")], True)
 
