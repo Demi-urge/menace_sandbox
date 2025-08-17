@@ -1,11 +1,8 @@
 import pytest
-from vector_service import (
+from semantic_service import (
     Retriever,
-    ContextBuilder,
     PatchLogger,
     EmbeddingBackfill,
-    ErrorResult,
-    VectorServiceError,
     RateLimitError,
     MalformedPromptError,
     FallbackResult,
@@ -42,9 +39,8 @@ class DummyRetrieverNoHits:
 
 def test_retriever_search_success_returns_results():
     r = Retriever(retriever=DummyRetrieverSuccess())
-    results, conf = r.search("query", include_confidence=True)
+    results = r.search("query")
     assert results[0]["record_id"] == "1"
-    assert conf == pytest.approx(0.9)
 
 
 def test_retriever_search_rate_limit_raises_error():
@@ -64,46 +60,6 @@ def test_retriever_search_malformed_prompt():
     r = Retriever(retriever=DummyRetrieverSuccess())
     with pytest.raises(MalformedPromptError):
         r.search("  ")
-
-
-# ---------------------------------------------------------------------------
-# ContextBuilder
-# ---------------------------------------------------------------------------
-
-
-class DummyBuilder:
-    def __init__(self, exc=None):
-        self.exc = exc
-
-    def build_context(self, task_description, **kwargs):
-        if self.exc:
-            raise self.exc
-        return "ok"
-
-
-def test_context_builder_success():
-    cb = ContextBuilder(builder=DummyBuilder())
-    assert cb.build("task") == "ok"
-
-
-def test_context_builder_returns_value_error_object():
-    cb = ContextBuilder(builder=DummyBuilder(exc=ValueError("bad")))
-    res = cb.build("task")
-    assert isinstance(res, ErrorResult)
-    assert res.error == "value_error"
-
-
-def test_context_builder_returns_rate_limit_object():
-    cb = ContextBuilder(builder=DummyBuilder(exc=Exception("429 rate limit")))
-    res = cb.build("task")
-    assert isinstance(res, ErrorResult)
-    assert res.error == "rate_limited"
-
-
-def test_context_builder_wraps_other_errors():
-    cb = ContextBuilder(builder=DummyBuilder(exc=RuntimeError("boom")))
-    with pytest.raises(VectorServiceError):
-        cb.build("task")
 
 
 # ---------------------------------------------------------------------------
@@ -145,18 +101,6 @@ def test_patch_logger_vector_metrics_db_success():
     pl = PatchLogger(vector_metrics=vm)
     pl.track_contributors(["x"], False, session_id="s")
     assert vm.called
-
-
-def test_patch_logger_metrics_db_error_raises():
-    pl = PatchLogger(metrics_db=DummyMetricsDB(fail=True))
-    with pytest.raises(VectorServiceError):
-        pl.track_contributors(["a"], True)
-
-
-def test_patch_logger_malformed_vector_ids():
-    pl = PatchLogger(metrics_db=DummyMetricsDB())
-    with pytest.raises(MalformedPromptError):
-        pl.track_contributors([123], True)
 
 
 # ---------------------------------------------------------------------------

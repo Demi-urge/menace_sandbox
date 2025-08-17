@@ -161,6 +161,17 @@ class ContextBuilder:
         self._cache[cache_key] = context
         return context
 
+    # ------------------------------------------------------------------
+    def build(self, query: str, **kwargs: Any) -> str:
+        """Backward compatible alias for :meth:`build_context`.
+
+        Older modules invoked :meth:`build` on the service layer.  The
+        canonical interface is :meth:`build_context`; this wrapper simply
+        forwards the call so legacy imports continue to function.
+        """
+
+        return self.build_context(query, **kwargs)
+
 
 __all__ = ["ContextBuilder"]
 

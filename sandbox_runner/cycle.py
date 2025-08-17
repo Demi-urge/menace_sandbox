@@ -20,7 +20,7 @@ from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
-from vector_service import Retriever
+from semantic_service import Retriever
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
