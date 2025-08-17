@@ -20,6 +20,7 @@ if not _LIGHT_IMPORTS:
         SANDBOX_ENV_PRESETS,
         SANDBOX_STUB_STRATEGY,
     )
+    from .meta_logger import _SandboxMetaLogger
 else:  # defer heavy imports until needed
     _env_mod = None
 
@@ -58,7 +59,12 @@ else:  # defer heavy imports until needed
             "SANDBOX_ENV_PRESETS",
             "SANDBOX_STUB_STRATEGY",
             "_sandbox_cycle_runner",
+            "_SandboxMetaLogger",
         }:
+            if name == "_SandboxMetaLogger":
+                from .meta_logger import _SandboxMetaLogger as ml
+                globals()["_SandboxMetaLogger"] = ml
+                return ml
             _load_env()
             if name == "_sandbox_cycle_runner":
                 from .cycle import _sandbox_cycle_runner as cyc
@@ -110,6 +116,7 @@ __all__ = [
     "SANDBOX_ENV_PRESETS",
     "SANDBOX_STUB_STRATEGY",
     "_sandbox_cycle_runner",
+    "_SandboxMetaLogger",
     "_run_sandbox",
     "rank_scenarios",
     "main",

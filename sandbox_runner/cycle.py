@@ -623,6 +623,11 @@ def _sandbox_cycle_runner(
         cycle_start = time.perf_counter()
         # ensure orphan modules are processed before each cycle begins
         include_orphan_modules(ctx)
+        if section:
+            mapped_sec = map_module_identifier(section, ctx.repo, 0.0)
+            if mapped_sec in ctx.meta_log.flagged_sections:
+                logger.debug("section %s already complete", section)
+                break
 
         logger.debug(
             "resource tuning start",
@@ -761,9 +766,16 @@ def _sandbox_cycle_runner(
         if section:
             mods = [m for m in mods if m == section.split(":", 1)[0]]
         roi_delta = roi - ctx.prev_roi
-        mapped_mods = [
-            map_module_identifier(m, ctx.repo, roi_delta) for m in mods
+        mapped_pairs = [
+            (m, map_module_identifier(m, ctx.repo, roi_delta)) for m in mods
         ]
+        mapped_pairs = [
+            (orig, mapped)
+            for orig, mapped in mapped_pairs
+            if mapped not in ctx.meta_log.flagged_sections
+        ]
+        mods = [orig for orig, _ in mapped_pairs]
+        mapped_mods = [mapped for _, mapped in mapped_pairs]
         mapped_section = (
             map_module_identifier(section, ctx.repo, roi_delta) if section else None
         )
@@ -1057,9 +1069,11 @@ def _sandbox_cycle_runner(
             code_quality=code_quality,
         )
         name_list = [mapped_section] if section else mapped_mods
-        vertex, curve, should_stop = tracker.update(
+        vertex, curve, should_stop, entropy_ceiling = tracker.update(
             ctx.prev_roi, roi, name_list, resources, {**metrics, **scenario_metrics}
         )
+        if entropy_ceiling:
+            ctx.meta_log.flag_modules(name_list)
         last_metrics = metrics
         feat_vec = [
             roi,
@@ -1281,7 +1295,11 @@ def _sandbox_cycle_runner(
                     new_roi = res.roi.roi if res.roi else roi
                     roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo, roi_delta)
-                    tracker.update(roi, new_roi, [mapped], resources)
+                    _, _, _, entropy_ceiling = tracker.update(
+                        roi, new_roi, [mapped], resources
+                    )
+                    if entropy_ceiling:
+                        ctx.meta_log.flag_modules([mapped])
                     ctx.meta_log.log_cycle(
                         idx,
                         new_roi,
@@ -1599,7 +1617,11 @@ def _sandbox_cycle_runner(
                     new_roi = res.roi.roi if res.roi else roi
                     roi_delta = new_roi - roi
                     mapped = map_module_identifier(mod, ctx.repo, roi_delta)
-                    tracker.update(roi, new_roi, [mapped], resources)
+                    _, _, _, entropy_ceiling = tracker.update(
+                        roi, new_roi, [mapped], resources
+                    )
+                    if entropy_ceiling:
+                        ctx.meta_log.flag_modules([mapped])
                     ctx.meta_log.log_cycle(
                         idx,
                         new_roi,

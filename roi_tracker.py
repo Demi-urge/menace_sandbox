@@ -998,7 +998,7 @@ class ROITracker:
         category: str | None = None,
         confidence: float | None = None,
         retrieval_metrics: Sequence[Dict[str, Any]] | None = None,
-    ) -> Tuple[Optional[int], List[float], bool]:
+    ) -> Tuple[Optional[int], List[float], bool, bool]:
         """Record ROI delta and evaluate stopping criteria.
 
         When ``modules`` is provided, track ROI contributions per module. When
@@ -1007,6 +1007,10 @@ class ROITracker:
         recorded for later forecasting with :meth:`forecast_metric`. ``category``
         captures the predicted ROI growth classification for this iteration and
         ``confidence`` records the model's confidence in the prediction.
+
+        Returns a tuple of ``(vertex, predictions, should_stop, entropy_ceiling)``
+        where ``entropy_ceiling`` is ``True`` when the ROI gain per entropy delta
+        falls below the configured tolerance.
         """
         predicted_class = self._next_category
         if self._next_prediction is not None:
@@ -1169,9 +1173,8 @@ class ROITracker:
                 )
             except Exception:
                 logger.exception("model evaluation failed")
-        return vertex, preds, should_stop or self.entropy_ceiling(
-            self.tolerance, window=self.window
-        )
+        entropy_stop = self.entropy_ceiling(self.tolerance, window=self.window)
+        return vertex, preds, should_stop, entropy_stop
 
     # ------------------------------------------------------------------
     def forecast(self) -> Tuple[float, Tuple[float, float]]:
