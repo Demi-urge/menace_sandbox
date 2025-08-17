@@ -41,6 +41,7 @@ class _SandboxMetaLogger:
         self.audit = AuditTrail(str(path))
         self.records: list[_CycleMeta] = []
         self.module_deltas: dict[str, list[float]] = {}
+        self.module_entropy_deltas: dict[str, list[float]] = {}
         self.flagged_sections: set[str] = set()
         self.last_patch_id = 0
         self.module_index = module_index
@@ -55,6 +56,7 @@ class _SandboxMetaLogger:
         reason: str,
         warnings: dict | None = None,
         *,
+        entropy_delta: float = 0.0,
         exec_time: float = 0.0,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
@@ -72,6 +74,7 @@ class _SandboxMetaLogger:
             else:
                 gid = m
             self.module_deltas.setdefault(gid, []).append(delta)
+            self.module_entropy_deltas.setdefault(gid, []).append(entropy_delta)
             if self.metrics_db:
                 try:
                     self.metrics_db.record(
@@ -104,6 +107,34 @@ class _SandboxMetaLogger:
         totals = {m: sum(v) for m, v in self.module_deltas.items()}
         logger.debug("rankings computed: %s", totals)
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+    def ceiling(self, ratio_threshold: float, consecutive: int = 3) -> list[str]:
+        """Return modules where ROI gain per entropy delta falls below threshold."""
+
+        flags: list[str] = []
+        thr = float(ratio_threshold)
+        for m, roi_vals in self.module_deltas.items():
+            if m in self.flagged_sections:
+                continue
+            ent_vals = self.module_entropy_deltas.get(m)
+            if not ent_vals or len(roi_vals) < consecutive or len(ent_vals) < consecutive:
+                continue
+            roi_window = roi_vals[-consecutive:]
+            ent_window = ent_vals[-consecutive:]
+            ratios = [
+                abs(r) / abs(e) if e != 0 else float("inf")
+                for r, e in zip(roi_window, ent_window)
+                if e != 0
+            ]
+            if len(ratios) < consecutive:
+                continue
+            mean_ratio = sum(ratios) / len(ratios)
+            if mean_ratio < thr:
+                flags.append(m)
+                self.flagged_sections.add(m)
+        if flags:
+            logger.debug("modules hitting entropy ceiling: %s", flags)
+        return flags
 
     def diminishing(
         self,
