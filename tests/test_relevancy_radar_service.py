@@ -221,8 +221,12 @@ def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
 
     # Reset gauge values
-    for action in ["retire", "compress", "replace"]:
-        metrics_exporter.relevancy_flags_total.labels(action=action).set(0)
+    for gauge in (
+        metrics_exporter.relevancy_flags_retire_total,
+        metrics_exporter.relevancy_flags_compress_total,
+        metrics_exporter.relevancy_flags_replace_total,
+    ):
+        gauge.set(0)
 
     class DummyGraph:
         nodes = ["a", "b", "c"]
@@ -263,13 +267,12 @@ def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     service = relevancy_radar_service.RelevancyRadarService(tmp_path)
     service._scan_once()
 
-    def gauge_value(action: str) -> float:
-        child = metrics_exporter.relevancy_flags_total.labels(action=action)
+    def gauge_value(child) -> float:
         getter = getattr(child, "get", None)
         if getter:
             return getter()
         return child._value.get()  # type: ignore[attr-defined]
 
-    assert gauge_value("retire") == 1.0
-    assert gauge_value("compress") == 1.0
-    assert gauge_value("replace") == 1.0
+    assert gauge_value(metrics_exporter.relevancy_flags_retire_total) == 1.0
+    assert gauge_value(metrics_exporter.relevancy_flags_compress_total) == 1.0
+    assert gauge_value(metrics_exporter.relevancy_flags_replace_total) == 1.0

@@ -308,6 +308,11 @@ relevancy_flags_total = Gauge(
     ["action"],
 )
 
+# Pre-labelled gauges for individual flag actions
+relevancy_flags_retire_total = relevancy_flags_total.labels(action="retire")
+relevancy_flags_compress_total = relevancy_flags_total.labels(action="compress")
+relevancy_flags_replace_total = relevancy_flags_total.labels(action="replace")
+
 # Gauges tracking module retirement outcomes
 retired_modules_total = Gauge(
     "retired_modules_total",
@@ -790,6 +795,10 @@ __all__ = [
     "prediction_mae",
     "prediction_reliability",
     "relevancy_flagged_modules_total",
+    "relevancy_flags_total",
+    "relevancy_flags_retire_total",
+    "relevancy_flags_compress_total",
+    "relevancy_flags_replace_total",
     "update_relevancy_metrics",
     "error_bot_exceptions",
     "learning_engine_exceptions",
