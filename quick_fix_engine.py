@@ -42,13 +42,6 @@ except Exception:  # pragma: no cover - fallback for tests
     def log_violation(*a, **k):
         return None
 
-try:  # pragma: no cover - optional dependency
-    from .vector_metrics_db import VectorMetricsDB
-except Exception:  # pragma: no cover - fallback when unavailable
-    VectorMetricsDB = None  # type: ignore
-
-_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
-
 
 def generate_patch(
     module: str,
@@ -290,34 +283,16 @@ class QuickFixEngine:
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
             raise
-        if _VEC_METRICS is not None and session_id and vectors:
-            try:
-                if bool(patch_id) and tests_ok:
-                    _VEC_METRICS.update_outcome(
-                        session_id,
-                        vectors,
-                        contribution=1.0,
-                        patch_id=str(patch_id),
-                        win=True,
-                    )
-                else:
-                    _VEC_METRICS.update_outcome(
-                        session_id,
-                        vectors,
-                        contribution=0.0,
-                        patch_id=str(patch_id or ""),
-                        regret=True,
-                    )
-            except Exception:
-                self.logger.exception("failed to log vector outcome")
         if self.patch_logger is not None and session_id and vectors:
             ids = [f"{o}:{v}" for o, v in vectors]
             try:
+                result = bool(patch_id) and tests_ok
                 self.patch_logger.track_contributors(
                     ids,
-                    bool(patch_id) and tests_ok,
+                    result,
                     patch_id=str(patch_id or ""),
                     session_id=session_id,
+                    contribution=1.0 if result else 0.0,
                 )
             except Exception:
                 self.logger.debug("patch logging failed", exc_info=True)
@@ -413,34 +388,16 @@ class QuickFixEngine:
                 self.db.log_preemptive_patch(module, risk, patch_id)
             except Exception as exc:  # pragma: no cover - db issues
                 self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
-            if _VEC_METRICS is not None and session_id and vectors:
-                try:
-                    if patch_id:
-                        _VEC_METRICS.update_outcome(
-                            session_id,
-                            vectors,
-                            contribution=1.0,
-                            patch_id=str(patch_id),
-                            win=True,
-                        )
-                    else:
-                        _VEC_METRICS.update_outcome(
-                            session_id,
-                            vectors,
-                            contribution=0.0,
-                            patch_id=str(patch_id or ""),
-                            regret=True,
-                        )
-                except Exception:
-                    self.logger.exception("failed to log vector outcome")
             if self.patch_logger is not None and session_id and vectors:
                 ids = [f"{o}:{v}" for o, v in vectors]
                 try:
+                    result = bool(patch_id)
                     self.patch_logger.track_contributors(
                         ids,
-                        bool(patch_id),
+                        result,
                         patch_id=str(patch_id or ""),
                         session_id=session_id,
+                        contribution=1.0 if result else 0.0,
                     )
                 except Exception:
                     self.logger.debug("patch logging failed", exc_info=True)
