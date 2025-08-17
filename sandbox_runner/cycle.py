@@ -61,12 +61,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     psutil = None  # type: ignore
 
-try:
-    from vector_metrics_db import VectorMetricsDB
-except Exception:  # pragma: no cover - optional dependency
-    VectorMetricsDB = None  # type: ignore
-
-_VEC_METRICS = VectorMetricsDB() if VectorMetricsDB is not None else None
+# ``VectorMetricsDB`` was previously used for logging patch outcomes but has
+# since been superseded by :class:`vector_service.patch_logger.PatchLogger`.
+# The legacy import and global instance are removed in favor of using
+# ``PatchLogger`` directly where needed.
 
 logger = get_logger(__name__)
 
@@ -1314,56 +1312,64 @@ def _sandbox_cycle_runner(
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
-                        if _VEC_METRICS is not None and session_id and vectors:
+                        patch_logger = ctx.patch_logger
+                        if patch_logger and session_id and vectors:
+                            ids = [f"{o}:{v}" for o, v in vectors]
                             try:
-                                _VEC_METRICS.update_outcome(
-                                    session_id,
-                                    vectors,
-                                    contribution=roi_delta,
+                                patch_logger.track_contributors(
+                                    ids,
+                                    False,
                                     patch_id=str(patch_id),
-                                    regret=True,
+                                    session_id=session_id,
+                                    contribution=roi_delta,
                                 )
-                            except Exception:
-                                logger.exception("failed to log vector outcome")
+                            except VectorServiceError:
+                                logger.debug("patch logging failed", exc_info=True)
                     else:
-                        if _VEC_METRICS is not None and session_id and vectors and patch_id:
+                        patch_logger = ctx.patch_logger
+                        if patch_logger and session_id and vectors and patch_id:
+                            ids = [f"{o}:{v}" for o, v in vectors]
                             try:
-                                _VEC_METRICS.update_outcome(
-                                    session_id,
-                                    vectors,
-                                    contribution=roi_delta,
+                                patch_logger.track_contributors(
+                                    ids,
+                                    True,
                                     patch_id=str(patch_id),
-                                    win=True,
+                                    session_id=session_id,
+                                    contribution=roi_delta,
                                 )
-                            except Exception:
-                                logger.exception("failed to log vector outcome")
+                            except VectorServiceError:
+                                logger.debug("patch logging failed", exc_info=True)
                         roi = new_roi
                 except Exception:
                     logger.exception("patch from gpt failed for %s", mod)
-                    if _VEC_METRICS is not None and session_id and vectors:
+                    patch_logger = ctx.patch_logger
+                    if patch_logger and session_id and vectors:
+                        ids = [f"{o}:{v}" for o, v in vectors]
                         try:
-                            _VEC_METRICS.update_outcome(
-                                session_id,
-                                vectors,
-                                contribution=0.0,
+                            patch_logger.track_contributors(
+                                ids,
+                                False,
                                 patch_id=str(patch_id or ""),
-                                regret=True,
+                                session_id=session_id,
+                                contribution=0.0,
                             )
-                        except Exception:
-                            logger.exception("failed to log vector outcome")
+                        except VectorServiceError:
+                            logger.debug("patch logging failed", exc_info=True)
                     early_exit = True
                     continue
-                if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
+                patch_logger = ctx.patch_logger
+                if patch_id is None and patch_logger and session_id and vectors:
+                    ids = [f"{o}:{v}" for o, v in vectors]
                     try:
-                        _VEC_METRICS.update_outcome(
-                            session_id,
-                            vectors,
-                            contribution=0.0,
+                        patch_logger.track_contributors(
+                            ids,
+                            False,
                             patch_id=str(patch_id or ""),
-                            regret=True,
+                            session_id=session_id,
+                            contribution=0.0,
                         )
-                    except Exception:
-                        logger.exception("failed to log vector outcome")
+                    except VectorServiceError:
+                        logger.debug("patch logging failed", exc_info=True)
                 if early_exit:
                     break
             if early_exit:
@@ -1636,56 +1642,64 @@ def _sandbox_cycle_runner(
                         )
                         ctx.engine.rollback_patch(str(patch_id))
                         early_exit = True
-                        if _VEC_METRICS is not None and session_id and vectors:
+                        patch_logger = ctx.patch_logger
+                        if patch_logger and session_id and vectors:
+                            ids = [f"{o}:{v}" for o, v in vectors]
                             try:
-                                _VEC_METRICS.update_outcome(
-                                    session_id,
-                                    vectors,
-                                    contribution=roi_delta,
+                                patch_logger.track_contributors(
+                                    ids,
+                                    False,
                                     patch_id=str(patch_id),
-                                    regret=True,
+                                    session_id=session_id,
+                                    contribution=roi_delta,
                                 )
-                            except Exception:
-                                logger.exception("failed to log vector outcome")
+                            except VectorServiceError:
+                                logger.debug("patch logging failed", exc_info=True)
                     else:
-                        if _VEC_METRICS is not None and session_id and vectors and patch_id:
+                        patch_logger = ctx.patch_logger
+                        if patch_logger and session_id and vectors and patch_id:
+                            ids = [f"{o}:{v}" for o, v in vectors]
                             try:
-                                _VEC_METRICS.update_outcome(
-                                    session_id,
-                                    vectors,
-                                    contribution=roi_delta,
+                                patch_logger.track_contributors(
+                                    ids,
+                                    True,
                                     patch_id=str(patch_id),
-                                    win=True,
+                                    session_id=session_id,
+                                    contribution=roi_delta,
                                 )
-                            except Exception:
-                                logger.exception("failed to log vector outcome")
+                            except VectorServiceError:
+                                logger.debug("patch logging failed", exc_info=True)
                         roi = new_roi
                 except Exception:
                     logger.exception("offline suggestion failed for %s", mod)
-                    if _VEC_METRICS is not None and session_id and vectors:
+                    patch_logger = ctx.patch_logger
+                    if patch_logger and session_id and vectors:
+                        ids = [f"{o}:{v}" for o, v in vectors]
                         try:
-                            _VEC_METRICS.update_outcome(
-                                session_id,
-                                vectors,
-                                contribution=0.0,
+                            patch_logger.track_contributors(
+                                ids,
+                                False,
                                 patch_id=str(patch_id or ""),
-                                regret=True,
+                                session_id=session_id,
+                                contribution=0.0,
                             )
-                        except Exception:
-                            logger.exception("failed to log vector outcome")
+                        except VectorServiceError:
+                            logger.debug("patch logging failed", exc_info=True)
                     early_exit = True
                     continue
-                if patch_id is None and _VEC_METRICS is not None and session_id and vectors:
+                patch_logger = ctx.patch_logger
+                if patch_id is None and patch_logger and session_id and vectors:
+                    ids = [f"{o}:{v}" for o, v in vectors]
                     try:
-                        _VEC_METRICS.update_outcome(
-                            session_id,
-                            vectors,
-                            contribution=0.0,
+                        patch_logger.track_contributors(
+                            ids,
+                            False,
                             patch_id=str(patch_id or ""),
-                            regret=True,
+                            session_id=session_id,
+                            contribution=0.0,
                         )
-                    except Exception:
-                        logger.exception("failed to log vector outcome")
+                    except VectorServiceError:
+                        logger.debug("patch logging failed", exc_info=True)
                 if early_exit:
                     break
             if early_exit:
