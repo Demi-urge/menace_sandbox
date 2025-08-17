@@ -10,7 +10,7 @@ heuristic fallbacks used across the code base.
 
 from dataclasses import dataclass, field
 import time
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Sequence
 
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
@@ -24,8 +24,36 @@ except Exception:  # pragma: no cover - fallback when not available
 
 
 @dataclass
+class FallbackResult(Sequence[Dict[str, Any]]):
+    """Container returned when search falls back to heuristics.
+
+    The object behaves like a sequence of result dictionaries while also
+    exposing the ``reason`` and the confidence of the failed lookup.
+    """
+
+    reason: str
+    results: List[Dict[str, Any]]
+    confidence: float = 0.0
+
+    def __iter__(self):  # pragma: no cover - simple delegation
+        return iter(self.results)
+
+    def __len__(self) -> int:  # pragma: no cover - simple delegation
+        return len(self.results)
+
+    def __getitem__(self, item: int) -> Dict[str, Any]:  # pragma: no cover
+        return self.results[item]
+
+
+@dataclass
 class Retriever:
-    """Facade around :class:`UniversalRetriever` with caching and retries."""
+    """Facade around :class:`UniversalRetriever` with caching and retries.
+
+    When the underlying retriever exposes ``retrieve_with_confidence`` the
+    confidence score is used to determine whether to retry the search with
+    broader parameters.  If all attempts fail a :class:`FallbackResult` is
+    returned containing the reason and heuristic hits.
+    """
 
     retriever: UniversalRetriever | None = None
     top_k: int = 5
@@ -83,8 +111,15 @@ class Retriever:
         top_k: int | None = None,
         session_id: str = "",
         similarity_threshold: float | None = None,
-    ) -> List[Dict[str, Any]]:
-        """Perform semantic search and return normalised results."""
+    ) -> List[Dict[str, Any]] | FallbackResult:
+        """Perform semantic search and return normalised results.
+
+        The method first attempts ``retrieve_with_confidence`` when available.
+        If the returned confidence is below ``similarity_threshold`` or no
+        results are produced, the search is retried once with ``top_k`` doubled.
+        After failing again a :class:`FallbackResult` is returned instead of
+        plain hits.
+        """
 
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
@@ -93,16 +128,29 @@ class Retriever:
         thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
         retriever = self._get_retriever()
 
-        attempts = 3
+        attempts = 2
         backoff = 1.0
         hits: List[Any] = []
+        confidence = 0.0
         for attempt in range(attempts):
             try:
-                try:
+                if hasattr(retriever, "retrieve_with_confidence"):
+                    hits, confidence, _ = retriever.retrieve_with_confidence(  # type: ignore[attr-defined]
+                        query, top_k=k
+                    )
+                else:
                     hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
-                except AttributeError:  # pragma: no cover - compatibility
+                    confidence = (
+                        max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                    )
+            except AttributeError:  # pragma: no cover - compatibility fallback
+                try:
                     hits = retriever.search(query)[:k]  # type: ignore[assignment]
-                break
+                    confidence = (
+                        max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                    )
+                except Exception as exc:
+                    raise VectorServiceError("vector search failed") from exc
             except Exception as exc:  # pragma: no cover - best effort
                 msg = str(exc).lower()
                 if ("rate" in msg and "limit" in msg) or "429" in msg:
@@ -113,23 +161,22 @@ class Retriever:
                     raise RateLimitError("vector search rate limited") from exc
                 raise VectorServiceError("vector search failed") from exc
 
-        if not hits:
-            cached = self._cache.get(query)
-            if cached is not None:
-                return cached
-            return self._fallback("no results")
+            if hits and confidence >= thresh:
+                results = self._parse_hits(hits)
+                self._cache[query] = results
+                return results
 
-        top_score = max(getattr(h, "score", 0.0) for h in hits)
-        if top_score >= thresh:
-            results = self._parse_hits(hits)
-            self._cache[query] = results
-            return results
+            # Broaden parameters and retry once
+            k *= 2
 
         cached = self._cache.get(query)
         if cached is not None:
             return cached
-        return self._fallback("low similarity")
+        fb_hits = self._fallback("no results" if not hits else "low confidence")
+        return FallbackResult(
+            "no results" if not hits else "low confidence", fb_hits, confidence
+        )
 
 
-__all__ = ["Retriever"]
+__all__ = ["Retriever", "FallbackResult"]
 
