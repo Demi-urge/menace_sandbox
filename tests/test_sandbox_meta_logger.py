@@ -1,5 +1,6 @@
 from tests.test_menace_master import _setup_mm_stubs
 import sandbox_runner
+import pytest
 
 
 def test_meta_logger_basic(monkeypatch, tmp_path):
@@ -15,8 +16,8 @@ def test_meta_logger_basic(monkeypatch, tmp_path):
     log.log_cycle(2, 2.1, ['b.py'], 'third')
 
     ranking = dict(log.rankings())
-    assert ranking['a.py'] == 2.0
-    assert ranking['b.py'] == 1.1
+    assert ranking['a.py'] == 1.5
+    assert ranking['b.py'] == pytest.approx(0.6)
     assert log.diminishing() == []
 
 

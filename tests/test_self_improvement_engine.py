@@ -647,10 +647,10 @@ def test_roi_history_group_ids(tmp_path, monkeypatch):
             import sqlite3
             conn = sqlite3.connect(":memory:")
             conn.execute(
-                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER)"
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0)"
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"
             )
             conn.commit()
             import contextlib
@@ -704,10 +704,10 @@ def test_module_map_refresh_updates_roi_groups(tmp_path, monkeypatch):
             from datetime import datetime
             conn = sqlite3.connect(":memory:")
             conn.execute(
-                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER, ts TEXT)"
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER, ts TEXT)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted, ts) VALUES ('new.py', 0.0, 0.0, 0, ?)",
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted, ts) VALUES ('new.py', 0.0, 0.0, 0.0, 0, ?)",
                 (datetime.utcnow().isoformat(),),
             )
             conn.commit()
@@ -830,10 +830,10 @@ def test_init_discovers_module_groups(tmp_path, monkeypatch):
 
             conn = sqlite3.connect(":memory:")
             conn.execute(
-                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, reverted INTEGER)"
+                "CREATE TABLE patch_history(id INTEGER PRIMARY KEY, filename TEXT, roi_delta REAL, complexity_delta REAL, entropy_delta REAL, reverted INTEGER)"
             )
             conn.execute(
-                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0)"
+                "INSERT INTO patch_history(filename, roi_delta, complexity_delta, entropy_delta, reverted) VALUES ('a.py', 1.0, 0.0, 0.0, 0)"
             )
             conn.commit()
 

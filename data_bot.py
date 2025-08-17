@@ -67,6 +67,7 @@ class MetricRecord:
     projected_lucrativity: float = 0.0
     profitability: float = 0.0
     patch_complexity: float = 0.0
+    patch_entropy: float = 0.0
     energy_consumption: float = 0.0
     resilience: float = 0.0
     network_latency: float = 0.0
@@ -107,6 +108,7 @@ class MetricsDB:
                 projected_lucrativity REAL DEFAULT 0,
                 profitability REAL DEFAULT 0,
                 patch_complexity REAL DEFAULT 0,
+                patch_entropy REAL DEFAULT 0,
                 energy_consumption REAL DEFAULT 0,
                 resilience REAL DEFAULT 0,
                 network_latency REAL DEFAULT 0,
@@ -378,6 +380,10 @@ class MetricsDB:
                 conn.execute(
                     "ALTER TABLE metrics ADD COLUMN patch_complexity REAL DEFAULT 0"
                 )
+            if "patch_entropy" not in cols:
+                conn.execute(
+                    "ALTER TABLE metrics ADD COLUMN patch_entropy REAL DEFAULT 0"
+                )
             if "energy_consumption" not in cols:
                 conn.execute(
                     "ALTER TABLE metrics ADD COLUMN energy_consumption REAL DEFAULT 0"
@@ -423,10 +429,10 @@ class MetricsDB:
                 security_score, safety_rating, adaptability,
                 antifragility, shannon_entropy, efficiency,
                 flexibility, gpu_usage, projected_lucrativity,
-                profitability, patch_complexity, energy_consumption,
+                profitability, patch_complexity, patch_entropy, energy_consumption,
                 resilience, network_latency, throughput, risk_index,
                 maintainability, code_quality, ts)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     rec.bot,
@@ -449,6 +455,7 @@ class MetricsDB:
                     rec.projected_lucrativity,
                     rec.profitability,
                     rec.patch_complexity,
+                    rec.patch_entropy,
                     rec.energy_consumption,
                     rec.resilience,
                     rec.network_latency,
@@ -781,7 +788,7 @@ class MetricsDB:
             "SELECT bot, cpu, memory, response_time, disk_io, net_io, errors,"
             " revenue, expense, security_score, safety_rating, adaptability,"
             " antifragility, shannon_entropy, efficiency, flexibility, gpu_usage,"
-            " projected_lucrativity, profitability, patch_complexity,"
+            " projected_lucrativity, profitability, patch_complexity, patch_entropy,"
             " energy_consumption, resilience, network_latency, throughput,"
             " risk_index, maintainability, code_quality, ts FROM metrics"
         )
@@ -901,6 +908,12 @@ class DataBot:
                     ["bot"],
                     registry=self.registry,
                 ),
+                "patch_entropy": Gauge(
+                    "bot_patch_entropy",
+                    "Patch entropy",
+                    ["bot"],
+                    registry=self.registry,
+                ),
                 "energy_consumption": Gauge(
                     "bot_energy_consumption",
                     "Energy consumption",
@@ -969,6 +982,7 @@ class DataBot:
         projected_lucrativity: float = 0.0,
         profitability: float | None = None,
         patch_complexity: float = 0.0,
+        patch_entropy: float = 0.0,
         energy_consumption: float | None = None,
         resilience: float = 0.0,
         network_latency: float = 0.0,
@@ -1031,18 +1045,26 @@ class DataBot:
             throughput = 1000.0 / (network_latency + 1.0)
         if not risk_index:
             risk_index = max(0.0, 100.0 - (security_score + safety_rating) / 2.0)
-        if self.patch_db and not patch_complexity:
+        if self.patch_db and (not patch_complexity or not patch_entropy):
             try:
                 with self.patch_db._connect() as conn:
-                    rows = conn.execute(
-                        "SELECT complexity_after FROM patch_history ORDER BY id DESC LIMIT 5"
+                    comp_rows = conn.execute(
+                        "SELECT complexity_after, entropy_after FROM patch_history ORDER BY id DESC LIMIT 5"
                     ).fetchall()
-                if rows:
-                    patch_complexity = float(
-                        sum(float(r[0] or 0.0) for r in rows) / len(rows)
-                    )
+                if comp_rows:
+                    if not patch_complexity:
+                        patch_complexity = float(
+                            sum(float(r[0] or 0.0) for r in comp_rows) / len(comp_rows)
+                        )
+                    if not patch_entropy:
+                        patch_entropy = float(
+                            sum(float(r[1] or 0.0) for r in comp_rows) / len(comp_rows)
+                        )
             except Exception:
-                patch_complexity = 0.0
+                if not patch_complexity:
+                    patch_complexity = 0.0
+                if not patch_entropy:
+                    patch_entropy = 0.0
         if not resilience:
             resilience = 100.0 / float(errors + 1)
         rec = MetricRecord(
@@ -1066,6 +1088,7 @@ class DataBot:
             projected_lucrativity=projected_lucrativity,
             profitability=profitability,
             patch_complexity=patch_complexity,
+            patch_entropy=patch_entropy,
             energy_consumption=energy_consumption,
             resilience=resilience,
             network_latency=network_latency,

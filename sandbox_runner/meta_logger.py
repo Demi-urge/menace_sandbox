@@ -63,6 +63,7 @@ class _SandboxMetaLogger:
         delta = roi - prev
         self.records.append(_CycleMeta(cycle, roi, delta, modules, reason, warnings))
         per_module_delta = delta / len(modules) if modules else 0.0
+        per_module_entropy = entropy_delta / len(modules) if modules else 0.0
         for m in modules:
             if self.module_index:
                 try:
@@ -73,8 +74,8 @@ class _SandboxMetaLogger:
                     gid = m
             else:
                 gid = m
-            self.module_deltas.setdefault(gid, []).append(delta)
-            self.module_entropy_deltas.setdefault(gid, []).append(entropy_delta)
+            self.module_deltas.setdefault(gid, []).append(per_module_delta)
+            self.module_entropy_deltas.setdefault(gid, []).append(per_module_entropy)
             if self.metrics_db:
                 try:
                     self.metrics_db.record(
