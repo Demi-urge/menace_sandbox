@@ -16,24 +16,21 @@ with CONFIG_PATH.open("r", encoding="utf-8") as fh:
 class ROICalculator:
     """Calculate ROI based on weighted metrics and veto rules."""
 
-    def __init__(self, profile_type: str) -> None:
-        try:
-            profile = _PROFILES[profile_type]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"unknown ROI profile: {profile_type}") from exc
-        self.profile_type = profile_type
-        self.weights: dict[str, float] = profile.get("metrics", {})
-        self.veto_exprs: list[str] = profile.get("veto", [])
+    def __init__(self) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.hard_fail = False
 
     # ------------------------------------------------------------------
     def _eval_vetoes(
-        self, metrics: dict[str, float], flags: dict[str, Any]
+        self,
+        metrics: dict[str, float],
+        flags: dict[str, Any],
+        exprs: list[str],
     ) -> list[str]:
+        """Return list of veto expressions triggered by *metrics* and *flags*."""
         context: dict[str, Any] = {**flags, **metrics, "true": True, "false": False}
         triggered: list[str] = []
-        for expr in self.veto_exprs:
+        for expr in exprs:
             expr_py = expr.replace(" true", " True").replace(" false", " False")
             try:
                 if eval(expr_py, {"__builtins__": {}}, context):  # noqa: S307
@@ -43,34 +40,53 @@ class ROICalculator:
         return triggered
 
     # ------------------------------------------------------------------
-    def calculate(
+    def compute(
         self,
         metrics: dict[str, float],
+        profile_type: str,
         flags: dict[str, Any] | None = None,
     ) -> float:
-        """Return ROI score for ``metrics`` or ``-inf`` if vetoes trigger."""
+        """Return ROI score or ``-inf`` if any veto condition triggers."""
+        try:
+            profile = _PROFILES[profile_type]
+        except KeyError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"unknown ROI profile: {profile_type}") from exc
+
+        weights: dict[str, float] = profile.get("metrics", {})
+        veto_exprs: list[str] = profile.get("veto", [])
+
         flags = flags or {}
-        triggered = self._eval_vetoes(metrics, flags)
+        triggered = self._eval_vetoes(metrics, flags, veto_exprs)
         if triggered:
             self.hard_fail = True
             return float("-inf")
         self.hard_fail = False
-        return sum(metrics.get(name, 0.0) * weight for name, weight in self.weights.items())
+        return sum(metrics.get(name, 0.0) * weight for name, weight in weights.items())
 
     # ------------------------------------------------------------------
     def log_debug(
         self,
         metrics: dict[str, float],
+        profile_type: str,
         flags: dict[str, Any] | None = None,
     ) -> None:
-        """Log weights, per-metric contributions, final score, and vetoes."""
+        """Log weights, per-metric contributions, final score and vetoes."""
+
+        try:
+            profile = _PROFILES[profile_type]
+        except KeyError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"unknown ROI profile: {profile_type}") from exc
+
+        weights: dict[str, float] = profile.get("metrics", {})
+        veto_exprs: list[str] = profile.get("veto", [])
         flags = flags or {}
         contributions = {
-            name: metrics.get(name, 0.0) * weight for name, weight in self.weights.items()
+            name: metrics.get(name, 0.0) * weight for name, weight in weights.items()
         }
-        triggered = self._eval_vetoes(metrics, flags)
+        triggered = self._eval_vetoes(metrics, flags, veto_exprs)
         score = float("-inf") if triggered else sum(contributions.values())
-        self.logger.debug("weights: %s", self.weights)
+        self.logger.debug("profile: %s", profile_type)
+        self.logger.debug("weights: %s", weights)
         self.logger.debug("metrics: %s", metrics)
         self.logger.debug("flags: %s", flags)
         self.logger.debug("contributions: %s", contributions)

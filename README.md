@@ -86,6 +86,7 @@
 - Self-provisioning of missing packages through `SystemProvisioner`
 - Distributed rollback verification via `RollbackValidator`
 - ROI-driven autoscaling with `ROIScalingPolicy`
+- Profile-based ROI evaluation via `ROICalculator` using YAML-configured weights and veto rules
 - ROI history forecasting via `ROITracker` ([docs/roi_tracker.md](docs/roi_tracker.md))
 - Debug logs report the EMA and standard deviation used for ROI thresholds along
   with per-metric synergy EMA, deviation and confidence. Window sizes and weight

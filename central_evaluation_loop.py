@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 from .kpi_reward_core import compute_reward, explain_reward
 from . import reward_dispatcher
+from .roi_calculator import ROICalculator
 
 load_dotenv()
 
@@ -118,7 +119,7 @@ def _dispatch_with_retry(action: dict[str, Any], max_attempts: int = 3) -> None:
 
 
 def process_action(raw_line: str) -> bool:
-    """Evaluate a single log entry."""
+    """Evaluate a single log entry and optionally compute ROI."""
     try:
         action = json.loads(raw_line)
     except json.JSONDecodeError as exc:
@@ -132,6 +133,25 @@ def process_action(raw_line: str) -> bool:
         return False
 
     flags = flag_risky_behaviour(action)
+
+    roi_score = None
+    if "metrics" in action and "roi_profile" in action:
+        calc = ROICalculator()
+        roi_score = calc.compute(
+            action["metrics"],
+            action["roi_profile"],
+            action.get("flags", {}),
+        )
+        calc.log_debug(action["metrics"], action["roi_profile"], action.get("flags", {}))
+        if calc.hard_fail:
+            append_audit(
+                {
+                    "timestamp": int(time.time()),
+                    "error": "roi_veto",
+                    "action": action,
+                }
+            )
+            return False
 
     try:
         reward = compute_reward(action)
@@ -162,6 +182,8 @@ def process_action(raw_line: str) -> bool:
         "action": action,
         "flags": flags,
     }
+    if roi_score is not None:
+        audit_record["roi"] = roi_score
     if dispatch_error:
         audit_record["dispatch_error"] = dispatch_error
     append_audit(audit_record)
