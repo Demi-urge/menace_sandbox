@@ -1,7 +1,7 @@
 import pytest
-from semantic_service.patch_logger import PatchLogger
-from semantic_service.embedding_backfill import EmbeddingBackfill, EmbeddableDBMixin
-import semantic_service.decorators as dec
+from vector_service import PatchLogger
+from vector_service import EmbeddingBackfill, EmbeddableDBMixin
+import vector_service.decorators as dec
 
 
 class DummyGauge:

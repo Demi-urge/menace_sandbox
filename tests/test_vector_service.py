@@ -1,5 +1,5 @@
 import pytest
-from semantic_service import (
+from vector_service import (
     Retriever,
     PatchLogger,
     EmbeddingBackfill,
