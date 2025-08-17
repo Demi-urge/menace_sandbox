@@ -72,7 +72,7 @@ def test_retriever_search_async(monkeypatch):
     assert g3.set_calls == [1]
 
 
-def test_context_builder_build_async():
+def test_context_builder_build_async(monkeypatch):
     class DummyResult:
         def __init__(self):
             self.record_id = 1
@@ -92,11 +92,18 @@ def test_context_builder_build_async():
         def retrieve_with_confidence(self, query, top_k=5):
             return [DummyResult()], 0.9, None
 
+    g1, g2, g3 = Gauge(), Gauge(), Gauge()
+    monkeypatch.setattr(dec, "_CALL_COUNT", g1)
+    monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
+    monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
+
     r = Retriever(retriever=DummyUR())
     builder = ContextBuilder(retriever=r)
     ctx = asyncio.run(builder.build_async("query"))
     data = json.loads(ctx)
     assert "errors" in data and data["errors"][0]["id"] == 1
+    assert g1.inc_calls == 3
+    assert g3.set_calls[1:] == [len(ctx), len(ctx)]
 
 
 def test_patch_logger_track_contributors_async(monkeypatch):

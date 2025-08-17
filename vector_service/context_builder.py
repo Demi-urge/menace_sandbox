@@ -8,8 +8,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import logging
 import asyncio
 
+from .decorators import log_and_measure
+from .exceptions import MalformedPromptError
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
+
+# Alias retained for backward compatibility with tests expecting
+# ``UniversalRetriever`` to be injectable.
+UniversalRetriever = Retriever
 
 logger = logging.getLogger(__name__)
 
@@ -140,8 +146,12 @@ class ContextBuilder:
         return key_map.get(origin, ""), _ScoredEntry(entry, score)
 
     # ------------------------------------------------------------------
+    @log_and_measure
     def build_context(self, query: str, top_k: int = 5, **_: Any) -> str:
         """Return a compact JSON context for ``query``."""
+
+        if not isinstance(query, str) or not query.strip():
+            raise MalformedPromptError("query must be a non-empty string")
 
         cache_key = (query, top_k)
         if cache_key in self._cache:
@@ -178,11 +188,12 @@ class ContextBuilder:
             items.sort(key=lambda e: e.score, reverse=True)
             result[key] = [e.entry for e in items[:top_k]]
 
-        context = json.dumps(result)
+        context = json.dumps(result, separators=(",", ":"))
         self._cache[cache_key] = context
         return context
 
     # ------------------------------------------------------------------
+    @log_and_measure
     def build(self, query: str, **kwargs: Any) -> str:
         """Backward compatible alias for :meth:`build_context`.
 
@@ -194,6 +205,7 @@ class ContextBuilder:
         return self.build_context(query, **kwargs)
 
     # ------------------------------------------------------------------
+    @log_and_measure
     async def build_async(self, query: str, **kwargs: Any) -> str:
         """Asynchronous wrapper for :meth:`build_context`."""
 
