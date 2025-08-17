@@ -56,7 +56,9 @@ class AutomatedReviewer:
                 self.logger.exception("failed disabling bot %s", bot_id)
             try:
                 builder = ContextBuilder()
-                ctx = builder.build(json.dumps({"bot_id": bot_id, "severity": severity}))
+                ctx = builder.build_context(
+                    json.dumps({"bot_id": bot_id, "severity": severity})
+                )
                 if isinstance(ctx, (ErrorResult, FallbackResult)):
                     self.logger.error("context build failed: %s", ctx)
                     ctx = ""

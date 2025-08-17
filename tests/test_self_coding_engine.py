@@ -64,6 +64,36 @@ sys.modules.setdefault("task_handoff_bot", types.SimpleNamespace(WorkflowDB=obje
 sys.modules.setdefault("error_bot", types.SimpleNamespace(ErrorDB=object))
 sys.modules.setdefault("failure_learning_system", types.SimpleNamespace(DiscrepancyDB=object))
 sys.modules.setdefault("code_database", types.SimpleNamespace(CodeDB=object))
+sys.modules.setdefault(
+    "gpt_memory",
+    types.SimpleNamespace(
+        GPTMemoryManager=object,
+        STANDARD_TAGS=[],
+        INSIGHT="insight",
+        _summarise_text=lambda *a, **k: "",
+    ),
+)
+sys.modules.setdefault(
+    "menace.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace.shared_knowledge_module",
+    types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None),
+)
+sys.modules.setdefault(
+    "menace.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=object, init_local_knowledge=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
+)
+for name in [
+    "shared_gpt_memory",
+    "shared_knowledge_module",
+    "local_knowledge_module",
+    "gpt_knowledge_service",
+]:
+    sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
 jinja_mod = types.ModuleType("jinja2")
 jinja_mod.Template = lambda *a, **k: None

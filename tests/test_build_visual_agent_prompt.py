@@ -23,17 +23,37 @@ serialization = types.ModuleType("serialization")
 primitives = sys.modules["cryptography.hazmat.primitives"]
 primitives.serialization = serialization
 sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
-dummy_cb = types.ModuleType("context_builder")
-class _DummyCB:
-    def __init__(self, *a, **k):
-        pass
-    def build_context(self, *a, **k):
-        return "{}"
-dummy_cb.ContextBuilder = _DummyCB
-sys.modules.setdefault("menace.context_builder", dummy_cb)
-sys.modules.setdefault("context_builder", dummy_cb)
 sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///:memory:"))
-sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+sys.modules.setdefault(
+    "gpt_memory",
+    types.SimpleNamespace(
+        GPTMemoryManager=object,
+        STANDARD_TAGS=[],
+        INSIGHT="insight",
+        _summarise_text=lambda *a, **k: "",
+    ),
+)
+sys.modules.setdefault(
+    "menace.shared_gpt_memory", types.SimpleNamespace(GPT_MEMORY_MANAGER=None)
+)
+sys.modules.setdefault(
+    "menace.shared_knowledge_module",
+    types.SimpleNamespace(LOCAL_KNOWLEDGE_MODULE=None),
+)
+sys.modules.setdefault(
+    "menace.local_knowledge_module",
+    types.SimpleNamespace(LocalKnowledgeModule=object, init_local_knowledge=lambda *a, **k: None),
+)
+sys.modules.setdefault(
+    "menace.gpt_knowledge_service", types.SimpleNamespace(GPTKnowledgeService=object)
+)
+for name in [
+    "shared_gpt_memory",
+    "shared_knowledge_module",
+    "local_knowledge_module",
+    "gpt_knowledge_service",
+]:
+    sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 pkg_path = os.path.join(os.path.dirname(__file__), "..")
 pkg_spec = importlib.util.spec_from_file_location(
