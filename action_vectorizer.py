@@ -7,6 +7,18 @@ import os
 import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import hashlib
+import importlib
+
+import license_fingerprint
+
+
+def _log_violation(path: str, lic: str, hash_: str) -> None:
+    try:  # pragma: no cover - best effort
+        CodeDB = importlib.import_module("code_database").CodeDB
+        CodeDB().log_license_violation(path, lic, hash_)
+    except Exception:
+        pass
 
 try:
     import numpy as np
@@ -151,6 +163,15 @@ class ActionVectorizer:
                 self._update_scale("risk_score", log.get("risk_score"))
                 self._update_scale("reward", log.get("reward"))
                 code = log.get("generated_code")
+                if code:
+                    lic = license_fingerprint.check(str(code))
+                    if lic:
+                        _log_violation(
+                            str(log.get("id", "")),
+                            lic,
+                            hashlib.sha256(str(code).encode("utf-8")).hexdigest(),
+                        )
+                        continue
                 self._update_scale("code_length", len(str(code)) if code else 0)
                 violations = log.get("violations", [])
                 severity = 0.0
@@ -179,13 +200,22 @@ class ActionVectorizer:
         vec.append(self._scale("reward", action_log.get("reward", 0.0)))
         vec.append(1.0 if action_log.get("invoked_security_ai") else 0.0)
         hb_flag = bool(action_log.get("helper_bot_created"))
+        code_tmp = str(action_log.get("generated_code", ""))
+        if code_tmp:
+            lic = license_fingerprint.check(code_tmp)
+            if lic:
+                _log_violation(
+                    str(action_log.get("id", "")),
+                    lic,
+                    hashlib.sha256(code_tmp.encode("utf-8")).hexdigest(),
+                )
+                raise ValueError(f"Disallowed license detected: {lic}")
         if not hb_flag:
-            code_tmp = str(action_log.get("generated_code", ""))
             hb_flag = any(k in code_tmp for k in ("helper_bot", "spawn_agent"))
         vec.append(1.0 if hb_flag else 0.0)
         vec.append(1.0 if action_log.get("lockdown_triggered") else 0.0)
         vec.append(1.0 if action_log.get("override_applied") or action_log.get("manual_override") else 0.0)
-        code = action_log.get("generated_code")
+        code = code_tmp if code_tmp else None
         vec.append(1.0 if code else 0.0)
         vec.append(self._scale("code_length", len(str(code)) if code else 0))
         violations = action_log.get("violations", [])
