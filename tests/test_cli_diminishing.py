@@ -47,3 +47,22 @@ def test_diminishing_modules_entropy():
     )
     assert flags == ["mod"]
     assert conf["mod"] == pytest.approx(1.0)
+
+
+def test_diminishing_modules_entropy_custom_params():
+    history = {}
+    entropy_history = {"mod": [0.02, 0.004, 0.003]}
+    flags, _ = cli._diminishing_modules(
+        history, set(), 0.01, consecutive=3, entropy_history=entropy_history
+    )
+    assert flags == []
+    flags, _ = cli._diminishing_modules(
+        history,
+        set(),
+        0.01,
+        consecutive=3,
+        entropy_history=entropy_history,
+        entropy_threshold=0.005,
+        entropy_consecutive=2,
+    )
+    assert flags == ["mod"]

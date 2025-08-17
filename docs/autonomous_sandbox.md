@@ -369,6 +369,8 @@ persisted to `sandbox_data/metrics.db` for later inspection.
 - `VISUAL_AGENT_SSL_KEY` – optional path to the corresponding private key
 - `ROI_THRESHOLD` – override the diminishing ROI threshold
 - `ROI_CONFIDENCE` – t-test confidence when flagging modules
+- `ENTROPY_PLATEAU_THRESHOLD` – entropy delta threshold for plateau detection
+- `ENTROPY_PLATEAU_CONSECUTIVE` – entropy samples below threshold before flagging
 - `MIN_INTEGRATION_ROI` – minimum ROI delta required before adding modules to existing workflows
 - `SYNERGY_THRESHOLD` – fixed synergy convergence threshold
 - `SYNERGY_THRESHOLD_WINDOW` – samples used for adaptive synergy threshold

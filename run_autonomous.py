@@ -706,6 +706,8 @@ def update_metrics(
     history_conn: sqlite3.Connection | None,
     roi_threshold: float | None,
     roi_confidence: float | None,
+    entropy_threshold: float | None,
+    entropy_consecutive: int | None,
     synergy_threshold_window: int,
     synergy_threshold_weight: float,
     synergy_confidence: float | None,
@@ -809,6 +811,8 @@ def update_metrics(
         consecutive=args.roi_cycles,
         confidence=roi_confidence or 0.95,
         entropy_history=entropy_history,
+        entropy_threshold=entropy_threshold,
+        entropy_consecutive=entropy_consecutive,
     )
     flagged.update(new_flags)
 
@@ -1012,6 +1016,16 @@ def main(argv: List[str] | None = None) -> None:
         "--roi-confidence",
         type=float,
         help="confidence level for ROI convergence",
+    )
+    parser.add_argument(
+        "--entropy-plateau-threshold",
+        type=float,
+        help="threshold for entropy delta plateau detection",
+    )
+    parser.add_argument(
+        "--entropy-plateau-consecutive",
+        type=int,
+        help="entropy delta samples below threshold before module convergence",
     )
     parser.add_argument(
         "--synergy-cycles",
@@ -1706,6 +1720,12 @@ def main(argv: List[str] | None = None) -> None:
     synergy_confidence = _get_env_override(
         "SYNERGY_CONFIDENCE", args.synergy_confidence, settings
     )
+    entropy_threshold = _get_env_override(
+        "ENTROPY_PLATEAU_THRESHOLD", args.entropy_plateau_threshold, settings
+    )
+    entropy_consecutive = _get_env_override(
+        "ENTROPY_PLATEAU_CONSECUTIVE", args.entropy_plateau_consecutive, settings
+    )
     synergy_threshold_window = _get_env_override(
         "SYNERGY_THRESHOLD_WINDOW", args.synergy_threshold_window, settings
     )
@@ -1862,6 +1882,8 @@ def main(argv: List[str] | None = None) -> None:
             history_conn,
             roi_threshold,
             roi_confidence,
+            entropy_threshold,
+            entropy_consecutive,
             synergy_threshold_window,
             synergy_threshold_weight,
             synergy_confidence,

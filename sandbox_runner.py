@@ -1353,7 +1353,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         for m, vals in t.metrics_history.items():
                             agg.metrics_history.setdefault(m, []).extend(vals)
                     thr = agg.diminishing()
-                    entropy_flags = agg.entropy_plateau(thr, 3)
+                    e_thr = ctx.settings.entropy_plateau_threshold or thr
+                    e_consec = ctx.settings.entropy_plateau_consecutive or 3
+                    entropy_flags = agg.entropy_plateau(e_thr, e_consec)
                     try:
                         flagged = ctx.meta_log.diminishing(
                             thr, entropy_flags=entropy_flags
@@ -1604,7 +1606,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     if ctx.adapt_presets:
         try:
             thr = ctx.tracker.diminishing()
-            entropy_flags = ctx.tracker.entropy_plateau(thr, 3)
+            e_thr = ctx.settings.entropy_plateau_threshold or thr
+            e_consec = ctx.settings.entropy_plateau_consecutive or 3
+            entropy_flags = ctx.tracker.entropy_plateau(e_thr, e_consec)
             try:
                 flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
             except TypeError:  # pragma: no cover - compatibility
@@ -1639,7 +1643,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             logger.exception("workflow simulations failed")
 
     ranking = ctx.meta_log.rankings()
-    entropy_flags = ctx.tracker.entropy_plateau(ctx.tracker.diminishing(), 3)
+    e_thr = ctx.settings.entropy_plateau_threshold or ctx.tracker.diminishing()
+    e_consec = ctx.settings.entropy_plateau_consecutive or 3
+    entropy_flags = ctx.tracker.entropy_plateau(e_thr, e_consec)
     try:
         flags = ctx.meta_log.diminishing(entropy_flags=entropy_flags)
     except TypeError:  # pragma: no cover - compatibility
