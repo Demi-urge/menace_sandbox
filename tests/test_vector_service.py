@@ -37,6 +37,11 @@ class DummyRetrieverNoHits:
         return [], 0.0, None
 
 
+class DummyRetrieverLowConfidence:
+    def retrieve_with_confidence(self, query, top_k):
+        return [DummyHit(score=0.05)], 0.05, None
+
+
 def test_retriever_search_success_returns_results():
     r = Retriever(retriever=DummyRetrieverSuccess())
     results = r.search("query", session_id="s")
@@ -54,6 +59,13 @@ def test_retriever_search_fallback_when_no_hits():
     res = r.search("q", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "no results"
+
+
+def test_retriever_search_low_confidence_fallback():
+    r = Retriever(retriever=DummyRetrieverLowConfidence())
+    res = r.search("q", session_id="s")
+    assert isinstance(res, FallbackResult)
+    assert res.reason == "low confidence"
 
 
 def test_retriever_search_malformed_prompt():
@@ -88,6 +100,16 @@ class DummyVectorMetricsDB:
         self.called = True
 
 
+class DummyPatchDB:
+    def __init__(self):
+        self.called = False
+        self.args = None
+
+    def record_vector_metrics(self, session_id, pairs, patch_id, contribution, win, regret):
+        self.called = True
+        self.args = (session_id, pairs, patch_id, contribution, win, regret)
+
+
 def test_patch_logger_metrics_db_success():
     db = DummyMetricsDB()
     pl = PatchLogger(metrics_db=db)
@@ -101,6 +123,20 @@ def test_patch_logger_vector_metrics_db_success():
     pl = PatchLogger(vector_metrics=vm)
     pl.track_contributors(["x"], False, session_id="s")
     assert vm.called
+
+
+def test_patch_logger_patch_db_success():
+    pdb = DummyPatchDB()
+    pl = PatchLogger(patch_db=pdb)
+    pl.track_contributors(["a:b"], True, patch_id="7", session_id="sid")
+    assert pdb.called
+    assert pdb.args[2] == 7
+
+
+def test_patch_logger_metrics_db_failure_ignored():
+    db = DummyMetricsDB(fail=True)
+    pl = PatchLogger(metrics_db=db)
+    pl.track_contributors(["a:b"], True, patch_id="p", session_id="s")
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +155,20 @@ class DummyDB:
 class ErrorDB(DummyDB):
     def backfill_embeddings(self, batch_size=0):
         raise RuntimeError("boom")
+
+
+class InitFallbackDB:
+    instances = []
+
+    def __init__(self, vector_backend=""):
+        if vector_backend:
+            raise TypeError("no backend")
+        self.__class__.instances.append(self)
+        self.processed = False
+
+    def backfill_embeddings(self, batch_size=0):
+        self.processed = True
+        self.batch = batch_size
 
 
 def test_embedding_backfill_run_processes_databases(monkeypatch):
@@ -151,3 +201,13 @@ def test_embedding_backfill_run_continues_on_error(monkeypatch):
     eb = EmbeddingBackfill()
     eb.run(session_id="s")
     assert order == [ErrorDB, DummyDB]
+
+
+def test_embedding_backfill_instantiation_fallback(monkeypatch):
+    monkeypatch.setattr(
+        EmbeddingBackfill, "_load_known_dbs", lambda self: [InitFallbackDB]
+    )
+    eb = EmbeddingBackfill(batch_size=3)
+    eb.run()
+    assert InitFallbackDB.instances and InitFallbackDB.instances[0].processed
+    assert InitFallbackDB.instances[0].batch == 3
