@@ -29,6 +29,16 @@ except Exception:  # pragma: no cover - fallback when unavailable
 
         pass
 
+try:  # pragma: no cover - optional dependency
+    from vector_service import PatchLogger, VectorServiceError  # type: ignore
+except Exception:  # pragma: no cover - fallback when unavailable
+    PatchLogger = object  # type: ignore
+
+    class VectorServiceError(Exception):
+        """Fallback VectorServiceError when vector service is unavailable."""
+
+        pass
+
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
     from roi_tracker import ROITracker
@@ -577,6 +587,12 @@ def _sandbox_cycle_runner(
     )
 
     knowledge_service = GPT_KNOWLEDGE_SERVICE
+
+    if getattr(ctx, "patch_logger", None) is None:
+        try:
+            ctx.patch_logger = PatchLogger()
+        except VectorServiceError:
+            ctx.patch_logger = None
 
     env_val = os.getenv("SANDBOX_ENV_PRESETS")
     if env_val:
@@ -1230,7 +1246,7 @@ def _sandbox_cycle_runner(
                         trigger="sandbox_runner",
                         context_meta=context_meta,
                     )
-                    patch_logger = getattr(ctx, "patch_logger", None)
+                    patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
                         ids = [f"{o}:{v}" for o, v in vectors]
                         try:
@@ -1240,7 +1256,7 @@ def _sandbox_cycle_runner(
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
                             )
-                        except Exception:
+                        except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
@@ -1613,7 +1629,7 @@ def _sandbox_cycle_runner(
                     logger.info(
                         "patch applied", extra={"module": mod, "patch_id": patch_id}
                     )
-                    patch_logger = getattr(ctx, "patch_logger", None)
+                    patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
                         ids = [f"{o}:{v}" for o, v in vectors]
                         try:
@@ -1623,7 +1639,7 @@ def _sandbox_cycle_runner(
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
                             )
-                        except Exception:
+                        except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
                 except PermissionError as exc:
                     logger.error("patch permission denied for %s: %s", mod, exc)
