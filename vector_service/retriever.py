@@ -13,6 +13,7 @@ import time
 import asyncio
 from typing import Any, Dict, Iterable, List, Sequence
 
+from redaction_utils import redact_dict, redact_text
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
@@ -89,11 +90,12 @@ class Retriever:
                     "reason": getattr(h, "reason", ""),
                     "metadata": meta,
                 }
-            results.append(item)
+            results.append(redact_dict(item))
         return results
 
     # ------------------------------------------------------------------
     def _fallback(self, reason: str) -> List[Dict[str, Any]]:
+        reason = redact_text(reason)
         return [
             {
                 "origin_db": "heuristic",
@@ -126,6 +128,7 @@ class Retriever:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
+        query = redact_text(query)
         k = top_k or self.top_k
         thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
         retriever = self._get_retriever()

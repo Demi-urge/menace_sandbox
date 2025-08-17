@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import logging
 import asyncio
 
+from redaction_utils import redact_text
+
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, FallbackResult
@@ -118,17 +120,18 @@ class ContextBuilder:
         elif origin == "bot":
             text = meta.get("name") or meta.get("purpose") or ""
             if "name" in meta:
-                entry["name"] = meta["name"]
+                entry["name"] = redact_text(str(meta["name"]))
         elif origin == "workflow":
             text = meta.get("title") or meta.get("description") or ""
             if "title" in meta:
-                entry["title"] = meta["title"]
+                entry["title"] = redact_text(str(meta["title"]))
         elif origin == "discrepancy":
             text = meta.get("message") or meta.get("description") or ""
         elif origin == "code":
             text = meta.get("summary") or meta.get("code") or ""
 
-        entry["desc"] = self._summarise(str(text))
+        text = redact_text(str(text))
+        entry["desc"] = self._summarise(text)
         metric = self._metric(origin, meta)
         if metric is not None:
             entry["metric"] = metric
@@ -153,6 +156,7 @@ class ContextBuilder:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
+        query = redact_text(query)
         cache_key = (query, top_k)
         if cache_key in self._cache:
             return self._cache[cache_key]
