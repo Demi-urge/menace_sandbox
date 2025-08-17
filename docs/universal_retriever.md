@@ -27,7 +27,7 @@ hits, session_id, vectors = retriever.retrieve(
 Alternatively a lightweight wrapper is available via the service layer:
 
 ```python
-from semantic_service import Retriever
+from vector_service import Retriever
 
 hits = Retriever().search("upload failed")
 ```

@@ -1,11 +1,11 @@
 # Vector Service HTTP API
 
 The `vector_service_api` module exposes a tiny [FastAPI](https://fastapi.tiangolo.com/)
-application that wraps helpers from [`semantic_service`](semantic_service.md).
+application that wraps helpers from [`vector_service`](vector_service.md).
 Each endpoint returns a JSON object with a `status` field and timing metrics.
 
 ## `POST /search`
-Run semantic search through `semantic_service.Retriever`.
+Run semantic search through `vector_service.Retriever`.
 
 ```bash
 curl -X POST http://localhost:8000/search \
@@ -23,7 +23,7 @@ Response:
 ```
 
 ## `POST /build-context`
-Generate a contextual string using `semantic_service.ContextBuilder`.
+Generate a contextual string using `vector_service.ContextBuilder`.
 
 ```bash
 curl -X POST http://localhost:8000/build-context \
@@ -41,7 +41,7 @@ Response:
 ```
 
 ## `POST /track-contributors`
-Record contributor outcomes via `semantic_service.PatchLogger`.
+Record contributor outcomes via `vector_service.PatchLogger`.
 
 ```bash
 curl -X POST http://localhost:8000/track-contributors \
@@ -58,7 +58,7 @@ Response:
 ```
 
 ## `POST /backfill-embeddings`
-Trigger an embedding backfill through `semantic_service.EmbeddingBackfill`.
+Trigger an embedding backfill through `vector_service.EmbeddingBackfill`.
 
 ```bash
 curl -X POST http://localhost:8000/backfill-embeddings \
