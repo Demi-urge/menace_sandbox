@@ -9,13 +9,16 @@ from pathlib import Path
 # Ensure repository root on ``sys.path`` when executed directly
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from semantic_service import EmbeddingBackfill
+from vector_service import EmbeddingBackfill, VectorServiceError
 
 
 def main(*, session_id: str, backend: str, batch_size: int) -> None:
-    EmbeddingBackfill(batch_size=batch_size, backend=backend).run(
-        session_id=session_id
-    )
+    try:
+        EmbeddingBackfill(batch_size=batch_size, backend=backend).run(
+            session_id=session_id
+        )
+    except VectorServiceError:
+        raise
 
 
 def cli() -> None:
