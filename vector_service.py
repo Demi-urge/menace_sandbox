@@ -107,25 +107,46 @@ def log_and_metric(func: F) -> F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         session_id = kwargs.get("session_id", "")
         start = time.time()
+
+        req_meta = {
+            "args": [repr(a) for a in args[1:]],  # skip ``self``
+            "kwargs": {k: repr(v) for k, v in kwargs.items() if k != "session_id"},
+        }
+
         try:
             result = func(*args, **kwargs)
         except Exception:
             latency = time.time() - start
-            _FAILURE_COUNT.labels(name).inc()
-            _LATENCY_GAUGE.labels(name).set(latency)
+            try:
+                _FAILURE_COUNT.labels(name).inc()
+                _LATENCY_GAUGE.labels(name).set(latency)
+            except Exception:
+                pass
             logger.exception(
                 "%s failed", func.__qualname__,
-                extra=log_record(session_id=session_id, latency=latency, result_size=0),
+                extra=log_record(
+                    session_id=session_id,
+                    latency=latency,
+                    request=req_meta,
+                    result_size=0,
+                ),
             )
             raise
+
         latency = time.time() - start
         size = _result_size(result)
-        _SUCCESS_COUNT.labels(name).inc()
-        _LATENCY_GAUGE.labels(name).set(latency)
+        try:
+            _SUCCESS_COUNT.labels(name).inc()
+            _LATENCY_GAUGE.labels(name).set(latency)
+        except Exception:
+            pass
         logger.info(
             "%s executed", func.__qualname__,
             extra=log_record(
-                session_id=session_id, latency=latency, result_size=size
+                session_id=session_id,
+                latency=latency,
+                request=req_meta,
+                response={"result_size": size},
             ),
         )
         return result
