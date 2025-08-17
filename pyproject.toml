@@ -97,3 +97,4 @@ where = ["."]
 
 [tool.poetry.scripts]
 mypy = "mypy:main"
+embedding-backfill = "scripts.backfill_embeddings:cli"

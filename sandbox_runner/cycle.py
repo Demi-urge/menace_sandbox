@@ -20,6 +20,7 @@ from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
+from semantic_service import Retriever
 
 if TYPE_CHECKING:  # pragma: no cover - import heavy types only for checking
     from sandbox_runner import SandboxContext
@@ -1160,7 +1161,7 @@ def _sandbox_cycle_runner(
                     continue
                 session_id = ""
                 vectors: list[tuple[str, str]] = []
-                retriever = getattr(ctx, "retriever", None)
+                retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
                     try:
@@ -1538,7 +1539,7 @@ def _sandbox_cycle_runner(
                 suggestion = _choose_suggestion(ctx, module_name)
                 session_id = ""
                 vectors: list[tuple[str, str]] = []
-                retriever = getattr(ctx, "retriever", None)
+                retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
                     try:

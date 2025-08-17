@@ -1,53 +1,31 @@
-#!/usr/bin/env python3
-"""Backfill vector embeddings for selected databases."""
+"""CLI for running embedding backfills across databases."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
-from typing import Iterable
 
-# Ensure repository root on sys.path when executed directly
+# Ensure repository root on ``sys.path`` when executed directly
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from bot_database import BotDB
-from task_handoff_bot import WorkflowDB
-from chatgpt_enhancement_bot import EnhancementDB
-from error_bot import ErrorDB
-from research_aggregator_bot import InfoDB
-from information_db import InformationDB
+from semantic_service import EmbeddingBackfill
 
 
-DB_CLASSES = {
-    "bot": BotDB,
-    "workflow": WorkflowDB,
-    "enhancement": EnhancementDB,
-    "error": ErrorDB,
-    "info": InfoDB,
-    "information": InformationDB,
-}
-
-
-def main(databases: Iterable[str], backend: str, batch_size: int = 100) -> None:
-    """Backfill embeddings for ``databases`` using ``backend``."""
-
-    for name in databases:
-        db_cls = DB_CLASSES[name]
-        db = db_cls(vector_backend=backend)
-        db.backfill_embeddings(batch_size=batch_size)
+def main(*, session_id: str, backend: str, batch_size: int) -> None:
+    EmbeddingBackfill(batch_size=batch_size, backend=backend).run(
+        session_id=session_id
+    )
 
 
 def cli() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill embeddings for selected databases",
+        description="Backfill embeddings for all known databases",
     )
     parser.add_argument(
-        "--db",
-        choices=DB_CLASSES.keys(),
-        nargs="*",
-        default=list(DB_CLASSES.keys()),
-        help="Databases to process (default: all)",
+        "--session-id",
+        default="",
+        help="Identifier used for metrics aggregation",
     )
     parser.add_argument(
         "--backend",
@@ -62,9 +40,9 @@ def cli() -> None:
         help="Batch size for processing",
     )
     args = parser.parse_args()
-    main(args.db, args.backend, batch_size=args.batch_size)
+    main(session_id=args.session_id, backend=args.backend, batch_size=args.batch_size)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover - CLI entrypoint
     cli()
 
