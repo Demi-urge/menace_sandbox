@@ -160,8 +160,36 @@ def log_and_metric(func: F) -> F:
 
 
 @dataclass
+class FallbackResult(Sequence[Dict[str, Any]]):
+    """Container returned when semantic search falls back.
+
+    Behaves like a sequence of result dictionaries while exposing the
+    ``reason`` for the fallback and the confidence of the failed lookup.
+    """
+
+    reason: str
+    results: List[Dict[str, Any]]
+    confidence: float = 0.0
+
+    def __iter__(self):  # pragma: no cover - delegation
+        return iter(self.results)
+
+    def __len__(self) -> int:  # pragma: no cover - delegation
+        return len(self.results)
+
+    def __getitem__(self, item: int) -> Dict[str, Any]:  # pragma: no cover
+        return self.results[item]
+
+
+@dataclass
 class Retriever:
-    """Facade around :class:`UniversalRetriever` with optional fallback."""
+    """Facade around :class:`UniversalRetriever` with caching and retries.
+
+    The retriever attempts ``retrieve_with_confidence`` when available and
+    retries once with broader parameters when the returned confidence is below
+    ``score_threshold``.  If all attempts fail a :class:`FallbackResult` is
+    returned containing the reason and heuristic hits.
+    """
 
     retriever: UniversalRetriever | None = None
     fallback_retriever: UniversalRetriever | None = None
@@ -199,26 +227,38 @@ class Retriever:
         return results
 
     def _retrieve(
-        self,
-        retriever: UniversalRetriever,
-        query: str,
-        k: int,
-        include_confidence: bool,
+        self, retriever: UniversalRetriever, query: str, k: int
     ) -> Tuple[List[Dict[str, Any]], float]:
+        """Run the underlying retriever and return hits with confidence."""
+
         try:
-            if include_confidence and hasattr(retriever, "retrieve_with_confidence"):
-                hits, _, _ = retriever.retrieve_with_confidence(query, top_k=k)  # type: ignore[arg-type]
+            if hasattr(retriever, "retrieve_with_confidence"):
+                hits, confidence, _ = retriever.retrieve_with_confidence(  # type: ignore[attr-defined]
+                    query, top_k=k
+                )
             else:
                 hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
+                confidence = (
+                    max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
+                )
         except Exception as exc:
             msg = str(exc).lower()
             if "rate limit" in msg or "too many requests" in msg or "429" in msg:
                 raise RateLimitError(str(exc)) from exc
-
             raise VectorServiceError(str(exc)) from exc
         normalised = self._normalise(hits)
-        top_score = normalised[0]["score"] if normalised else 0.0
-        return normalised, top_score
+        return normalised, float(confidence)
+
+    def _fallback(self, reason: str) -> List[Dict[str, Any]]:
+        return [
+            {
+                "origin_db": "heuristic",
+                "record_id": None,
+                "score": 0.0,
+                "metadata": {},
+                "reason": reason,
+            }
+        ]
 
     @log_and_metric
     def search(
@@ -229,14 +269,19 @@ class Retriever:
         session_id: str = "",
         min_score: float | None = None,
         include_confidence: bool = False,
-    ) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], float]]:
+    ) -> Union[
+        List[Dict[str, Any]],
+        Tuple[List[Dict[str, Any]], float],
+        FallbackResult,
+        Tuple[FallbackResult, float],
+    ]:
         """Perform semantic search and optionally return a confidence score.
 
-        The method performs a primary retrieval.  When no hits are returned or the
-        best score falls below ``min_score`` (or ``score_threshold``) a secondary
-        retrieval strategy is attempted using ``fallback_retriever`` when
-        provided.  When ``include_confidence`` is true the highest score of the
-        selected results is returned alongside the hits.
+        A primary retrieval is attempted and, when no hits are produced or the
+        confidence falls below ``min_score`` (or ``score_threshold``), the
+        search is retried once with broader parameters.  After exhausting these
+        attempts a :class:`FallbackResult` is returned documenting the reason
+        for the fallback.
         """
 
         if not isinstance(query, str) or not query.strip():
@@ -244,19 +289,34 @@ class Retriever:
 
         k = top_k or self.top_k
         threshold = self.score_threshold if min_score is None else min_score
-        retriever = self._get_retriever()
-        results, top_score = self._retrieve(retriever, query, k, include_confidence)
-        if (not results or top_score < threshold) and self._get_fallback() is not None:
-            fb = self._get_fallback()
-            assert fb is not None
-            fb_results, fb_score = self._retrieve(fb, query, k, include_confidence)
-            if fb_results:
-                for r in fb_results:
-                    r.setdefault("reason", "fallback")
-                results, top_score = fb_results, fb_score
+
+        primary = self._get_retriever()
+        secondary = self._get_fallback() or primary
+
+        attempts = [(primary, k), (secondary, k * 2)]
+        last_results: List[Dict[str, Any]] = []
+        confidence = 0.0
+        for retr, kk in attempts:
+            results, confidence = self._retrieve(retr, query, kk)
+            if results and confidence >= threshold:
+                self._cache[query] = results
+                if include_confidence:
+                    return results, confidence
+                return results
+            last_results = results
+
+        cached = self._cache.get(query)
+        if cached is not None:
+            if include_confidence:
+                return cached, confidence
+            return cached
+
+        reason = "no results" if not last_results else "low confidence"
+        fb_hits = self._fallback(reason)
+        fb_result = FallbackResult(reason, fb_hits, confidence)
         if include_confidence:
-            return results, top_score
-        return results
+            return fb_result, confidence
+        return fb_result
 
 
 @dataclass
@@ -289,6 +349,13 @@ class ContextBuilder:
     def build(
         self, task_description: str, *, session_id: str = "", **kwargs: Any
     ) -> Union[str, ErrorResult]:
+        """Build a context string for ``task_description``.
+
+        ``ValueError`` and rate‑limit responses from the downstream builder are
+        captured and returned as :class:`ErrorResult` instances.  All other
+        exceptions are wrapped in :class:`VectorServiceError`.
+        """
+
         if not isinstance(task_description, str) or not task_description.strip():
             raise MalformedPromptError("task_description must be a non-empty string")
         builder = self._get_builder()
@@ -441,7 +508,9 @@ class EmbeddingBackfill:
 
 __all__ = [
     "Retriever",
+    "FallbackResult",
     "ContextBuilder",
+    "ErrorResult",
     "PatchLogger",
     "EmbeddingBackfill",
     "VectorServiceError",
