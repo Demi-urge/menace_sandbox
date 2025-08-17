@@ -44,12 +44,12 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
-from semantic_service import Retriever, FallbackResult
+from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when missing
     class ErrorResult(Exception):
-        """Fallback ErrorResult when semantic_service lacks explicit class."""
+        """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
 try:

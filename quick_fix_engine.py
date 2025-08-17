@@ -19,12 +19,12 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from semantic_service import ContextBuilder, Retriever, PatchLogger, FallbackResult
+from vector_service import ContextBuilder, Retriever, PatchLogger, FallbackResult
 try:  # pragma: no cover - optional dependency
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
     class ErrorResult(Exception):
-        """Fallback ErrorResult when semantic_service lacks explicit class."""
+        """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
 try:  # pragma: no cover - optional dependency

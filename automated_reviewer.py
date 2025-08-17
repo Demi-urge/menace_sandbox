@@ -8,14 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
-from vector_service import ContextBuilder, FallbackResult
-try:  # pragma: no cover - graceful fallback when dependency missing
-    from vector_service import ErrorResult
-except Exception:  # pragma: no cover - compatibility
-    class ErrorResult(Exception):
-        """Fallback ErrorResult when vector service dependency missing."""
-
-        pass
+from vector_service import ContextBuilder, FallbackResult, ErrorResult
 
 
 class AutomatedReviewer:

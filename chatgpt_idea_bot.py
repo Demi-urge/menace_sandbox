@@ -80,14 +80,14 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
-    from semantic_service import Retriever, FallbackResult
+    from vector_service import Retriever, FallbackResult
 except Exception:  # pragma: no cover - missing dependency
     Retriever = None  # type: ignore
     class FallbackResult(list):  # type: ignore
         pass
 
 try:  # pragma: no cover - optional
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
     class ErrorResult(Exception):  # type: ignore
         pass

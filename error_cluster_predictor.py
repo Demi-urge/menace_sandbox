@@ -17,12 +17,12 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
 from .error_bot import ErrorDB
-from semantic_service import Retriever, FallbackResult
+from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback
     class ErrorResult(Exception):
-        """Fallback ErrorResult when semantic_service lacks explicit class."""
+        """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
 
