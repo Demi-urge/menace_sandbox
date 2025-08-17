@@ -1093,7 +1093,16 @@ def _sandbox_cycle_runner(
                 "synergy_mae": synergy_mae,
             },
         )
-        flagged = ctx.meta_log.diminishing(tracker.diminishing())
+        thr = tracker.diminishing()
+        entropy_flags = tracker.entropy_plateau(thr, 3)
+        try:
+            flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
+        except TypeError:  # pragma: no cover - compatibility
+            flagged = ctx.meta_log.diminishing(thr)
+            for m in entropy_flags:
+                if m not in ctx.meta_log.flagged_sections:
+                    ctx.meta_log.flagged_sections.add(m)
+                    flagged.append(m)
         if ctx.gpt_client:
             brainstorm_summary = "; ".join(ctx.brainstorm_history[-3:])
             early_exit = False
@@ -1772,7 +1781,16 @@ def _sandbox_cycle_runner(
     flagged = []
     if ctx.adapt_presets:
         try:
-            flagged = ctx.meta_log.diminishing(tracker.diminishing())
+            thr = tracker.diminishing()
+            entropy_flags = tracker.entropy_plateau(thr, 3)
+            try:
+                flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
+            except TypeError:  # pragma: no cover - compatibility
+                flagged = ctx.meta_log.diminishing(thr)
+                for m in entropy_flags:
+                    if m not in ctx.meta_log.flagged_sections:
+                        ctx.meta_log.flagged_sections.add(m)
+                        flagged.append(m)
         except Exception:
             flagged = []
     if ctx.adapt_presets and flagged:

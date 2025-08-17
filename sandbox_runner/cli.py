@@ -357,13 +357,15 @@ def _diminishing_modules(
     std_threshold: float = 1e-3,
     *,
     confidence: float = 0.95,
+    entropy_history: dict[str, list[float]] | None = None,
 ) -> tuple[list[str], dict[str, float]]:
-    """Return modules with ROI deltas that consistently fall within ``threshold``.
+    """Return modules with ROI or entropy deltas that plateau within ``threshold``.
 
-    The last ``consecutive`` deltas are evaluated using an exponential moving
+    The last ``consecutive`` ROI deltas are evaluated using an exponential moving
     average and variance. A module is flagged when the EMA magnitude is below the
     given ``threshold`` and the exponentially weighted standard deviation is less
-    than ``std_threshold``.
+    than ``std_threshold``. Additionally modules whose recent entropy delta ratios
+    stay within ``threshold`` for ``consecutive`` entries are flagged.
     """
 
     flags: list[str] = []
@@ -383,6 +385,15 @@ def _diminishing_modules(
         if abs(ema) <= thr and std <= std_threshold and conf >= confidence:
             flags.append(mod)
             confidences[mod] = conf
+
+    if entropy_history:
+        for mod, vals in entropy_history.items():
+            if mod in flagged or mod in flags or len(vals) < consecutive:
+                continue
+            window = vals[-consecutive:]
+            if all(abs(v) <= thr for v in window):
+                flags.append(mod)
+                confidences[mod] = 1.0
 
     return flags, confidences
 
@@ -612,6 +623,7 @@ def full_autonomous_run(
         ).start()
 
     module_history: dict[str, list[float]] = {}
+    module_entropy_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     synergy_history = list(synergy_history or [])
     synergy_pred_history: list[dict[str, float]] = []
@@ -743,6 +755,8 @@ def full_autonomous_run(
             last_tracker = tracker
             for mod, vals in tracker.module_deltas.items():
                 module_history.setdefault(mod, []).extend(vals)
+            for mod, vals in tracker.module_entropy_deltas.items():
+                module_entropy_history.setdefault(mod, []).extend(vals)
             syn_vals = {
                 k: v[-1]
                 for k, v in tracker.metrics_history.items()
@@ -782,6 +796,7 @@ def full_autonomous_run(
                 roi_threshold,
                 consecutive=roi_cycles,
                 confidence=roi_confidence or 0.95,
+                entropy_history=module_entropy_history,
             )
             flagged.update(new_flags)
         if last_tracker and getattr(args, "auto_thresholds", False):
@@ -811,7 +826,8 @@ def full_autonomous_run(
             )
         else:
             converged, ema_val, _ = False, 0.0, 0.0
-        if module_history and set(module_history) <= flagged and converged:
+        all_mods = set(module_history) | set(module_entropy_history)
+        if all_mods and all_mods <= flagged and converged:
             logger.info(
                 "synergy convergence reached",
                 extra={"iteration": iteration, "ema": ema_val},

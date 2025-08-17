@@ -2319,6 +2319,20 @@ class ROITracker:
         return list(self.module_entropy_deltas.get(module_name, []))
 
     # ------------------------------------------------------------------
+    def entropy_plateau(self, threshold: float, consecutive: int) -> List[str]:
+        """Return modules whose entropy deltas stay below ``threshold``."""
+
+        flags: List[str] = []
+        thr = float(threshold)
+        for mod, vals in self.module_entropy_deltas.items():
+            if len(vals) < consecutive:
+                continue
+            window = vals[-consecutive:]
+            if all(abs(v) <= thr for v in window):
+                flags.append(mod)
+        return flags
+
+    # ------------------------------------------------------------------
     def rankings(self) -> List[Tuple[str, float]]:
         """Return modules sorted by cumulative ROI contribution."""
         totals = {m: sum(v) for m, v in self.module_deltas.items()}

@@ -117,6 +117,15 @@ def test_save_and_load_sqlite(tmp_path):
     assert other.synergy_history == tracker.synergy_history
 
 
+def test_entropy_plateau_detection():
+    tracker = rt.ROITracker()
+    tracker.module_entropy_deltas = {
+        "a.py": [0.005, 0.004, 0.003],
+        "b.py": [0.02, 0.01, 0.02],
+    }
+    assert tracker.entropy_plateau(0.01, 3) == ["a.py"]
+
+
 def test_roi_tracker_filters_outliers():
     tracker = rt.ROITracker()
     normal = [0.1, 0.2, 0.15, 0.18]
