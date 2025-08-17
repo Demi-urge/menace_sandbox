@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List
 
-from .decorators import log_and_time, track_metrics
+from .decorators import log_and_measure
 
 try:  # pragma: no cover - optional dependency
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
@@ -47,8 +47,7 @@ class EmbeddingBackfill:
         return subclasses
 
     # ------------------------------------------------------------------
-    @log_and_time
-    @track_metrics
+    @log_and_measure
     def _process_db(
         self,
         db: EmbeddableDBMixin,
@@ -62,8 +61,7 @@ class EmbeddingBackfill:
             db.backfill_embeddings()  # type: ignore[call-arg]
 
     # ------------------------------------------------------------------
-    @log_and_time
-    @track_metrics
+    @log_and_measure
     def run(
         self,
         *,

@@ -6,7 +6,7 @@ from typing import Any, Callable, TypeVar
 
 import logging
 
-try:
+try:  # pragma: no cover - optional dependency not critical for tests
     from .. import metrics_exporter as _me  # type: ignore
 except Exception:  # pragma: no cover - fallback when running as script
     import metrics_exporter as _me  # type: ignore
@@ -34,52 +34,58 @@ def _result_size(result: Any) -> int:
     return 0
 
 
-def log_and_time(func: F) -> F:
-    """Log structured information about a function call."""
+def log_and_measure(func: F) -> F:
+    """Log start/end timestamps and emit metrics for ``func``."""
 
     logger = logging.getLogger(func.__module__)
+    name = func.__qualname__
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         session_id = kwargs.get("session_id", "")
         start = time.time()
+        logger.info("%s start", name, extra={"session_id": session_id, "timestamp": start})
         try:
             result = func(*args, **kwargs)
-            latency = time.time() - start
-            size = _result_size(result)
-            logger.info(
-                "%s executed", func.__qualname__,
-                extra={"session_id": session_id, "latency": latency, "result_size": size},
-            )
-            return result
         except Exception:
-            latency = time.time() - start
+            end = time.time()
+            latency = end - start
+            _CALL_COUNT.labels(name).inc()
+            _LATENCY_GAUGE.labels(name).set(latency)
             logger.exception(
-                "%s failed", func.__qualname__,
-                extra={"session_id": session_id, "latency": latency, "result_size": 0},
+                "%s error", name,
+                extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": 0},
             )
             raise
 
-    return wrapper  # type: ignore[return-value]
-
-
-def track_metrics(func: F) -> F:
-    """Update Prometheus-style metrics for the wrapped function."""
-
-    name = func.__qualname__
-
-    @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start = time.time()
-        result = func(*args, **kwargs)
-        latency = time.time() - start
+        end = time.time()
+        latency = end - start
         size = _result_size(result)
         _CALL_COUNT.labels(name).inc()
         _LATENCY_GAUGE.labels(name).set(latency)
         _RESULT_SIZE_GAUGE.labels(name).set(size)
+        logger.info(
+            "%s end", name,
+            extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": size},
+        )
         return result
 
     return wrapper  # type: ignore[return-value]
 
 
-__all__ = ["log_and_time", "track_metrics"]
+# ---------------------------------------------------------------------------
+# Backwards compatibility helpers
+
+def log_and_time(func: F) -> F:  # pragma: no cover - compatibility shim
+    """Alias for :func:`log_and_measure` for older call sites."""
+
+    return log_and_measure(func)
+
+
+def track_metrics(func: F) -> F:  # pragma: no cover - compatibility shim
+    """No-op wrapper retained for backwards compatibility."""
+
+    return func
+
+
+__all__ = ["log_and_measure", "log_and_time", "track_metrics"]

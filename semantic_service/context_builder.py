@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any, Dict, List
 
-from .decorators import log_and_time, track_metrics
+from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
 
@@ -26,8 +26,7 @@ class ContextBuilder:
         self._cache: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
-    @log_and_time
-    @track_metrics
+    @log_and_measure
     def build(self, task_description: str, **kwargs: Any) -> str:
         """Return a compact JSON context for ``task_description``."""
 

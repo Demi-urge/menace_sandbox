@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import time
 from typing import Any, Dict, Iterable, List
 
-from .decorators import log_and_time, track_metrics
+from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
 
@@ -29,6 +29,7 @@ class Retriever:
 
     retriever: UniversalRetriever | None = None
     top_k: int = 5
+    similarity_threshold: float = 0.1
     _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -62,10 +63,26 @@ class Retriever:
         return results
 
     # ------------------------------------------------------------------
-    @log_and_time
-    @track_metrics
+    def _fallback(self, reason: str) -> List[Dict[str, Any]]:
+        return [
+            {
+                "origin_db": "heuristic",
+                "record_id": None,
+                "score": 0.0,
+                "metadata": {},
+                "reason": reason,
+            }
+        ]
+
+    # ------------------------------------------------------------------
+    @log_and_measure
     def search(
-        self, query: str, *, top_k: int | None = None, session_id: str = ""
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        session_id: str = "",
+        similarity_threshold: float | None = None,
     ) -> List[Dict[str, Any]]:
         """Perform semantic search and return normalised results."""
 
@@ -73,6 +90,7 @@ class Retriever:
             raise MalformedPromptError("query must be a non-empty string")
 
         k = top_k or self.top_k
+        thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
         retriever = self._get_retriever()
 
         attempts = 3
@@ -99,35 +117,18 @@ class Retriever:
             cached = self._cache.get(query)
             if cached is not None:
                 return cached
-        else:
-            top_score = max(getattr(h, "score", 0.0) for h in hits)
-            if top_score >= 0.1:
-                results = self._parse_hits(hits)
-                self._cache[query] = results
-                return results
-            cached = self._cache.get(query)
-            if cached is not None:
-                return cached
-            return [
-                {
-                    "origin_db": "heuristic",
-                    "record_id": None,
-                    "score": 0.0,
-                    "metadata": {},
-                    "reason": "low similarity" if hits else "no results",
-                }
-            ]
+            return self._fallback("no results")
 
-        # No hits and nothing cached – return heuristic fallback
-        return [
-            {
-                "origin_db": "heuristic",
-                "record_id": None,
-                "score": 0.0,
-                "metadata": {},
-                "reason": "no results",
-            }
-        ]
+        top_score = max(getattr(h, "score", 0.0) for h in hits)
+        if top_score >= thresh:
+            results = self._parse_hits(hits)
+            self._cache[query] = results
+            return results
+
+        cached = self._cache.get(query)
+        if cached is not None:
+            return cached
+        return self._fallback("low similarity")
 
 
 __all__ = ["Retriever"]
