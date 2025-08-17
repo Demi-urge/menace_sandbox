@@ -1,97 +1,78 @@
 from __future__ import annotations
 
-"""Compute ROI scores from metric profiles with optional vetoes."""
+"""Profile-driven ROI scoring with configurable veto rules."""
 
 from pathlib import Path
-import logging
 from typing import Any
 
 import yaml
 
-CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "roi_profiles.yaml"
-with CONFIG_PATH.open("r", encoding="utf-8") as fh:
-    _PROFILES: dict[str, dict[str, Any]] = yaml.safe_load(fh)
-
 
 class ROICalculator:
-    """Calculate ROI based on weighted metrics and veto rules."""
+    """Calculate ROI scores from weighted metrics and veto rules."""
 
-    def __init__(self) -> None:
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.hard_fail = False
+    def __init__(self, profiles_path: str | Path = "configs/roi_profiles.yaml") -> None:
+        """Initialise calculator with profiles loaded from *profiles_path*."""
+        path = Path(profiles_path)
+        with path.open("r", encoding="utf-8") as fh:
+            self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
+        self.hard_fail: bool = False
 
-    # ------------------------------------------------------------------
-    def _eval_vetoes(
-        self,
-        metrics: dict[str, float],
-        flags: dict[str, Any],
-        exprs: list[str],
-    ) -> list[str]:
-        """Return list of veto expressions triggered by *metrics* and *flags*."""
-        context: dict[str, Any] = {**flags, **metrics, "true": True, "false": False}
-        triggered: list[str] = []
-        for expr in exprs:
-            expr_py = expr.replace(" true", " True").replace(" false", " False")
-            try:
-                if eval(expr_py, {"__builtins__": {}}, context):  # noqa: S307
-                    triggered.append(expr)
-            except Exception:  # pragma: no cover - debug logging only
-                self.logger.exception("failed to evaluate veto expression %r", expr)
-        return triggered
+    def calculate(
+        self, metrics: dict[str, Any], profile_type: str
+    ) -> tuple[float, bool, list[str]]:
+        """Return weighted ROI score and veto information.
 
-    # ------------------------------------------------------------------
-    def compute(
-        self,
-        metrics: dict[str, float],
-        profile_type: str,
-        flags: dict[str, Any] | None = None,
-    ) -> float:
-        """Return ROI score or ``-inf`` if any veto condition triggers."""
+        Missing metrics default to ``0.0``. When any veto condition is met the
+        score becomes ``-inf`` and the veto list describes the triggered
+        conditions.
+        """
         try:
-            profile = _PROFILES[profile_type]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"unknown ROI profile: {profile_type}") from exc
+            profile = self.profiles[profile_type]
+        except KeyError as exc:
+            raise ValueError(f"unknown profile: {profile_type}") from exc
 
-        weights: dict[str, float] = profile.get("metrics", {})
-        veto_exprs: list[str] = profile.get("veto", [])
+        weights: dict[str, float] = profile.get("weights", {})
+        veto_rules: dict[str, dict[str, Any]] = profile.get("veto", {})
 
-        flags = flags or {}
-        triggered = self._eval_vetoes(metrics, flags, veto_exprs)
-        if triggered:
-            self.hard_fail = True
-            return float("-inf")
-        self.hard_fail = False
-        return sum(metrics.get(name, 0.0) * weight for name, weight in weights.items())
+        score = 0.0
+        for name, weight in weights.items():
+            value = float(metrics.get(name, 0.0))
+            score += value * weight
 
-    # ------------------------------------------------------------------
-    def log_debug(
-        self,
-        metrics: dict[str, float],
-        profile_type: str,
-        flags: dict[str, Any] | None = None,
-    ) -> None:
-        """Log weights, per-metric contributions, final score and vetoes."""
+        triggers: list[str] = []
+        for name, rule in veto_rules.items():
+            value = metrics.get(name, 0.0 if any(k in rule for k in ("min", "max")) else None)
+            if "min" in rule and float(value) < rule["min"]:
+                triggers.append(f"{name} below min {rule['min']}")
+            if "max" in rule and float(value) > rule["max"]:
+                triggers.append(f"{name} above max {rule['max']}")
+            if "equals" in rule and value == rule["equals"]:
+                triggers.append(f"{name} equals {rule['equals']}")
 
-        try:
-            profile = _PROFILES[profile_type]
-        except KeyError as exc:  # pragma: no cover - defensive
-            raise ValueError(f"unknown ROI profile: {profile_type}") from exc
+        vetoed = bool(triggers)
+        self.hard_fail = vetoed
+        if vetoed:
+            return (float("-inf"), True, triggers)
+        return (score, False, [])
 
-        weights: dict[str, float] = profile.get("metrics", {})
-        veto_exprs: list[str] = profile.get("veto", [])
-        flags = flags or {}
-        contributions = {
-            name: metrics.get(name, 0.0) * weight for name, weight in weights.items()
-        }
-        triggered = self._eval_vetoes(metrics, flags, veto_exprs)
-        score = float("-inf") if triggered else sum(contributions.values())
-        self.logger.debug("profile: %s", profile_type)
-        self.logger.debug("weights: %s", weights)
-        self.logger.debug("metrics: %s", metrics)
-        self.logger.debug("flags: %s", flags)
-        self.logger.debug("contributions: %s", contributions)
-        self.logger.debug("final_score: %s", score)
-        self.logger.debug("veto_triggered: %s", triggered)
+    def log_debug(self, metrics: dict[str, Any], profile_type: str) -> None:
+        """Print per-metric contributions, final score and veto triggers."""
+        score, vetoed, triggers = self.calculate(metrics, profile_type)
+        weights = self.profiles[profile_type].get("weights", {})
+        for name, weight in weights.items():
+            value = float(metrics.get(name, 0.0))
+            print(f"{name} * {weight} = {value * weight}")
+        print(f"Final score: {score}")
+        if triggers:
+            print(f"Veto triggers: {triggers}")
+        else:
+            print("Veto triggers: none")
+
+    def compute(self, metrics: dict[str, Any], profile_type: str) -> float:
+        """Backward compatible alias for :meth:`calculate` returning only the score."""
+        score, _, _ = self.calculate(metrics, profile_type)
+        return score
 
 
 __all__ = ["ROICalculator"]

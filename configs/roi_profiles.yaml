@@ -1,41 +1,41 @@
 scraper_bot:
-  metrics:
-    profitability: 0.15
+  weights:
+    profitability: 0.25
     efficiency: 0.25
     reliability: 0.10
-    resilience: 0.05
+    resilience: 0.10
     maintainability: 0.05
     security: 0.15
-    latency: 0.20
-    energy: 0.05
+    latency: -0.15
+    energy: -0.05
   veto:
-    - security < 0.4
-    - alignment_violation == true
+    security: {min: 0.5}
+    alignment_violation: {equals: true}
 
 content_generator:
-  metrics:
+  weights:
     profitability: 0.30
     efficiency: 0.20
-    reliability: 0.10
+    reliability: 0.15
     resilience: 0.05
     maintainability: 0.10
     security: 0.10
-    latency: 0.10
-    energy: 0.05
+    latency: -0.10
+    energy: -0.05
   veto:
-    - security < 0.5
-    - alignment_violation == true
+    security: {min: 0.45}
+    alignment_violation: {equals: true}
 
 growth_planner:
-  metrics:
+  weights:
     profitability: 0.35
     efficiency: 0.15
     reliability: 0.10
     resilience: 0.10
     maintainability: 0.10
     security: 0.10
-    latency: 0.05
-    energy: 0.05
+    latency: -0.05
+    energy: -0.05
   veto:
-    - security < 0.6
-    - alignment_violation == true
+    security: {min: 0.6}
+    alignment_violation: {equals: true}

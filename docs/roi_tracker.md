@@ -4,6 +4,8 @@
 It exposes utilities to record history, forecast the next ROI change and plot
 trends.
 
+For profile based scoring see the [ROI calculator](roi_calculator.md).
+
 ## Adaptive Forecasting
 
 The `forecast()` method evaluates multiple ARIMA orders when the optional

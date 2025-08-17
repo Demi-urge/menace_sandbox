@@ -92,6 +92,7 @@ if not os.getenv("MENACE_LIGHT_IMPORTS"):
 __all__ = [
     "__version__",
     "ROICalculator",
+    "roi_calculator",
     "newsreader_bot",
     "preliminary_research_bot",
     "passive_discovery_bot",
