@@ -9,7 +9,7 @@ import logging
 import asyncio
 
 from .decorators import log_and_measure
-from .exceptions import MalformedPromptError
+from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
 
@@ -157,7 +157,15 @@ class ContextBuilder:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        hits = self.retriever.search(query, top_k=top_k * 5)
+        try:
+            hits = self.retriever.search(query, top_k=top_k * 5)
+        except RateLimitError:
+            raise
+        except VectorServiceError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive
+            raise VectorServiceError("retriever failure") from exc
+
         if isinstance(hits, ErrorResult):
             return "{}"
         if isinstance(hits, FallbackResult):
