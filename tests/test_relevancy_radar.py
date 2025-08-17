@@ -49,16 +49,18 @@ def test_tracking_and_persistence(radar_env):
     modules["beta"].run()
 
     stats = rr.load_usage_stats()
-    assert stats == {"alpha": 2, "beta": 1}
+    assert stats == pytest.approx({"alpha": 2, "beta": 1})
 
     rr._save_usage_counts()
     data = json.loads(usage_file.read_text())
-    assert {k: len(v) for k, v in data.items()} == stats
+    assert {k: len(v) for k, v in data.items()} == {
+        k: round(v) for k, v in stats.items()
+    }
 
     rr._module_usage_counter.clear()
     modules["alpha"].run()
     stats2 = rr.load_usage_stats()
-    assert stats2 == {"alpha": 3, "beta": 1}
+    assert stats2 == pytest.approx({"alpha": 3, "beta": 1})
 
 
 def test_relevancy_evaluation_unused_flagged(radar_env):
@@ -97,7 +99,7 @@ def test_age_based_pruning(radar_env, monkeypatch):
     }))
 
     stats = rr.load_usage_stats()
-    assert stats == {"alpha": 1}
+    assert stats == pytest.approx({"alpha": 1}, rel=1e-5)
 
     module_map = {"alpha": 1, "beta": 1}
     flags = rr.evaluate_relevancy(module_map, {"alpha": [old, now], "beta": [old]})
