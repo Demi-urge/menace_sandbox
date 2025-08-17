@@ -50,6 +50,7 @@ class SearchRequest(BaseModel):
     top_k: int | None = None
     min_score: float | None = None
     include_confidence: bool = False
+    session_id: str = ""
 
 
 @app.post("/search")
@@ -62,6 +63,7 @@ def search(req: SearchRequest) -> Any:
             top_k=req.top_k,
             min_score=req.min_score,
             include_confidence=req.include_confidence,
+            session_id=req.session_id,
         )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
@@ -133,6 +135,7 @@ class TrackRequest(BaseModel):
     vector_ids: List[str]
     result: bool
     patch_id: str | None = ""
+    session_id: str = ""
 
 
 @app.post("/track-contributors")
@@ -141,7 +144,10 @@ def track_contributors(req: TrackRequest) -> Any:
     start = time.time()
     try:
         _patch_logger.track_contributors(
-            req.vector_ids, req.result, patch_id=req.patch_id or ""
+            req.vector_ids,
+            req.result,
+            patch_id=req.patch_id or "",
+            session_id=req.session_id,
         )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
@@ -152,6 +158,7 @@ def track_contributors(req: TrackRequest) -> Any:
 class BackfillRequest(BaseModel):
     batch_size: int | None = None
     backend: str | None = None
+    session_id: str = ""
 
 
 @app.post("/backfill-embeddings")
@@ -159,7 +166,11 @@ def backfill_embeddings(req: BackfillRequest) -> Any:
     """Kick off embedding backfill using :class:`vector_service.EmbeddingBackfill`."""
     start = time.time()
     try:
-        _backfill.run(batch_size=req.batch_size, backend=req.backend)
+        _backfill.run(
+            session_id=req.session_id,
+            batch_size=req.batch_size,
+            backend=req.backend,
+        )
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
     duration = time.time() - start

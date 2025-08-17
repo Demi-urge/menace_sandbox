@@ -34,14 +34,14 @@ class DummyRetriever:
 
 def test_retriever_search_success():
     r = Retriever(retriever=DummyRetriever(confidence=0.9))
-    results = r.search("query")
+    results = r.search("query", session_id="s")
     assert results[0]["record_id"] == "1"
 
 
 def test_retriever_low_confidence_fallback():
     dr = DummyRetriever(confidence=0.01)
     r = Retriever(retriever=dr, similarity_threshold=0.1)
-    res = r.search("question")
+    res = r.search("question", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "low confidence"
     assert res.confidence == 0.01
@@ -51,7 +51,7 @@ def test_retriever_low_confidence_fallback():
 def test_retriever_malformed_query():
     r = Retriever(retriever=DummyRetriever())
     with pytest.raises(MalformedPromptError):
-        r.search("")
+        r.search("", session_id="s")
 
 
 class MockVectorMetricsDB:
@@ -90,5 +90,5 @@ def test_embedding_backfill_run_on_dummy_db(monkeypatch):
         EmbeddingBackfill, "_load_known_dbs", lambda self: [DummyDB]
     )
     eb = EmbeddingBackfill()
-    eb.run(batch_size=5, backend="vec")
+    eb.run(batch_size=5, backend="vec", session_id="s")
     assert calls == [("vec", 5)]

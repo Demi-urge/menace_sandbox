@@ -5,8 +5,24 @@ from __future__ import annotations
 from typing import Any, Iterable, List, Sequence, Tuple
 
 import asyncio
+import time
 
 from .decorators import log_and_measure
+
+try:  # pragma: no cover - optional dependency for metrics
+    from . import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - fallback when running as script
+    import metrics_exporter as _me  # type: ignore
+
+_TRACK_OUTCOME = _me.Gauge(
+    "patch_logger_track_contributors_total",
+    "Outcomes recorded by PatchLogger.track_contributors",
+    labelnames=["status"],
+)
+_TRACK_DURATION = _me.Gauge(
+    "patch_logger_track_contributors_duration_seconds",
+    "Duration of PatchLogger.track_contributors calls",
+)
 
 try:  # pragma: no cover - optional dependencies
     from vector_metrics_db import VectorMetricsDB  # type: ignore
@@ -62,39 +78,49 @@ class PatchLogger:
     ) -> None:
         """Log patch outcome for vectors contributing to a patch."""
 
-        pairs = self._parse_vectors(vector_ids)
+        start = time.time()
+        status = "success" if result else "failure"
+        try:
+            pairs = self._parse_vectors(vector_ids)
 
-        if self.metrics_db is not None:
-            try:  # pragma: no cover - legacy path
-                self.metrics_db.log_patch_outcome(
-                    patch_id or "", result, pairs, session_id=session_id
-                )
-            except Exception:
-                pass
-        elif self.patch_db is not None and patch_id:
-            try:  # pragma: no cover - best effort
-                self.patch_db.record_vector_metrics(
-                    session_id,
-                    pairs,
-                    patch_id=int(patch_id),
-                    contribution=0.0,
-                    win=result,
-                    regret=not result,
-                )
-            except Exception:
-                pass
-        elif self.vector_metrics is not None:
-            try:  # pragma: no cover - best effort
-                self.vector_metrics.update_outcome(
-                    session_id,
-                    pairs,
-                    contribution=0.0,
-                    patch_id=patch_id,
-                    win=result,
-                    regret=not result,
-                )
-            except Exception:
-                pass
+            if self.metrics_db is not None:
+                try:  # pragma: no cover - legacy path
+                    self.metrics_db.log_patch_outcome(
+                        patch_id or "", result, pairs, session_id=session_id
+                    )
+                except Exception:
+                    pass
+            elif self.patch_db is not None and patch_id:
+                try:  # pragma: no cover - best effort
+                    self.patch_db.record_vector_metrics(
+                        session_id,
+                        pairs,
+                        patch_id=int(patch_id),
+                        contribution=0.0,
+                        win=result,
+                        regret=not result,
+                    )
+                except Exception:
+                    pass
+            elif self.vector_metrics is not None:
+                try:  # pragma: no cover - best effort
+                    self.vector_metrics.update_outcome(
+                        session_id,
+                        pairs,
+                        contribution=0.0,
+                        patch_id=patch_id,
+                        win=result,
+                        regret=not result,
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            _TRACK_OUTCOME.labels("error").inc()
+            _TRACK_DURATION.set(time.time() - start)
+            raise
+
+        _TRACK_OUTCOME.labels(status).inc()
+        _TRACK_DURATION.set(time.time() - start)
 
     # ------------------------------------------------------------------
     @log_and_measure

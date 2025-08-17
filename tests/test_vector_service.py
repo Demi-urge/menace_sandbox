@@ -39,19 +39,19 @@ class DummyRetrieverNoHits:
 
 def test_retriever_search_success_returns_results():
     r = Retriever(retriever=DummyRetrieverSuccess())
-    results = r.search("query")
+    results = r.search("query", session_id="s")
     assert results[0]["record_id"] == "1"
 
 
 def test_retriever_search_rate_limit_raises_error():
     r = Retriever(retriever=DummyRetrieverRateLimit())
     with pytest.raises(RateLimitError):
-        r.search("q")
+        r.search("q", session_id="s")
 
 
 def test_retriever_search_fallback_when_no_hits():
     r = Retriever(retriever=DummyRetrieverNoHits())
-    res = r.search("q")
+    res = r.search("q", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "no results"
 
@@ -59,7 +59,7 @@ def test_retriever_search_fallback_when_no_hits():
 def test_retriever_search_malformed_prompt():
     r = Retriever(retriever=DummyRetrieverSuccess())
     with pytest.raises(MalformedPromptError):
-        r.search("  ")
+        r.search("  ", session_id="s")
 
 
 # ---------------------------------------------------------------------------
@@ -149,5 +149,5 @@ def test_embedding_backfill_run_continues_on_error(monkeypatch):
 
     monkeypatch.setattr(EmbeddingBackfill, "_process_db", fake_process)
     eb = EmbeddingBackfill()
-    eb.run()
+    eb.run(session_id="s")
     assert order == [ErrorDB, DummyDB]

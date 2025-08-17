@@ -256,7 +256,7 @@ def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
             self.retriever = DummyRetriever()
         def build(self, query):
             self.calls.append(query)
-            return self.retriever.search(query)
+            return self.retriever.search(query, session_id="s")
 
     builder = DummyBuilder()
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
