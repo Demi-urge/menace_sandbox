@@ -17,7 +17,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
 from .error_bot import ErrorDB
-from semantic_service import Retriever
+from vector_service import Retriever
 
 
 class ErrorClusterPredictor:
