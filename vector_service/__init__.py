@@ -13,6 +13,12 @@ from .exceptions import (
     MalformedPromptError,
 )
 
+
+class ErrorResult(Exception):
+    """Fallback error result used when retriever returns an error."""
+
+    pass
+
 try:  # pragma: no cover - optional dependency used in tests
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
 except Exception:  # pragma: no cover - fallback when dependency missing
@@ -29,4 +35,5 @@ __all__ = [
     "VectorServiceError",
     "RateLimitError",
     "MalformedPromptError",
+    "ErrorResult",
 ]
