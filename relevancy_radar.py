@@ -22,6 +22,8 @@ import os
 from typing import Dict, Iterable, List
 import builtins
 
+import math
+
 import networkx as nx
 import inspect
 from metrics_exporter import update_relevancy_metrics
@@ -74,9 +76,20 @@ def _relevancy_cutoff() -> float:
     return time.time() - days * 86400
 
 
-def load_usage_stats() -> Dict[str, int]:
-    """Return usage statistics merged with any persisted counts."""
+def _decay_factor(ts: int, *, now: float | None = None, window: float | None = None) -> float:
+    """Return an exponential decay factor for ``ts`` relative to the relevancy window."""
+    now = float(now if now is not None else time.time())
+    if window is None:
+        window = max(now - _relevancy_cutoff(), 1.0)
+    age = max(0.0, now - float(ts))
+    return math.exp(-age / window)
+
+
+def load_usage_stats() -> Dict[str, float]:
+    """Return usage statistics merged with any persisted counts using decay weighting."""
     cutoff = _relevancy_cutoff()
+    now = time.time()
+    window = max(now - cutoff, 1.0)
     merged: Dict[str, List[int]] = defaultdict(list)
 
     if _MODULE_USAGE_FILE.exists():
@@ -95,11 +108,13 @@ def load_usage_stats() -> Dict[str, int]:
         merged[mod].extend(ts_list)
 
     # Filter out entries older than the cutoff
-    recent_counts: Dict[str, int] = {}
+    recent_counts: Dict[str, float] = {}
     for mod, ts_list in merged.items():
         recent = [ts for ts in ts_list if ts >= cutoff]
         if recent:
-            recent_counts[mod] = len(recent)
+            recent_counts[mod] = sum(
+                _decay_factor(ts, now=now, window=window) for ts in recent
+            )
             merged[mod] = recent
 
     return recent_counts
@@ -132,12 +147,16 @@ def evaluate_relevancy(
     """
 
     cutoff = _relevancy_cutoff()
+    now = time.time()
+    window = max(now - cutoff, 1.0)
     counts: Dict[str, float] = {}
     for mod, data in usage_stats.items():
         if isinstance(data, list):
-            counts[mod] = float(sum(int(ts) >= cutoff for ts in data))
+            counts[mod] = float(
+                sum(_decay_factor(ts, now=now, window=window) for ts in data if ts >= cutoff)
+            )
         else:
-            counts[mod] = float(int(data))
+            counts[mod] = float(data)
 
     impact_stats = impact_stats or {}
     for mod, impact in impact_stats.items():
@@ -247,7 +266,7 @@ class RelevancyRadar:
 
     def __init__(self, metrics_file: Path | None = None) -> None:
         self.metrics_file = Path(metrics_file) if metrics_file else _RELEVANCY_METRICS_FILE
-        self._metrics: Dict[str, Dict[str, int | float | str]] = self._load_metrics()
+        self._metrics: Dict[str, Dict[str, float | str]] = self._load_metrics()
         self._call_graph: Dict[str, set[str]] = self._load_call_graph()
         self._install_import_hook()
         atexit.register(self._persist_metrics)
@@ -255,8 +274,8 @@ class RelevancyRadar:
     # ------------------------------------------------------------------
     # Metrics persistence helpers
     # ------------------------------------------------------------------
-    def _load_metrics(self) -> Dict[str, Dict[str, int | float | str]]:
-        data: Dict[str, Dict[str, int | float | str]] = {}
+    def _load_metrics(self) -> Dict[str, Dict[str, float | str]]:
+        data: Dict[str, Dict[str, float | str]] = {}
         if self.metrics_file.exists():
             try:
                 with self.metrics_file.open("r", encoding="utf-8") as fh:
@@ -264,9 +283,9 @@ class RelevancyRadar:
                 if isinstance(raw, dict):
                     for mod, counts in raw.items():
                         if isinstance(counts, dict):
-                            entry: Dict[str, int | float | str] = {
-                                "imports": int(counts.get("imports", 0)),
-                                "executions": int(counts.get("executions", 0)),
+                            entry: Dict[str, float | str] = {
+                                "imports": float(counts.get("imports", 0.0)),
+                                "executions": float(counts.get("executions", 0.0)),
                                 "impact": float(counts.get("impact", 0.0)),
                                 "output_impact": float(counts.get("output_impact", 0.0)),
                             }
@@ -315,13 +334,13 @@ class RelevancyRadar:
             info = radar._metrics.setdefault(
                 root,
                 {
-                    "imports": 0,
-                    "executions": 0,
+                    "imports": 0.0,
+                    "executions": 0.0,
                     "impact": 0.0,
                     "output_impact": 0.0,
                 },
             )
-            info["imports"] += 1
+            info["imports"] = float(info.get("imports", 0.0)) + 1.0
             return original_import(name, globals, locals, fromlist, level)
 
         builtins._relevancy_radar_original_import = original_import
@@ -335,9 +354,9 @@ class RelevancyRadar:
 
         info = self._metrics.setdefault(
             module_name,
-            {"imports": 0, "executions": 0, "impact": 0.0, "output_impact": 0.0},
+            {"imports": 0.0, "executions": 0.0, "impact": 0.0, "output_impact": 0.0},
         )
-        info["executions"] += 1
+        info["executions"] = float(info.get("executions", 0.0)) + 1.0
         info["impact"] = float(info.get("impact", 0.0)) + float(impact)
         try:
             caller_frame = inspect.stack()[1]
@@ -358,7 +377,7 @@ class RelevancyRadar:
 
         info = self._metrics.setdefault(
             module_name,
-            {"imports": 0, "executions": 0, "impact": 0.0, "output_impact": 0.0},
+            {"imports": 0.0, "executions": 0.0, "impact": 0.0, "output_impact": 0.0},
         )
         info["output_impact"] = float(info.get("output_impact", 0.0)) + float(impact)
         self._persist_metrics()
@@ -388,8 +407,8 @@ class RelevancyRadar:
         for mod, counts in self._metrics.items():
             impact_val = float(counts.get("impact", 0.0))
             score = (
-                int(counts.get("imports", 0))
-                + int(counts.get("executions", 0))
+                float(counts.get("imports", 0.0))
+                + float(counts.get("executions", 0.0))
                 + impact_weight * impact_val
             )
             if score <= 0:
@@ -430,8 +449,8 @@ class RelevancyRadar:
                 counts.get("output_impact", 0.0)
             )
             score = (
-                int(counts.get("imports", 0))
-                + int(counts.get("executions", 0))
+                float(counts.get("imports", 0.0))
+                + float(counts.get("executions", 0.0))
                 + impact_weight * impact_val
             )
             if score <= 0:
