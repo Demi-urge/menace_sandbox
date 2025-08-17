@@ -201,6 +201,67 @@ def test_start_populates_latest_flags(monkeypatch, tmp_path):
     assert service.latest_flags == {"sample": "retire"}
 
 
+def test_scan_aggregates_roi_deltas(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    class DummyGraph:
+        nodes = ["demo"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {"demo": 2.0}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+
+    existing = {"demo": {"impact": 1.0, "output_impact": 0.5}}
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar, "_load_metrics", lambda self: existing.copy()
+    )
+
+    captured = {}
+
+    def fake_persist(self):
+        captured.update(self._metrics)
+
+    monkeypatch.setattr(relevancy_radar.RelevancyRadar, "_persist_metrics", fake_persist)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {}
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "evaluate_final_contribution",
+        fake_eval,
+    )
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path, interval=0)
+
+    service._scan_once()
+
+    assert captured["demo"]["impact"] == 3.0
+
+
 def test_dependency_chain_not_flagged(monkeypatch, tmp_path):
     """Dependencies of used modules are ignored by evaluate_final_contribution."""
 
