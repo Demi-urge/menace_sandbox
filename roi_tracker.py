@@ -965,6 +965,29 @@ class ROITracker:
         return roi_avg / entropy_avg
 
     # ------------------------------------------------------------------
+    def entropy_ceiling(self, threshold: float, window: int = 5) -> bool:
+        """Return ``True`` when ROI per entropy delta falls below ``threshold``.
+
+        The mean ratio of ROI delta to entropy delta is computed for the most
+        recent ``window`` entries. Entries with zero entropy delta are skipped to
+        avoid division by zero. If no valid ratios exist the ceiling is
+        considered unmet.
+        """
+
+        n = min(window, len(self.roi_history), len(self.entropy_delta_history))
+        if n == 0:
+            return False
+        ratios: List[float] = []
+        for roi, ent in zip(self.roi_history[-n:], self.entropy_delta_history[-n:]):
+            if ent == 0:
+                continue
+            ratios.append(abs(roi) / abs(ent))
+        if not ratios:
+            return False
+        mean_ratio = sum(ratios) / len(ratios)
+        return mean_ratio < threshold
+
+    # ------------------------------------------------------------------
     def update(
         self,
         roi_before: float,
@@ -1118,9 +1141,9 @@ class ROITracker:
             )
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
-        stop = False
+        should_stop = False
         if vertex is not None and iteration >= vertex:
-            stop = True
+            should_stop = True
         if len(self.roi_history) >= self.window:
             if self.weights is None:
                 avg = sum(self.roi_history[-self.window :]) / self.window
@@ -1128,7 +1151,7 @@ class ROITracker:
                 data = np.array(self.roi_history[-self.window :], dtype=float)
                 avg = float(np.dot(data, self.weights))
             if abs(avg) < self.tolerance:
-                stop = True
+                should_stop = True
         # predicted gain-based termination when recent categories are marginal
         if (
             len(self.category_history) >= self.window
@@ -1136,7 +1159,7 @@ class ROITracker:
         ):
             predicted_gain, _ = self.forecast()
             if abs(predicted_gain) < self.tolerance:
-                stop = True
+                should_stop = True
         if len(self.roi_history) % self.evaluate_every == 0:
             try:
                 self.evaluate_model(
@@ -1146,7 +1169,9 @@ class ROITracker:
                 )
             except Exception:
                 logger.exception("model evaluation failed")
-        return vertex, preds, stop
+        return vertex, preds, should_stop or self.entropy_ceiling(
+            self.tolerance, window=self.window
+        )
 
     # ------------------------------------------------------------------
     def forecast(self) -> Tuple[float, Tuple[float, float]]:
