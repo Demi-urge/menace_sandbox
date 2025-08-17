@@ -164,7 +164,28 @@ def test_roi_prediction_events_panel():
 def test_alignment_warning_panel(monkeypatch):
     mgr = _make_manager()
     dash = ed.EvaluationDashboard(mgr)
-    monkeypatch.setattr(ed, "recent_alignment_warnings", lambda limit=50: [{"entry_id": "w"}])
+    monkeypatch.setattr(
+        ed, "load_persisted_alignment_warnings", lambda **kw: [{"entry_id": "w"}]
+    )
     warnings = dash.alignment_warning_panel()
     assert warnings and warnings[0]["entry_id"] == "w"
+
+
+def test_relevancy_radar_panel_includes_impact_and_flag(tmp_path, monkeypatch):
+    mgr = _make_manager()
+    dash = ed.EvaluationDashboard(mgr)
+
+    metrics_dir = tmp_path / "sandbox_data"
+    metrics_dir.mkdir()
+    metrics_file = metrics_dir / "relevancy_metrics.json"
+    metrics_file.write_text(
+        json.dumps({"alpha": {"imports": 10, "executions": 0, "impact": 2.5}})
+    )
+
+    monkeypatch.setattr(ed, "__file__", str(tmp_path / "evaluation_dashboard.py"))
+    monkeypatch.setattr(ed, "flagged_modules", lambda: {"alpha": "retire"})
+
+    panel = dash.relevancy_radar_panel()
+    assert panel and panel[0]["impact"] == pytest.approx(2.5)
+    assert panel[0]["flag"] == "retire"
 

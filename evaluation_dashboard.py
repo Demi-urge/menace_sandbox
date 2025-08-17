@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List
 import types
+from relevancy_radar import flagged_modules
 
 try:  # optional dependency
     import pandas as pd  # type: ignore
@@ -200,20 +201,28 @@ class EvaluationDashboard:
         except json.JSONDecodeError:
             return []
 
+        flags = flagged_modules()
+
         results: List[Dict[str, Any]] = []
-        for mod, info in data.items():
+        modules = set(data.keys()) | set(flags.keys())
+        for mod in modules:
+            info = data.get(mod, {})
             if not isinstance(info, dict):
                 continue
             imports = int(info.get("imports", 0))
             executions = int(info.get("executions", 0))
             score = imports + executions
             annotation = str(info.get("annotation", ""))
-            if score < threshold or annotation:
+            impact = float(info.get("impact", 0.0))
+            flag = flags.get(mod)
+            if score < threshold or annotation or flag:
                 rec: Dict[str, Any] = {
                     "module": mod,
                     "imports": imports,
                     "executions": executions,
                     "score": score,
+                    "impact": impact,
+                    "flag": flag,
                 }
                 if annotation:
                     rec["annotation"] = annotation
