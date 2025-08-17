@@ -682,6 +682,24 @@ def full_autonomous_run(
             entropy_threshold = float(env_val)
         except Exception:
             entropy_threshold = None
+    entropy_ceiling_threshold = getattr(args, "entropy_ceiling_threshold", None)
+    env_val = os.getenv("ENTROPY_CEILING_THRESHOLD")
+    if entropy_ceiling_threshold is None and env_val is not None:
+        try:
+            entropy_ceiling_threshold = float(env_val)
+        except Exception:
+            entropy_ceiling_threshold = None
+    if entropy_ceiling_threshold is not None:
+        os.environ["ENTROPY_CEILING_THRESHOLD"] = str(entropy_ceiling_threshold)
+    entropy_ceiling_consecutive = getattr(args, "entropy_ceiling_consecutive", None)
+    env_val = os.getenv("ENTROPY_CEILING_CONSECUTIVE")
+    if entropy_ceiling_consecutive is None and env_val is not None:
+        try:
+            entropy_ceiling_consecutive = int(env_val)
+        except Exception:
+            entropy_ceiling_consecutive = None
+    if entropy_ceiling_consecutive is not None:
+        os.environ["ENTROPY_CEILING_CONSECUTIVE"] = str(entropy_ceiling_consecutive)
     synergy_threshold_window = getattr(args, "synergy_threshold_window", None)
     env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
     if synergy_threshold_window is None and env_val is not None:
@@ -1310,6 +1328,16 @@ def main(argv: List[str] | None = None) -> None:
         "--entropy-threshold",
         type=float,
         help="ROI gain per entropy delta threshold",
+    )
+    p_autorun.add_argument(
+        "--entropy-ceiling-threshold",
+        type=float,
+        help="ROI/entropy ratio ceiling before module retirement",
+    )
+    p_autorun.add_argument(
+        "--entropy-ceiling-consecutive",
+        type=int,
+        help="cycles below ceiling threshold before retirement",
     )
     p_autorun.add_argument(
         "--synergy-cycles",
