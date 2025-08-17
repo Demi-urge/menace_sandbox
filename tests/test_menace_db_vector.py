@@ -1,7 +1,7 @@
 import sqlite3
 import pytest
 
-from menace.embeddable_db_mixin import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin
 
 
 class _MemoryDB(EmbeddableDBMixin):
