@@ -6,11 +6,20 @@ import os
 import shutil
 import sys
 import signal
+import uuid
 from typing import TYPE_CHECKING, Sequence
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
 from shared_knowledge_module import LOCAL_KNOWLEDGE_MODULE, LocalKnowledgeModule
+from vector_service import FallbackResult
+try:  # pragma: no cover - optional dependency
+    from vector_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when vector service lacks explicit class."""
+
+        pass
 
 
 REQUIRED_SYSTEM_TOOLS = ["ffmpeg", "tesseract", "qemu-system-x86_64"]
@@ -1540,21 +1549,18 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                     )
                     hist = ctx.conversations.get("brainstorm", [])
                     module = _get_local_knowledge()
-                    try:
-                        entries = module.memory.search_context(
-                            "",
-                            tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
-                            limit=5,
-                            use_embeddings=False,
-                        )
-                    except Exception:
-                        entries = []
-                    if entries:
-                        snips = [
-                            (getattr(e, "response", "") or "").strip().splitlines()[0]
-                            for e in entries
-                        ]
-                        prompt = "\n".join(snips) + "\n\n" + prompt
+                    builder = getattr(ctx, "context_builder", None)
+                    mem_ctx = ""
+                    if builder is not None:
+                        cb_session = uuid.uuid4().hex
+                        try:
+                            mem_ctx = builder.build("brainstorm", session_id=cb_session)
+                            if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
+                                mem_ctx = ""
+                        except Exception:
+                            mem_ctx = ""
+                    if mem_ctx:
+                        prompt = mem_ctx + "\n\n" + prompt
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )

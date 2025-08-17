@@ -80,8 +80,10 @@ def generate_patch(
     description = f"preemptive fix for {path.name}"
     context_block = ""
     if builder is not None:
+        cb_session = uuid.uuid4().hex
+        context_meta["context_session_id"] = cb_session
         try:
-            context_block = builder.build(description)
+            context_block = builder.build(description, session_id=cb_session)
             if isinstance(context_block, (FallbackResult, ErrorResult)):
                 context_block = ""
         except Exception:
@@ -246,9 +248,11 @@ class QuickFixEngine:
         builder = self.context_builder
         ctx_block = ""
         if builder is not None:
+            cb_session = uuid.uuid4().hex
+            context_meta["context_session_id"] = cb_session
             try:
                 query = f"{etype} in {module}"
-                ctx_block = builder.build(query)
+                ctx_block = builder.build(query, session_id=cb_session)
                 if isinstance(ctx_block, (FallbackResult, ErrorResult)):
                     ctx_block = ""
             except Exception:
@@ -352,9 +356,11 @@ class QuickFixEngine:
             builder = self.context_builder
             ctx = ""
             if builder is not None:
+                cb_session = uuid.uuid4().hex
+                meta["context_session_id"] = cb_session
                 try:
                     query = f"preemptive patch {module}"
-                    ctx = builder.build(query)
+                    ctx = builder.build(query, session_id=cb_session)
                     if isinstance(ctx, (FallbackResult, ErrorResult)):
                         ctx = ""
                 except Exception:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Dict
 import logging
+import uuid
 
 try:  # pragma: no cover - optional dependency
     import hdbscan  # type: ignore
@@ -105,7 +106,8 @@ class ErrorClusterPredictor:
         if self.retriever is not None:
             for mod in results:
                 try:
-                    res = self.retriever.search(mod, top_k=1)
+                    session_id = uuid.uuid4().hex
+                    res = self.retriever.search(mod, top_k=1, session_id=session_id)
                     if isinstance(res, (FallbackResult, ErrorResult)):
                         if isinstance(res, FallbackResult):
                             self.logger.debug(

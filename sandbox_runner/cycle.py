@@ -1150,44 +1150,19 @@ def _sandbox_cycle_runner(
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
                     gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                    if gpt_mem:
+                    builder = getattr(ctx, "context_builder", None)
+                    if builder is not None:
+                        cb_session = uuid.uuid4().hex
                         try:
-                            entries = []
-                            if hasattr(gpt_mem, "search_context"):
-                                entries = gpt_mem.search_context(
-                                    memory_key,
-                                    tags=[INSIGHT, FEEDBACK, IMPROVEMENT_PATH],
-                                    limit=5,
-                                    use_embeddings=False,
-                                )
-                            elif hasattr(gpt_mem, "retrieve"):
-                                entries = gpt_mem.retrieve(memory_key, limit=5)
+                            mem_ctx = builder.build(memory_key, session_id=cb_session)
+                            if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
+                                mem_ctx = ""
                         except Exception:
-                            entries = []
-                        if entries:
-                            snippets = [
-                                (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                for e in entries
-                            ]
-                            prompt += "\n\n### Memory\n" + "\n".join(snippets)
-                    history = ctx.conversations.get(memory_key, [])
+                            mem_ctx = ""
+                        if mem_ctx:
+                            prompt += "\n\n### Memory\n" + mem_ctx
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                    if lkm:
-                        try:
-                            entries = lkm.memory.search_context(
-                                "",
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
-                                limit=5,
-                                use_embeddings=False,
-                            )
-                        except Exception:
-                            entries = []
-                        if entries:
-                            snips = [
-                                (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                for e in entries
-                            ]
-                            prompt = "\n".join(snips) + "\n\n" + prompt
+                    history = ctx.conversations.get(memory_key, [])
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in history
                     )
@@ -1402,44 +1377,19 @@ def _sandbox_cycle_runner(
                         if insight:
                             prompt = f"{insight}\n\n{prompt}"
                         gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                        if gpt_mem:
+                        builder = getattr(ctx, "context_builder", None)
+                        if builder is not None:
+                            cb_session = uuid.uuid4().hex
                             try:
-                                entries = []
-                                if hasattr(gpt_mem, "search_context"):
-                                    entries = gpt_mem.search_context(
-                                        "brainstorm",
-                                        tags=["brainstorm", INSIGHT],
-                                        limit=5,
-                                        use_embeddings=False,
-                                    )
-                                elif hasattr(gpt_mem, "retrieve"):
-                                    entries = gpt_mem.retrieve("brainstorm", limit=5)
+                                mem_ctx = builder.build("brainstorm", session_id=cb_session)
+                                if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
+                                    mem_ctx = ""
                             except Exception:
-                                entries = []
-                            if entries:
-                                snips = [
-                                    (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                    for e in entries
-                                ]
-                                prompt += "\n\n### Memory\n" + "\n".join(snips)
+                                mem_ctx = ""
+                            if mem_ctx:
+                                prompt += "\n\n### Memory\n" + mem_ctx
                         hist = ctx.conversations.get("brainstorm", [])
                         lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                        if lkm:
-                            try:
-                                entries = lkm.memory.search_context(
-                                    "",
-                                    tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
-                                    limit=5,
-                                    use_embeddings=False,
-                                )
-                            except Exception:
-                                entries = []
-                            if entries:
-                                snips = [
-                                    (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                    for e in entries
-                                ]
-                                prompt = "\n".join(snips) + "\n\n" + prompt
                         history_text = "\n".join(
                             f"{m.get('role')}: {m.get('content')}" for m in hist
                         )
@@ -1529,45 +1479,19 @@ def _sandbox_cycle_runner(
                     )
                     if insight:
                         prompt = f"{insight}\n\n{prompt}"
-                    gpt_mem = getattr(ctx.gpt_client, "gpt_memory", None)
-                    if gpt_mem:
+                    builder = getattr(ctx, "context_builder", None)
+                    if builder is not None:
+                        cb_session = uuid.uuid4().hex
                         try:
-                            entries = []
-                            if hasattr(gpt_mem, "search_context"):
-                                entries = gpt_mem.search_context(
-                                    "brainstorm",
-                                    tags=["brainstorm", INSIGHT],
-                                    limit=5,
-                                    use_embeddings=False,
-                                )
-                            elif hasattr(gpt_mem, "retrieve"):
-                                entries = gpt_mem.retrieve("brainstorm", limit=5)
+                            mem_ctx = builder.build("brainstorm", session_id=cb_session)
+                            if isinstance(mem_ctx, (FallbackResult, ErrorResult)):
+                                mem_ctx = ""
                         except Exception:
-                            entries = []
-                    if entries:
-                        snips = [
-                            (getattr(e, "response", "") or "").strip().splitlines()[0]
-                            for e in entries
-                        ]
-                        prompt += "\n\n### Memory\n" + "\n".join(snips)
+                            mem_ctx = ""
+                        if mem_ctx:
+                            prompt += "\n\n### Memory\n" + mem_ctx
                     hist = ctx.conversations.get("brainstorm", [])
                     lkm = getattr(__import__("sys").modules.get("sandbox_runner"), "LOCAL_KNOWLEDGE_MODULE", None)
-                    if lkm:
-                        try:
-                            entries = lkm.memory.search_context(
-                                "",
-                                tags=[FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX],
-                                limit=5,
-                                use_embeddings=False,
-                            )
-                        except Exception:
-                            entries = []
-                        if entries:
-                            snips2 = [
-                                (getattr(e, "response", "") or "").strip().splitlines()[0]
-                                for e in entries
-                            ]
-                            prompt = "\n".join(snips2) + "\n\n" + prompt
                     history_text = "\n".join(
                         f"{m.get('role')}: {m.get('content')}" for m in hist
                     )
