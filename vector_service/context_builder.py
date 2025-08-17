@@ -6,8 +6,16 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from .retriever import Retriever
+from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
+
+try:  # pragma: no cover - optional dependency
+    from . import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback when undefined
+    class ErrorResult(Exception):
+        """Fallback ErrorResult used when vector service lacks explicit class."""
+
+        pass
 
 # Optional summariser -------------------------------------------------------
 try:  # pragma: no cover - heavy dependency
@@ -136,6 +144,10 @@ class ContextBuilder:
             return self._cache[cache_key]
 
         hits = self.retriever.search(query, top_k=top_k * 5)
+        if isinstance(hits, ErrorResult):
+            return "{}"
+        if isinstance(hits, FallbackResult):
+            hits = list(hits)
 
         buckets: Dict[str, List[_ScoredEntry]] = {
             "errors": [],

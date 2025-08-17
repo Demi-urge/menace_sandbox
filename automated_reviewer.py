@@ -8,12 +8,13 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - only for type hints
     from .auto_escalation_manager import AutoEscalationManager
-from vector_service import ContextBuilder
+from vector_service import ContextBuilder, FallbackResult
 try:  # pragma: no cover - graceful fallback when dependency missing
     from vector_service import ErrorResult
 except Exception:  # pragma: no cover - compatibility
     class ErrorResult(Exception):
         """Fallback ErrorResult when vector service dependency missing."""
+
         pass
 
 
@@ -56,7 +57,7 @@ class AutomatedReviewer:
             try:
                 builder = ContextBuilder()
                 ctx = builder.build(json.dumps({"bot_id": bot_id, "severity": severity}))
-                if isinstance(ctx, ErrorResult):
+                if isinstance(ctx, (ErrorResult, FallbackResult)):
                     self.logger.error("context build failed: %s", ctx)
                     ctx = ""
                 self.escalation_manager.handle(
