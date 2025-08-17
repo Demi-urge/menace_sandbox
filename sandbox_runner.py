@@ -1457,7 +1457,10 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             ctx.tracker.update(
                 roi_sum,
                 combined_roi,
-                [map_module_identifier(m, ctx.repo) for m in ctx.meta_log.flagged_sections],
+                [
+                    map_module_identifier(m, ctx.repo, combined_roi)
+                    for m in ctx.meta_log.flagged_sections
+                ],
                 metrics=synergy_metrics,
             )
             synergy_history.append(synergy_metrics)
