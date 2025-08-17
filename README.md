@@ -174,6 +174,28 @@ See [docs/quickstart.md](docs/quickstart.md) for a Quickstart guide on launching
 Run `scripts/check_personal_setup.py` afterwards to verify your environment variables.
 Detailed environment notes are available in [docs/autonomous_sandbox.md](docs/autonomous_sandbox.md).
 
+### Service layer examples
+
+The sandbox exposes a number of background services that follow a common
+``run_continuous`` pattern.  Instantiate the service, start it with an optional
+``threading.Event`` and stop it when finished:
+
+```python
+import threading
+from microtrend_service import MicrotrendService
+from workflow_cloner import WorkflowCloner
+from self_evaluation_service import SelfEvaluationService
+
+svc = SelfEvaluationService(
+    microtrend=MicrotrendService(),
+    cloner=WorkflowCloner(),
+)
+stop = threading.Event()
+svc.run_continuous(interval=3600, stop_event=stop)
+# ... later ...
+stop.set()
+```
+
 ### Memory-aware GPT wrapper
 
 Use `memory_aware_gpt_client.ask_with_memory` to automatically prepend past
