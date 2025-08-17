@@ -276,3 +276,54 @@ def test_metrics_increment_on_flags(monkeypatch, tmp_path):
     assert gauge_value(metrics_exporter.relevancy_flags_retire_total) == 1.0
     assert gauge_value(metrics_exporter.relevancy_flags_compress_total) == 1.0
     assert gauge_value(metrics_exporter.relevancy_flags_replace_total) == 1.0
+
+
+def test_process_flags_receives_all_types(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    # Build a dummy graph with three modules.
+    class DummyGraph:
+        nodes = ["a", "b", "c"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {"a": "retire", "b": "compress", "c": "replace"}
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "evaluate_final_contribution",
+        fake_eval,
+    )
+
+    captured = {}
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            captured.update(flags)
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    service._scan_once()
+
+    assert captured == {"a": "retire", "b": "compress", "c": "replace"}
