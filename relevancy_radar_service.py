@@ -17,7 +17,12 @@ except Exception:  # pragma: no cover - executed when run as a script
 class RelevancyRadarService:
     """Periodically scan for unused modules and trigger retirements."""
 
-    def __init__(self, repo_root: str | Path = ".", interval: int = 3600) -> None:
+    def __init__(
+        self,
+        repo_root: str | Path = ".",
+        interval: int = 3600,
+        event_bus: "UnifiedEventBus | None" = None,
+    ) -> None:
         self.root = Path(repo_root)
         self.interval = interval
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -25,6 +30,14 @@ class RelevancyRadarService:
         self.running = False
         self.latest_flags: Dict[str, str] = {}
         self._retirement_service: ModuleRetirementService | None = None
+
+        if event_bus is None:
+            try:
+                from .unified_event_bus import UnifiedEventBus
+            except Exception:  # pragma: no cover - executed when run as script
+                from unified_event_bus import UnifiedEventBus
+            event_bus = UnifiedEventBus()
+        self._event_bus = event_bus
 
     # ------------------------------------------------------------------
     def _modules(self) -> Iterable[str]:
@@ -53,6 +66,7 @@ class RelevancyRadarService:
                     relevancy_flags_compress_total,
                     relevancy_flags_replace_total,
                 )
+                from .unified_event_bus import UnifiedEventBus
             except Exception:  # pragma: no cover - executed when run as script
                 from module_graph_analyzer import build_import_graph
                 from relevancy_radar import load_usage_stats
@@ -63,6 +77,7 @@ class RelevancyRadarService:
                     relevancy_flags_compress_total,
                     relevancy_flags_replace_total,
                 )
+                from unified_event_bus import UnifiedEventBus
 
             try:
                 from .sandbox_settings import SandboxSettings
@@ -129,6 +144,11 @@ class RelevancyRadarService:
             self.latest_flags = flags
             update_relevancy_metrics(flags)
 
+            event_bus = self._event_bus
+            if event_bus is None:
+                event_bus = UnifiedEventBus()
+                self._event_bus = event_bus
+
             from collections import Counter
 
             counts = Counter(flags.values())
@@ -139,6 +159,10 @@ class RelevancyRadarService:
             if counts.get("replace"):
                 relevancy_flags_replace_total.inc(float(counts["replace"]))
             if flags:
+                try:
+                    event_bus.publish("relevancy_flags", flags)
+                except Exception:
+                    self.logger.exception("failed to publish relevancy flags")
                 if self._retirement_service is None:
                     try:
                         from .module_retirement_service import ModuleRetirementService

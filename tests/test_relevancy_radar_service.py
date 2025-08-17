@@ -74,6 +74,66 @@ def test_service_scan_updates_flags(monkeypatch, tmp_path):
     assert DummyRetirementService.flags == {"demo": "retire"}
 
 
+def test_relevancy_flags_event_published(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    class DummyGraph:
+        nodes = ["demo"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+
+    def fake_eval(self, compress, replace, *, graph, core_modules=None):
+        return {"demo": "retire"}
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar,
+        "evaluate_final_contribution",
+        fake_eval,
+    )
+
+    class DummyRetirementService:
+        def __init__(self, root):
+            pass
+
+        def process_flags(self, flags):
+            return flags
+
+    monkeypatch.setattr(
+        module_retirement_service, "ModuleRetirementService", DummyRetirementService
+    )
+
+    class DummyBus:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, topic, event):
+            self.events.append((topic, event))
+
+    bus = DummyBus()
+
+    service = relevancy_radar_service.RelevancyRadarService(
+        tmp_path, interval=0, event_bus=bus
+    )
+
+    service._scan_once()
+
+    assert ("relevancy_flags", {"demo": "retire"}) in bus.events
+
+
 def test_start_runs_initial_scan(monkeypatch, tmp_path):
     service = relevancy_radar_service.RelevancyRadarService(tmp_path)
 
