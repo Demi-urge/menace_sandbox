@@ -112,6 +112,16 @@ class SandboxSettings(BaseSettings):
     entropy_plateau_consecutive: int | None = Field(
         None, env="ENTROPY_PLATEAU_CONSECUTIVE"
     )
+    entropy_ceiling_threshold: float | None = Field(
+        None,
+        env="ENTROPY_CEILING_THRESHOLD",
+        description="ROI gain per entropy delta threshold used for module retirement decisions.",
+    )
+    entropy_ceiling_consecutive: int | None = Field(
+        None,
+        env="ENTROPY_CEILING_CONSECUTIVE",
+        description="Number of consecutive cycles below the ceiling threshold before flagging a module.",
+    )
     min_integration_roi: float = Field(
         0.0,
         env="MIN_INTEGRATION_ROI",

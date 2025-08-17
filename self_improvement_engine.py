@@ -4705,6 +4705,46 @@ class SelfImprovementEngine:
         cid = f"cycle-{self._cycle_count}"
         set_correlation_id(cid)
         try:
+            if self.meta_logger:
+                try:
+                    settings = SandboxSettings()
+                    thr = settings.entropy_ceiling_threshold
+                    consecutive = settings.entropy_ceiling_consecutive or 3
+                except Exception:
+                    thr = None
+                    consecutive = 3
+                if thr is not None:
+                    try:
+                        flagged = self.meta_logger.ceiling(thr, consecutive=consecutive)
+                    except Exception:
+                        flagged = []
+                    if flagged:
+                        try:
+                            service = ModuleRetirementService(
+                                Path(os.getenv("SANDBOX_REPO_PATH", "."))
+                            )
+                            pending = {m: "retire" for m in flagged}
+                            results = service.process_flags(pending)
+                            remaining = [
+                                m for m, action in results.items() if action == "skipped"
+                            ]
+                            if remaining:
+                                pending = {m: "compress" for m in remaining}
+                                results.update(service.process_flags(pending))
+                                remaining = [
+                                    m
+                                    for m in remaining
+                                    if results.get(m) == "skipped"
+                                ]
+                            if remaining:
+                                service.process_flags(
+                                    {m: "replace" for m in remaining}
+                                )
+                        except Exception:
+                            self.logger.exception(
+                                "ceiling flag processing failed",
+                                extra=log_record(modules=flagged),
+                            )
             try:
                 self.retest_redundant_modules()
             except Exception as exc:  # pragma: no cover - best effort
