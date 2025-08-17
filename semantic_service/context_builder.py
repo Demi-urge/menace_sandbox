@@ -1,83 +1,164 @@
+"""Cross-database context builder used by language model prompts."""
+
 from __future__ import annotations
 
-"""Light‑weight wrapper around the legacy :mod:`context_builder` module."""
-
 import json
-import time
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
-from .decorators import log_and_measure
-from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
+from .retriever import Retriever
+from config import ContextBuilderConfig
+
+# Optional summariser -------------------------------------------------------
+try:  # pragma: no cover - heavy dependency
+    from menace_memory_manager import MenaceMemoryManager, _summarise_text
+except Exception:  # pragma: no cover - tiny fallback helper
+    MenaceMemoryManager = None  # type: ignore
+
+    def _summarise_text(text: str, ratio: float = 0.3) -> str:
+        text = text.strip().replace("\n", " ")
+        if len(text) <= 120:
+            return text
+        return text[:117] + "..."
 
 
-try:  # pragma: no cover - the legacy builder lives at repository root
-    from context_builder import ContextBuilder as _LegacyContextBuilder  # type: ignore
-except Exception:  # pragma: no cover - fallback when not available
-    _LegacyContextBuilder = None  # type: ignore
+@dataclass
+class _ScoredEntry:
+    entry: Dict[str, Any]
+    score: float
 
 
 class ContextBuilder:
-    """Expose a ``build`` method compatible with older call sites."""
+    """Build compact JSON context blocks from multiple databases."""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        if _LegacyContextBuilder is None:  # pragma: no cover - defensive
-            raise RuntimeError("context_builder module unavailable")
-        self._builder = _LegacyContextBuilder(*args, **kwargs)
-        self._cache: Dict[str, str] = {}
+    def __init__(
+        self,
+        *,
+        retriever: Retriever | None = None,
+        memory_manager: Optional[MenaceMemoryManager] = None,
+        db_weights: Dict[str, float] | None = None,
+        max_tokens: int = ContextBuilderConfig().max_tokens,
+    ) -> None:
+        self.retriever = retriever or Retriever()
+        self.memory = memory_manager
+        self._cache: Dict[Tuple[str, int], str] = {}
+        self.db_weights = db_weights or {}
+        self.max_tokens = max_tokens
 
     # ------------------------------------------------------------------
-    @log_and_measure
-    def build(self, task_description: str, **kwargs: Any) -> str:
-        """Return a compact JSON context for ``task_description``."""
-
-        if not isinstance(task_description, str) or not task_description.strip():
-            raise MalformedPromptError("task_description must be a non-empty string")
-
-        assert self._builder is not None  # for type checkers
-        retriever = getattr(self._builder, "retriever", None)
-        if retriever is None:  # pragma: no cover - defensive
-            raise VectorServiceError("retriever unavailable")
-
-        attempts = 3
-        backoff = 1.0
-        hits: List[Any] = []
-        for attempt in range(attempts):
+    def _summarise(self, text: str) -> str:
+        if self.memory and hasattr(self.memory, "_summarise_text"):
             try:
-                hits, _, _ = retriever.retrieve(task_description, top_k=1)
-                break
-            except Exception as exc:  # pragma: no cover - best effort
-                msg = str(exc).lower()
-                if ("rate" in msg and "limit" in msg) or "429" in msg:
-                    if attempt < attempts - 1:
-                        time.sleep(backoff)
-                        backoff *= 2
-                        continue
-                    raise RateLimitError("vector search rate limited") from exc
-                raise VectorServiceError("vector search failed") from exc
+                return self.memory._summarise_text(text)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover - fallback
+                pass
+        return _summarise_text(text)
 
-        if not hits or max(getattr(h, "score", 0.0) for h in hits) < 0.1:
-            cached = self._cache.get(task_description)
-            if cached is not None:
-                return cached
-            return json.dumps({"note": "insufficient context"})
+    # ------------------------------------------------------------------
+    def _metric(self, origin: str, meta: Dict[str, Any]) -> float | None:
+        """Extract ROI/success metrics from metadata."""
 
-        context = ""
-        backoff = 1.0
-        for attempt in range(attempts):
-            try:
-                context = self._builder.build_context(task_description, **kwargs)
-                break
-            except Exception as exc:  # pragma: no cover - best effort
-                msg = str(exc).lower()
-                if ("rate" in msg and "limit" in msg) or "429" in msg:
-                    if attempt < attempts - 1:
-                        time.sleep(backoff)
-                        backoff *= 2
-                        continue
-                    raise RateLimitError("vector search rate limited") from exc
-                raise VectorServiceError("context build failed") from exc
+        try:
+            if origin == "error":
+                freq = meta.get("frequency")
+                if freq is not None:
+                    return 1.0 / (1.0 + float(freq))
 
-        self._cache[task_description] = context
+            if origin == "bot":
+                for key in ("roi", "deploy_count"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+
+            if origin == "workflow":
+                for key in ("roi", "usage", "runs"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+
+            if origin == "code":
+                for key in ("roi", "patch_success"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+
+            if origin == "discrepancy":
+                for key in ("roi", "severity", "impact"):
+                    if key in meta and meta[key] is not None:
+                        return float(meta[key])
+        except Exception:  # pragma: no cover - defensive
+            return None
+        return None
+
+    # ------------------------------------------------------------------
+    def _bundle_to_entry(self, bundle: Dict[str, Any]) -> Tuple[str, _ScoredEntry]:
+        meta = bundle.get("metadata", {})
+        origin = bundle.get("origin_db", "")
+
+        text = ""
+        entry: Dict[str, Any] = {"id": bundle.get("record_id")}
+
+        if origin == "error":
+            text = meta.get("message") or meta.get("description") or ""
+        elif origin == "bot":
+            text = meta.get("name") or meta.get("purpose") or ""
+            if "name" in meta:
+                entry["name"] = meta["name"]
+        elif origin == "workflow":
+            text = meta.get("title") or meta.get("description") or ""
+            if "title" in meta:
+                entry["title"] = meta["title"]
+        elif origin == "discrepancy":
+            text = meta.get("message") or meta.get("description") or ""
+        elif origin == "code":
+            text = meta.get("summary") or meta.get("code") or ""
+
+        entry["desc"] = self._summarise(str(text))
+        metric = self._metric(origin, meta)
+        if metric is not None:
+            entry["metric"] = metric
+
+        score = float(bundle.get("score", 0.0)) + (metric or 0.0)
+        score *= self.db_weights.get(origin, 1.0)
+
+        key_map = {
+            "error": "errors",
+            "bot": "bots",
+            "workflow": "workflows",
+            "code": "code",
+            "discrepancy": "discrepancies",
+        }
+        return key_map.get(origin, ""), _ScoredEntry(entry, score)
+
+    # ------------------------------------------------------------------
+    def build_context(self, query: str, top_k: int = 5, **_: Any) -> str:
+        """Return a compact JSON context for ``query``."""
+
+        cache_key = (query, top_k)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        hits = self.retriever.search(query, top_k=top_k * 5)
+
+        buckets: Dict[str, List[_ScoredEntry]] = {
+            "errors": [],
+            "bots": [],
+            "workflows": [],
+            "code": [],
+            "discrepancies": [],
+        }
+
+        for bundle in hits:
+            bucket, scored = self._bundle_to_entry(bundle)
+            if bucket:
+                buckets[bucket].append(scored)
+
+        result: Dict[str, List[Dict[str, Any]]] = {}
+        for key, items in buckets.items():
+            if not items:
+                continue
+            items.sort(key=lambda e: e.score, reverse=True)
+            result[key] = [e.entry for e in items[:top_k]]
+
+        context = json.dumps(result)
+        self._cache[cache_key] = context
         return context
 
 

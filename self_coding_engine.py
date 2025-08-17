@@ -62,6 +62,7 @@ try:  # pragma: no cover - optional dependency
     from .context_builder import ContextBuilder
 except Exception:  # pragma: no cover - defensive fallback
     ContextBuilder = None  # type: ignore
+from semantic_service import PatchLogger
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -91,6 +92,7 @@ class SelfCodingEngine:
         rollback_mgr: Optional[RollbackManager] = None,
         formal_verifier: Optional[FormalVerifier] = None,
         patch_suggestion_db: "PatchSuggestionDB" | None = None,
+        patch_logger: PatchLogger | None = None,
         bot_roles: Optional[Dict[str, str]] = None,
         audit_trail_path: str | None = None,
         audit_privkey: bytes | None = None,
@@ -140,6 +142,7 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
+        self.patch_logger = patch_logger
         # Optional contextual information builder for prompts; may be ``None``
         # when the dependency is unavailable.  No automatic initialisation is
         # attempted to keep operations fully offline.
@@ -191,6 +194,25 @@ class SelfCodingEngine:
             )
         except Exception:
             self.logger.exception("memory logging failed")
+
+    def _track_contributors(
+        self,
+        session_id: str,
+        vectors: List[Tuple[str, str]],
+        result: bool,
+        patch_id: int | None = None,
+    ) -> None:
+        if self.patch_logger and session_id and vectors:
+            ids = [f"{o}:{v}" for o, v in vectors]
+            try:
+                self.patch_logger.track_contributors(
+                    ids,
+                    result,
+                    patch_id=str(patch_id or ""),
+                    session_id=session_id,
+                )
+            except Exception:
+                self.logger.debug("patch logging failed", exc_info=True)
 
     # --------------------------------------------------------------
     def suggest_snippets(self, description: str, limit: int = 3) -> Iterable[CodeRecord]:
@@ -674,6 +696,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
+            self._track_contributors(session_id, vectors, False)
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
@@ -751,6 +774,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
+            self._track_contributors(session_id, vectors, False, patch_id)
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
@@ -779,6 +803,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
+            self._track_contributors(session_id, vectors, False)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
@@ -806,6 +831,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
+            self._track_contributors(session_id, vectors, False)
             return None, False, 0.0
         if self.pipeline:
             try:
@@ -963,6 +989,7 @@ class SelfCodingEngine:
                 )
         except Exception:
             self.logger.exception("failed to log patch outcome")
+        self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id)
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
