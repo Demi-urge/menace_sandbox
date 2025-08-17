@@ -8,7 +8,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 
 import vector_service_api as api
-from semantic_service import VectorServiceError
+from vector_service import VectorServiceError
 
 client = TestClient(api.app)
 

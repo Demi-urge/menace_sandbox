@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Lightweight FastAPI app exposing vector service helpers.
 
-This module wires the small utility classes from :mod:`semantic_service` into a
+This module wires the small utility classes from :mod:`vector_service` into a
 minimal HTTP API.  Each endpoint delegates to the corresponding service method
 and returns a JSON response containing a status indicator and basic metrics such
 as execution duration.  The module is intentionally tiny so it can be embedded
@@ -16,7 +16,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from semantic_service import (
+from vector_service import (
     ContextBuilder,
     EmbeddingBackfill,
     PatchLogger,
@@ -26,10 +26,10 @@ from semantic_service import (
 )
 
 try:  # pragma: no cover - optional dependency
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - compatibility fallback
     class ErrorResult(Exception):
-        """Fallback ErrorResult when semantic_service lacks explicit class."""
+        """Fallback ErrorResult when vector_service lacks explicit class."""
 
         pass
 
@@ -54,7 +54,7 @@ class SearchRequest(BaseModel):
 
 @app.post("/search")
 def search(req: SearchRequest) -> Any:
-    """Run semantic search via :class:`semantic_service.Retriever`."""
+    """Run semantic search via :class:`vector_service.Retriever`."""
     start = time.time()
     try:
         result = _retriever.search(
@@ -108,7 +108,7 @@ class ContextRequest(BaseModel):
 
 @app.post("/build-context")
 def build_context(req: ContextRequest) -> Any:
-    """Construct a context string using :class:`semantic_service.ContextBuilder`."""
+    """Construct a context string using :class:`vector_service.ContextBuilder`."""
     start = time.time()
     try:
         result = _context_builder.build(
@@ -137,7 +137,7 @@ class TrackRequest(BaseModel):
 
 @app.post("/track-contributors")
 def track_contributors(req: TrackRequest) -> Any:
-    """Record contributor outcomes via :class:`semantic_service.PatchLogger`."""
+    """Record contributor outcomes via :class:`vector_service.PatchLogger`."""
     start = time.time()
     try:
         _patch_logger.track_contributors(
@@ -156,7 +156,7 @@ class BackfillRequest(BaseModel):
 
 @app.post("/backfill-embeddings")
 def backfill_embeddings(req: BackfillRequest) -> Any:
-    """Kick off embedding backfill using :class:`semantic_service.EmbeddingBackfill`."""
+    """Kick off embedding backfill using :class:`vector_service.EmbeddingBackfill`."""
     start = time.time()
     try:
         _backfill.run(batch_size=req.batch_size, backend=req.backend)

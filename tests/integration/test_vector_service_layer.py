@@ -1,7 +1,7 @@
 import logging
 from types import SimpleNamespace
 
-from semantic_service import EmbeddingBackfill, EmbeddableDBMixin, PatchLogger
+from vector_service import EmbeddingBackfill, EmbeddableDBMixin, PatchLogger
 
 
 class DummyDB(EmbeddableDBMixin):

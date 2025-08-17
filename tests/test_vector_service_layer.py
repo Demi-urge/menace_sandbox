@@ -5,7 +5,7 @@ import os
 import sys
 import types
 
-from semantic_service import Retriever, FallbackResult
+from vector_service import Retriever, FallbackResult
 
 # Construct minimal menace package for QuickFixEngine
 package = types.ModuleType("menace")
