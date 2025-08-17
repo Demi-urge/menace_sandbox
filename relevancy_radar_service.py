@@ -80,6 +80,7 @@ class RelevancyRadarService:
             module_names = {n.replace("/", ".") for n in graph.nodes}
 
             radar = RelevancyRadar()
+            existing_metrics = radar._load_metrics()
             radar._metrics.clear()
 
             usage_stats = load_usage_stats()
@@ -95,11 +96,17 @@ class RelevancyRadarService:
 
             for mod in module_names:
                 count = int(usage_stats.get(mod, 0))
-                radar._metrics[mod] = {
+                info = {
                     "imports": count,
                     "executions": count,
                     "impact": float(roi_deltas.get(mod, 0.0)),
+                    "output_impact": float(
+                        existing_metrics.get(mod, {}).get("output_impact", 0.0)
+                    ),
                 }
+                radar._metrics[mod] = info
+
+            radar._persist_metrics()
 
             import inspect
 
