@@ -1,0 +1,47 @@
+# ROI Calculator
+
+The `ROICalculator` computes a weighted return-on-investment score for a
+set of metrics. Profiles live in a YAML file and define metric weights and
+veto rules that can force a hard failure when certain thresholds are
+violated.
+
+## Profile format
+
+Each profile contains a `weights` mapping for the eight supported metrics and
+a `veto` section listing hard constraints:
+
+```yaml
+scraper_bot:
+  weights:
+    profitability: 0.3
+    efficiency: 0.2
+    reliability: 0.1
+    resilience: 0.1
+    maintainability: 0.1
+    security: 0.1
+    latency: -0.1
+    energy: -0.05
+  veto:
+    security: {min: 0.4}
+    alignment_violation: {equals: true}
+```
+
+`min` and `max` apply to numeric metrics. `equals` can match booleans or
+strings and triggers when the metric value exactly equals the provided
+literal.
+
+## Usage
+
+```python
+from menace_sandbox.roi_calculator import ROICalculator
+
+calc = ROICalculator()  # loads configs/roi_profiles.yaml by default
+metrics = {"profitability": 0.8, "security": 0.5}
+score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
+```
+
+The tuple contains the weighted score, a boolean indicating whether any veto
+fired and a list of the triggered veto descriptions.
+
+`log_debug()` prints a human readable breakdown of each contribution and any
+veto triggers.
