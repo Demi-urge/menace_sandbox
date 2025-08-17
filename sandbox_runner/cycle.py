@@ -72,6 +72,7 @@ from relevancy_radar import (
     RelevancyRadar,
     track_usage as _radar_track_usage,
     evaluate_final_contribution,
+    record_output_impact,
 )
 
 from .environment import (
@@ -104,12 +105,17 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
 
     if not _ENABLE_RELEVANCY_RADAR:
         return
+
+    def _track() -> None:
+        try:
+            _radar_track_usage(module, 0.0 if impact is None else impact)
+            if impact is not None:
+                record_output_impact(module, impact)
+        except Exception:
+            pass
+
     try:
-        threading.Thread(
-            target=_radar_track_usage,
-            args=(module, 0.0 if impact is None else impact),
-            daemon=True,
-        ).start()
+        threading.Thread(target=_track, daemon=True).start()
     except Exception:
         pass
 
