@@ -236,7 +236,9 @@ __all__ = [
     "flagged_modules",
     "RelevancyRadar",
     "track_usage",
+    "record_output_impact",
     "evaluate_relevance",
+    "evaluate_final_contribution",
 ]
 
 
@@ -266,6 +268,7 @@ class RelevancyRadar:
                                 "imports": int(counts.get("imports", 0)),
                                 "executions": int(counts.get("executions", 0)),
                                 "impact": float(counts.get("impact", 0.0)),
+                                "output_impact": float(counts.get("output_impact", 0.0)),
                             }
                             annotation = counts.get("annotation")
                             if isinstance(annotation, str) and annotation:
@@ -310,7 +313,13 @@ class RelevancyRadar:
         def tracked_import(name, globals=None, locals=None, fromlist=(), level=0):
             root = name.split(".")[0]
             info = radar._metrics.setdefault(
-                root, {"imports": 0, "executions": 0, "impact": 0.0}
+                root,
+                {
+                    "imports": 0,
+                    "executions": 0,
+                    "impact": 0.0,
+                    "output_impact": 0.0,
+                },
             )
             info["imports"] += 1
             return original_import(name, globals, locals, fromlist, level)
@@ -325,7 +334,8 @@ class RelevancyRadar:
         """Record an execution event for ``module_name`` and persist metrics."""
 
         info = self._metrics.setdefault(
-            module_name, {"imports": 0, "executions": 0, "impact": 0.0}
+            module_name,
+            {"imports": 0, "executions": 0, "impact": 0.0, "output_impact": 0.0},
         )
         info["executions"] += 1
         info["impact"] = float(info.get("impact", 0.0)) + float(impact)
@@ -341,6 +351,16 @@ class RelevancyRadar:
                 pass
         if caller:
             self._call_graph.setdefault(caller, set()).add(module_name)
+        self._persist_metrics()
+
+    def record_output_impact(self, module_name: str, impact: float) -> None:
+        """Record that ``module_name`` contributed ``impact`` to the final output."""
+
+        info = self._metrics.setdefault(
+            module_name,
+            {"imports": 0, "executions": 0, "impact": 0.0, "output_impact": 0.0},
+        )
+        info["output_impact"] = float(info.get("output_impact", 0.0)) + float(impact)
         self._persist_metrics()
 
     def evaluate_relevance(
@@ -403,9 +423,22 @@ class RelevancyRadar:
     ) -> Dict[str, str]:
         """Return dependency-aware relevancy flags using the recorded call graph."""
 
-        results = self.evaluate_relevance(
-            compress_threshold, replace_threshold, impact_weight
-        )
+        results: Dict[str, str] = {}
+        for mod, counts in self._metrics.items():
+            impact_val = float(counts.get("impact", 0.0)) + float(
+                counts.get("output_impact", 0.0)
+            )
+            score = (
+                int(counts.get("imports", 0))
+                + int(counts.get("executions", 0))
+                + impact_weight * max(impact_val, 0.0)
+            )
+            if score == 0:
+                results[mod] = "retire"
+            elif score <= compress_threshold:
+                results[mod] = "compress"
+            elif score <= replace_threshold:
+                results[mod] = "replace"
 
         graph = nx.DiGraph()
         for caller, callees in self._call_graph.items():
@@ -492,6 +525,13 @@ def track_usage(module_name: str, impact: float = 0.0) -> None:
 
     radar = _get_default_radar()
     radar.track_usage(module_name, impact)
+
+
+def record_output_impact(module_name: str, impact: float) -> None:
+    """Record that ``module_name`` contributed to the final output."""
+
+    radar = _get_default_radar()
+    radar.record_output_impact(module_name, impact)
 
 
 def evaluate_relevance(

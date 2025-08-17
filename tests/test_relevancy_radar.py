@@ -152,7 +152,7 @@ def test_scan_publishes_event(metrics_db):
     from relevancy_radar import scan
     from menace.unified_event_bus import UnifiedEventBus
 
-    bus = mock.Mock(spec=UnifiedEventBus)
+    bus = mock.Mock()
 
     def run_scan(event_bus):
         try:
