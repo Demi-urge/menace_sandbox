@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Sequence, Tuple
 
-from .decorators import log_and_time, track_metrics
+from .decorators import log_and_measure
 
 try:  # pragma: no cover - optional dependencies
     from vector_metrics_db import VectorMetricsDB  # type: ignore
@@ -49,8 +49,7 @@ class PatchLogger:
         return pairs
 
     # ------------------------------------------------------------------
-    @log_and_time
-    @track_metrics
+    @log_and_measure
     def track_contributors(
         self,
         vector_ids: Sequence[str],

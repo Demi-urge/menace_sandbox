@@ -10,7 +10,12 @@ from .retriever import Retriever
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from .embedding_backfill import EmbeddingBackfill
-from .exceptions import VectorServiceError, RateLimitError, MalformedPromptError
+from .exceptions import (
+    SemanticServiceError,
+    VectorServiceError,
+    RateLimitError,
+    MalformedPromptError,
+)
 
 try:  # pragma: no cover - optional dependency used in tests
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
@@ -24,6 +29,7 @@ __all__ = [
     "PatchLogger",
     "EmbeddingBackfill",
     "EmbeddableDBMixin",
+    "SemanticServiceError",
     "VectorServiceError",
     "RateLimitError",
     "MalformedPromptError",
