@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, List, Sequence, Tuple
 
+import asyncio
+
 from .decorators import log_and_measure
 
 try:  # pragma: no cover - optional dependencies
@@ -93,6 +95,27 @@ class PatchLogger:
                 )
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    @log_and_measure
+    async def track_contributors_async(
+        self,
+        vector_ids: Sequence[str],
+        result: bool,
+        *,
+        patch_id: str = "",
+        session_id: str = "",
+    ) -> None:
+        """Asynchronous wrapper for :meth:`track_contributors`."""
+
+        await asyncio.to_thread(
+            self.track_contributors.__wrapped__,
+            self,
+            vector_ids,
+            result,
+            patch_id=patch_id,
+            session_id=session_id,
+        )
 
 
 __all__ = ["PatchLogger"]

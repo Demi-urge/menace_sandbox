@@ -5,6 +5,7 @@ import time
 from typing import Any, Callable, TypeVar
 
 import logging
+import asyncio
 
 try:  # pragma: no cover - optional dependency not critical for tests
     from .. import metrics_exporter as _me  # type: ignore
@@ -39,6 +40,39 @@ def log_and_measure(func: F) -> F:
 
     logger = logging.getLogger(func.__module__)
     name = func.__qualname__
+
+    if asyncio.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def awrapper(*args: Any, **kwargs: Any) -> Any:
+            session_id = kwargs.get("session_id", "")
+            start = time.time()
+            logger.info("%s start", name, extra={"session_id": session_id, "timestamp": start})
+            try:
+                result = await func(*args, **kwargs)
+            except Exception:
+                end = time.time()
+                latency = end - start
+                _CALL_COUNT.labels(name).inc()
+                _LATENCY_GAUGE.labels(name).set(latency)
+                logger.exception(
+                    "%s error", name,
+                    extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": 0},
+                )
+                raise
+
+            end = time.time()
+            latency = end - start
+            size = _result_size(result)
+            _CALL_COUNT.labels(name).inc()
+            _LATENCY_GAUGE.labels(name).set(latency)
+            _RESULT_SIZE_GAUGE.labels(name).set(size)
+            logger.info(
+                "%s end", name,
+                extra={"session_id": session_id, "timestamp": end, "latency": latency, "result_size": size},
+            )
+            return result
+
+        return awrapper  # type: ignore[return-value]
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
