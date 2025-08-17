@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+import logging
 
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
+
+logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - optional dependency
     from . import ErrorResult  # type: ignore
@@ -147,6 +150,11 @@ class ContextBuilder:
         if isinstance(hits, ErrorResult):
             return "{}"
         if isinstance(hits, FallbackResult):
+            logger.debug(
+                "retriever returned fallback for %s: %s",
+                query,
+                getattr(hits, "reason", ""),
+            )
             hits = list(hits)
 
         buckets: Dict[str, List[_ScoredEntry]] = {

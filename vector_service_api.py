@@ -11,6 +11,7 @@ in tests or examples without pulling in the rest of the sandbox infrastructure.
 
 from typing import Any, List, Sequence
 import time
+import logging
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -41,6 +42,8 @@ _context_builder = ContextBuilder()
 _patch_logger = PatchLogger()
 _backfill = EmbeddingBackfill()
 
+logger = logging.getLogger(__name__)
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -67,14 +70,18 @@ def search(req: SearchRequest) -> Any:
         raise HTTPException(status_code=500, detail=str(result))
 
     if isinstance(result, FallbackResult):
+        logger.warning("retriever fallback: %s", getattr(result, "reason", ""))
         payload = list(result)
         size = len(payload)
-        return {
+        response = {
             "status": "fallback",
             "data": payload,
             "reason": getattr(result, "reason", ""),
             "metrics": {"duration": duration, "result_size": size},
         }
+        if req.include_confidence:
+            response["confidence"] = getattr(result, "confidence", 0.0)
+        return response
 
     if req.include_confidence and isinstance(result, tuple):
         payload, confidence = result

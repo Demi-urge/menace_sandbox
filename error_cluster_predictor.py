@@ -107,7 +107,14 @@ class ErrorClusterPredictor:
                 try:
                     res = self.retriever.search(mod, top_k=1)
                     if isinstance(res, (FallbackResult, ErrorResult)):
-                        self.logger.debug("retriever returned fallback for %s", mod)
+                        if isinstance(res, FallbackResult):
+                            self.logger.debug(
+                                "retriever returned fallback for %s: %s",
+                                mod,
+                                getattr(res, "reason", ""),
+                            )
+                        else:
+                            self.logger.debug("retriever returned fallback for %s", mod)
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
         return results

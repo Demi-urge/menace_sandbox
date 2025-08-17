@@ -205,6 +205,12 @@ class QuickFixEngine:
         try:
             hits = self.retriever.search(query, top_k=top_k, session_id=session_id)
             if isinstance(hits, (FallbackResult, ErrorResult)):
+                if isinstance(hits, FallbackResult):
+                    self.logger.debug(
+                        "retriever returned fallback for %s: %s",
+                        query,
+                        getattr(hits, "reason", ""),
+                    )
                 return [], "", []
         except Exception:
             self.logger.debug("retriever lookup failed", exc_info=True)
