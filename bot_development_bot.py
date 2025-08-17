@@ -35,14 +35,7 @@ from .models_repo import (
     ACTIVE_MODEL_FILE,
     ensure_models_repo,
 )
-from vector_service import ContextBuilder, FallbackResult
-try:  # pragma: no cover - allow missing dependency
-    from vector_service import ErrorResult
-except Exception:  # pragma: no cover - fallback
-    class ErrorResult(Exception):
-        """Fallback ErrorResult when vector service is unavailable."""
-
-        pass
+from vector_service import ContextBuilder, FallbackResult, ErrorResult
 
 if TYPE_CHECKING:  # pragma: no cover - heavy dependency
     from .watchdog import Watchdog

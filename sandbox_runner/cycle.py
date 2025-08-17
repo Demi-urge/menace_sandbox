@@ -20,12 +20,12 @@ from sandbox_settings import SandboxSettings
 from log_tags import FEEDBACK, IMPROVEMENT_PATH, INSIGHT, ERROR_FIX
 from memory_logging import log_with_tags
 from memory_aware_gpt_client import ask_with_memory
-from semantic_service import Retriever, FallbackResult
+from vector_service import Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
-    from semantic_service import ErrorResult  # type: ignore
+    from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
     class ErrorResult(Exception):
-        """Fallback ErrorResult when semantic_service lacks explicit class."""
+        """Fallback ErrorResult when vector service lacks explicit class."""
 
         pass
 
