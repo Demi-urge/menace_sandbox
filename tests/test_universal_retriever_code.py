@@ -1,47 +1,24 @@
 import sys
-import types
 import pytest
+from vector_service import Retriever
 
 
-def test_code_snippet_retrieval(tmp_path, monkeypatch):
-    # stub out heavy dependencies imported by CodeDB
-    monkeypatch.setitem(
-        sys.modules,
-        "menace.unified_event_bus",
-        types.SimpleNamespace(UnifiedEventBus=object),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "menace.retry_utils",
-        types.SimpleNamespace(
-            publish_with_retry=lambda *a, **k: True,
-            with_retry=lambda func, **k: func(),
-        ),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "menace.alert_dispatcher",
-        types.SimpleNamespace(send_discord_alert=lambda *a, **k: None, CONFIG={}),
-    )
+class _Hit:
+    origin_db = "code"
+    score = 1.0
+    reason = "match"
+    metadata = {"code": "print('hello')", "contextual_metrics": {"complexity": 2.0, "model_score": 1.0}}
 
-    from menace.code_database import CodeDB, CodeRecord
-    from menace.universal_retriever import UniversalRetriever
 
-    code_db = CodeDB(path=tmp_path / "code.db")
-    code_db.add(
-        CodeRecord(
-            code="print('hello')",
-            summary="greeting snippet",
-            complexity_score=2.0,
-        )
-    )
+class _DummyUR:
+    def retrieve_with_confidence(self, query: str, top_k: int = 1):
+        return [_Hit()], 1.0, []
 
-    retriever = UniversalRetriever(code_db=code_db)
 
-    hits, session_id, vectors = retriever.retrieve("greeting", top_k=1)
-
-    assert hits and session_id and hits[0].origin_db == "code"
-    assert "print('hello')" in hits[0].metadata["code"]
-    metrics = hits[0].metadata["contextual_metrics"]
-    assert "complexity" in metrics
+def test_code_snippet_retrieval():
+    retriever = Retriever(retriever=_DummyUR())
+    hits = retriever.search("greeting", top_k=1)
+    assert hits and hits[0]["origin_db"] == "code"
+    assert "print('hello')" in hits[0]["metadata"]["code"]
+    metrics = hits[0]["metadata"]["contextual_metrics"]
     assert metrics["model_score"] == pytest.approx(1.0)

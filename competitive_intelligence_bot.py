@@ -12,8 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable, List, Any, Dict
 import re
-
-from .vector_utils import cosine_similarity
+import math
 
 from .retry_utils import with_retry
 
@@ -91,6 +90,17 @@ def _parse_env_dict(val: str | None) -> Dict[str, float]:
         else:
             result[part.strip()] = 1.0
     return result
+
+
+def _cosine_similarity(a: Iterable[float], b: Iterable[float]) -> float:
+    """Return cosine similarity between vectors ``a`` and ``b``."""
+
+    vec_a = list(a)
+    vec_b = list(b)
+    dot = sum(x * y for x, y in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(x * x for x in vec_a))
+    norm_b = math.sqrt(sum(x * x for x in vec_b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
 
 def _normalize_timestamp(ts: Any) -> str:
@@ -478,7 +488,7 @@ def detect_ai_signals(
     if _EMBEDDER and _AI_EMBEDDINGS:
         try:
             vec = _EMBEDDER.encode([text])[0]
-            scores = [cosine_similarity(vec, kw) for kw in _AI_EMBEDDINGS]
+            scores = [_cosine_similarity(vec, kw) for kw in _AI_EMBEDDINGS]
             if _EMBED_STRATEGY == "average":
                 score = sum(scores) / len(scores)
             elif _EMBED_STRATEGY == "topk":

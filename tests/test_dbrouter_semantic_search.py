@@ -38,7 +38,6 @@ from menace.error_bot import ErrorDB
 import menace.chatgpt_enhancement_bot as ceb
 import menace.research_aggregator_bot as rab
 from menace.database_router import DatabaseRouter
-from menace.universal_retriever import ResultBundle
 
 
 def test_semantic_search_delegates_to_retriever(tmp_path):
@@ -58,20 +57,17 @@ def test_semantic_search_delegates_to_retriever(tmp_path):
 
     called: dict[str, tuple] = {}
 
-    def fake_retrieve(query, top_k=10):
+    def fake_search(query, top_k=10):
         called["args"] = (query, top_k)
-        hits = [
-            ResultBundle(origin_db="bot", metadata={"id": 1}, score=0.5, reason="a"),
-            ResultBundle(origin_db="information", metadata={"id": 2}, score=0.4, reason="b"),
+        return [
+            {"origin_db": "bot", "metadata": {"id": 1}, "score": 0.5, "reason": "a"},
+            {"origin_db": "information", "metadata": {"id": 2}, "score": 0.4, "reason": "b"},
         ]
-        vectors = [(h.origin_db, str(h.metadata["id"])) for h in hits]
-        return hits, "sess", vectors
 
-    router._retriever.retrieve = fake_retrieve  # type: ignore
+    router._retriever = types.SimpleNamespace(search=fake_search)
 
     results = router.semantic_search("alpha", top_k=5)
 
     assert called["args"] == ("alpha", 5)
-    assert [r.origin_db for r in results] == ["bot", "info"]
-    assert all(isinstance(r, ResultBundle) for r in results)
-    assert results[0].metadata["id"] == 1
+    assert [r["origin_db"] for r in results] == ["bot", "info"]
+    assert results[0]["metadata"]["id"] == 1
