@@ -239,8 +239,21 @@ class Retriever:
 
 
 @dataclass
+class ErrorResult:
+    """Standardised error structure returned by :meth:`ContextBuilder.build`."""
+
+    error: str
+    message: str
+
+
+@dataclass
 class ContextBuilder:
-    """Thin wrapper around :func:`context_builder.ContextBuilder`."""
+    """Thin wrapper around :func:`context_builder.ContextBuilder`.
+
+    When downstream APIs raise ``ValueError`` or rate-limit the request the
+    method returns an :class:`ErrorResult` instead of bubbling up raw
+    exceptions.  All other exceptions are wrapped in :class:`VectorServiceError`.
+    """
 
     builder: _LegacyContextBuilder | None = None
 
@@ -252,16 +265,20 @@ class ContextBuilder:
         return self.builder
 
     @log_and_metric
-    def build(self, task_description: str, *, session_id: str = "", **kwargs: Any) -> str:
+    def build(
+        self, task_description: str, *, session_id: str = "", **kwargs: Any
+    ) -> Union[str, ErrorResult]:
         if not isinstance(task_description, str) or not task_description.strip():
             raise MalformedPromptError("task_description must be a non-empty string")
         builder = self._get_builder()
         try:
             return builder.build_context(task_description, **kwargs)
+        except ValueError as exc:
+            return ErrorResult("value_error", str(exc))
         except Exception as exc:  # pragma: no cover - best effort
             msg = str(exc).lower()
             if "rate limit" in msg or "too many requests" in msg or "429" in msg:
-                raise RateLimitError(str(exc)) from exc
+                return ErrorResult("rate_limited", str(exc))
             raise VectorServiceError(str(exc)) from exc
 
 

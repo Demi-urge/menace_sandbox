@@ -5,7 +5,7 @@ import os
 import sys
 import types
 
-from semantic_service import Retriever
+from semantic_service import Retriever, FallbackResult
 
 # Construct minimal menace package for QuickFixEngine
 package = types.ModuleType("menace")
@@ -54,8 +54,9 @@ def test_retriever_fallback_low_similarity():
     ur = DummyUR(score=0.05)
     retriever = Retriever(retriever=ur)
     hits = retriever.search("beta")
-    assert hits[0]["origin_db"] == "heuristic"
-    assert hits[0]["reason"] == "low similarity"
+    assert isinstance(hits, FallbackResult)
+    assert hits.reason == "low confidence"
+    assert list(hits)[0]["origin_db"] == "heuristic"
 
 
 class DummyManager:

@@ -6,7 +6,7 @@ startup.  This ``__init__`` simply re‑exports the commonly used classes so
 callers can rely on ``semantic_service`` as a stable facade.
 """
 
-from .retriever import Retriever
+from .retriever import Retriever, FallbackResult
 from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from .embedding_backfill import EmbeddingBackfill
@@ -25,6 +25,7 @@ except Exception:  # pragma: no cover - fallback when dependency missing
 
 __all__ = [
     "Retriever",
+    "FallbackResult",
     "ContextBuilder",
     "PatchLogger",
     "EmbeddingBackfill",
