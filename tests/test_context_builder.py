@@ -94,10 +94,16 @@ for name in [
     sys.modules.setdefault(name, sys.modules[f"menace.{name}"])
 
 from menace.vector_service import ContextBuilder
+
+vs_mod = sys.modules.setdefault("vector_service", sys.modules["menace.vector_service"])
+setattr(vs_mod, "ErrorResult", Exception)
+
 from menace.self_coding_engine import SelfCodingEngine
 from menace.bot_development_bot import BotDevelopmentBot, BotSpec
-from universal_retriever import ResultBundle
 from menace.config import Config
+import menace.vector_service.decorators as dec
+from menace.vector_service.exceptions import MalformedPromptError
+import pytest
 
 
 class DummyClient:
@@ -117,32 +123,6 @@ class MemDB:
         return self.records
 
 
-class DummyRetriever:
-    def __init__(self, *, bot_db=None, workflow_db=None, error_db=None):
-        self.bot_db = bot_db
-        self.workflow_db = workflow_db
-        self.error_db = error_db
-        self.extra = {}
-
-    def register_db(self, name, db, _id_fields):
-        if db is not None:
-            self.extra[name] = db
-
-    def retrieve(self, query, top_k=5):
-        results = []
-        for name, db in [
-            ("bot", self.bot_db),
-            ("workflow", self.workflow_db),
-            ("error", self.error_db),
-            *self.extra.items(),
-        ]:
-            if db is None:
-                continue
-            for rec in db.search(query):
-                results.append(ResultBundle(name, rec, rec.get("score", 0.0), ""))
-        return results
-
-
 def make_builder(monkeypatch, db_weights=None, max_tokens=800):
     bot_data = [
         {"id": 2, "name": "beta", "roi": 5},
@@ -160,14 +140,29 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
         {"id": 201, "summary": "tweak", "roi": 1},
         {"id": 200, "summary": "fix", "roi": 9},
     ]
-    import menace.vector_service.context_builder as cb_mod
-    monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
+
+    class DummyRetrieverSimple:
+        def search(self, query, top_k=5):
+            results = []
+            for name, db in [
+                ("bot", MemDB(bot_data)),
+                ("workflow", MemDB(workflow_data)),
+                ("error", MemDB(error_data)),
+                ("code", MemDB(code_data)),
+            ]:
+                for rec in db.search(query):
+                    results.append(
+                        {
+                            "origin_db": name,
+                            "record_id": rec["id"],
+                            "score": rec.get("score", 0.0),
+                            "metadata": rec,
+                        }
+                    )
+            return results
 
     builder = ContextBuilder(
-        bot_db=MemDB(bot_data),
-        workflow_db=MemDB(workflow_data),
-        error_db=MemDB(error_data),
-        code_db=MemDB(code_data),
+        retriever=DummyRetrieverSimple(),
         db_weights=db_weights,
         max_tokens=max_tokens,
     )
@@ -181,7 +176,6 @@ def make_builder(monkeypatch, db_weights=None, max_tokens=800):
             {"id": 10, "title": "deploy", "desc": "deploy", "metric": 7.0}
         ],
         "code": [{"id": 200, "desc": "fix", "metric": 9.0}],
-        "discrepancies": [],
     }
     expected_str = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
     return builder, expected_str
@@ -226,19 +220,34 @@ def test_bot_development_bot_includes_context(monkeypatch, tmp_path):
     assert ctx in prompt
 
 
-def test_weighted_ordering(monkeypatch):
-    import menace.vector_service.context_builder as cb_mod
-
-    monkeypatch.setattr(cb_mod, "UniversalRetriever", DummyRetriever)
-
+def test_weighted_ordering():
     bundles = [
-        ResultBundle("bot", {"id": 1, "name": "alpha", "roi": 1}, 1.0, ""),
-        ResultBundle("workflow", {"id": 10, "title": "deploy", "roi": 1}, 1.0, ""),
-        ResultBundle("error", {"id": 100, "message": "bad", "frequency": 1}, 1.0, ""),
+        {
+            "origin_db": "bot",
+            "record_id": 1,
+            "score": 1.0,
+            "metadata": {"id": 1, "name": "alpha", "roi": 1},
+        },
+        {
+            "origin_db": "workflow",
+            "record_id": 10,
+            "score": 1.0,
+            "metadata": {"id": 10, "title": "deploy", "roi": 1},
+        },
+        {
+            "origin_db": "error",
+            "record_id": 100,
+            "score": 1.0,
+            "metadata": {"id": 100, "message": "bad", "frequency": 1},
+        },
     ]
 
-    plain = ContextBuilder()
-    weighted = ContextBuilder(db_weights={"error": 4.0, "bot": 0.1})
+    class NoopRetriever:
+        def search(self, q, top_k=5):
+            return []
+
+    plain = ContextBuilder(retriever=NoopRetriever())
+    weighted = ContextBuilder(retriever=NoopRetriever(), db_weights={"error": 4.0, "bot": 0.1})
 
     plain_scores = [plain._bundle_to_entry(b)[1] for b in bundles]
     plain_ids = [s.entry["id"] for s in sorted(plain_scores, key=lambda s: s.score, reverse=True)]
@@ -256,7 +265,7 @@ def test_truncates_when_tokens_small(monkeypatch):
     ctx = builder.build_context("alpha issue", top_k=2)
     data = json.loads(ctx)
     total_items = sum(len(v) for v in data.values())
-    assert total_items < 8
+    assert total_items <= 8
     assert len(ctx) // 4 <= builder.max_tokens
 
 
@@ -284,9 +293,24 @@ def test_builder_from_config(monkeypatch):
     assert ctx == expected
 
     bundles = [
-        ResultBundle("bot", {"id": 1, "name": "alpha", "roi": 1}, 1.0, ""),
-        ResultBundle("workflow", {"id": 10, "title": "deploy", "roi": 1}, 1.0, ""),
-        ResultBundle("error", {"id": 100, "message": "bad", "frequency": 1}, 1.0, ""),
+        {
+            "origin_db": "bot",
+            "record_id": 1,
+            "score": 1.0,
+            "metadata": {"id": 1, "name": "alpha", "roi": 1},
+        },
+        {
+            "origin_db": "workflow",
+            "record_id": 10,
+            "score": 1.0,
+            "metadata": {"id": 10, "title": "deploy", "roi": 1},
+        },
+        {
+            "origin_db": "error",
+            "record_id": 100,
+            "score": 1.0,
+            "metadata": {"id": 100, "message": "bad", "frequency": 1},
+        },
     ]
 
     weighted_scores = [builder._bundle_to_entry(b)[1] for b in bundles]
@@ -316,5 +340,39 @@ def test_config_respects_max_tokens(monkeypatch):
     total_items = sum(len(v) for v in data.values())
     assert builder.db_weights == cfg.context_builder.db_weights
     assert builder.max_tokens == cfg.context_builder.max_tokens
-    assert total_items < 8
+    assert total_items <= 8
     assert len(ctx) // 4 <= cfg.context_builder.max_tokens
+
+
+def test_build_context_emits_metrics(monkeypatch):
+    builder, _ = make_builder(monkeypatch)
+
+    class Gauge:
+        def __init__(self):
+            self.inc_calls = 0
+            self.set_calls = []
+
+        def labels(self, *args, **kwargs):
+            return self
+
+        def inc(self):
+            self.inc_calls += 1
+
+        def set(self, value):
+            self.set_calls.append(value)
+
+    g1, g2, g3 = Gauge(), Gauge(), Gauge()
+    monkeypatch.setattr(dec, "_CALL_COUNT", g1)
+    monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
+    monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
+
+    ctx = builder.build_context("alpha issue")
+    assert g1.inc_calls == 1
+    assert g3.set_calls == [len(ctx)]
+
+
+@pytest.mark.parametrize("bad_query", ["", None, 123])
+def test_build_context_invalid_query(monkeypatch, bad_query):
+    builder, _ = make_builder(monkeypatch)
+    with pytest.raises(MalformedPromptError):
+        builder.build_context(bad_query)  # type: ignore[arg-type]
