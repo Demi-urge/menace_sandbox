@@ -150,7 +150,7 @@ class DummyMetaLogger:
     def rankings(self):
         return []
 
-    def diminishing(self, threshold=None):
+    def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
         return ["mod.py"]
 
 
@@ -1434,7 +1434,7 @@ class _StaticImprover(DummyImprover):
 
 
 class _NoFlagMetaLogger(DummyMetaLogger):
-    def diminishing(self, threshold=None):
+    def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
         return []
 
 
@@ -1458,7 +1458,7 @@ class _CaptureLogger(DummyMetaLogger):
     def log_cycle(self, cycle, roi, modules, reason):
         self.reasons.append(reason)
 
-    def diminishing(self, threshold=None):
+    def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
         return []
 
 
@@ -2063,7 +2063,7 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
         def rankings(self):
             return []
 
-        def diminishing(self, threshold=None, entropy_flags=None):
+        def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
             self.flagged_sections.add("m.py:sec")
             return ["m.py:sec"]
 

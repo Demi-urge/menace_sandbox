@@ -32,11 +32,11 @@ def test_meta_logger_consecutive_threshold(monkeypatch, tmp_path):
     log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
     threshold = 0.1
     log.log_cycle(0, 0.0, ["x.py"], "first")
-    assert log.diminishing(threshold, consecutive=2) == []
+    assert log.diminishing(threshold, consecutive=2, entropy_threshold=-1.0) == []
     log.log_cycle(1, 0.05, ["x.py"], "second")
-    assert log.diminishing(threshold, consecutive=2) == []
+    assert log.diminishing(threshold, consecutive=2, entropy_threshold=-1.0) == []
     log.log_cycle(2, 0.1, ["x.py"], "third")
-    assert log.diminishing(threshold, consecutive=2) == ["x.py"]
+    assert log.diminishing(threshold, consecutive=2, entropy_threshold=-1.0) == ["x.py"]
     assert "x.py" in log.flagged_sections
 
 
@@ -94,6 +94,23 @@ def test_meta_logger_entropy_ceiling_entropy_spike(monkeypatch, tmp_path):
     log.log_cycle(3, 0.09, ["x.py"], "fourth")
 
     assert log.ceiling(0.2, consecutive=2) == ["x.py"]
+    assert "x.py" in log.flagged_sections
+
+
+def test_meta_logger_entropy_plateau(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    from tests.test_menace_master import _stub_module, DummyBot
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+
+    log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
+    rois = [0.0, 0.5, 0.0, 0.5, 0.0, 0.5, 0.0, 0.5]
+    for idx, roi in enumerate(rois):
+        log.log_cycle(idx, roi, ["x.py"], str(idx))
+
+    assert log.diminishing(0.1, consecutive=2, entropy_threshold=0.01) == ["x.py"]
     assert "x.py" in log.flagged_sections
 
 

@@ -201,10 +201,11 @@ class _SandboxMetaLogger:
         self,
         threshold: float | None = None,
         consecutive: int = 3,
-        entropy_flags: Sequence[str] | None = None,
+        entropy_threshold: float | None = None,
     ) -> list[str]:
         flags: list[str] = []
         thr = 0.0 if threshold is None else float(threshold)
+        e_thr = thr if entropy_threshold is None else float(entropy_threshold)
         eps = 1e-3
         for m, vals in self.module_deltas.items():
             if m in self.flagged_sections:
@@ -218,12 +219,22 @@ class _SandboxMetaLogger:
                 std = var ** 0.5
             else:
                 std = 0.0
-            if abs(mean) <= thr and std < eps:
+            roi_plateau = abs(mean) <= thr and std < eps
+
+            ent_vals = self.module_entropy_deltas.get(m, [])
+            if len(ent_vals) < len(vals):
+                try:
+                    self.entropy_delta(m)
+                except Exception:
+                    logger.exception("entropy delta computation failed for %s", m)
+                ent_vals = self.module_entropy_deltas.get(m, [])
+            ent_plateau = False
+            if len(ent_vals) >= consecutive:
+                ent_plateau = all(
+                    abs(v) <= e_thr for v in ent_vals[-consecutive:]
+                )
+            if roi_plateau or ent_plateau:
                 flags.append(m)
-        if entropy_flags:
-            for m in entropy_flags:
-                if m not in self.flagged_sections:
-                    flags.append(m)
         if flags:
             self.flag_modules(flags, reason="diminishing_returns")
             logger.debug("modules with diminishing returns: %s", flags)

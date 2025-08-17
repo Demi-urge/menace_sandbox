@@ -1203,6 +1203,20 @@ def main(argv: List[str] | None = None) -> None:
         help="path to JSON cache with offline suggestions",
     )
     parser.add_argument(
+        "--entropy-threshold",
+        "--entropy-plateau-threshold",
+        dest="entropy_plateau_threshold",
+        type=float,
+        help="threshold for entropy delta plateau detection",
+    )
+    parser.add_argument(
+        "--consecutive",
+        "--entropy-plateau-consecutive",
+        dest="entropy_plateau_consecutive",
+        type=int,
+        help="entropy delta samples below threshold before module convergence",
+    )
+    parser.add_argument(
         "--no-workflow-run",
         action="store_true",
         help="skip workflow simulations after section cycles",
@@ -1315,12 +1329,17 @@ def main(argv: List[str] | None = None) -> None:
         help="confidence level for ROI convergence",
     )
     p_autorun.add_argument(
+        "--entropy-threshold",
         "--entropy-plateau-threshold",
+        dest="entropy_plateau_threshold",
         type=float,
         help="threshold for entropy delta plateau detection",
     )
     p_autorun.add_argument(
+        "--entropy-consecutive",
         "--entropy-plateau-consecutive",
+        "--consecutive",
+        dest="entropy_plateau_consecutive",
         type=int,
         help="entropy delta samples below threshold before module convergence",
     )
@@ -1529,6 +1548,14 @@ def main(argv: List[str] | None = None) -> None:
         os.environ["GPT_SECTION_SUMMARY_DEPTH"] = str(args.summary_depth)
     if args.max_recursion_depth is not None:
         os.environ["SANDBOX_MAX_RECURSION_DEPTH"] = str(args.max_recursion_depth)
+    if getattr(args, "entropy_plateau_threshold", None) is not None:
+        os.environ["ENTROPY_PLATEAU_THRESHOLD"] = str(
+            args.entropy_plateau_threshold
+        )
+    if getattr(args, "entropy_plateau_consecutive", None) is not None:
+        os.environ["ENTROPY_PLATEAU_CONSECUTIVE"] = str(
+            args.entropy_plateau_consecutive
+        )
 
     if getattr(args, "alignment_warnings", False):
         from menace import violation_logger as vl

@@ -163,7 +163,7 @@ def _run_sandbox_loop(monkeypatch, tmp_path, reliability):
         def rankings(self):
             return {}
 
-        def diminishing(self, threshold=None):
+        def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
             return []
 
     class DummyCtx:
