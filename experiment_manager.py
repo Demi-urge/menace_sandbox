@@ -64,10 +64,15 @@ class ExperimentManager:
             logger.warning("failed backtracking lineage: %s", exc)
             return []
 
-    def clone_branch_for_ab_test(self, patch_id: int, description: str) -> int | None:
+    def clone_branch_for_ab_test(
+        self,
+        patch_id: int,
+        description: str,
+        vectors: List[tuple[str, float]] | None = None,
+    ) -> int | None:
         """Clone a patch branch for A/B testing and return new patch id."""
         try:
-            return self.lineage.clone_branch_for_ab_test(patch_id, description)
+            return self.lineage.clone_branch_for_ab_test(patch_id, description, vectors)
         except Exception as exc:
             logger.warning("failed cloning branch for A/B test: %s", exc)
             return None

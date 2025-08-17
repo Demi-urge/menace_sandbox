@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Helper for recording patch outcomes for contributing vectors."""
 
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any, Iterable, List, Sequence, Tuple, Union
 
 import asyncio
 import time
@@ -56,21 +56,27 @@ class PatchLogger:
         self.metrics_db = metrics_db
 
     # ------------------------------------------------------------------
-    def _parse_vectors(self, vector_ids: Iterable[str]) -> List[Tuple[str, str]]:
-        pairs: List[Tuple[str, str]] = []
-        for vid in vector_ids:
+    def _parse_vectors(
+        self, vector_ids: Iterable[Union[str, Tuple[str, float]]]
+    ) -> List[Tuple[str, str, float]]:
+        pairs: List[Tuple[str, str, float]] = []
+        for item in vector_ids:
+            if isinstance(item, tuple):
+                vid, score = item
+            else:
+                vid, score = item, 0.0
             if ":" in vid:
                 origin, vec_id = vid.split(":", 1)
             else:
                 origin, vec_id = "", vid
-            pairs.append((origin, vec_id))
+            pairs.append((origin, vec_id, float(score)))
         return pairs
 
     # ------------------------------------------------------------------
     @log_and_measure
     def track_contributors(
         self,
-        vector_ids: Sequence[str],
+        vector_ids: Sequence[Union[str, Tuple[str, float]]],
         result: bool,
         *,
         patch_id: str = "",
@@ -82,7 +88,8 @@ class PatchLogger:
         start = time.time()
         status = "success" if result else "failure"
         try:
-            pairs = self._parse_vectors(vector_ids)
+            detailed = self._parse_vectors(vector_ids)
+            pairs = [(o, vid) for o, vid, _ in detailed]
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
@@ -101,6 +108,7 @@ class PatchLogger:
                         win=result,
                         regret=not result,
                     )
+                    self.patch_db.record_provenance(int(patch_id), detailed)
                 except Exception:
                     pass
             elif self.vector_metrics is not None:
@@ -127,7 +135,7 @@ class PatchLogger:
     @log_and_measure
     async def track_contributors_async(
         self,
-        vector_ids: Sequence[str],
+        vector_ids: Sequence[Union[str, Tuple[str, float]]],
         result: bool,
         *,
         patch_id: str = "",

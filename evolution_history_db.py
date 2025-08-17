@@ -348,7 +348,7 @@ class EvolutionHistoryDB:
         rows = cur.fetchall()
         by_parent: dict[int | None, list] = {}
         for row in rows:
-            by_parent.setdefault(row[-1], []).append(row)
+            by_parent.setdefault(row[15], []).append(row)
 
         def build(pid: int | None) -> List[dict]:
             children: List[dict] = []
