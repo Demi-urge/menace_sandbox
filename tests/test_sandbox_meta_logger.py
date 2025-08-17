@@ -55,3 +55,6 @@ def test_meta_logger_entropy_ceiling(monkeypatch, tmp_path):
 
     assert log.ceiling(0.3, consecutive=2) == ["x.py"]
     assert "x.py" in log.flagged_sections
+
+    new_log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
+    assert "x.py" in new_log.flagged_sections
