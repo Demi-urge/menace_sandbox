@@ -1,8 +1,6 @@
 """Public interface for the :mod:`vector_service` package.
 
-This package provides the canonical vector retrieval service. The deprecated
-``semantic_service`` package re-exports these symbols and will be removed once
-all consumers migrate here.
+This package provides the canonical vector retrieval service.
 """
 
 from .retriever import Retriever, FallbackResult
@@ -10,7 +8,6 @@ from .context_builder import ContextBuilder
 from .patch_logger import PatchLogger
 from .embedding_backfill import EmbeddingBackfill
 from .exceptions import (
-    SemanticServiceError,
     VectorServiceError,
     RateLimitError,
     MalformedPromptError,
@@ -29,7 +26,6 @@ __all__ = [
     "PatchLogger",
     "EmbeddingBackfill",
     "EmbeddableDBMixin",
-    "SemanticServiceError",
     "VectorServiceError",
     "RateLimitError",
     "MalformedPromptError",

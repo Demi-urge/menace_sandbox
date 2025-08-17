@@ -16,13 +16,13 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 # Gauges for tracking basic metrics per function
 _CALL_COUNT = _me.Gauge(
-    "semantic_service_calls_total", "Number of times a function is invoked", ["function"],
+    "vector_service_calls_total", "Number of times a function is invoked", ["function"],
 )
 _LATENCY_GAUGE = _me.Gauge(
-    "semantic_service_latency_seconds", "Execution time of functions", ["function"],
+    "vector_service_latency_seconds", "Execution time of functions", ["function"],
 )
 _RESULT_SIZE_GAUGE = _me.Gauge(
-    "semantic_service_result_size", "Size of results returned by functions", ["function"],
+    "vector_service_result_size", "Size of results returned by functions", ["function"],
 )
 
 
