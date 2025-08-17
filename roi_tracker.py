@@ -57,6 +57,7 @@ class ROITracker:
         window: int = 5,
         tolerance: float = 0.01,
         *,
+        entropy_threshold: float | None = None,
         filter_outliers: bool = True,
         weights: Optional[List[float]] = None,
         resource_db: "ROIHistoryDB" | None = None,
@@ -74,6 +75,9 @@ class ROITracker:
             Number of recent deltas considered when evaluating convergence.
         tolerance:
             Threshold below which the average delta is considered negligible.
+        entropy_threshold:
+            Minimum ROI gain per unit entropy delta before entropy increases are
+            treated as unproductive. Defaults to ``tolerance`` when omitted.
         filter_outliers:
             Whether to discard extreme deltas when updating the history.
         weights:
@@ -92,6 +96,9 @@ class ROITracker:
         self.entropy_delta_history: List[float] = []
         self.window = window
         self.tolerance = tolerance
+        self.entropy_threshold = (
+            tolerance if entropy_threshold is None else float(entropy_threshold)
+        )
         self.filter_outliers = filter_outliers
         if weights is not None:
             if len(weights) != window:
@@ -1173,7 +1180,9 @@ class ROITracker:
                 )
             except Exception:
                 logger.exception("model evaluation failed")
-        entropy_stop = self.entropy_ceiling(self.tolerance, window=self.window)
+        entropy_stop = self.entropy_ceiling(
+            self.entropy_threshold, window=self.window
+        )
         return vertex, preds, should_stop, entropy_stop
 
     # ------------------------------------------------------------------

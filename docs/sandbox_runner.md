@@ -808,7 +808,9 @@ specified.
 The `run_autonomous.py` helper exposes the same functionality while verifying
 dependencies first. It keeps launching new runs until ROI improvements fade for
 all modules and workflows. `--roi-cycles` and `--synergy-cycles` cap how many
-consecutive below-threshold cycles trigger convergence. The optional `--runs`
+consecutive below-threshold cycles trigger convergence. The optional
+`--entropy-threshold` flag (or `ENTROPY_THRESHOLD`) adjusts the minimum ROI
+gain per entropy delta before entropy increases are ignored. The optional `--runs`
 argument acts as an upper bound. Use `--log-level LEVEL` or set
 `SANDBOX_LOG_LEVEL` to adjust console verbosity. Pass `--verbose` to force
 debug output regardless of the configured level:
@@ -836,6 +838,8 @@ checks:
 
 - ``ROI_CYCLES`` and ``SYNERGY_CYCLES`` override ``--roi-cycles`` and
   ``--synergy-cycles``.
+- ``ENTROPY_THRESHOLD`` sets the ROI gain per entropy delta ceiling used by
+  ``ROITracker``.
 - ``SYNERGY_MA_WINDOW`` sets the rolling window for the EMA and stationarity
   test.
 - ``SYNERGY_STATIONARITY_CONFIDENCE`` and ``SYNERGY_VARIANCE_CONFIDENCE``
