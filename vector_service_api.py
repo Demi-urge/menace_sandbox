@@ -10,10 +10,13 @@ in tests or examples without pulling in the rest of the sandbox infrastructure.
 """
 
 from typing import Any, List, Sequence
+import os
 import time
 import logging
+from collections import defaultdict, deque
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from vector_service import (
@@ -43,6 +46,34 @@ _patch_logger = PatchLogger()
 _backfill = EmbeddingBackfill()
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Authentication and rate limiting
+# ---------------------------------------------------------------------------
+API_TOKEN = os.environ.get("VECTOR_SERVICE_API_TOKEN", "")
+RATE_LIMIT = int(os.environ.get("VECTOR_SERVICE_RATE_LIMIT", "60"))
+RATE_WINDOW = int(os.environ.get("VECTOR_SERVICE_RATE_WINDOW", "60"))
+
+_request_log: dict[str, deque[float]] = defaultdict(deque)
+
+
+@app.middleware("http")
+async def auth_and_rate_limit(request: Request, call_next):
+    """Validate API token and enforce a simple rate limit."""
+    token = request.headers.get("X-API-Token") or request.query_params.get("token")
+    if API_TOKEN and token != API_TOKEN:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+    identifier = token or (request.client.host if request.client else "")
+    now = time.time()
+    window_start = now - RATE_WINDOW
+    times = _request_log[identifier]
+    while times and times[0] < window_start:
+        times.popleft()
+    if len(times) >= RATE_LIMIT:
+        return JSONResponse(status_code=429, content={"detail": "Too Many Requests"})
+    times.append(now)
+    return await call_next(request)
 
 
 class SearchRequest(BaseModel):
