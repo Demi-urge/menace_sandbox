@@ -15,6 +15,46 @@ vec_mod.ContextBuilder = object  # type: ignore[attr-defined]
 vec_mod.ErrorResult = object  # type: ignore[attr-defined]
 vec_mod.PatchLogger = object  # type: ignore[attr-defined]
 vec_mod.VectorServiceError = _VSError
+
+class FallbackResult(list):
+    def __init__(self, reason, results=None):
+        super().__init__(results or [])
+        self.reason = reason
+vec_mod.FallbackResult = FallbackResult
+
+# minimal decorators module with gauges
+dec_mod = types.ModuleType("vector_service.decorators")
+class _Gauge:
+    def __init__(self):
+        self.calls = 0
+        self.sets = []
+    def labels(self, *args):
+        return self
+    def inc(self):
+        self.calls += 1
+    def set(self, value):
+        self.sets.append(value)
+_dec_call = _Gauge()
+_dec_lat = _Gauge()
+_dec_size = _Gauge()
+dec_mod._CALL_COUNT = _dec_call
+dec_mod._LATENCY_GAUGE = _dec_lat
+dec_mod._RESULT_SIZE_GAUGE = _dec_size
+
+def log_and_measure(func):
+    def wrapper(*a, **k):
+        dec_mod._CALL_COUNT.labels(func.__qualname__).inc()
+        result = func(*a, **k)
+        dec_mod._LATENCY_GAUGE.labels(func.__qualname__).set(0.0)
+        try:
+            size = len(result)
+        except Exception:
+            size = 0
+        dec_mod._RESULT_SIZE_GAUGE.labels(func.__qualname__).set(size)
+        return result
+    return wrapper
+dec_mod.log_and_measure = log_and_measure
+sys.modules.setdefault("vector_service.decorators", dec_mod)
 sys.modules.setdefault("vector_service", vec_mod)
 
 from vector_service import VectorServiceError
@@ -243,3 +283,61 @@ def test_patch_logger_vector_service_error(tmp_path):
     # Should not raise despite logger failure
     engine._track_contributors("s", [("o", "v")], True)
 
+
+def test_vector_service_metrics_and_fallback(tmp_path, monkeypatch):
+    import vector_service
+    import vector_service.decorators as dec
+    from vector_service.decorators import log_and_measure
+    import menace.self_coding_engine as sce
+    import menace.code_database as cd
+    import menace.menace_memory_manager as mm
+    import menace.data_bot as db
+
+    class Gauge:
+        def __init__(self):
+            self.inc_calls = 0
+            self.set_calls: list[float] = []
+        def labels(self, *args):
+            return self
+        def inc(self):
+            self.inc_calls += 1
+        def set(self, value):
+            self.set_calls.append(value)
+
+    g1, g2, g3 = Gauge(), Gauge(), Gauge()
+    monkeypatch.setattr(dec, "_CALL_COUNT", g1)
+    monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
+    monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
+
+    class DummyRetriever:
+        @log_and_measure
+        def search(self, query, **_):
+            return vector_service.FallbackResult("sentinel_fallback", [])
+
+    class DummyBuilder:
+        def __init__(self):
+            self.calls = []
+            self.retriever = DummyRetriever()
+        def build(self, query):
+            self.calls.append(query)
+            return self.retriever.search(query)
+
+    builder = DummyBuilder()
+
+    mdb = db.MetricsDB(tmp_path / "m.db")
+    patch_db = cd.PatchHistoryDB(tmp_path / "p.db")
+    data_bot = db.DataBot(mdb, patch_db=patch_db)
+    mem = mm.MenaceMemoryManager(tmp_path / "mem.db")
+    engine = sce.SelfCodingEngine(
+        cd.CodeDB(tmp_path / "c.db"),
+        mem,
+        data_bot=data_bot,
+        patch_db=patch_db,
+        context_builder=builder,
+        llm_client=object(),
+    )
+    monkeypatch.setattr(sce, "ask_with_memory", lambda *a, **k: {})
+    code = engine.generate_helper("demo task")
+    assert builder.calls == ["demo task"]
+    assert g1.inc_calls == 1
+    assert "sentinel_fallback" not in code

@@ -221,3 +221,47 @@ def test_token_refresh_retry_success(monkeypatch, tmp_path):
     bot = bdb.BotDevelopmentBot(repo_base=tmp_path, config=cfg)
     assert bot._refresh_token()
     assert bot.visual_token == "NEW"
+
+def test_vector_service_metrics_and_fallback(monkeypatch, tmp_path):
+    from vector_service import FallbackResult
+    import vector_service.decorators as dec
+    from vector_service.decorators import log_and_measure
+
+    class Gauge:
+        def __init__(self):
+            self.inc_calls = 0
+            self.set_calls: list[float] = []
+            self.labels_args: list[tuple] = []
+        def labels(self, *args):
+            self.labels_args.append(args)
+            return self
+        def inc(self):
+            self.inc_calls += 1
+        def set(self, value):
+            self.set_calls.append(value)
+
+    g1, g2, g3 = Gauge(), Gauge(), Gauge()
+    monkeypatch.setattr(dec, "_CALL_COUNT", g1)
+    monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
+    monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
+
+    class DummyRetriever:
+        @log_and_measure
+        def search(self, query, **_):
+            return FallbackResult("sentinel_fallback", [])
+
+    class DummyBuilder:
+        def __init__(self):
+            self.calls = []
+            self.retriever = DummyRetriever()
+        def build(self, query):
+            self.calls.append(query)
+            return self.retriever.search(query)
+
+    builder = DummyBuilder()
+    bot = bdb.BotDevelopmentBot(repo_base=tmp_path)
+    spec = bdb.BotSpec(name="demo", purpose="demo", description="demo")
+    prompt = bot._build_prompt(spec, builder=builder)
+    assert builder.calls == ["demo"]
+    assert g1.inc_calls == 1
+    assert "sentinel_fallback" not in prompt
