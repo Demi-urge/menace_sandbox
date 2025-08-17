@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, List, Sequence, Tuple, Callable, TypeVar
 import functools
 import logging
 import time
+from logging_utils import get_logger, log_record
 
 try:  # optional dependency
     from universal_retriever import UniversalRetriever, ResultBundle  # type: ignore
@@ -66,14 +67,20 @@ class MalformedPromptError(VectorServiceError):
 
 F = TypeVar("F", bound=Callable[..., Any])
 
-_CALL_COUNT = _me.Gauge(
-    "vector_service_calls_total", "Number of times a function is invoked", ["function"]
+_SUCCESS_COUNT = _me.Gauge(
+    "vector_service_success_total",
+    "Number of successful vector service calls",
+    ["function"],
+)
+_FAILURE_COUNT = _me.Gauge(
+    "vector_service_failure_total",
+    "Number of failed vector service calls",
+    ["function"],
 )
 _LATENCY_GAUGE = _me.Gauge(
-    "vector_service_latency_seconds", "Execution time of functions", ["function"]
-)
-_RESULT_SIZE_GAUGE = _me.Gauge(
-    "vector_service_result_size", "Size of results returned by functions", ["function"]
+    "vector_service_latency_seconds",
+    "Execution time of vector service functions",
+    ["function"],
 )
 
 
@@ -86,10 +93,15 @@ def _result_size(result: Any) -> int:
     return 0
 
 
-def log_and_time(func: F) -> F:
-    """Log structured information about a function call."""
+def log_and_metric(func: F) -> F:
+    """Log call metadata and update Prometheus counters.
 
-    logger = logging.getLogger(func.__module__)
+    The decorator records wall time and increments success/failure counters
+    while logging structured information via :mod:`logging_utils`.
+    """
+
+    logger = get_logger(func.__module__)
+    name = func.__qualname__
 
     @functools.wraps(func)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -97,38 +109,25 @@ def log_and_time(func: F) -> F:
         start = time.time()
         try:
             result = func(*args, **kwargs)
-            latency = time.time() - start
-            size = _result_size(result)
-            logger.info(
-                "%s executed", func.__qualname__,
-                extra={"session_id": session_id, "latency": latency, "result_size": size},
-            )
-            return result
         except Exception:
             latency = time.time() - start
+            _FAILURE_COUNT.labels(name).inc()
+            _LATENCY_GAUGE.labels(name).set(latency)
             logger.exception(
                 "%s failed", func.__qualname__,
-                extra={"session_id": session_id, "latency": latency, "result_size": 0},
+                extra=log_record(session_id=session_id, latency=latency, result_size=0),
             )
             raise
-
-    return wrapper  # type: ignore[return-value]
-
-
-def track_metrics(func: F) -> F:
-    """Update Prometheus-style metrics for the wrapped function."""
-
-    name = func.__qualname__
-
-    @functools.wraps(func)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start = time.time()
-        result = func(*args, **kwargs)
         latency = time.time() - start
         size = _result_size(result)
-        _CALL_COUNT.labels(name).inc()
+        _SUCCESS_COUNT.labels(name).inc()
         _LATENCY_GAUGE.labels(name).set(latency)
-        _RESULT_SIZE_GAUGE.labels(name).set(size)
+        logger.info(
+            "%s executed", func.__qualname__,
+            extra=log_record(
+                session_id=session_id, latency=latency, result_size=size
+            ),
+        )
         return result
 
     return wrapper  # type: ignore[return-value]
@@ -200,8 +199,7 @@ class Retriever:
         top_score = normalised[0]["score"] if normalised else 0.0
         return normalised, top_score
 
-    @log_and_time
-    @track_metrics
+    @log_and_metric
     def search(
         self,
         query: str,
@@ -253,8 +251,7 @@ class ContextBuilder:
             self.builder = _LegacyContextBuilder()
         return self.builder
 
-    @log_and_time
-    @track_metrics
+    @log_and_metric
     def build(self, task_description: str, *, session_id: str = "", **kwargs: Any) -> str:
         if not isinstance(task_description, str) or not task_description.strip():
             raise MalformedPromptError("task_description must be a non-empty string")
@@ -270,8 +267,9 @@ class ContextBuilder:
 
 @dataclass
 class PatchLogger:
-    """Record patch outcomes in :class:`VectorMetricsDB`."""
+    """Record patch outcomes in :class:`VectorMetricsDB` or legacy metrics DB."""
 
+    metrics_db: Any | None = None
     vector_metrics: VectorMetricsDB | None = None
 
     def _parse_vectors(self, ids: Iterable[str]) -> List[Tuple[str, str]]:
@@ -291,8 +289,7 @@ class PatchLogger:
             self.vector_metrics = VectorMetricsDB()
         return self.vector_metrics
 
-    @log_and_time
-    @track_metrics
+    @log_and_metric
     def track_contributors(
         self,
         vector_ids: Sequence[str],
@@ -303,8 +300,16 @@ class PatchLogger:
     ) -> None:
         if not all(isinstance(v, str) for v in vector_ids):
             raise MalformedPromptError("vector_ids must be a sequence of strings")
-        db = self._get_db()
         pairs = self._parse_vectors(vector_ids)
+        if self.metrics_db is not None:
+            try:
+                self.metrics_db.log_patch_outcome(
+                    patch_id, result, pairs, session_id=session_id
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                raise VectorServiceError(str(exc)) from exc
+            return
+        db = self._get_db()
         try:
             db.update_outcome(
                 session_id,
@@ -349,8 +354,7 @@ class EmbeddingBackfill:
             subclasses = []
         return subclasses
 
-    @log_and_time
-    @track_metrics
+    @log_and_metric
     def _process_db(
         self,
         db: EmbeddableDBMixin,
@@ -363,8 +367,7 @@ class EmbeddingBackfill:
         except TypeError:
             db.backfill_embeddings()  # type: ignore[call-arg]
 
-    @log_and_time
-    @track_metrics
+    @log_and_metric
     def run(
         self,
         *,
