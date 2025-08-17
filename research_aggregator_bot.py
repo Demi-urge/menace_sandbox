@@ -33,7 +33,7 @@ from .chatgpt_research_bot import ChatGPTResearchBot, Exchange, summarise_text
 from .database_manager import get_connection, DB_PATH
 from .capital_management_bot import CapitalManagementBot
 from .database_router import DatabaseRouter
-from menace.embeddable_db_mixin import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin
 try:
     from .menace_db import MenaceDB
 except Exception:  # pragma: no cover - optional dependency

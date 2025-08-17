@@ -43,8 +43,7 @@ from .menace_memory_manager import MenaceMemoryManager
 from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
-from menace.embeddable_db_mixin import EmbeddableDBMixin
-from vector_service import Retriever, FallbackResult
+from vector_service import EmbeddableDBMixin, Retriever, FallbackResult
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when missing

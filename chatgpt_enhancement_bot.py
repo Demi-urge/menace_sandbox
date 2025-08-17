@@ -29,7 +29,7 @@ try:  # shared GPT memory instance
     from .shared_gpt_memory import GPT_MEMORY_MANAGER
 except Exception:  # pragma: no cover - fallback for flat layout
     from shared_gpt_memory import GPT_MEMORY_MANAGER  # type: ignore
-from menace.embeddable_db_mixin import EmbeddableDBMixin
+from vector_service import EmbeddableDBMixin
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
