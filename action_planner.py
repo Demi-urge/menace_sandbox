@@ -32,7 +32,7 @@ from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
-from .context_builder import ContextBuilder
+from semantic_service import ContextBuilder
 
 logger = logging.getLogger(__name__)
 

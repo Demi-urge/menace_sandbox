@@ -69,14 +69,16 @@ def generate_patch(
         return None
 
     context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
-    builder = context_builder or ContextBuilder()
+    builder = context_builder
     description = f"preemptive fix for {path.name}"
-    try:
-        context_block = builder.build(description)
-    except Exception:
-        context_block = ""
-    if context_block:
-        description += "\n\n" + context_block
+    context_block = ""
+    if builder is not None:
+        try:
+            context_block = builder.build(description)
+        except Exception:
+            context_block = ""
+        if context_block:
+            description += "\n\n" + context_block
 
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
@@ -225,12 +227,6 @@ class QuickFixEngine:
             return
         context_meta = {"error_type": etype, "module": module, "bot": bot}
         builder = self.context_builder
-        if builder is None:
-            try:
-                builder = ContextBuilder()
-            except Exception:
-                builder = None
-            self.context_builder = builder
         ctx_block = ""
         if builder is not None:
             try:
@@ -335,12 +331,6 @@ class QuickFixEngine:
                 continue
             meta = {"module": module, "reason": "preemptive_patch"}
             builder = self.context_builder
-            if builder is None:
-                try:
-                    builder = ContextBuilder()
-                except Exception:
-                    builder = None
-                self.context_builder = builder
             ctx = ""
             if builder is not None:
                 try:
