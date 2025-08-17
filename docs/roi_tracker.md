@@ -43,6 +43,11 @@ behaviour.
 
 Each prediction records the change in `synergy_shannon_entropy` relative to the complexity delta of the last patch. The ratio for each module is appended to `module_entropy_deltas`. `entropy_delta_history(name)` returns the stored ratios while `entropy_plateau(threshold, consecutive)` identifies modules whose entropy change stays below a threshold for a given number of samples. Inside the autonomous sandbox these flags are controlled by the `ENTROPY_PLATEAU_THRESHOLD` and `ENTROPY_PLATEAU_CONSECUTIVE` variables and cause modules to be marked complete and skipped in later cycles.
 
+Use ``--entropy-threshold``/``ENTROPY_THRESHOLD`` to set the minimum ROI gain
+per entropy unit and ``--consecutive``/``ENTROPY_PLATEAU_CONSECUTIVE`` to define
+how many low-entropy samples are required before a module is considered
+complete.
+
 ```python
 tracker.record_prediction(0.1, 0.1)
 print(tracker.entropy_delta_history("m.py"))

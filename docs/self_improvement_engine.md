@@ -155,7 +155,8 @@ changes would add complexity without meaningful returns.
 
 Tune the sensitivity with the ``--entropy-threshold`` flag or the
 ``ENTROPY_THRESHOLD`` environment variable. Plateau detection is governed by
-``ENTROPY_PLATEAU_THRESHOLD`` and ``ENTROPY_PLATEAU_CONSECUTIVE``.
+``--consecutive``/``--entropy-plateau-consecutive`` (``ENTROPY_PLATEAU_CONSECUTIVE``)
+and ``ENTROPY_PLATEAU_THRESHOLD``.
 
 ## Interpreting plateau logs
 
