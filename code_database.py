@@ -23,11 +23,16 @@ except Exception:  # pragma: no cover - optional
 
 T = TypeVar("T")
 
-from .auto_link import auto_link
-
-from .unified_event_bus import UnifiedEventBus
-from .retry_utils import publish_with_retry, with_retry
-from .alert_dispatcher import send_discord_alert, CONFIG as ALERT_CONFIG
+try:  # pragma: no cover - support direct module execution
+    from .auto_link import auto_link  # type: ignore
+    from .unified_event_bus import UnifiedEventBus  # type: ignore
+    from .retry_utils import publish_with_retry, with_retry  # type: ignore
+    from .alert_dispatcher import send_discord_alert, CONFIG as ALERT_CONFIG  # type: ignore
+except Exception:  # pragma: no cover - fallback for top-level imports
+    from auto_link import auto_link  # type: ignore
+    from unified_event_bus import UnifiedEventBus  # type: ignore
+    from retry_utils import publish_with_retry, with_retry  # type: ignore
+    from alert_dispatcher import send_discord_alert, CONFIG as ALERT_CONFIG  # type: ignore
 
 try:  # pragma: no cover - optional dependency
     from .vector_metrics_db import VectorMetricsDB
@@ -106,6 +111,18 @@ SQL_DELETE_REL = {
 }
 SQL_SELECT_BY_COMPLEXITY = _load_sql("select_by_complexity.sql")
 
+SQL_CREATE_LICENSE_VIOLATIONS_TABLE = (
+    "CREATE TABLE IF NOT EXISTS license_violations("\
+    "id INTEGER PRIMARY KEY AUTOINCREMENT,"\
+    "path TEXT,"\
+    "license TEXT,"\
+    "hash TEXT,"\
+    "detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+)
+SQL_INSERT_LICENSE_VIOLATION = (
+    "INSERT INTO license_violations(path, license, hash) VALUES (?, ?, ?)"
+)
+
 MIGRATIONS: list[tuple[int, list[str]]] = [
     (
         1,
@@ -142,6 +159,12 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
             "DROP INDEX IF EXISTS idx_code_body",
             SQL_CREATE_INDEX_CODE_SUMMARY,
             SQL_CREATE_INDEX_CODE_BODY,
+        ],
+    ),
+    (
+        5,
+        [
+            SQL_CREATE_LICENSE_VIOLATIONS_TABLE,
         ],
     ),
 ]
@@ -621,6 +644,14 @@ class CodeDB:
 
         def op(conn: Any) -> None:
             self._insert(conn, SQL_INSERT_CODE_ERROR, (code_id, err_id))
+
+        self._with_retry(lambda: self._conn_wrapper(op))
+
+    def log_license_violation(self, path: str, license_name: str, hash: str) -> None:
+        """Record a disallowed license fingerprint for auditing."""
+
+        def op(conn: Any) -> None:
+            self._insert(conn, SQL_INSERT_LICENSE_VIOLATION, (path, license_name, hash))
 
         self._with_retry(lambda: self._conn_wrapper(op))
 

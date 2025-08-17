@@ -5,8 +5,18 @@ from __future__ import annotations
 import logging
 import time
 from typing import List
+import hashlib
+import importlib
 
 from .decorators import log_and_measure
+import license_fingerprint
+
+def _log_violation(path: str, lic: str, hash_: str) -> None:
+    try:  # pragma: no cover - best effort
+        CodeDB = importlib.import_module("code_database").CodeDB
+        CodeDB().log_license_violation(path, lic, hash_)
+    except Exception:
+        pass
 
 try:  # pragma: no cover - optional dependency for metrics
     from . import metrics_exporter as _me  # type: ignore
@@ -71,6 +81,23 @@ class EmbeddingBackfill:
         batch_size: int,
         session_id: str = "",
     ) -> None:
+        original_add = getattr(db, "add_embedding", None)
+
+        if callable(original_add):
+            def wrapped_add(record_id, record, kind, *, source_id=""):
+                text = record if isinstance(record, str) else str(record)
+                lic = license_fingerprint.check(text)
+                if lic:
+                    _log_violation(
+                        str(record_id),
+                        lic,
+                        hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    )
+                    return
+                return original_add(record_id, record, kind, source_id=source_id)
+
+            db.add_embedding = wrapped_add  # type: ignore[attr-defined]
+
         try:
             db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
         except TypeError:
