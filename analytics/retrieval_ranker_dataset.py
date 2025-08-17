@@ -22,7 +22,7 @@ from ..vector_metrics_db import VectorMetricsDB  # type: ignore
 from ..error_bot import ErrorDB  # type: ignore
 from ..task_handoff_bot import WorkflowDB  # type: ignore
 from ..bot_database import BotDB  # type: ignore
-from ..universal_retriever import UniversalRetriever  # type: ignore
+from ..vector_service import Retriever  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ def _record_age(db_name: str, vec_id: str, *, now: datetime) -> float:
 
 # ---------------------------------------------------------------------------
 def _exec_metric(
-    retriever: UniversalRetriever,
+    retriever: Retriever,
     db_name: str,
     vec_id: str,
     wf_db: WorkflowDB,
@@ -77,18 +77,18 @@ def _exec_metric(
     except Exception:
         vid = 0
     if db_name == "error":
-        return retriever._error_frequency(vid)
+        return retriever.error_frequency(vid)
     if db_name == "workflow":
         try:
             row = wf_db.conn.execute("SELECT * FROM workflows WHERE id=?", (vid,)).fetchone()
             if row is not None:
                 rec = wf_db._row_to_record(row)
-                return retriever._workflow_usage(rec)
+                return retriever.workflow_usage(rec)
         except Exception:
             return 0.0
         return 0.0
     if db_name == "bot":
-        return retriever._bot_deploy_freq(vid)
+        return retriever.bot_deploy_freq(vid)
     return 0.0
 
 
@@ -157,8 +157,12 @@ def build_dataset(
     error_db = ErrorDB("errors.db")
     wf_db = WorkflowDB("workflows.db")
     bot_db = BotDB("bots.db")
-    retriever = UniversalRetriever(
-        error_db=error_db, workflow_db=wf_db, bot_db=bot_db
+    retriever = Retriever(
+        retriever_kwargs={
+            "error_db": error_db,
+            "workflow_db": wf_db,
+            "bot_db": bot_db,
+        }
     )
     roi_conn = sqlite3.connect(roi_path)
 
