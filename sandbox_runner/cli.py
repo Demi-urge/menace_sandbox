@@ -661,13 +661,13 @@ def full_autonomous_run(
             synergy_confidence = float(env_val)
         except Exception:
             synergy_confidence = None
-    entropy_threshold = getattr(args, "entropy_plateau_threshold", None)
+    entropy_plateau_threshold = getattr(args, "entropy_plateau_threshold", None)
     env_val = os.getenv("ENTROPY_PLATEAU_THRESHOLD")
-    if entropy_threshold is None and env_val is not None:
+    if entropy_plateau_threshold is None and env_val is not None:
         try:
-            entropy_threshold = float(env_val)
+            entropy_plateau_threshold = float(env_val)
         except Exception:
-            entropy_threshold = None
+            entropy_plateau_threshold = None
     entropy_consecutive = getattr(args, "entropy_plateau_consecutive", None)
     env_val = os.getenv("ENTROPY_PLATEAU_CONSECUTIVE")
     if entropy_consecutive is None and env_val is not None:
@@ -675,6 +675,13 @@ def full_autonomous_run(
             entropy_consecutive = int(env_val)
         except Exception:
             entropy_consecutive = None
+    entropy_threshold = getattr(args, "entropy_threshold", None)
+    env_val = os.getenv("ENTROPY_THRESHOLD")
+    if entropy_threshold is None and env_val is not None:
+        try:
+            entropy_threshold = float(env_val)
+        except Exception:
+            entropy_threshold = None
     synergy_threshold_window = getattr(args, "synergy_threshold_window", None)
     env_val = os.getenv("SYNERGY_THRESHOLD_WINDOW")
     if synergy_threshold_window is None and env_val is not None:
@@ -753,6 +760,8 @@ def full_autonomous_run(
         presets = generate_presets(args.preset_count or 3)
         for preset in presets:
             os.environ["SANDBOX_ENV_PRESETS"] = json.dumps([preset])
+            if entropy_threshold is not None:
+                os.environ["SANDBOX_ENTROPY_THRESHOLD"] = str(entropy_threshold)
             run_args = argparse.Namespace(
                 sandbox_data_dir=args.sandbox_data_dir,
                 workflow_db="workflows.db",
@@ -815,7 +824,7 @@ def full_autonomous_run(
                 consecutive=roi_cycles,
                 confidence=roi_confidence or 0.95,
                 entropy_history=module_entropy_history,
-                entropy_threshold=entropy_threshold,
+                entropy_threshold=entropy_plateau_threshold,
                 entropy_consecutive=entropy_consecutive,
             )
             flagged.update(new_flags)
@@ -1296,6 +1305,11 @@ def main(argv: List[str] | None = None) -> None:
         "--entropy-plateau-consecutive",
         type=int,
         help="entropy delta samples below threshold before module convergence",
+    )
+    p_autorun.add_argument(
+        "--entropy-threshold",
+        type=float,
+        help="ROI gain per entropy delta threshold",
     )
     p_autorun.add_argument(
         "--synergy-cycles",

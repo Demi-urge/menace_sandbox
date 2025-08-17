@@ -875,7 +875,15 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
         except Exception:
             pre_roi_bot = None
 
-    tracker = ROITracker(resource_db=res_db, cluster_map=improver.module_clusters)
+    roi_tolerance = float(env.get("SANDBOX_ROI_TOLERANCE", "0.01"))
+    entropy_threshold = float(
+        env.get("SANDBOX_ENTROPY_THRESHOLD", str(roi_tolerance))
+    )
+    tracker = ROITracker(
+        resource_db=res_db,
+        cluster_map=improver.module_clusters,
+        entropy_threshold=entropy_threshold,
+    )
     roi_history_file = data_dir / "roi_history.json"
     try:
         tracker.load_history(str(roi_history_file))
@@ -885,7 +893,6 @@ def _sandbox_init(preset: Dict[str, Any], args: argparse.Namespace) -> SandboxCo
     prev_roi = 0.0
     predicted_roi = None
     predicted_lucrativity = None
-    roi_tolerance = float(env.get("SANDBOX_ROI_TOLERANCE", "0.01"))
     base_roi_tolerance = roi_tolerance
     cycles = int(env.get("SANDBOX_CYCLES", "5"))
     brainstorm_interval = int(env.get("SANDBOX_BRAINSTORM_INTERVAL", "0"))
@@ -1200,7 +1207,11 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 os.environ.update({k: str(v) for k, v in env_updates.items()})
                 ctx.prev_roi = 0.0
                 ctx.predicted_roi = None
-                sec_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
+                sec_tracker = ROITracker(
+                    resource_db=ctx.res_db,
+                    cluster_map=ctx.improver.module_clusters,
+                    entropy_threshold=entropy_threshold,
+                )
                 _cycle(section_name, snippet, sec_tracker, scenario)
                 if LOCAL_KNOWLEDGE_REFRESH_EVERY > 0:
                     _local_knowledge_refresh_counter += 1
@@ -1239,7 +1250,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                 try:
                     from menace.environment_generator import adapt_presets
 
-                    agg = ROITracker()
+                    agg = ROITracker(entropy_threshold=entropy_threshold)
                     for t in section_trackers:
                         agg.roi_history.extend(t.roi_history)
                         for m, vals in t.metrics_history.items():
@@ -1292,7 +1303,11 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         }
         synergy_history: list[dict[str, float]] = ctx.tracker.synergy_history
         while True:
-            synergy_tracker = ROITracker(resource_db=ctx.res_db, cluster_map=ctx.improver.module_clusters)
+            synergy_tracker = ROITracker(
+                resource_db=ctx.res_db,
+                cluster_map=ctx.improver.module_clusters,
+                entropy_threshold=entropy_threshold,
+            )
             ctx.prev_roi = 0.0
             ctx.predicted_roi = None
             _cycle(None, None, synergy_tracker)

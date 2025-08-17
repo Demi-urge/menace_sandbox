@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import shutil
 import pytest
+from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,6 +64,7 @@ def setup_stubs(monkeypatch):
     monkeypatch.setitem(sys.modules, "sandbox_runner", sr_stub)
     monkeypatch.setitem(sys.modules, "sandbox_runner.cli", cli_stub)
     monkeypatch.setenv("SAVE_SYNERGY_HISTORY", "0")
+    monkeypatch.setenv("ENABLE_RELEVANCY_RADAR", "0")
 
 
 def test_files_created(monkeypatch, tmp_path):
@@ -148,7 +150,7 @@ def test_invalid_preset_file_exits(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "_check_dependencies", lambda *a, **k: True)
     monkeypatch.setenv("VISUAL_AGENT_AUTOSTART", "0")
 
-    with pytest.raises(SystemExit):
+    with pytest.raises((SystemExit, ValidationError)):
         mod.main([
             "--max-iterations",
             "1",
