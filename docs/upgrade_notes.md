@@ -1,11 +1,11 @@
 # Upgrade Notes
 
-## semantic_service renamed to vector_service
+## vector_service API
 
-The `semantic_service` package has been replaced by `vector_service`. Update
-imports to use `vector_service` helpers and consult `vector_service_api.py` for
-HTTP endpoints (`/search`, `/build-context`, `/track-contributors`,
-`/backfill-embeddings`).
+The `vector_service` package provides retrieval helpers and HTTP endpoints
+(`/search`, `/build-context`, `/track-contributors`,
+`/backfill-embeddings`). Ensure imports use `vector_service` helpers and
+consult `vector_service_api.py` for usage details.
 
 ## Recursive orphan scanning default
 

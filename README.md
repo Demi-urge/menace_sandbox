@@ -36,12 +36,11 @@
 - Service layer wrappers in `vector_service` expose `Retriever`, `ContextBuilder`,
   `PatchLogger` and `EmbeddingBackfill` with structured logging and metrics.
   Other modules should interact with embeddings through this layer rather than
-  accessing databases or retrievers directly. The former `semantic_service`
-  module is fully replaced by this layer. Migration tips live in
-  [docs/semantic_service.md](docs/semantic_service.md) and detailed API docs in
-  [docs/vector_service.md](docs/vector_service.md). A lightweight FastAPI app in
-  `vector_service_api.py` provides `/search`, `/build-context`,
-  `/track-contributors` and `/backfill-embeddings` endpoints.
+  accessing databases or retrievers directly. See
+  [docs/vector_service.md](docs/vector_service.md) for detailed API
+  documentation. A lightweight FastAPI app in `vector_service_api.py`
+  provides `/search`, `/build-context`, `/track-contributors` and
+  `/backfill-embeddings` endpoints.
 - Compact, offline context assembly via `ContextBuilder` which summarises error,
   bot, workflow and code records for code-generation modules. Enable it in the
   self-improving sandbox by passing `context_builder=ContextBuilder()` to
