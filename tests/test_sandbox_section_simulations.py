@@ -19,17 +19,35 @@ class _SandboxMetaLogger:
         self.audit = DummyAudit(path)
         self.records = []
         self.module_deltas = {}
+        self.module_entropy_deltas = {}
         self.flagged_sections = set()
         self.last_patch_id = 0
-
-    def log_cycle(self, cycle: int, roi: float, modules: list[str], reason: str) -> None:
+    def log_cycle(
+        self,
+        cycle: int,
+        roi: float,
+        modules: list[str],
+        reason: str,
+        *,
+        entropy_delta: float = 0.0,
+        exec_time: float = 0.0,
+    ) -> None:
         prev = self.records[-1][1] if self.records else 0.0
         delta = roi - prev
         self.records.append((cycle, roi, delta, modules, reason))
         for m in modules:
             self.module_deltas.setdefault(m, []).append(delta)
+            self.module_entropy_deltas.setdefault(m, []).append(entropy_delta)
         try:
-            self.audit.record({"cycle": cycle, "roi": roi, "delta": delta, "modules": modules, "reason": reason})
+            self.audit.record(
+                {
+                    "cycle": cycle,
+                    "roi": roi,
+                    "delta": delta,
+                    "modules": modules,
+                    "reason": reason,
+                }
+            )
         except Exception:
             pass
 

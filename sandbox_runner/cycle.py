@@ -1073,7 +1073,7 @@ def _sandbox_cycle_runner(
             ctx.prev_roi, roi, name_list, resources, {**metrics, **scenario_metrics}
         )
         if entropy_ceiling:
-            ctx.meta_log.flag_modules(name_list)
+            ctx.meta_log.ceiling(tracker.tolerance)
         last_metrics = metrics
         feat_vec = [
             roi,
@@ -1092,12 +1092,16 @@ def _sandbox_cycle_runner(
                 )
             except Exception:
                 logger.exception("metric prediction failed")
+        entropy_delta = (
+            tracker.entropy_delta_history[-1] if tracker.entropy_delta_history else 0.0
+        )
         ctx.meta_log.log_cycle(
             idx,
             roi,
             name_list,
             "self_improvement",
             warnings=warnings,
+            entropy_delta=entropy_delta,
             exec_time=time.perf_counter() - cycle_start,
         )
         forecast, interval = tracker.forecast()
@@ -1299,12 +1303,18 @@ def _sandbox_cycle_runner(
                         roi, new_roi, [mapped], resources
                     )
                     if entropy_ceiling:
-                        ctx.meta_log.flag_modules([mapped])
+                        ctx.meta_log.ceiling(tracker.tolerance)
+                    entropy_delta = (
+                        tracker.entropy_delta_history[-1]
+                        if tracker.entropy_delta_history
+                        else 0.0
+                    )
                     ctx.meta_log.log_cycle(
                         idx,
                         new_roi,
                         [mapped],
                         "gpt4",
+                        entropy_delta=entropy_delta,
                         exec_time=0.0,
                     )
                     if roi_delta <= tracker.diminishing() and patch_id:
@@ -1470,11 +1480,17 @@ def _sandbox_cycle_runner(
             elif resilience_drop:
                 brainstorm_now = True
                 try:
+                    entropy_delta = (
+                        tracker.entropy_delta_history[-1]
+                        if tracker.entropy_delta_history
+                        else 0.0
+                    )
                     ctx.meta_log.log_cycle(
                         idx,
                         roi,
                         name_list,
                         "resilience_brainstorm",
+                        entropy_delta=entropy_delta,
                         exec_time=0.0,
                     )
                 except Exception:
@@ -1621,12 +1637,18 @@ def _sandbox_cycle_runner(
                         roi, new_roi, [mapped], resources
                     )
                     if entropy_ceiling:
-                        ctx.meta_log.flag_modules([mapped])
+                        ctx.meta_log.ceiling(tracker.tolerance)
+                    entropy_delta = (
+                        tracker.entropy_delta_history[-1]
+                        if tracker.entropy_delta_history
+                        else 0.0
+                    )
                     ctx.meta_log.log_cycle(
                         idx,
                         new_roi,
                         [mapped],
                         "offline",
+                        entropy_delta=entropy_delta,
                         exec_time=0.0,
                     )
                     if roi_delta <= tracker.diminishing() and patch_id:
