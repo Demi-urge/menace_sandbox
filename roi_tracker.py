@@ -88,6 +88,8 @@ class ROITracker:
         self.roi_history: List[float] = []
         self.confidence_history: List[float] = []
         self.category_history: List[str] = []
+        self.entropy_history: List[float] = []
+        self.entropy_delta_history: List[float] = []
         self.window = window
         self.tolerance = tolerance
         self.filter_outliers = filter_outliers
@@ -297,6 +299,8 @@ class ROITracker:
         pre_len = len(self.roi_history)
         self.roi_history.extend(other.roi_history)
         self.confidence_history.extend(other.confidence_history)
+        self.entropy_history.extend(getattr(other, "entropy_history", []))
+        self.entropy_delta_history.extend(getattr(other, "entropy_delta_history", []))
         delta = len(other.roi_history)
 
         for name, hist in self.metrics_history.items():
@@ -948,6 +952,19 @@ class ROITracker:
                 return 0.0
 
     # ------------------------------------------------------------------
+    def entropy_gain(self) -> float:
+        """Return average ROI gain per unit entropy delta."""
+
+        n = min(self.window, len(self.roi_history), len(self.entropy_delta_history))
+        if n == 0:
+            return 0.0
+        roi_avg = sum(self.roi_history[-n:]) / n
+        entropy_avg = sum(abs(x) for x in self.entropy_delta_history[-n:]) / n
+        if entropy_avg == 0:
+            return 0.0
+        return roi_avg / entropy_avg
+
+    # ------------------------------------------------------------------
     def update(
         self,
         roi_before: float,
@@ -1042,6 +1059,29 @@ class ROITracker:
                     )
                 except Exception:
                     self.resource_metrics.append((0.0, 0.0, 0.0, 0.0, 0.0))
+            entropy_val: float | None = None
+            if metrics:
+                if "synergy_shannon_entropy" in metrics:
+                    try:
+                        entropy_val = float(metrics["synergy_shannon_entropy"])
+                    except Exception:
+                        entropy_val = 0.0
+                elif "shannon_entropy" in metrics:
+                    try:
+                        entropy_val = float(metrics["shannon_entropy"])
+                    except Exception:
+                        entropy_val = 0.0
+            if entropy_val is None:
+                entropy_val = self.entropy_history[-1] if self.entropy_history else 0.0
+            prev_entropy = self.entropy_history[-1] if self.entropy_history else entropy_val
+            entropy_delta = entropy_val - prev_entropy
+            self.entropy_history.append(entropy_val)
+            self.entropy_delta_history.append(entropy_delta)
+            if modules:
+                for m in modules:
+                    cid = self.cluster_map.get(m)
+                    key = str(cid) if cid is not None else m
+                    self.module_entropy_deltas.setdefault(key, []).append(entropy_delta)
             if metrics:
                 for name, value in metrics.items():
                     try:
