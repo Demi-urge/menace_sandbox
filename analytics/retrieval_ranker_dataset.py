@@ -19,9 +19,6 @@ import argparse
 import pandas as pd
 
 from ..vector_metrics_db import VectorMetricsDB  # type: ignore
-from ..error_bot import ErrorDB  # type: ignore
-from ..task_handoff_bot import WorkflowDB  # type: ignore
-from ..bot_database import BotDB  # type: ignore
 from ..vector_service import Retriever  # type: ignore
 
 
@@ -64,12 +61,7 @@ def _record_age(db_name: str, vec_id: str, *, now: datetime) -> float:
 
 
 # ---------------------------------------------------------------------------
-def _exec_metric(
-    retriever: Retriever,
-    db_name: str,
-    vec_id: str,
-    wf_db: WorkflowDB,
-) -> float:
+def _exec_metric(retriever: Retriever, db_name: str, vec_id: str) -> float:
     """Return execution frequency/usage metric for ``vec_id``."""
 
     try:
@@ -79,14 +71,7 @@ def _exec_metric(
     if db_name == "error":
         return retriever.error_frequency(vid)
     if db_name == "workflow":
-        try:
-            row = wf_db.conn.execute("SELECT * FROM workflows WHERE id=?", (vid,)).fetchone()
-            if row is not None:
-                rec = wf_db._row_to_record(row)
-                return retriever.workflow_usage(rec)
-        except Exception:
-            return 0.0
-        return 0.0
+        return retriever.workflow_usage(vid)
     if db_name == "bot":
         return retriever.bot_deploy_freq(vid)
     return 0.0
@@ -154,16 +139,7 @@ def build_dataset(
     """
 
     vmdb = VectorMetricsDB(vec_db_path)
-    error_db = ErrorDB("errors.db")
-    wf_db = WorkflowDB("workflows.db")
-    bot_db = BotDB("bots.db")
-    retriever = Retriever(
-        retriever_kwargs={
-            "error_db": error_db,
-            "workflow_db": wf_db,
-            "bot_db": bot_db,
-        }
-    )
+    retriever = Retriever()
     roi_conn = sqlite3.connect(roi_path)
 
     now = datetime.utcnow()
@@ -179,11 +155,13 @@ def build_dataset(
     rows: list[FeatureRow] = []
     hit_counts: dict[str, int] = {}
     for session_id, vec_id, db, contrib, ts, patch_id, hit in cur.fetchall():
+        if not vec_id or db == "heuristic":
+            continue
         prior = hit_counts.get(str(vec_id), 0)
         if hit:
             hit_counts[str(vec_id)] = prior + 1
         age = _record_age(str(db), str(vec_id), now=now)
-        freq = _exec_metric(retriever, str(db), str(vec_id), wf_db)
+        freq = _exec_metric(retriever, str(db), str(vec_id))
         roi = _roi_delta(roi_conn, patch_id)
         rows.append(
             FeatureRow(
