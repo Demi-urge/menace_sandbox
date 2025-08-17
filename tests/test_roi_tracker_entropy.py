@@ -33,3 +33,17 @@ def test_entropy_ceiling_threshold_override():
         0.01, 0.02, metrics={"synergy_shannon_entropy": 0.4}
     )
     assert stop
+
+
+def test_entropy_ceiling_ratio_below_threshold():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 0.1, metrics={"synergy_shannon_entropy": 1.0})
+    tracker.update(0.1, 0.2, metrics={"synergy_shannon_entropy": 2.0})
+    assert tracker.entropy_ceiling(0.2, window=2)
+
+
+def test_entropy_ceiling_ratio_above_threshold():
+    tracker = rt.ROITracker()
+    tracker.update(0.0, 1.0, metrics={"synergy_shannon_entropy": 1.0})
+    tracker.update(1.0, 2.0, metrics={"synergy_shannon_entropy": 2.0})
+    assert not tracker.entropy_ceiling(0.2, window=2)
