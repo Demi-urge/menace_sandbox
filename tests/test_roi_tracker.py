@@ -88,6 +88,7 @@ def test_save_and_load_json(tmp_path):
     new_tracker.load_history(str(path))
     assert new_tracker.roi_history == tracker.roi_history
     assert new_tracker.module_deltas == tracker.module_deltas
+    assert new_tracker.module_entropy_deltas == tracker.module_entropy_deltas
     assert new_tracker.predicted_roi == tracker.predicted_roi
     assert new_tracker.actual_roi == tracker.actual_roi
     assert new_tracker.metrics_history == tracker.metrics_history
@@ -109,6 +110,7 @@ def test_save_and_load_sqlite(tmp_path):
     other.load_history(str(path))
     assert other.roi_history == tracker.roi_history
     assert other.module_deltas == tracker.module_deltas
+    assert other.module_entropy_deltas == tracker.module_entropy_deltas
     assert other.predicted_roi == tracker.predicted_roi
     assert other.actual_roi == tracker.actual_roi
     assert other.metrics_history == tracker.metrics_history
@@ -193,6 +195,26 @@ def test_update_without_modules():
     tracker = rt.ROITracker()
     tracker.update(0.0, 1.0)
     assert tracker.module_deltas == {}
+
+
+def test_entropy_delta_history(tmp_path, monkeypatch):
+    from menace.code_database import PatchHistoryDB, PatchRecord
+
+    db_path = tmp_path / "p.db"
+    monkeypatch.setenv("PATCH_HISTORY_DB_PATH", str(db_path))
+    patch_db = PatchHistoryDB(str(db_path))
+    rec = PatchRecord(
+        filename="a.py",
+        description="",
+        roi_before=0.0,
+        roi_after=0.0,
+        complexity_delta=2.0,
+    )
+    patch_db.add(rec)
+    tracker = rt.ROITracker()
+    tracker.metrics_history["synergy_shannon_entropy"] = [0.1, 0.3]
+    tracker.record_prediction(0.0, 0.0)
+    assert tracker.entropy_delta_history("a.py") == [pytest.approx(0.1)]
 
 
 def test_arima_order_selection_cached(monkeypatch):
