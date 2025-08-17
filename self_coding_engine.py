@@ -64,6 +64,7 @@ try:  # pragma: no cover - optional dependency
         ErrorResult,
         PatchLogger,
         VectorServiceError,
+        FallbackResult,
     )
 except Exception:  # pragma: no cover - defensive fallback
     ContextBuilder = None  # type: ignore
@@ -76,6 +77,11 @@ except Exception:  # pragma: no cover - defensive fallback
 
     class VectorServiceError(Exception):
         """Fallback VectorServiceError when vector service is unavailable."""
+
+        pass
+
+    class FallbackResult(list):
+        """Fallback FallbackResult when vector service is unavailable."""
 
         pass
 
@@ -416,7 +422,7 @@ class SelfCodingEngine:
         if builder is not None:
             try:
                 retrieval_context = builder.build(description)
-                if isinstance(retrieval_context, ErrorResult):
+                if isinstance(retrieval_context, (ErrorResult, FallbackResult)):
                     retrieval_context = ""
                 elif not isinstance(retrieval_context, str):
                     retrieval_context = json.dumps(retrieval_context)

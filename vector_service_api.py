@@ -21,7 +21,16 @@ from semantic_service import (
     PatchLogger,
     Retriever,
     VectorServiceError,
+    FallbackResult,
 )
+
+try:  # pragma: no cover - optional dependency
+    from semantic_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - compatibility fallback
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when semantic_service lacks explicit class."""
+
+        pass
 
 app = FastAPI()
 
@@ -54,6 +63,18 @@ def search(req: SearchRequest) -> Any:
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
     duration = time.time() - start
+    if isinstance(result, ErrorResult):
+        raise HTTPException(status_code=500, detail=str(result))
+
+    if isinstance(result, FallbackResult):
+        payload = list(result)
+        size = len(payload)
+        return {
+            "status": "fallback",
+            "data": payload,
+            "reason": getattr(result, "reason", ""),
+            "metrics": {"duration": duration, "result_size": size},
+        }
 
     if req.include_confidence and isinstance(result, tuple):
         payload, confidence = result
@@ -89,6 +110,10 @@ def build_context(req: ContextRequest) -> Any:
     except VectorServiceError as exc:  # pragma: no cover - defensive
         raise HTTPException(status_code=500, detail=str(exc))
     duration = time.time() - start
+    if isinstance(result, ErrorResult):
+        raise HTTPException(status_code=500, detail=str(result))
+    if isinstance(result, FallbackResult):
+        result = ""
     length = len(result) if isinstance(result, str) else 0
     return {
         "status": "ok",

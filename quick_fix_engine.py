@@ -19,7 +19,14 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from semantic_service import ContextBuilder, Retriever, PatchLogger
+from semantic_service import ContextBuilder, Retriever, PatchLogger, FallbackResult
+try:  # pragma: no cover - optional dependency
+    from semantic_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback when unavailable
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when semantic_service lacks explicit class."""
+
+        pass
 try:  # pragma: no cover - optional dependency
     from .human_alignment_flagger import _collect_diff_data
 except Exception:  # pragma: no cover - fallback for tests
@@ -75,6 +82,8 @@ def generate_patch(
     if builder is not None:
         try:
             context_block = builder.build(description)
+            if isinstance(context_block, (FallbackResult, ErrorResult)):
+                context_block = ""
         except Exception:
             context_block = ""
         if context_block:
@@ -195,6 +204,8 @@ class QuickFixEngine:
         session_id = uuid.uuid4().hex
         try:
             hits = self.retriever.search(query, top_k=top_k, session_id=session_id)
+            if isinstance(hits, (FallbackResult, ErrorResult)):
+                return [], "", []
         except Exception:
             self.logger.debug("retriever lookup failed", exc_info=True)
             return [], "", []
@@ -232,6 +243,8 @@ class QuickFixEngine:
             try:
                 query = f"{etype} in {module}"
                 ctx_block = builder.build(query)
+                if isinstance(ctx_block, (FallbackResult, ErrorResult)):
+                    ctx_block = ""
             except Exception:
                 ctx_block = ""
         desc = f"quick fix {etype}"
@@ -336,6 +349,8 @@ class QuickFixEngine:
                 try:
                     query = f"preemptive patch {module}"
                     ctx = builder.build(query)
+                    if isinstance(ctx, (FallbackResult, ErrorResult)):
+                        ctx = ""
                 except Exception:
                     ctx = ""
             desc = "preemptive_patch"

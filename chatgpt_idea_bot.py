@@ -80,9 +80,17 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
-    from semantic_service import Retriever
+    from semantic_service import Retriever, FallbackResult
 except Exception:  # pragma: no cover - missing dependency
     Retriever = None  # type: ignore
+    class FallbackResult(list):  # type: ignore
+        pass
+
+try:  # pragma: no cover - optional
+    from semantic_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    class ErrorResult(Exception):  # type: ignore
+        pass
 DEFAULT_IDEA_DB = database_manager.DB_PATH
 IDEA_DB_PATH = Path(os.environ.get("IDEA_DB_PATH", str(DEFAULT_IDEA_DB)))
 
@@ -210,6 +218,8 @@ class ChatGPTClient:
                 if retriever is not None:
                     try:
                         hits = retriever.search(user_prompt, top_k=5)
+                        if isinstance(hits, (FallbackResult, ErrorResult)):
+                            hits = []
                     except Exception:
                         hits = []
                     for h in hits:

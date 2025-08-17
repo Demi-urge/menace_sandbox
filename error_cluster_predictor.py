@@ -17,7 +17,14 @@ except Exception:  # pragma: no cover - optional dependency
 
 from .knowledge_graph import KnowledgeGraph, _SimpleKMeans
 from .error_bot import ErrorDB
-from semantic_service import Retriever
+from semantic_service import Retriever, FallbackResult
+try:  # pragma: no cover - optional dependency
+    from semantic_service import ErrorResult  # type: ignore
+except Exception:  # pragma: no cover - fallback
+    class ErrorResult(Exception):
+        """Fallback ErrorResult when semantic_service lacks explicit class."""
+
+        pass
 
 
 class ErrorClusterPredictor:
@@ -98,7 +105,9 @@ class ErrorClusterPredictor:
         if self.retriever is not None:
             for mod in results:
                 try:
-                    self.retriever.search(mod, top_k=1)
+                    res = self.retriever.search(mod, top_k=1)
+                    if isinstance(res, (FallbackResult, ErrorResult)):
+                        self.logger.debug("retriever returned fallback for %s", mod)
                 except Exception:
                     self.logger.debug("retriever lookup failed", exc_info=True)
         return results

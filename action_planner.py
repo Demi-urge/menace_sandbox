@@ -32,12 +32,13 @@ from .growth_utils import growth_score
 from .adaptive_roi_predictor import AdaptiveROIPredictor
 from .roi_tracker import ROITracker
 from sandbox_settings import SandboxSettings
-from vector_service import ContextBuilder
+from vector_service import ContextBuilder, FallbackResult
 try:  # pragma: no cover - allow missing dependency
     from vector_service import ErrorResult
 except Exception:  # pragma: no cover - compatibility fallback
     class ErrorResult(Exception):
         """Fallback ErrorResult when vector service is unavailable."""
+
         pass
 
 logger = logging.getLogger(__name__)
@@ -458,7 +459,7 @@ class ActionPlanner:
         if self.context_builder:
             try:
                 result = self.context_builder.build(current)
-                if isinstance(result, ErrorResult):
+                if isinstance(result, (ErrorResult, FallbackResult)):
                     ctx = {}
                 else:
                     ctx = json.loads(result)
