@@ -138,6 +138,11 @@ class SandboxSettings(BaseSettings):
         env="ENABLE_RELEVANCY_RADAR",
         description="Enable the relevancy radar during sandbox runs.",
     )
+    relevancy_radar_interval: int = Field(
+        3600,
+        env="RELEVANCY_RADAR_INTERVAL",
+        description="Interval in seconds between relevancy radar scans.",
+    )
     relevancy_radar_min_calls: int = Field(
         0,
         env="RELEVANCY_RADAR_MIN_CALLS",

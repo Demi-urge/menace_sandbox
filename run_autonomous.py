@@ -194,6 +194,7 @@ from sandbox_settings import SandboxSettings
 from threshold_logger import ThresholdLogger
 from forecast_logger import ForecastLogger
 from preset_logger import PresetLogger
+from relevancy_radar_service import RelevancyRadarService
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
@@ -1651,6 +1652,21 @@ def main(argv: List[str] | None = None) -> None:
         agent_monitor = VisualAgentMonitor(agent_mgr, settings.visual_agent_urls)
         agent_monitor.start()
         cleanup_funcs.append(agent_monitor.stop)
+
+    relevancy_radar = None
+    if settings.enable_relevancy_radar:
+        interval_env = os.getenv("RELEVANCY_RADAR_INTERVAL")
+        radar_interval = settings.relevancy_radar_interval
+        if interval_env:
+            try:
+                radar_interval = float(interval_env)
+            except Exception:
+                logger.warning(
+                    "Invalid RELEVANCY_RADAR_INTERVAL value: %s", interval_env
+                )
+        relevancy_radar = RelevancyRadarService(_pkg_dir, int(radar_interval))
+        relevancy_radar.start()
+        cleanup_funcs.append(relevancy_radar.stop)
 
     module_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
