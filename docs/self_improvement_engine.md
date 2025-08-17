@@ -120,6 +120,22 @@ the tracker history. Comparing these values highlights which conditions trigger
 improvements. For example, rising `roi_delta_ema` during a `concurrency_spike`
 run indicates the bot is adapting to thread bursts.
 
+## Entropy delta detection
+
+`ROITracker` records how each patch changes `synergy_shannon_entropy` compared
+to the ROI it produced. When the average ROI gain per entropy delta drops below
+`ENTROPY_THRESHOLD`, or when the ratios remain below
+`ENTROPY_PLATEAU_THRESHOLD` for `ENTROPY_PLATEAU_CONSECUTIVE` samples, the
+engine marks the module complete to avoid infinite tweaking.
+
+Watch for log lines like ``modules hitting entropy ceiling`` in debug output or
+``sandbox diminishing`` messages in the run log. They indicate that further
+changes would add complexity without meaningful returns.
+
+Tune the sensitivity with the ``--entropy-threshold`` flag or the
+``ENTROPY_THRESHOLD`` environment variable. Plateau detection is governed by
+``ENTROPY_PLATEAU_THRESHOLD`` and ``ENTROPY_PLATEAU_CONSECUTIVE``.
+
 ## Interpreting plateau logs
 
 During a cycle the sandbox logs a `sandbox diminishing` entry when ROI deltas or
