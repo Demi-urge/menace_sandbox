@@ -1,9 +1,39 @@
 # Relevancy Radar
 
-The relevancy radar tracks how often modules are imported and executed during
-sandbox runs. The collected metrics are persisted to
-`sandbox_data/relevancy_metrics.json` and can be inspected or annotated using
-the `relevancy_radar_cli.py` helper.
+The relevancy radar suite keeps the repository lean by tracking how modules are
+used and recommending maintenance actions.
+
+## Components and interaction
+
+- **`RelevancyRadar`** collects import and execution counts, records optional
+  impact scores and evaluates modules against threshold values. Results are
+  persisted to `sandbox_data/relevancy_metrics.json`.
+- **`RelevancyRadarService`** periodically invokes the radar. It merges live
+  usage statistics and ROI deltas, updates Prometheus metrics and forwards any
+  flags to the retirement service.
+- **`ModuleRetirementService`** performs the requested action. Unused modules
+  are archived, low‑value modules are compressed via the quick fix engine and
+  replaceable modules receive a generated patch proposal.
+
+### Example flows
+
+**Retirement**
+1. `RelevancyRadar` notices that `old_helper` has no recorded activity.
+2. `RelevancyRadarService` emits a `retire` flag.
+3. `ModuleRetirementService` moves `old_helper.py` into
+   `sandbox_data/retired_modules/` when no dependents are found.
+
+**Compression**
+1. `RelevancyRadar` scores `slow_algo` below the compression threshold.
+2. `RelevancyRadarService` flags it for `compress`.
+3. `ModuleRetirementService` calls `generate_patch` to produce a smaller
+   version.
+
+**Replacement**
+1. `RelevancyRadar` identifies `legacy_api` as rarely used but still necessary.
+2. `RelevancyRadarService` labels it `replace`.
+3. `ModuleRetirementService` requests a patch from the quick fix tooling and
+   logs the patch identifier.
 
 ## CLI usage
 
