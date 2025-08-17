@@ -114,15 +114,22 @@ def _async_track_usage(module: str, impact: float | None = None) -> None:
         pass
 
 
-def map_module_identifier(name: str, repo: Path) -> str:
-    """Return canonical module identifier for ``name`` relative to ``repo``."""
+def map_module_identifier(
+    name: str, repo: Path, impact: float | None = None
+) -> str:
+    """Return canonical module identifier for ``name`` relative to ``repo``.
+
+    ``impact`` specifies the ROI delta attributable to the module which will be
+    forwarded to the relevancy radar.
+    """
+
     base = name.split(":", 1)[0]
     try:
         rel = Path(base).resolve().relative_to(repo)
     except Exception:
         rel = Path(base)
     module_id = rel.with_suffix("").as_posix()
-    _async_track_usage(module_id)
+    _async_track_usage(module_id, impact)
     return module_id
 
 
@@ -358,10 +365,9 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                     )
                 except Exception as exc:
                     record_error(exc)
-                    continue
-                finally:
                     for m in mods:
                         _async_track_usage(m)
+                    continue
                 for k in tested:
                     tested[k].extend(cluster_tested.get(k, []))
                 if cluster_tracker:
@@ -369,8 +375,20 @@ def include_orphan_modules(ctx: "SandboxContext") -> None:
                         ctx.tracker.merge_history(cluster_tracker)
                     except Exception:
                         logger.exception("failed to merge orphan metrics")
-                    for m, vals in getattr(cluster_tracker, "module_deltas", {}).items():
+                    deltas = getattr(cluster_tracker, "module_deltas", {})
+                    for m, vals in deltas.items():
                         roi_map.setdefault(m, []).extend(vals)
+                    for m in mods:
+                        impact_vals = deltas.get(m)
+                        impact = (
+                            float(sum(float(x) for x in impact_vals))
+                            if impact_vals
+                            else None
+                        )
+                        _async_track_usage(m, impact)
+                else:
+                    for m in mods:
+                        _async_track_usage(m)
 
         added = set(tested.get("added", []))
         failed = set(tested.get("failed", []))
@@ -708,8 +726,13 @@ def _sandbox_cycle_runner(
         )
         if section:
             mods = [m for m in mods if m == section.split(":", 1)[0]]
-        mapped_mods = [map_module_identifier(m, ctx.repo) for m in mods]
-        mapped_section = map_module_identifier(section, ctx.repo) if section else None
+        roi_delta = roi - ctx.prev_roi
+        mapped_mods = [
+            map_module_identifier(m, ctx.repo, roi_delta) for m in mods
+        ]
+        mapped_section = (
+            map_module_identifier(section, ctx.repo, roi_delta) if section else None
+        )
         resources = None
         if ctx.res_db is not None:
             try:
@@ -1229,7 +1252,7 @@ def _sandbox_cycle_runner(
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
                     roi_delta = new_roi - roi
-                    mapped = map_module_identifier(mod, ctx.repo)
+                    mapped = map_module_identifier(mod, ctx.repo, roi_delta)
                     tracker.update(roi, new_roi, [mapped], resources)
                     ctx.meta_log.log_cycle(
                         idx,
@@ -1590,7 +1613,7 @@ def _sandbox_cycle_runner(
                     res = ctx.improver.run_cycle()
                     new_roi = res.roi.roi if res.roi else roi
                     roi_delta = new_roi - roi
-                    mapped = map_module_identifier(mod, ctx.repo)
+                    mapped = map_module_identifier(mod, ctx.repo, roi_delta)
                     tracker.update(roi, new_roi, [mapped], resources)
                     ctx.meta_log.log_cycle(
                         idx,
