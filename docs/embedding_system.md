@@ -62,3 +62,7 @@ perform a single query across bots, workflows, errors, enhancements and
 research items without dealing with individual databases. Each result includes
 the originating database label, combined score and a short reason describing the
 highest contributing metric.
+
+## Service Layer
+
+`vector_service` provides lightweight facades—`Retriever`, `ContextBuilder`, `PatchLogger` and `EmbeddingBackfill`—that wrap the embedding components with structured logging and Prometheus metrics. Other modules should depend on this layer instead of calling databases or retrievers directly. The service layer keeps instrumentation consistent and makes unit testing simple by allowing dependencies to be swapped or mocked.
