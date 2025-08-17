@@ -75,6 +75,7 @@ class PatchLogger:
         *,
         patch_id: str = "",
         session_id: str = "",
+        contribution: float | None = None,
     ) -> None:
         """Log patch outcome for vectors contributing to a patch."""
 
@@ -96,7 +97,7 @@ class PatchLogger:
                         session_id,
                         pairs,
                         patch_id=int(patch_id),
-                        contribution=0.0,
+                        contribution=0.0 if contribution is None else contribution,
                         win=result,
                         regret=not result,
                     )
@@ -107,7 +108,7 @@ class PatchLogger:
                     self.vector_metrics.update_outcome(
                         session_id,
                         pairs,
-                        contribution=0.0,
+                        contribution=0.0 if contribution is None else contribution,
                         patch_id=patch_id,
                         win=result,
                         regret=not result,
@@ -131,6 +132,7 @@ class PatchLogger:
         *,
         patch_id: str = "",
         session_id: str = "",
+        contribution: float | None = None,
     ) -> None:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -141,6 +143,7 @@ class PatchLogger:
             result,
             patch_id=patch_id,
             session_id=session_id,
+            contribution=contribution,
         )
 
 

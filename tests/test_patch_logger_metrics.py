@@ -1,4 +1,5 @@
 import pytest
+from typing import Any
 from vector_service import EmbeddingBackfill, EmbeddableDBMixin, PatchLogger
 import vector_service.decorators as dec
 
@@ -28,6 +29,54 @@ class DummyMetricsDB:
         self.called = True
         if self.fail:
             raise RuntimeError("db failure")
+
+
+class DummyVectorMetricsDB:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] | None = None
+
+    def update_outcome(
+        self,
+        session_id,
+        pairs,
+        *,
+        contribution,
+        patch_id,
+        win,
+        regret,
+    ):
+        self.kwargs = {
+            "session_id": session_id,
+            "pairs": pairs,
+            "contribution": contribution,
+            "patch_id": patch_id,
+            "win": win,
+            "regret": regret,
+        }
+
+
+class DummyPatchDB:
+    def __init__(self) -> None:
+        self.kwargs: dict[str, Any] | None = None
+
+    def record_vector_metrics(
+        self,
+        session_id,
+        pairs,
+        *,
+        patch_id,
+        contribution,
+        win,
+        regret,
+    ):
+        self.kwargs = {
+            "session_id": session_id,
+            "pairs": pairs,
+            "patch_id": patch_id,
+            "contribution": contribution,
+            "win": win,
+            "regret": regret,
+        }
 
 
 def patch_metrics(monkeypatch):
@@ -87,6 +136,22 @@ def test_track_contributors_malformed_vector_ids_raise_and_count(monkeypatch):
     assert ("inc", "PatchLogger.track_contributors", 1.0) in call.calls
     assert ("inc", "error", 1.0) in outcome.calls
     assert any(c[0] == "set" for c in duration.calls)
+
+
+def test_track_contributors_forwards_contribution_vector_metrics(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    vm = DummyVectorMetricsDB()
+    pl = PatchLogger(vector_metrics=vm)
+    pl.track_contributors(["v1"], True, patch_id="p", session_id="s", contribution=0.3)
+    assert vm.kwargs and vm.kwargs["contribution"] == 0.3
+
+
+def test_track_contributors_forwards_contribution_patch_db(monkeypatch):
+    _, _, _, _, _, _, _ = patch_metrics(monkeypatch)
+    pdb = DummyPatchDB()
+    pl = PatchLogger(patch_db=pdb)
+    pl.track_contributors(["v2"], False, patch_id="7", session_id="s", contribution=0.8)
+    assert pdb.kwargs and pdb.kwargs["contribution"] == 0.8
 
 
 # ---------------------------------------------------------------------------
