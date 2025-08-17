@@ -58,6 +58,7 @@ class Retriever:
     retriever: UniversalRetriever | None = None
     top_k: int = 5
     similarity_threshold: float = 0.1
+    retriever_kwargs: Dict[str, Any] = field(default_factory=dict)
     _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -65,7 +66,7 @@ class Retriever:
         if self.retriever is None:
             if UniversalRetriever is None:  # pragma: no cover - defensive
                 raise RuntimeError("UniversalRetriever unavailable")
-            self.retriever = UniversalRetriever()
+            self.retriever = UniversalRetriever(**self.retriever_kwargs)
         return self.retriever
 
     # ------------------------------------------------------------------
@@ -176,6 +177,33 @@ class Retriever:
         return FallbackResult(
             "no results" if not hits else "low confidence", fb_hits, confidence
         )
+
+    # ------------------------------------------------------------------
+    def error_frequency(self, error_id: int) -> float:
+        """Expose raw error frequency metric from the underlying service."""
+
+        try:
+            return float(self._get_retriever()._error_frequency(int(error_id)))
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    def workflow_usage(self, wf: Any) -> float:
+        """Expose workflow usage count for a workflow record."""
+
+        try:
+            return float(self._get_retriever()._workflow_usage(wf))
+        except Exception:
+            return 0.0
+
+    # ------------------------------------------------------------------
+    def bot_deploy_freq(self, bot_id: int) -> float:
+        """Return deployment frequency for the given bot id."""
+
+        try:
+            return float(self._get_retriever()._bot_deploy_freq(int(bot_id)))
+        except Exception:
+            return 0.0
 
 
 __all__ = ["Retriever", "FallbackResult"]
