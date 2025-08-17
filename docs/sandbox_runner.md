@@ -859,6 +859,26 @@ Writes to this history file are protected with a ``filelock.FileLock``. The lock
 ``synergy_history.db.lock`` is acquired before saving and released once the
 update completes to avoid corruption when multiple runs execute concurrently.
 
+## Entropy delta detection
+
+The sandbox tracks how much entropy each patch adds relative to ROI. When the
+mean ROI gain per unit entropy delta falls below a ceiling the affected modules
+are marked complete and skipped in later cycles. This prevents endless
+microscopic tweaks that add complexity without improving results.
+
+Configuration is controlled via:
+
+- ``--entropy-threshold`` or ``ENTROPY_THRESHOLD`` – minimum ROI gain per
+  entropy delta before further increases are ignored.
+- ``ENTROPY_PLATEAU_THRESHOLD`` and ``ENTROPY_PLATEAU_CONSECUTIVE`` – entropy
+  ratios below this threshold for the given number of samples trigger
+  convergence.
+
+During runs the meta logger emits debug lines such as
+``modules hitting entropy ceiling: ['m.py']``. Seeing a module in this list
+means its recent ROI-to-entropy ratios were too low and it will no longer be
+tweaked.
+
 Example usage:
 
 ```bash
