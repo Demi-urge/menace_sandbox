@@ -44,7 +44,7 @@ from .unified_event_bus import UnifiedEventBus
 from .task_handoff_bot import WorkflowDB, WorkflowRecord
 from .audit_trail import AuditTrail
 from menace.embeddable_db_mixin import EmbeddableDBMixin
-from vector_service import Retriever
+from semantic_service import Retriever
 try:
     from .databases import MenaceDB
 except Exception:  # pragma: no cover - optional dependency

@@ -80,7 +80,7 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 # Optional dependency for advanced retrieval
 try:  # pragma: no cover - optional
-    from vector_service import Retriever
+    from semantic_service import Retriever
 except Exception:  # pragma: no cover - missing dependency
     Retriever = None  # type: ignore
 DEFAULT_IDEA_DB = database_manager.DB_PATH
