@@ -6,7 +6,7 @@ import logging
 import threading
 import hashlib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar
+from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple
 from collections import deque, Counter
 import re
 import time
@@ -784,6 +784,19 @@ class PatchHistoryDB:
             )
             """
             )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS patch_provenance(
+                patch_id INTEGER,
+                origin TEXT,
+                vector_id TEXT,
+                influence REAL,
+                retrieved_at TEXT,
+                position INTEGER,
+                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            )
+            """
+            )
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
@@ -826,6 +839,9 @@ class PatchHistoryDB:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_flaky_file ON flakiness_history(filename)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_provenance_patch ON patch_provenance(patch_id)"
+            )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
         # expose connection for diagnostics and tests
@@ -853,8 +869,10 @@ class PatchHistoryDB:
         words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
         return words
 
-    def add(self, rec: PatchRecord) -> int:
-        """Store a patch record and attempt to link it to ``CodeDB`` via ``code_hash``."""
+    def add(
+        self, rec: PatchRecord, vectors: Sequence[tuple[str, float]] | None = None
+    ) -> int:
+        """Store a patch record and optional retrieval provenance."""
 
         def op(conn: sqlite3.Connection) -> int:
             if rec.code_hash is None and rec.filename:
@@ -923,6 +941,15 @@ class PatchHistoryDB:
                 self.keyword_recent[kw] = now
 
             patch_id = int(cur.lastrowid)
+            if vectors:
+                parsed: List[Tuple[str, str, float]] = []
+                for vid, score in vectors:
+                    if ":" in vid:
+                        origin, vec_id = vid.split(":", 1)
+                    else:
+                        origin, vec_id = "", vid
+                    parsed.append((origin, vec_id, float(score)))
+                self._insert_provenance(conn, patch_id, parsed)
             logger.info(
                 "patch stored",
                 extra={
@@ -997,6 +1024,44 @@ class PatchHistoryDB:
             )
         except Exception:
             logger.exception("vector metrics update failed")
+
+    # ------------------------------------------------------------------
+    def _insert_provenance(
+        self,
+        conn: sqlite3.Connection,
+        patch_id: int,
+        vectors: Sequence[tuple[str, str, float]],
+        *,
+        ts: str | None = None,
+    ) -> None:
+        ts = ts or datetime.utcnow().isoformat()
+        for pos, (origin, vec_id, score) in enumerate(vectors):
+            conn.execute(
+                "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position) VALUES(?,?,?,?,?,?)",
+                (patch_id, origin, vec_id, score, ts, pos),
+            )
+
+    def record_provenance(
+        self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
+    ) -> None:
+        """Persist retrieval provenance for a patch."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            self._insert_provenance(conn, patch_id, vectors)
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def get_provenance(self, patch_id: int) -> List[Tuple[str, str, float, str]]:
+        """Return provenance rows for ``patch_id`` ordered by original ranking."""
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[str, str, float, str]]:
+            rows = conn.execute(
+                "SELECT origin, vector_id, influence, retrieved_at FROM patch_provenance WHERE patch_id=? ORDER BY position",
+                (patch_id,),
+            ).fetchall()
+            return [(o, v, float(s), t) for o, v, s, t in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
     def keyword_features(self) -> tuple[int, int]:
         """Return count and recency (hrs) for the most common keyword."""

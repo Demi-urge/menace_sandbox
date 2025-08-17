@@ -102,7 +102,12 @@ class MutationLineage:
         return path
 
     # ------------------------------------------------------------------
-    def clone_branch_for_ab_test(self, patch_id: int, description: str) -> int:
+    def clone_branch_for_ab_test(
+        self,
+        patch_id: int,
+        description: str,
+        vectors: List[tuple[str, float]] | None = None,
+    ) -> int:
         """Clone a patch into a new branch for A/B testing.
 
         Returns the new patch id.
@@ -135,7 +140,7 @@ class MutationLineage:
             reason=None,
             trigger=None,
         )
-        return self.patch_db.add(rec)
+        return self.patch_db.add(rec, vectors=vectors)
 
 
 def main() -> None:  # pragma: no cover - CLI glue
