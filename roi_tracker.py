@@ -103,6 +103,7 @@ class ROITracker:
         self._poly = PolynomialFeatures(degree=2)
         self._model = LinearRegression()
         self.module_deltas: Dict[str, List[float]] = {}
+        self.module_entropy_deltas: Dict[str, List[float]] = {}
         self.origin_db_deltas: Dict[str, List[float]] = {}
         self.db_roi_metrics: Dict[str, Dict[str, float]] = {}
         self.cluster_map: Dict[str, int] = dict(cluster_map or {})
@@ -322,6 +323,8 @@ class ROITracker:
         self.resource_metrics.extend(getattr(other, "resource_metrics", []))
         for name, deltas in getattr(other, "module_deltas", {}).items():
             self.module_deltas.setdefault(name, []).extend(deltas)
+        for name, deltas in getattr(other, "module_entropy_deltas", {}).items():
+            self.module_entropy_deltas.setdefault(name, []).extend(deltas)
         for name, deltas in getattr(other, "cluster_deltas", {}).items():
             self.cluster_deltas.setdefault(name, []).extend(deltas)
         for db, deltas in getattr(other, "origin_db_deltas", {}).items():
@@ -408,6 +411,27 @@ class ROITracker:
 
         self.predicted_roi.append(float(pred_seq[0]))
         self.actual_roi.append(float(act_seq[0]))
+        try:
+            ent_hist = self.metrics_history.get("synergy_shannon_entropy", [])
+            if len(ent_hist) >= 2:
+                entropy_delta = float(ent_hist[-1]) - float(ent_hist[-2])
+                from .code_database import PatchHistoryDB
+
+                patch_db = PatchHistoryDB()
+                with patch_db._connect() as conn:
+                    row = conn.execute(
+                        "SELECT filename, complexity_delta FROM patch_history ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                if row:
+                    mod_name, complexity_delta = row
+                    complexity_delta = float(complexity_delta or 0.0)
+                    if complexity_delta:
+                        ratio = entropy_delta / complexity_delta
+                        self.module_entropy_deltas.setdefault(str(mod_name), []).append(
+                            ratio
+                        )
+        except Exception:
+            pass
 
         if predicted_class is None:
             predicted_class = self._next_category
@@ -1721,6 +1745,7 @@ class ROITracker:
                 "roi_history": self.roi_history,
                 "confidence_history": self.confidence_history,
                 "module_deltas": self.module_deltas,
+                "module_entropy_deltas": self.module_entropy_deltas,
                 "origin_db_deltas": self.origin_db_deltas,
                 "db_roi_metrics": self.db_roi_metrics,
                 "predicted_roi": self.predicted_roi,
@@ -1770,6 +1795,20 @@ class ROITracker:
                 conn.executemany(
                     "INSERT INTO module_deltas (module, delta) VALUES (?, ?)",
                     rows,
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS module_entropy_deltas (module TEXT, delta REAL)"
+            )
+            conn.execute("DELETE FROM module_entropy_deltas")
+            ent_rows = [
+                (m, float(v))
+                for m, vals in self.module_entropy_deltas.items()
+                for v in vals
+            ]
+            if ent_rows:
+                conn.executemany(
+                    "INSERT INTO module_entropy_deltas (module, delta) VALUES (?, ?)",
+                    ent_rows,
                 )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS db_deltas (origin_db TEXT, delta REAL)"
@@ -1922,6 +1961,7 @@ class ROITracker:
                     self.roi_history = [float(x) for x in data]
                     self.confidence_history = [0.0] * len(self.roi_history)
                     self.module_deltas = {}
+                    self.module_entropy_deltas = {}
                     self.origin_db_deltas = {}
                     self.db_roi_metrics = {}
                     self.predicted_roi = []
@@ -1948,6 +1988,10 @@ class ROITracker:
                     self.module_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("module_deltas", {}).items()
+                    }
+                    self.module_entropy_deltas = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("module_entropy_deltas", {}).items()
                     }
                     self.origin_db_deltas = {
                         str(m): [float(v) for v in vals]
@@ -2057,6 +2101,7 @@ class ROITracker:
             except Exception:
                 self.roi_history = []
                 self.module_deltas = {}
+                self.module_entropy_deltas = {}
                 self.metrics_history = {}
                 self.scenario_synergy = {}
             return
@@ -2074,6 +2119,12 @@ class ROITracker:
                 mod_rows = conn.execute(
                     "SELECT module, delta FROM module_deltas ORDER BY rowid"
                 ).fetchall()
+                try:
+                    ent_rows = conn.execute(
+                        "SELECT module, delta FROM module_entropy_deltas ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    ent_rows = []
                 try:
                     db_rows = conn.execute(
                         "SELECT origin_db, delta FROM db_deltas ORDER BY rowid"
@@ -2134,6 +2185,7 @@ class ROITracker:
         except Exception:
             self.roi_history = []
             self.module_deltas = {}
+            self.module_entropy_deltas = {}
             self.predicted_roi = []
             self.actual_roi = []
             self.metrics_history = {}
@@ -2153,6 +2205,9 @@ class ROITracker:
         self.module_deltas = {}
         for mod, delta in mod_rows:
             self.module_deltas.setdefault(str(mod), []).append(float(delta))
+        self.module_entropy_deltas = {}
+        for mod, delta in ent_rows:
+            self.module_entropy_deltas.setdefault(str(mod), []).append(float(delta))
         self.origin_db_deltas = {}
         for db, delta in db_rows:
             self.origin_db_deltas.setdefault(str(db), []).append(float(delta))
@@ -2256,6 +2311,12 @@ class ROITracker:
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
+
+    # ------------------------------------------------------------------
+    def entropy_delta_history(self, module_name: str) -> List[float]:
+        """Return recorded entropy delta ratios for ``module_name``."""
+
+        return list(self.module_entropy_deltas.get(module_name, []))
 
     # ------------------------------------------------------------------
     def rankings(self) -> List[Tuple[str, float]]:
