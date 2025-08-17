@@ -6,7 +6,7 @@ import os
 import shutil
 import sys
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 from log_tags import INSIGHT, IMPROVEMENT_PATH, FEEDBACK, ERROR_FIX
 from memory_aware_gpt_client import ask_with_memory
@@ -598,7 +598,10 @@ class _SandboxMetaLogger:
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
 
     def diminishing(
-        self, threshold: float | None = None, consecutive: int = 3
+        self,
+        threshold: float | None = None,
+        consecutive: int = 3,
+        entropy_flags: Sequence[str] | None = None,
     ) -> list[str]:
         flags: list[str] = []
         thr = 0.0 if threshold is None else float(threshold)
@@ -618,6 +621,11 @@ class _SandboxMetaLogger:
             if abs(mean) <= thr and std < eps:
                 flags.append(m)
                 self.flagged_sections.add(m)
+        if entropy_flags:
+            for m in entropy_flags:
+                if m not in self.flagged_sections:
+                    flags.append(m)
+                    self.flagged_sections.add(m)
         if flags:
             logger.debug("modules with diminishing returns: %s", flags)
         return flags
@@ -1344,7 +1352,18 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                         agg.roi_history.extend(t.roi_history)
                         for m, vals in t.metrics_history.items():
                             agg.metrics_history.setdefault(m, []).extend(vals)
-                    flagged = ctx.meta_log.diminishing(agg.diminishing())
+                    thr = agg.diminishing()
+                    entropy_flags = agg.entropy_plateau(thr, 3)
+                    try:
+                        flagged = ctx.meta_log.diminishing(
+                            thr, entropy_flags=entropy_flags
+                        )
+                    except TypeError:  # pragma: no cover - compatibility
+                        flagged = ctx.meta_log.diminishing(thr)
+                        for m in entropy_flags:
+                            if m not in ctx.meta_log.flagged_sections:
+                                ctx.meta_log.flagged_sections.add(m)
+                                flagged.append(m)
                     if flagged:
                         SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
                         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
@@ -1584,7 +1603,16 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     flagged = []
     if ctx.adapt_presets:
         try:
-            flagged = ctx.meta_log.diminishing(ctx.tracker.diminishing())
+            thr = ctx.tracker.diminishing()
+            entropy_flags = ctx.tracker.entropy_plateau(thr, 3)
+            try:
+                flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
+            except TypeError:  # pragma: no cover - compatibility
+                flagged = ctx.meta_log.diminishing(thr)
+                for m in entropy_flags:
+                    if m not in ctx.meta_log.flagged_sections:
+                        ctx.meta_log.flagged_sections.add(m)
+                        flagged.append(m)
         except Exception:
             flagged = []
     if ctx.adapt_presets and flagged:
@@ -1611,7 +1639,15 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             logger.exception("workflow simulations failed")
 
     ranking = ctx.meta_log.rankings()
-    flags = ctx.meta_log.diminishing()
+    entropy_flags = ctx.tracker.entropy_plateau(ctx.tracker.diminishing(), 3)
+    try:
+        flags = ctx.meta_log.diminishing(entropy_flags=entropy_flags)
+    except TypeError:  # pragma: no cover - compatibility
+        flags = ctx.meta_log.diminishing()
+        for m in entropy_flags:
+            if m not in ctx.meta_log.flagged_sections:
+                ctx.meta_log.flagged_sections.add(m)
+                flags.append(m)
     if ranking:
         logger.info("sandbox roi ranking", extra=log_record(ranking=ranking))
     if flags:

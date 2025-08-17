@@ -698,6 +698,7 @@ def update_metrics(
     args: argparse.Namespace,
     run_idx: int,
     module_history: dict[str, list[float]],
+    entropy_history: dict[str, list[float]],
     flagged: set[str],
     synergy_history: list[dict[str, float]],
     synergy_ma_history: list[dict[str, float]],
@@ -715,6 +716,8 @@ def update_metrics(
 
     for mod, vals in tracker.module_deltas.items():
         module_history.setdefault(mod, []).extend(vals)
+    for mod, vals in tracker.module_entropy_deltas.items():
+        entropy_history.setdefault(mod, []).extend(vals)
 
     syn_vals = {
         k: v[-1]
@@ -805,6 +808,7 @@ def update_metrics(
         roi_threshold,
         consecutive=args.roi_cycles,
         confidence=roi_confidence or 0.95,
+        entropy_history=entropy_history,
     )
     flagged.update(new_flags)
 
@@ -1690,6 +1694,7 @@ def main(argv: List[str] | None = None) -> None:
         cleanup_funcs.append(relevancy_radar.stop)
 
     module_history: dict[str, list[float]] = {}
+    entropy_history: dict[str, list[float]] = {}
     flagged: set[str] = set()
     roi_ma_history: list[float] = []
     synergy_ma_history: list[dict[str, float]] = list(synergy_ma_prev)
@@ -1740,6 +1745,8 @@ def main(argv: List[str] | None = None) -> None:
             last_tracker = tracker
             for mod, vals in tracker.module_deltas.items():
                 module_history.setdefault(mod, []).extend(vals)
+            for mod, vals in tracker.module_entropy_deltas.items():
+                entropy_history.setdefault(mod, []).extend(vals)
             missing = tracker.synergy_history[len(synergy_history) :]
             for entry in missing:
                 synergy_history.append(entry)
@@ -1847,6 +1854,7 @@ def main(argv: List[str] | None = None) -> None:
             args,
             run_idx,
             module_history,
+            entropy_history,
             flagged,
             synergy_history,
             synergy_ma_history,
@@ -1880,7 +1888,8 @@ def main(argv: List[str] | None = None) -> None:
         logger.info("completed autonomous run %d", run_idx)
         set_correlation_id(None)
 
-        if module_history and set(module_history) <= flagged and converged:
+        all_mods = set(module_history) | set(entropy_history)
+        if all_mods and all_mods <= flagged and converged:
             logger.info(
                 "convergence reached",
                 extra=log_record(
