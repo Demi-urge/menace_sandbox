@@ -59,13 +59,25 @@ from .patch_suggestion_db import PatchSuggestionDB, SuggestionRecord
 from typing import TYPE_CHECKING
 
 try:  # pragma: no cover - optional dependency
-    from vector_service import ContextBuilder, ErrorResult
+    from vector_service import (
+        ContextBuilder,
+        ErrorResult,
+        PatchLogger,
+        VectorServiceError,
+    )
 except Exception:  # pragma: no cover - defensive fallback
     ContextBuilder = None  # type: ignore
+    PatchLogger = object  # type: ignore
+
     class ErrorResult(Exception):
         """Fallback ErrorResult when vector service is unavailable."""
+
         pass
-from semantic_service import PatchLogger
+
+    class VectorServiceError(Exception):
+        """Fallback VectorServiceError when vector service is unavailable."""
+
+        pass
 
 if TYPE_CHECKING:  # pragma: no cover - type hints
     from .model_automation_pipeline import ModelAutomationPipeline
@@ -214,7 +226,7 @@ class SelfCodingEngine:
                     patch_id=str(patch_id or ""),
                     session_id=session_id,
                 )
-            except Exception:
+            except VectorServiceError:
                 self.logger.debug("patch logging failed", exc_info=True)
 
     # --------------------------------------------------------------
