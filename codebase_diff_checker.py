@@ -8,6 +8,8 @@ import os
 import difflib
 from typing import Dict, List, Tuple
 
+from unsafe_patterns import find_matches
+
 
 _KEYWORDS = {"reward", "self_improve", "security_ai", "dispatch", "monitor", "override"}
 
@@ -104,19 +106,26 @@ def save_diff_report(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]], outp
 
 
 def flag_risky_changes(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]]) -> List[str]:
-    """Return a list of locations where sensitive keywords appear in diffs."""
-    flagged = []
+    """Return a list of locations where risky patterns appear in diffs."""
+    flagged: List[str] = []
     for path, info in diff_data.items():
         for change_type, sections in info.get("changes", {}).items():
             for name, lines in sections.items():
                 for line in lines:
                     if line.startswith("+") or line.startswith("-"):
-                        text = line[1:].lower()
+                        text = line[1:]
+                        lowered = text.lower()
+                        matched = False
                         for key in _KEYWORDS:
-                            if key in text:
+                            if key in lowered:
                                 location = f"{path}:{name}: {line}"
                                 flagged.append(location)
+                                matched = True
                                 break
+                        if matched:
+                            continue
+                        for msg in find_matches(text):
+                            flagged.append(f"{path}:{name}: {msg}")
     return flagged
 
 

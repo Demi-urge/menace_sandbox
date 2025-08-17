@@ -145,3 +145,19 @@ def test_preemptive_patch_falls_back(monkeypatch, tmp_path):
     engine.preemptive_patch_modules([("mod", 0.8)], risk_threshold=0.5)
     assert mgr.calls == [(Path("mod.py"), "preemptive_patch")]
     assert db.records == [("mod", 0.8, 999)]
+
+
+def test_generate_patch_blocks_risky(monkeypatch, tmp_path):
+    path = tmp_path / "a.py"
+    path.write_text("x=1\n")
+
+    class DummyEngine:
+        def apply_patch(self, p, *a, **k):
+            with open(p, "a", encoding="utf-8") as f:
+                f.write("eval('2')\n")
+            return 1, "", ""
+
+    monkeypatch.chdir(tmp_path)
+    res = quick_fix.generate_patch(str(path), engine=DummyEngine())
+    assert res is None
+    assert path.read_text() == "x=1\n"

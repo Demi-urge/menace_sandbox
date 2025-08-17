@@ -11,6 +11,7 @@ import os
 import uuid
 from typing import Tuple, Iterable, Dict, Any, List
 
+from codebase_diff_checker import generate_code_diff, flag_risky_changes
 try:  # pragma: no cover - optional dependency
     from .error_cluster_predictor import ErrorClusterPredictor
 except Exception:  # pragma: no cover - optional dependency
@@ -116,6 +117,12 @@ def generate_patch(
             after_target = Path(after_dir) / rel
             after_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, after_target)
+            diff_struct = generate_code_diff(before_dir, after_dir)
+            risky = flag_risky_changes(diff_struct)
+            if risky:
+                logger.warning("risky changes detected: %s", risky)
+                shutil.copy2(before_target, path)
+                return None
             diff_data = _collect_diff_data(Path(before_dir), Path(after_dir))
             workflow_changes = [
                 {"file": f, "code": "\n".join(d["added"])}
