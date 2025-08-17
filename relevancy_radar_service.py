@@ -8,7 +8,10 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable
 
-from .relevancy_radar import RelevancyRadar
+try:  # pragma: no cover - prefer package import but allow direct execution
+    from .relevancy_radar import RelevancyRadar
+except Exception:  # pragma: no cover - executed when run as a script
+    from relevancy_radar import RelevancyRadar
 
 
 class RelevancyRadarService:
@@ -27,7 +30,10 @@ class RelevancyRadarService:
     def _modules(self) -> Iterable[str]:
         """Return an iterable of module identifiers under ``repo_root``."""
         try:
-            from .dynamic_module_mapper import build_module_map
+            try:
+                from .dynamic_module_mapper import build_module_map
+            except Exception:  # pragma: no cover - executed when run as script
+                from dynamic_module_mapper import build_module_map
 
             mapping = build_module_map(self.root)
             return mapping
@@ -37,14 +43,29 @@ class RelevancyRadarService:
 
     def _scan_once(self) -> None:
         try:
-            from .module_graph_analyzer import build_import_graph
-            from .relevancy_radar import load_usage_stats
-            from .relevancy_metrics_db import RelevancyMetricsDB
-            from .metrics_exporter import update_relevancy_metrics, relevancy_flags_total
+            try:
+                from .module_graph_analyzer import build_import_graph
+                from .relevancy_radar import load_usage_stats
+                from .relevancy_metrics_db import RelevancyMetricsDB
+                from .metrics_exporter import (
+                    update_relevancy_metrics,
+                    relevancy_flags_total,
+                )
+            except Exception:  # pragma: no cover - executed when run as script
+                from module_graph_analyzer import build_import_graph
+                from relevancy_radar import load_usage_stats
+                from relevancy_metrics_db import RelevancyMetricsDB
+                from metrics_exporter import (
+                    update_relevancy_metrics,
+                    relevancy_flags_total,
+                )
 
             try:
                 from .sandbox_settings import SandboxSettings
+            except Exception:  # pragma: no cover - executed when run as script
+                from sandbox_settings import SandboxSettings
 
+            try:
                 settings = SandboxSettings()
                 compress = float(settings.relevancy_radar_compress_ratio)
                 replace = float(settings.relevancy_radar_replace_ratio)
@@ -107,7 +128,10 @@ class RelevancyRadarService:
                     )
             if flags:
                 if self._retirement_service is None:
-                    from .module_retirement_service import ModuleRetirementService
+                    try:
+                        from .module_retirement_service import ModuleRetirementService
+                    except Exception:  # pragma: no cover - executed when run as script
+                        from module_retirement_service import ModuleRetirementService
 
                     self._retirement_service = ModuleRetirementService(self.root)
                 self._retirement_service.process_flags(flags)

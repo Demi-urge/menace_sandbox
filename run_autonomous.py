@@ -118,6 +118,12 @@ if _pkg_dir.name == "menace" and str(_pkg_dir.parent) not in sys.path:
 elif "menace" not in sys.modules:
     import importlib.util
 
+# Repository root used by background services like the RelevancyRadarService.
+# Default to ``SANDBOX_REPO_PATH`` when provided, otherwise fall back to the
+# directory containing this file.  ``SANDBOX_REPO_PATH`` is required in most
+# environments but this fallback keeps unit tests and ad-hoc scripts working.
+REPO_ROOT = Path(os.getenv("SANDBOX_REPO_PATH", _pkg_dir))
+
 
 def _visual_agent_running(urls: str) -> bool:
     """Return ``True`` if the visual agent responds to ``/health``."""
@@ -194,7 +200,14 @@ from sandbox_settings import SandboxSettings
 from threshold_logger import ThresholdLogger
 from forecast_logger import ForecastLogger
 from preset_logger import PresetLogger
-from relevancy_radar_service import RelevancyRadarService
+
+# ``relevancy_radar_service`` relies on package-relative imports.  When running
+# this module as a script the package may not be installed, so fall back to a
+# relative import to keep tests and direct execution working.
+try:  # pragma: no cover - simple import shim
+    from relevancy_radar_service import RelevancyRadarService
+except Exception:  # pragma: no cover - executed when run via package
+    from .relevancy_radar_service import RelevancyRadarService
 
 if not hasattr(sandbox_runner, "_sandbox_main"):
     import importlib.util
@@ -1240,14 +1253,19 @@ def main(argv: List[str] | None = None) -> None:
             return
         raise
 
-    auto_include_isolated = bool(getattr(settings, "auto_include_isolated", True) or getattr(args, "auto_include_isolated", False))
+    auto_include_isolated = bool(
+        getattr(settings, "auto_include_isolated", True)
+        or getattr(args, "auto_include_isolated", False)
+    )
     recursive_orphans = getattr(settings, "recursive_orphan_scan", True)
     if args.recursive_orphans is not None:
         recursive_orphans = args.recursive_orphans
     recursive_isolated = getattr(settings, "recursive_isolated", True)
     if args.recursive_isolated is not None:
         recursive_isolated = args.recursive_isolated
-    if auto_include_isolated:
+    # ``auto_include_isolated`` forces recursive isolated scans only when the
+    # user didn't explicitly request otherwise via ``--recursive-isolated``.
+    if auto_include_isolated and args.recursive_isolated is None:
         recursive_isolated = True
 
     args.auto_include_isolated = auto_include_isolated
@@ -1664,7 +1682,9 @@ def main(argv: List[str] | None = None) -> None:
                 logger.warning(
                     "Invalid RELEVANCY_RADAR_INTERVAL value: %s", interval_env
                 )
-        relevancy_radar = RelevancyRadarService(_pkg_dir, int(radar_interval))
+        # Instantiate the radar using the repository root so it scans the same
+        # checkout the sandbox operates on.
+        relevancy_radar = RelevancyRadarService(REPO_ROOT, float(radar_interval))
         relevancy_radar.start()
         atexit.register(relevancy_radar.stop)
         cleanup_funcs.append(relevancy_radar.stop)
