@@ -377,7 +377,7 @@ def test_section_short_circuit(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
     _stub_module(monkeypatch, "menace.menace_memory_manager", MenaceMemoryManager=DummyBot)
     _stub_module(monkeypatch, "menace.self_improvement_policy", SelfImprovementPolicy=_Policy)
-    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
+    _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p=None: DummyBot())
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
 
     class DummyTracker:
@@ -567,6 +567,9 @@ def test_failure_modes_disk(monkeypatch):
 
 def test_workflow_run_called(monkeypatch, tmp_path):
     _setup_mm_stubs(monkeypatch)
+    import shutil, importlib.util
+    monkeypatch.setattr(shutil, "which", lambda *a, **k: "/usr/bin/true")
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
     class DummyTracker:
         def __init__(self, **kw):
             self.updated = []
@@ -590,6 +593,7 @@ def test_workflow_run_called(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
+    _stub_module(monkeypatch, "menace.quick_fix_engine", QuickFixEngine=DummyBot)
     import importlib.util
     import sys
     import argparse
@@ -611,7 +615,7 @@ def test_workflow_run_called(monkeypatch, tmp_path):
             self.flagged_sections = set()
         def rankings(self):
             return {}
-        def diminishing(self, threshold=None):
+        def diminishing(self, threshold=None, consecutive=3, entropy_threshold=None):
             return []
 
     class DummyCtx:
@@ -627,6 +631,10 @@ def test_workflow_run_called(monkeypatch, tmp_path):
             self.synergy_needed = False
             self.best_roi = 0.0
             self.best_synergy_metrics = {}
+            self.settings = types.SimpleNamespace(
+                entropy_plateau_threshold=None, entropy_plateau_consecutive=None
+            )
+            self.sandbox = types.SimpleNamespace(graph=None)
 
     monkeypatch.setattr(sandbox_runner, "_sandbox_init", lambda preset, args: DummyCtx())
     monkeypatch.setattr(sandbox_runner, "_sandbox_cleanup", lambda ctx: None)

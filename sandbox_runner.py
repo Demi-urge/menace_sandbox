@@ -1258,17 +1258,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
                     thr = agg.diminishing()
                     e_thr = ctx.settings.entropy_plateau_threshold or thr
                     e_consec = ctx.settings.entropy_plateau_consecutive or 3
-                    entropy_flags = agg.entropy_plateau(e_thr, e_consec)
-                    try:
-                        flagged = ctx.meta_log.diminishing(
-                            thr, entropy_flags=entropy_flags
-                        )
-                    except TypeError:  # pragma: no cover - compatibility
-                        flagged = ctx.meta_log.diminishing(thr)
-                        for m in entropy_flags:
-                            if m not in ctx.meta_log.flagged_sections:
-                                ctx.meta_log.flagged_sections.add(m)
-                                flagged.append(m)
+                    flagged = ctx.meta_log.diminishing(
+                        thr, consecutive=e_consec, entropy_threshold=e_thr
+                    )
                     if flagged:
                         SANDBOX_ENV_PRESETS = adapt_presets(agg, SANDBOX_ENV_PRESETS)
                         os.environ["SANDBOX_ENV_PRESETS"] = json.dumps(SANDBOX_ENV_PRESETS)
@@ -1512,15 +1504,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
             thr = ctx.tracker.diminishing()
             e_thr = ctx.settings.entropy_plateau_threshold or thr
             e_consec = ctx.settings.entropy_plateau_consecutive or 3
-            entropy_flags = ctx.tracker.entropy_plateau(e_thr, e_consec)
-            try:
-                flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
-            except TypeError:  # pragma: no cover - compatibility
-                flagged = ctx.meta_log.diminishing(thr)
-                for m in entropy_flags:
-                    if m not in ctx.meta_log.flagged_sections:
-                        ctx.meta_log.flagged_sections.add(m)
-                        flagged.append(m)
+            flagged = ctx.meta_log.diminishing(
+                thr, consecutive=e_consec, entropy_threshold=e_thr
+            )
         except Exception:
             flagged = []
     if ctx.adapt_presets and flagged:
@@ -1549,15 +1535,9 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
     ranking = ctx.meta_log.rankings()
     e_thr = ctx.settings.entropy_plateau_threshold or ctx.tracker.diminishing()
     e_consec = ctx.settings.entropy_plateau_consecutive or 3
-    entropy_flags = ctx.tracker.entropy_plateau(e_thr, e_consec)
-    try:
-        flags = ctx.meta_log.diminishing(entropy_flags=entropy_flags)
-    except TypeError:  # pragma: no cover - compatibility
-        flags = ctx.meta_log.diminishing()
-        for m in entropy_flags:
-            if m not in ctx.meta_log.flagged_sections:
-                ctx.meta_log.flagged_sections.add(m)
-                flags.append(m)
+    flags = ctx.meta_log.diminishing(
+        consecutive=e_consec, entropy_threshold=e_thr
+    )
     if ranking:
         logger.info("sandbox roi ranking", extra=log_record(ranking=ranking))
     if flags:

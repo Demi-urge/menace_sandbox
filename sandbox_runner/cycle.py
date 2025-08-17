@@ -1124,15 +1124,9 @@ def _sandbox_cycle_runner(
         thr = tracker.diminishing()
         e_thr = ctx.settings.entropy_plateau_threshold or thr
         e_consec = ctx.settings.entropy_plateau_consecutive or 3
-        entropy_flags = tracker.entropy_plateau(e_thr, e_consec)
-        try:
-            flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
-        except TypeError:  # pragma: no cover - compatibility
-            flagged = ctx.meta_log.diminishing(thr)
-            for m in entropy_flags:
-                if m not in ctx.meta_log.flagged_sections:
-                    ctx.meta_log.flagged_sections.add(m)
-                    flagged.append(m)
+        flagged = ctx.meta_log.diminishing(
+            thr, consecutive=e_consec, entropy_threshold=e_thr
+        )
         if ctx.gpt_client:
             brainstorm_summary = "; ".join(ctx.brainstorm_history[-3:])
             early_exit = False
@@ -1774,15 +1768,9 @@ def _sandbox_cycle_runner(
             thr = tracker.diminishing()
             e_thr = ctx.settings.entropy_plateau_threshold or thr
             e_consec = ctx.settings.entropy_plateau_consecutive or 3
-            entropy_flags = tracker.entropy_plateau(e_thr, e_consec)
-            try:
-                flagged = ctx.meta_log.diminishing(thr, entropy_flags=entropy_flags)
-            except TypeError:  # pragma: no cover - compatibility
-                flagged = ctx.meta_log.diminishing(thr)
-                for m in entropy_flags:
-                    if m not in ctx.meta_log.flagged_sections:
-                        ctx.meta_log.flagged_sections.add(m)
-                        flagged.append(m)
+            flagged = ctx.meta_log.diminishing(
+                thr, consecutive=e_consec, entropy_threshold=e_thr
+            )
         except Exception:
             flagged = []
     if ctx.adapt_presets and flagged:
