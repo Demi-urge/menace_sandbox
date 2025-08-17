@@ -12,6 +12,9 @@ import menace_sandbox.module_retirement_service as module_retirement_service
 import menace_sandbox.relevancy_radar as relevancy_radar
 import menace_sandbox.relevancy_radar_service as relevancy_radar_service
 
+# Avoid writing metrics to disk during tests
+relevancy_radar.RelevancyRadar._persist_metrics = lambda self: None
+
 
 def test_service_scan_updates_flags(monkeypatch, tmp_path):
     import menace_sandbox.metrics_exporter as metrics_exporter
@@ -327,3 +330,60 @@ def test_process_flags_receives_all_types(monkeypatch, tmp_path):
     service._scan_once()
 
     assert captured == {"a": "retire", "b": "compress", "c": "replace"}
+
+
+def test_output_impact_prevents_retirement(monkeypatch, tmp_path):
+    import menace_sandbox.metrics_exporter as metrics_exporter
+    import menace_sandbox.module_graph_analyzer as module_graph_analyzer
+    import menace_sandbox.relevancy_metrics_db as relevancy_metrics_db
+
+    class DummyGraph:
+        nodes = ["hero", "loner"]
+
+    monkeypatch.setattr(module_graph_analyzer, "build_import_graph", lambda root: DummyGraph())
+    monkeypatch.setattr(relevancy_radar, "load_usage_stats", lambda: {})
+
+    class DummyDB:
+        def __init__(self, path):
+            pass
+
+        def get_roi_deltas(self, modules):
+            return {}
+
+    monkeypatch.setattr(relevancy_metrics_db, "RelevancyMetricsDB", DummyDB)
+    monkeypatch.setattr(metrics_exporter, "update_relevancy_metrics", lambda flags: None)
+
+    def fake_load_metrics(self):
+        return {
+            "hero": {
+                "imports": 0,
+                "executions": 0,
+                "impact": 0.0,
+                "output_impact": 5.0,
+            },
+            "loner": {
+                "imports": 0,
+                "executions": 0,
+                "impact": 0.0,
+                "output_impact": 0.0,
+            },
+        }
+
+    monkeypatch.setattr(relevancy_radar.RelevancyRadar, "_load_metrics", fake_load_metrics)
+    monkeypatch.setattr(relevancy_radar.RelevancyRadar, "_load_call_graph", lambda self: {})
+    monkeypatch.setattr(relevancy_radar.RelevancyRadar, "_persist_metrics", lambda self: None)
+
+    original_eval = relevancy_radar.RelevancyRadar.evaluate_final_contribution
+
+    def wrapper(self, compress, replace, *, graph, core_modules=None):
+        return original_eval(self, compress, replace, core_modules=core_modules)
+
+    monkeypatch.setattr(
+        relevancy_radar.RelevancyRadar, "evaluate_final_contribution", wrapper
+    )
+
+    service = relevancy_radar_service.RelevancyRadarService(tmp_path)
+    service._scan_once()
+
+    assert service.flags() == {"loner": "retire"}
+    assert "hero" not in service.flags()
