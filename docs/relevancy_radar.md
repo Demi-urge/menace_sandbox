@@ -1,7 +1,10 @@
 # Relevancy Radar
 
 The relevancy radar suite keeps the repository lean by tracking how modules are
-used and recommending maintenance actions.
+used and recommending maintenance actions. It combines three components:
+`RelevancyRadar` gathers usage statistics, `RelevancyRadarService` evaluates
+those findings on a schedule and `ModuleRetirementService` performs any
+resulting cleanup.
 
 ## Components and interaction
 
