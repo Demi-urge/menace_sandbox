@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+import asyncio
 
 from .retriever import Retriever, FallbackResult
 from config import ContextBuilderConfig
@@ -191,6 +192,12 @@ class ContextBuilder:
         """
 
         return self.build_context(query, **kwargs)
+
+    # ------------------------------------------------------------------
+    async def build_async(self, query: str, **kwargs: Any) -> str:
+        """Asynchronous wrapper for :meth:`build_context`."""
+
+        return await asyncio.to_thread(self.build_context, query, **kwargs)
 
 
 __all__ = ["ContextBuilder"]

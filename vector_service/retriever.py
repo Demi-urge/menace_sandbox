@@ -10,6 +10,7 @@ heuristic fallbacks used across the code base.
 
 from dataclasses import dataclass, field
 import time
+import asyncio
 from typing import Any, Dict, Iterable, List, Sequence
 
 from .decorators import log_and_measure
@@ -176,6 +177,31 @@ class Retriever:
         fb_hits = self._fallback("no results" if not hits else "low confidence")
         return FallbackResult(
             "no results" if not hits else "low confidence", fb_hits, confidence
+        )
+
+    # ------------------------------------------------------------------
+    @log_and_measure
+    async def search_async(
+        self,
+        query: str,
+        *,
+        top_k: int | None = None,
+        session_id: str = "",
+        similarity_threshold: float | None = None,
+    ) -> List[Dict[str, Any]] | FallbackResult:
+        """Asynchronous wrapper for :meth:`search`.
+
+        Executes the synchronous :meth:`search` implementation in a separate
+        thread so it can be awaited without blocking the event loop.
+        """
+
+        return await asyncio.to_thread(
+            self.search.__wrapped__,
+            self,
+            query,
+            top_k=top_k,
+            session_id=session_id,
+            similarity_threshold=similarity_threshold,
         )
 
     # ------------------------------------------------------------------
