@@ -70,3 +70,19 @@ def test_imported_module_never_invoked_is_retired(tmp_path, monkeypatch):
     )
 
     assert flags == {"unused_mod": "retire"}
+
+
+def test_output_impact_influences_scoring(tmp_path, monkeypatch):
+    rr, radar = _create_radar(tmp_path, monkeypatch)
+
+    radar.record_output_impact("hero_mod", 10.0)
+    radar.record_output_impact("retire_mod", 0.0)
+
+    radar._call_graph = {}
+
+    flags = radar.evaluate_final_contribution(
+        compress_threshold=2.0, replace_threshold=5.0
+    )
+
+    assert flags == {"retire_mod": "retire"}
+    assert "hero_mod" not in flags
