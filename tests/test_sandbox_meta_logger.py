@@ -49,9 +49,10 @@ def test_meta_logger_entropy_ceiling(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
 
     log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
-    log.log_cycle(0, 0.0, ["x.py"], "first", entropy_delta=0.1)
-    log.log_cycle(1, 0.04, ["x.py"], "second", entropy_delta=0.2)
-    log.log_cycle(2, 0.08, ["x.py"], "third", entropy_delta=0.2)
+    log.log_cycle(0, 0.0, ["x.py"], "first")
+    log.log_cycle(1, 0.1, ["x.py"], "second")
+    log.log_cycle(2, 0.15, ["x.py"], "third")
+    log.log_cycle(3, 0.2, ["x.py"], "fourth")
 
     assert log.ceiling(0.3, consecutive=2) == ["x.py"]
     assert "x.py" in log.flagged_sections
@@ -69,9 +70,10 @@ def test_meta_logger_entropy_ceiling_no_flag_high_ratio(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
 
     log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
-    log.log_cycle(0, 0.0, ["x.py"], "first", entropy_delta=0.2)
-    log.log_cycle(1, 0.6, ["x.py"], "second", entropy_delta=0.2)
-    log.log_cycle(2, 1.2, ["x.py"], "third", entropy_delta=0.1)
+    log.log_cycle(0, 0.0, ["x.py"], "first")
+    log.log_cycle(1, 1.0, ["x.py"], "second")
+    log.log_cycle(2, 2.0, ["x.py"], "third")
+    log.log_cycle(3, 3.0, ["x.py"], "fourth")
 
     assert log.ceiling(1.0, consecutive=2) == []
     assert "x.py" not in log.flagged_sections
@@ -86,9 +88,30 @@ def test_meta_logger_entropy_ceiling_entropy_spike(monkeypatch, tmp_path):
     _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
 
     log = sandbox_runner._SandboxMetaLogger(tmp_path / "log.txt")
-    log.log_cycle(0, 0.0, ["x.py"], "first", entropy_delta=0.05)
-    log.log_cycle(1, 0.03, ["x.py"], "second", entropy_delta=0.2)
-    log.log_cycle(2, 0.04, ["x.py"], "third", entropy_delta=0.3)
+    log.log_cycle(0, 0.0, ["x.py"], "first")
+    log.log_cycle(1, 0.03, ["x.py"], "second")
+    log.log_cycle(2, 0.06, ["x.py"], "third")
+    log.log_cycle(3, 0.09, ["x.py"], "fourth")
 
     assert log.ceiling(0.2, consecutive=2) == ["x.py"]
     assert "x.py" in log.flagged_sections
+
+
+def test_meta_logger_entropy_persistence(monkeypatch, tmp_path):
+    _setup_mm_stubs(monkeypatch)
+    from tests.test_menace_master import _stub_module, DummyBot
+    _stub_module(monkeypatch, "menace.self_coding_engine", SelfCodingEngine=DummyBot)
+    _stub_module(monkeypatch, "menace.code_database", CodeDB=DummyBot, PatchHistoryDB=DummyBot)
+    _stub_module(monkeypatch, "menace.audit_trail", AuditTrail=DummyBot)
+    _stub_module(monkeypatch, "menace.error_bot", ErrorDB=lambda p: DummyBot(), ErrorBot=DummyBot)
+
+    path = tmp_path / "log.txt"
+    log = sandbox_runner._SandboxMetaLogger(path)
+    log.log_cycle(0, 0.0, ["m.py"], "first")
+    log.log_cycle(1, 0.1, ["m.py"], "second")
+    ent_before = log.module_entropy_deltas["m.py"][-1]
+
+    new_log = sandbox_runner._SandboxMetaLogger(path)
+    assert new_log.module_entropy_deltas["m.py"][-1] == pytest.approx(ent_before)
+    new_log.log_cycle(2, 0.15, ["m.py"], "third")
+    assert len(new_log.module_entropy_deltas["m.py"]) == 3

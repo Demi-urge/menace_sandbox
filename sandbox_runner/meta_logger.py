@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 import json
+import math
 
 from logging_utils import get_logger, log_record
 from audit_trail import AuditTrail
@@ -40,9 +41,11 @@ class _SandboxMetaLogger:
     ) -> None:
         self.path = path
         self.flags_path = path.with_suffix(path.suffix + ".flags")
+        self.history_path = path.with_suffix(path.suffix + ".hist")
         self.audit = AuditTrail(str(path))
         self.records: list[_CycleMeta] = []
         self.module_deltas: dict[str, list[float]] = {}
+        self.module_entropies: dict[str, list[float]] = {}
         self.module_entropy_deltas: dict[str, list[float]] = {}
         self.flagged_sections: set[str] = set()
         self.last_patch_id = 0
@@ -55,6 +58,24 @@ class _SandboxMetaLogger:
                     self.flagged_sections.update(str(x) for x in data)
             except Exception:  # pragma: no cover - best effort
                 logger.exception("failed to load sandbox flags")
+        if self.history_path.exists():
+            try:
+                data = json.loads(self.history_path.read_text())
+                self.module_deltas.update(
+                    {str(k): list(map(float, v)) for k, v in data.get("module_deltas", {}).items()}
+                )
+                self.module_entropies.update(
+                    {str(k): list(map(float, v)) for k, v in data.get("module_entropies", {}).items()}
+                )
+                for m, hist in self.module_entropies.items():
+                    if hist:
+                        deltas = [0.0]
+                        deltas.extend(
+                            hist[i] - hist[i - 1] for i in range(1, len(hist))
+                        )
+                        self.module_entropy_deltas[m] = deltas
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to load sandbox history")
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
@@ -65,14 +86,12 @@ class _SandboxMetaLogger:
         reason: str,
         warnings: dict | None = None,
         *,
-        entropy_delta: float = 0.0,
         exec_time: float = 0.0,
     ) -> None:
         prev = self.records[-1].roi if self.records else 0.0
         delta = roi - prev
         self.records.append(_CycleMeta(cycle, roi, delta, modules, reason, warnings))
         per_module_delta = delta / len(modules) if modules else 0.0
-        per_module_entropy = entropy_delta / len(modules) if modules else 0.0
         for m in modules:
             if self.module_index:
                 try:
@@ -84,7 +103,7 @@ class _SandboxMetaLogger:
             else:
                 gid = m
             self.module_deltas.setdefault(gid, []).append(per_module_delta)
-            self.module_entropy_deltas.setdefault(gid, []).append(per_module_entropy)
+            self.entropy_delta(gid)
             if self.metrics_db:
                 try:
                     self.metrics_db.record(
@@ -96,6 +115,7 @@ class _SandboxMetaLogger:
                 except Exception:
                     logger.exception("relevancy metrics record failed")
             _async_track_usage(gid, per_module_delta)
+        self._persist_history()
         try:
             record = {
                 "cycle": cycle,
@@ -117,6 +137,36 @@ class _SandboxMetaLogger:
         totals = {m: sum(v) for m, v in self.module_deltas.items()}
         logger.debug("rankings computed: %s", totals)
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+
+    def entropy_delta(self, module: str, window: int = 5) -> float:
+        vals = self.module_deltas.get(module)
+        if not vals:
+            return 0.0
+        win = vals[-window:]
+        total = sum(abs(v) for v in win)
+        if total <= 0:
+            entropy = 0.0
+        else:
+            entropy = -sum(
+                (abs(v) / total) * math.log(abs(v) / total, 2)
+                for v in win if v != 0
+            )
+        hist = self.module_entropies.setdefault(module, [])
+        prev = hist[-1] if hist else entropy
+        hist.append(entropy)
+        delta = entropy - prev
+        self.module_entropy_deltas.setdefault(module, []).append(delta)
+        return delta
+
+    def _persist_history(self) -> None:
+        try:
+            data = {
+                "module_deltas": self.module_deltas,
+                "module_entropies": self.module_entropies,
+            }
+            self.history_path.write_text(json.dumps(data))
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to persist sandbox history")
 
     def ceiling(self, ratio_threshold: float, consecutive: int = 3) -> list[str]:
         """Return modules where ROI gain per entropy delta diminishes."""
