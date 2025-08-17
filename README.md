@@ -1349,7 +1349,9 @@ time.
 Automated module maintenance is handled by the relevancy radar suite. See
 [docs/relevancy_radar.md](docs/relevancy_radar.md) to learn how the
 `RelevancyRadar`, `RelevancyRadarService` and `ModuleRetirementService`
-collaborate on retirement, compression and replacement actions.
+collaborate on retirement, compression and replacement actions. The
+[Recording Output Impact](docs/relevancy_radar.md#recording-output-impact)
+section covers attributing ROI deltas and final output contributions.
 
 ### Relevancy radar overrides
 The relevancy radar tracks how often each module is exercised during runs.
