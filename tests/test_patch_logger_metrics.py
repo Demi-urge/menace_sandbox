@@ -1,6 +1,5 @@
 import pytest
-from vector_service import PatchLogger
-from vector_service import EmbeddingBackfill, EmbeddableDBMixin
+from vector_service import EmbeddingBackfill, EmbeddableDBMixin, PatchLogger
 import vector_service.decorators as dec
 
 
@@ -38,7 +37,17 @@ def patch_metrics(monkeypatch):
     monkeypatch.setattr(dec, "_CALL_COUNT", call)
     monkeypatch.setattr(dec, "_LATENCY_GAUGE", lat)
     monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", size)
-    return call, lat, size
+    import vector_service.patch_logger as pl_mod
+    import vector_service.embedding_backfill as eb_mod
+    outcome = DummyGauge()
+    duration = DummyGauge()
+    run_outcome = DummyGauge()
+    run_duration = DummyGauge()
+    monkeypatch.setattr(pl_mod, "_TRACK_OUTCOME", outcome)
+    monkeypatch.setattr(pl_mod, "_TRACK_DURATION", duration)
+    monkeypatch.setattr(eb_mod, "_RUN_OUTCOME", run_outcome)
+    monkeypatch.setattr(eb_mod, "_RUN_DURATION", run_duration)
+    return call, lat, size, outcome, duration, run_outcome, run_duration
 
 
 # ---------------------------------------------------------------------------
@@ -47,7 +56,7 @@ def patch_metrics(monkeypatch):
 
 
 def test_track_contributors_success_emits_metrics(monkeypatch):
-    call, lat, size = patch_metrics(monkeypatch)
+    call, lat, size, outcome, duration, _, _ = patch_metrics(monkeypatch)
     db = DummyMetricsDB()
     pl = PatchLogger(metrics_db=db)
     pl.track_contributors(["a:b", "c"], True, patch_id="1", session_id="s")
@@ -55,23 +64,29 @@ def test_track_contributors_success_emits_metrics(monkeypatch):
     assert ("inc", "PatchLogger.track_contributors", 1.0) in call.calls
     assert any(c[0] == "set" and c[1] == "PatchLogger.track_contributors" for c in lat.calls)
     assert any(c[0] == "set" and c[1] == "PatchLogger.track_contributors" for c in size.calls)
+    assert ("inc", "success", 1.0) in outcome.calls
+    assert any(c[0] == "set" for c in duration.calls)
 
 
 def test_track_contributors_db_failure_still_counts(monkeypatch):
-    call, lat, size = patch_metrics(monkeypatch)
+    call, lat, size, outcome, duration, _, _ = patch_metrics(monkeypatch)
     db = DummyMetricsDB(fail=True)
     pl = PatchLogger(metrics_db=db)
-    pl.track_contributors(["x"], False, patch_id="2")
+    pl.track_contributors(["x"], False, patch_id="2", session_id="s")
     assert db.called
     assert ("inc", "PatchLogger.track_contributors", 1.0) in call.calls
+    assert ("inc", "failure", 1.0) in outcome.calls
+    assert any(c[0] == "set" for c in duration.calls)
 
 
 def test_track_contributors_malformed_vector_ids_raise_and_count(monkeypatch):
-    call, lat, size = patch_metrics(monkeypatch)
+    call, lat, size, outcome, duration, _, _ = patch_metrics(monkeypatch)
     pl = PatchLogger()
     with pytest.raises(TypeError):
-        pl.track_contributors(["ok", None], True)
+        pl.track_contributors(["ok", None], True, session_id="s")
     assert ("inc", "PatchLogger.track_contributors", 1.0) in call.calls
+    assert ("inc", "error", 1.0) in outcome.calls
+    assert any(c[0] == "set" for c in duration.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +115,7 @@ class FailDB(EmbeddableDBMixin):
 
 
 def test_embedding_backfill_run_retries_and_skips(monkeypatch):
-    call, lat, size = patch_metrics(monkeypatch)
+    call, lat, size, _, _, run_outcome, run_duration = patch_metrics(monkeypatch)
     _processed.clear()
     monkeypatch.setattr(
         EmbeddingBackfill, "_load_known_dbs", lambda self: [RetryDB, FailDB]
@@ -110,3 +125,5 @@ def test_embedding_backfill_run_retries_and_skips(monkeypatch):
     assert _processed == [RetryDB]
     assert ("inc", "EmbeddingBackfill.run", 1.0) in call.calls
     assert ("inc", "EmbeddingBackfill._process_db", 1.0) in call.calls
+    assert ("inc", "success", 1.0) in run_outcome.calls
+    assert any(c[0] == "set" for c in run_duration.calls)

@@ -66,7 +66,7 @@ def test_retriever_search_async(monkeypatch):
             return [DummyResult()], 0.9, None
 
     r = Retriever(retriever=DummyUR())
-    result = asyncio.run(r.search_async("test"))
+    result = asyncio.run(r.search_async("test", session_id="s"))
     assert result and result[0]["record_id"] == 1
     assert g1.inc_calls == 1
     assert g3.set_calls == [1]

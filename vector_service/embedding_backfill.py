@@ -3,9 +3,25 @@ from __future__ import annotations
 """Utilities for backfilling vector embeddings across databases."""
 
 import logging
+import time
 from typing import List
 
 from .decorators import log_and_measure
+
+try:  # pragma: no cover - optional dependency for metrics
+    from . import metrics_exporter as _me  # type: ignore
+except Exception:  # pragma: no cover - fallback when running standalone
+    import metrics_exporter as _me  # type: ignore
+
+_RUN_OUTCOME = _me.Gauge(
+    "embedding_backfill_runs_total",
+    "Outcomes of EmbeddingBackfill.run calls",
+    labelnames=["status"],
+)
+_RUN_DURATION = _me.Gauge(
+    "embedding_backfill_run_duration_seconds",
+    "Duration of EmbeddingBackfill.run calls",
+)
 
 try:  # pragma: no cover - optional dependency
     from embeddable_db_mixin import EmbeddableDBMixin  # type: ignore
@@ -70,31 +86,40 @@ class EmbeddingBackfill:
         backend: str | None = None,
     ) -> None:
         """Backfill embeddings for all ``EmbeddableDBMixin`` subclasses."""
-
-        bs = batch_size if batch_size is not None else self.batch_size
-        be = backend or self.backend
-        subclasses = self._load_known_dbs()
-        logger = logging.getLogger(__name__)
-        total = len(subclasses)
-        for idx, cls in enumerate(subclasses, 1):
-            try:
-                db = cls(vector_backend=be)  # type: ignore[call-arg]
-            except Exception:  # pragma: no cover - fallback
+        start = time.time()
+        status = "success"
+        try:
+            bs = batch_size if batch_size is not None else self.batch_size
+            be = backend or self.backend
+            subclasses = self._load_known_dbs()
+            logger = logging.getLogger(__name__)
+            total = len(subclasses)
+            for idx, cls in enumerate(subclasses, 1):
                 try:
-                    db = cls()  # type: ignore[call-arg]
-                except Exception:
+                    db = cls(vector_backend=be)  # type: ignore[call-arg]
+                except Exception:  # pragma: no cover - fallback
+                    try:
+                        db = cls()  # type: ignore[call-arg]
+                    except Exception:
+                        continue
+                logger.info(
+                    "Backfilling %s (%d/%d)",
+                    cls.__name__,
+                    idx,
+                    total,
+                    extra={"session_id": session_id},
+                )
+                try:
+                    self._process_db(db, batch_size=bs, session_id=session_id)
+                except Exception:  # pragma: no cover - best effort
                     continue
-            logger.info(
-                "Backfilling %s (%d/%d)",
-                cls.__name__,
-                idx,
-                total,
-                extra={"session_id": session_id},
-            )
-            try:
-                self._process_db(db, batch_size=bs, session_id=session_id)
-            except Exception:  # pragma: no cover - best effort
-                continue
+        except Exception:
+            status = "failure"
+            _RUN_OUTCOME.labels(status).inc()
+            _RUN_DURATION.set(time.time() - start)
+            raise
+        _RUN_OUTCOME.labels(status).inc()
+        _RUN_DURATION.set(time.time() - start)
 
 
 __all__ = ["EmbeddingBackfill", "EmbeddableDBMixin"]

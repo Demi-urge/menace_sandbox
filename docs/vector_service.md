@@ -5,6 +5,10 @@ retrieval and logging components. Each wrapper adds structured logging and
 Prometheus-style metrics so callers get consistent telemetry without dealing
 with individual implementations.
 
+All entry points accept a `session_id` keyword argument which should always be
+supplied.  The identifier is propagated to logs and metrics, allowing callers to
+correlate related operations across services.
+
 ## Retriever
 
 ```python
@@ -44,6 +48,12 @@ Vector identifiers may optionally specify the origin database using the
 `"origin:id"` format. Outcomes are forwarded to `data_bot.MetricsDB` when
 available or to `vector_metrics_db.VectorMetricsDB` as a fallback.
 
+Metrics emitted by `PatchLogger.track_contributors`:
+
+- `patch_logger_track_contributors_total{status="success|failure|error"}` –
+  counter of contributor tracking attempts.
+- `patch_logger_track_contributors_duration_seconds` – duration of each call.
+
 ## EmbeddingBackfill
 
 ```python
@@ -54,4 +64,10 @@ EmbeddingBackfill().run(session_id="bulk")
 
 `EmbeddingBackfill` discovers every `EmbeddableDBMixin` subclass and invokes
 `backfill_embeddings` on each, logging progress for visibility.
+
+Metrics emitted by `EmbeddingBackfill.run`:
+
+- `embedding_backfill_runs_total{status="success|failure"}` – counter of
+  backfill runs.
+- `embedding_backfill_run_duration_seconds` – duration of each run in seconds.
 

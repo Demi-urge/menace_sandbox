@@ -53,7 +53,7 @@ def test_logging_hook_emits_session_id(caplog):
 def test_retriever_fallback_low_similarity():
     ur = DummyUR(score=0.05)
     retriever = Retriever(retriever=ur)
-    hits = retriever.search("beta")
+    hits = retriever.search("beta", session_id="sess-2")
     assert isinstance(hits, FallbackResult)
     assert hits.reason == "low confidence"
     assert list(hits)[0]["origin_db"] == "heuristic"
