@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
+import json
 
 from logging_utils import get_logger, log_record
 from audit_trail import AuditTrail
@@ -38,6 +39,7 @@ class _SandboxMetaLogger:
         metrics_db: RelevancyMetricsDB | None = None,
     ) -> None:
         self.path = path
+        self.flags_path = path.with_suffix(path.suffix + ".flags")
         self.audit = AuditTrail(str(path))
         self.records: list[_CycleMeta] = []
         self.module_deltas: dict[str, list[float]] = {}
@@ -46,6 +48,13 @@ class _SandboxMetaLogger:
         self.last_patch_id = 0
         self.module_index = module_index
         self.metrics_db = metrics_db
+        if self.flags_path.exists():
+            try:
+                data = json.loads(self.flags_path.read_text())
+                if isinstance(data, list):
+                    self.flagged_sections.update(str(x) for x in data)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed to load sandbox flags")
         logger.debug("SandboxMetaLogger initialised at %s", path)
 
     def log_cycle(
@@ -110,7 +119,7 @@ class _SandboxMetaLogger:
         return sorted(totals.items(), key=lambda x: x[1], reverse=True)
 
     def ceiling(self, ratio_threshold: float, consecutive: int = 3) -> list[str]:
-        """Return modules where ROI gain per entropy delta falls below threshold."""
+        """Return modules where ROI gain per entropy delta diminishes."""
 
         flags: list[str] = []
         thr = float(ratio_threshold)
@@ -118,22 +127,23 @@ class _SandboxMetaLogger:
             if m in self.flagged_sections:
                 continue
             ent_vals = self.module_entropy_deltas.get(m)
-            if not ent_vals or len(roi_vals) < consecutive or len(ent_vals) < consecutive:
+            if not ent_vals:
                 continue
-            roi_window = roi_vals[-consecutive:]
-            ent_window = ent_vals[-consecutive:]
             ratios = [
                 abs(r) / abs(e) if e != 0 else float("inf")
-                for r, e in zip(roi_window, ent_window)
+                for r, e in zip(roi_vals, ent_vals)
                 if e != 0
             ]
             if len(ratios) < consecutive:
                 continue
-            mean_ratio = sum(ratios) / len(ratios)
-            if mean_ratio < thr:
+            avgs = [
+                sum(ratios[i - consecutive + 1 : i + 1]) / consecutive
+                for i in range(consecutive - 1, len(ratios))
+            ]
+            if avgs and all(avg < thr for avg in avgs[-consecutive:]):
                 flags.append(m)
-                self.flagged_sections.add(m)
         if flags:
+            self.flag_modules(flags, reason="entropy_ceiling")
             logger.debug("modules hitting entropy ceiling: %s", flags)
         return flags
 
@@ -160,31 +170,34 @@ class _SandboxMetaLogger:
                 std = 0.0
             if abs(mean) <= thr and std < eps:
                 flags.append(m)
-                self.flagged_sections.add(m)
         if entropy_flags:
             for m in entropy_flags:
                 if m not in self.flagged_sections:
                     flags.append(m)
-                    self.flagged_sections.add(m)
         if flags:
+            self.flag_modules(flags, reason="diminishing_returns")
             logger.debug("modules with diminishing returns: %s", flags)
         return flags
 
-    def flag_modules(self, modules: Sequence[str]) -> None:
+    def _persist_flags(self) -> None:
+        try:
+            self.flags_path.write_text(json.dumps(sorted(self.flagged_sections)))
+        except Exception:  # pragma: no cover - best effort
+            logger.exception("failed to persist sandbox flags")
+
+    def flag_modules(self, modules: Sequence[str], *, reason: str = "entropy_ceiling") -> None:
         """Mark ``modules`` as completed and add them to ``flagged_sections``."""
-        new_flags: list[str] = []
-        for m in modules:
-            if m not in self.flagged_sections:
-                self.flagged_sections.add(m)
-                new_flags.append(m)
+        new_flags = [m for m in modules if m not in self.flagged_sections]
         if not new_flags:
             return
+        self.flagged_sections.update(new_flags)
+        self._persist_flags()
         try:
             self.audit.record(
                 {
                     "cycle": len(self.records),
                     "modules": new_flags,
-                    "reason": "entropy_ceiling",
+                    "reason": reason,
                 }
             )
         except Exception:
