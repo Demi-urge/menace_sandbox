@@ -103,6 +103,8 @@
 - Running `menace_master.py` as root installs the service automatically
 - Background updates handled by `UnifiedUpdateService` even without the supervisor
 - Automatic first-run sandbox improving the codebase before live execution
+- Entropy delta detection marks modules complete when ROI gains per entropy unit
+  fall below `entropy_threshold` for a configurable number of consecutive cycles
 - Recursive inclusion flow discovers orphan and isolated modules, tests them
   and integrates passing ones into existing workflows. The helper
   `scripts/discover_isolated_modules.py` surfaces standalone files while
@@ -434,6 +436,18 @@ python -m menace.self_improvement_engine synergy-dashboard --wsgi flask
 ```
 
 Replace `flask` with `gunicorn` or `uvicorn` to use a different server.
+
+### Entropy delta detection
+
+The sandbox monitors the ROI gain relative to entropy changes for each module.
+When the ratio stays below `entropy_threshold` for a number of consecutive
+cycles the section is marked complete and skipped in later runs. Tune the
+behaviour with the `--entropy-threshold`/`ENTROPY_THRESHOLD` flag and the
+`--consecutive`/`ENTROPY_PLATEAU_CONSECUTIVE` window size:
+
+```bash
+python -m sandbox_runner.cli --entropy-threshold 0.02 --consecutive 5
+```
 
 ### Required dependencies
 

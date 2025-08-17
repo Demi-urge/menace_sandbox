@@ -897,14 +897,23 @@ Configuration is controlled via:
 
 - ``--entropy-threshold`` or ``ENTROPY_THRESHOLD`` – minimum ROI gain per
   entropy delta before further increases are ignored.
-- ``ENTROPY_PLATEAU_THRESHOLD`` and ``ENTROPY_PLATEAU_CONSECUTIVE`` – entropy
-  ratios below this threshold for the given number of samples trigger
-  convergence.
+- ``--consecutive``/``--entropy-plateau-consecutive`` or
+  ``ENTROPY_PLATEAU_CONSECUTIVE`` – entropy samples that must remain below the
+  plateau threshold before a module converges.
+- ``ENTROPY_PLATEAU_THRESHOLD`` – entropy ratios below this threshold for the
+  configured number of consecutive samples trigger convergence.
 
 During runs the meta logger emits debug lines such as
 ``modules hitting entropy ceiling: ['m.py']``. Seeing a module in this list
 means its recent ROI-to-entropy ratios were too low and it will no longer be
-tweaked.
+tweaked. Flagged modules are persisted to ``*.flags`` files so later cycles
+skip them.
+
+Example CLI usage:
+
+```bash
+python -m sandbox_runner.cli --entropy-threshold 0.02 --consecutive 5
+```
 
 Example usage:
 
