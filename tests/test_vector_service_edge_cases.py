@@ -33,14 +33,14 @@ class DummyRetriever:
 
 
 def test_retriever_search_success():
-    r = Retriever(retriever=DummyRetriever(confidence=0.9), content_filtering=False)
+    r = Retriever(retriever=DummyRetriever(confidence=0.9))
     results = r.search("query", session_id="s")
     assert results[0]["record_id"] == "1"
 
 
 def test_retriever_low_confidence_fallback():
     dr = DummyRetriever(confidence=0.01)
-    r = Retriever(retriever=dr, similarity_threshold=0.1, content_filtering=False)
+    r = Retriever(retriever=dr, similarity_threshold=0.1)
     res = r.search("question", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "low confidence"
@@ -49,7 +49,7 @@ def test_retriever_low_confidence_fallback():
 
 
 def test_retriever_malformed_query():
-    r = Retriever(retriever=DummyRetriever(), content_filtering=False)
+    r = Retriever(retriever=DummyRetriever())
     with pytest.raises(MalformedPromptError):
         r.search("", session_id="s")
 

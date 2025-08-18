@@ -46,33 +46,33 @@ class DummyRetrieverLowConfidence:
 
 
 def test_retriever_search_success_returns_results():
-    r = Retriever(retriever=DummyRetrieverSuccess(), content_filtering=False)
+    r = Retriever(retriever=DummyRetrieverSuccess())
     results = r.search("query", session_id="s")
     assert results[0]["record_id"] == "1"
 
 
 def test_retriever_search_rate_limit_raises_error():
-    r = Retriever(retriever=DummyRetrieverRateLimit(), content_filtering=False)
+    r = Retriever(retriever=DummyRetrieverRateLimit())
     with pytest.raises(RateLimitError):
         r.search("q", session_id="s")
 
 
 def test_retriever_search_fallback_when_no_hits():
-    r = Retriever(retriever=DummyRetrieverNoHits(), content_filtering=False)
+    r = Retriever(retriever=DummyRetrieverNoHits())
     res = r.search("q", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "no results"
 
 
 def test_retriever_search_low_confidence_fallback():
-    r = Retriever(retriever=DummyRetrieverLowConfidence(), content_filtering=False)
+    r = Retriever(retriever=DummyRetrieverLowConfidence())
     res = r.search("q", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "low confidence"
 
 
 def test_retriever_search_malformed_prompt():
-    r = Retriever(retriever=DummyRetrieverSuccess(), content_filtering=False)
+    r = Retriever(retriever=DummyRetrieverSuccess())
     with pytest.raises(MalformedPromptError):
         r.search("  ", session_id="s")
 

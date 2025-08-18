@@ -20,7 +20,7 @@ class _DummyUR:
 
 
 def test_code_snippet_retrieval():
-    retriever = Retriever(retriever=_DummyUR(), content_filtering=False)
+    retriever = Retriever(retriever=_DummyUR())
     hits = retriever.search("greeting", top_k=1)
     assert hits and hits[0]["origin_db"] == "code"
     assert "print('hello')" in hits[0]["metadata"]["code"]

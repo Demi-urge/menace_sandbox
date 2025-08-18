@@ -65,7 +65,7 @@ def test_retriever_search_async(monkeypatch):
         def retrieve_with_confidence(self, query, top_k=5):
             return [DummyResult()], 0.9, None
 
-    r = Retriever(retriever=DummyUR(), content_filtering=False)
+    r = Retriever(retriever=DummyUR())
     result = asyncio.run(r.search_async("test", session_id="s"))
     assert result and result[0]["record_id"] == 1
     assert g1.inc_calls == 1
@@ -97,7 +97,7 @@ def test_context_builder_build_async(monkeypatch):
     monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
     monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
 
-    r = Retriever(retriever=DummyUR(), content_filtering=False)
+    r = Retriever(retriever=DummyUR())
     builder = ContextBuilder(retriever=r)
     ctx = asyncio.run(builder.build_async("query"))
     data = json.loads(ctx)

@@ -34,7 +34,7 @@ def test_search_filters_license_hit():
         DummyHit("This program is licensed under the GNU General Public License", "1"),
         DummyHit("regular text", "2"),
     ]
-    r = Retriever(retriever=DummyRetriever(hits), content_filtering=True)
+    r = Retriever(retriever=DummyRetriever(hits))
     res = r.search("q")
     assert len(res) == 1
     assert res[0]["record_id"] == "2"
@@ -42,7 +42,7 @@ def test_search_filters_license_hit():
 
 def test_search_attaches_semantic_alerts():
     hits = [DummyHit("eval('data')", "1")]
-    r = Retriever(retriever=DummyRetriever(hits), content_filtering=True)
+    r = Retriever(retriever=DummyRetriever(hits))
     res = r.search("q")
     alerts = res[0]["metadata"].get("semantic_alerts")
     assert alerts and any("eval" in alert[1] for alert in alerts)
