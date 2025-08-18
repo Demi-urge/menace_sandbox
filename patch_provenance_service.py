@@ -9,6 +9,7 @@ import types
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
 from code_database import PatchHistoryDB
+from patch_provenance import get_patch_provenance, search_patches_by_vector
 
 
 def _rec_to_dict(rec):
@@ -58,35 +59,34 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
         rec = pdb.get(patch_id)
         if rec is None:
             return jsonify({"error": "not found"}), 404
-        prov = pdb.get_provenance(patch_id)
-        return jsonify(
-            {
-                "id": patch_id,
-                "record": _rec_to_dict(rec),
-                "provenance": [
-                    {
-                        "origin": o,
-                        "vector_id": v,
-                        "influence": s,
-                        "retrieved_at": t,
-                    }
-                    for o, v, s, t in prov
-                ],
-            }
-        )
+        prov = get_patch_provenance(patch_id, patch_db=pdb)
+        return jsonify({"id": patch_id, "record": _rec_to_dict(rec), "provenance": prov})
 
     @app.get("/search")
     def search():
         term = request.args.get("q", "")
         if not term:
             return jsonify([])
-        res = pdb.find_by_vector(term)
-        if not res:
-            res = pdb.search_with_ids(term)
-        patches = [
-            {"id": pid, "filename": rec.filename, "description": rec.description}
-            for pid, rec in res
-        ]
+        res = search_patches_by_vector(term, patch_db=pdb)
+        if res:
+            patches = [
+                {
+                    "id": r["patch_id"],
+                    "filename": r["filename"],
+                    "description": r["description"],
+                    "contribution": r["contribution"],
+                }
+                for r in res
+            ]
+        else:
+            patches = [
+                {
+                    "id": pid,
+                    "filename": rec.filename,
+                    "description": rec.description,
+                }
+                for pid, rec in pdb.search_with_ids(term)
+            ]
         return jsonify(patches)
 
     return app

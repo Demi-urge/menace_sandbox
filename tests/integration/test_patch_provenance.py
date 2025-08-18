@@ -18,10 +18,12 @@ def _setup_db(tmp_path):
         PatchRecord(filename="a.py", description="first patch", roi_before=0, roi_after=1),
         [("origin:vec1", 0.9)],
     )
+    db.record_ancestry(p1, [("origin", "vec1", 0.9)])
     p2 = db.add(
         PatchRecord(filename="b.py", description="second patch", roi_before=1, roi_after=2),
         [("vec2", 0.5)],
     )
+    db.record_ancestry(p2, [("", "vec2", 0.5)])
     return db, p1, p2
 
 
