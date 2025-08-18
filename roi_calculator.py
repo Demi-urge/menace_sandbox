@@ -103,10 +103,12 @@ class ROICalculator:
                 raise ValueError(
                     f"profile '{name}' has non-numeric weight(s) for: {', '.join(sorted(non_numeric))}"
                 )
-            total = float(sum(float(weights[m]) for m in EXPECTED_METRICS))
+            total = float(
+                sum(abs(float(weights[m])) for m in EXPECTED_METRICS)
+            )
             if not (0.99 <= total <= 1.01):
                 raise ValueError(
-                    f"profile '{name}' weight sum {total} outside acceptable range"
+                    f"profile '{name}' weight absolute sum {total} outside acceptable range"
                 )
 
     def log_debug(self, metrics: dict[str, Any], profile_type: str) -> None:

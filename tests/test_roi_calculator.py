@@ -8,10 +8,10 @@ from menace_sandbox.roi_calculator import ROICalculator
 
 def _write_profiles(path, weights=None):
     base_weights = {
-        "profitability": 0.3,
-        "efficiency": 0.25,
-        "reliability": 0.2,
-        "resilience": 0.15,
+        "profitability": 0.25,
+        "efficiency": 0.2,
+        "reliability": 0.15,
+        "resilience": 0.1,
         "maintainability": 0.1,
         "security": 0.1,
         "latency": -0.05,
@@ -46,7 +46,7 @@ def test_weighted_roi(tmp_path):
         "energy": 1,
     }
     score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert score == pytest.approx(1.0)
+    assert score == pytest.approx(0.8)
     assert vetoed is False
     assert triggers == []
 
@@ -70,7 +70,7 @@ def test_log_debug_outputs_components_and_veto(tmp_path, caplog):
     metrics = {"profitability": 1, "security": 0.2}
     with caplog.at_level(logging.DEBUG, logger="menace_sandbox.roi_calculator"):
         calc.log_debug(metrics, "scraper_bot")
-    assert "profitability * 0.3 = 0.3" in caplog.text
+    assert "profitability * 0.25 = 0.25" in caplog.text
     assert "Final score: -inf" in caplog.text
     assert "Veto triggers" in caplog.text
 
@@ -100,14 +100,14 @@ def test_profile_missing_metric_raises(tmp_path):
 
 def test_profile_invalid_weight_sum_raises(tmp_path):
     weights = {
-        "profitability": 1,
+        "profitability": 0.5,
         "efficiency": 0,
         "reliability": 0,
         "resilience": 0,
         "maintainability": 0,
         "security": 0,
         "latency": 0,
-        "energy": 1,
+        "energy": 0.6,
     }
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
     with pytest.raises(ValueError):
@@ -128,3 +128,23 @@ def test_profile_weight_sum_too_low_raises(tmp_path):
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
     with pytest.raises(ValueError):
         ROICalculator(profiles_path=profile_path)
+
+
+def test_profile_negative_weights_abs_sum_valid(tmp_path):
+    weights = {
+        "profitability": 0.5,
+        "efficiency": 0,
+        "reliability": 0,
+        "resilience": 0,
+        "maintainability": 0,
+        "security": 0,
+        "latency": 0,
+        "energy": -0.5,
+    }
+    profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
+    calc = ROICalculator(profiles_path=profile_path)
+    metrics = {"profitability": 1, "energy": 1, "security": 0.5}
+    score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
+    assert score == 0.0
+    assert vetoed is False
+    assert triggers == []
