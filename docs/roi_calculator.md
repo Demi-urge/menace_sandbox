@@ -43,5 +43,5 @@ score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
 The tuple contains the weighted score, a boolean indicating whether any veto
 fired and a list of the triggered veto descriptions.
 
-`log_debug()` prints a human readable breakdown of each contribution and any
-veto triggers.
+`log_debug()` uses the standard :mod:`logging` module to emit a human readable
+breakdown of each contribution and any veto triggers at ``DEBUG`` level.
