@@ -1209,7 +1209,7 @@ def _sandbox_cycle_runner(
                 if not suggestion:
                     continue
                 session_id = ""
-                vectors: list[tuple[str, str]] = []
+                vectors: list[tuple[str, str, float]] = []
                 retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
@@ -1312,7 +1312,7 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
-                            ids = [f"{o}:{v}" for o, v in vectors]
+                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1326,7 +1326,7 @@ def _sandbox_cycle_runner(
                     else:
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors and patch_id:
-                            ids = [f"{o}:{v}" for o, v in vectors]
+                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1342,7 +1342,7 @@ def _sandbox_cycle_runner(
                     logger.exception("patch from gpt failed for %s", mod)
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v in vectors]
+                        ids = [f"{o}:{v}" for o, v, *_ in vectors]
                         try:
                             patch_logger.track_contributors(
                                 ids,
@@ -1357,7 +1357,7 @@ def _sandbox_cycle_runner(
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
-                    ids = [f"{o}:{v}" for o, v in vectors]
+                    ids = [f"{o}:{v}" for o, v, *_ in vectors]
                     try:
                         patch_logger.track_contributors(
                             ids,
@@ -1560,7 +1560,7 @@ def _sandbox_cycle_runner(
                 module_name = mod.split(":", 1)[0]
                 suggestion = _choose_suggestion(ctx, module_name)
                 session_id = ""
-                vectors: list[tuple[str, str]] = []
+                vectors: list[tuple[str, str, float]] = []
                 retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
@@ -1646,7 +1646,7 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
-                            ids = [f"{o}:{v}" for o, v in vectors]
+                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1660,7 +1660,7 @@ def _sandbox_cycle_runner(
                     else:
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors and patch_id:
-                            ids = [f"{o}:{v}" for o, v in vectors]
+                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1676,7 +1676,7 @@ def _sandbox_cycle_runner(
                     logger.exception("offline suggestion failed for %s", mod)
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v in vectors]
+                        ids = [f"{o}:{v}" for o, v, *_ in vectors]
                         try:
                             patch_logger.track_contributors(
                                 ids,
@@ -1691,7 +1691,7 @@ def _sandbox_cycle_runner(
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
-                    ids = [f"{o}:{v}" for o, v in vectors]
+                    ids = [f"{o}:{v}" for o, v, *_ in vectors]
                     try:
                         patch_logger.track_contributors(
                             ids,
