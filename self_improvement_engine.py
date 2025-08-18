@@ -122,7 +122,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
 try:  # pragma: no cover - allow flat imports
     from .module_retirement_service import ModuleRetirementService
 except Exception:  # pragma: no cover - fallback for flat layout
-    from module_retirement_service import ModuleRetirementService  # type: ignore
+    try:
+        from module_retirement_service import ModuleRetirementService  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        ModuleRetirementService = object  # type: ignore
 try:  # pragma: no cover - allow flat imports
     from .relevancy_metrics_db import RelevancyMetricsDB
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -282,6 +285,7 @@ except Exception:  # pragma: no cover - fallback for tests
         return []
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
+from .truth_adapter import TruthAdapter
 from .evaluation_history_db import EvaluationHistoryDB
 from .self_improvement_policy import (
     SelfImprovementPolicy,
@@ -729,6 +733,8 @@ class SelfImprovementEngine:
             self.roi_tracker = None
             self._adaptive_roi_last_train = 0.0
             self.adaptive_roi_train_interval = ADAPTIVE_ROI_TRAIN_INTERVAL
+        self.truth_adapter = TruthAdapter()
+        self._truth_adapter_needs_retrain = False
         self.synergy_weight_roi = (
             synergy_weight_roi
             if synergy_weight_roi is not None
@@ -2482,6 +2488,14 @@ class SelfImprovementEngine:
                 self.logger.exception(
                     "adaptive roi scheduled retrain failed: %s", exc
                 )
+
+    def fit_truth_adapter(self, X: np.ndarray, y: np.ndarray) -> None:
+        """Retrain :class:`TruthAdapter` with new data."""
+        try:
+            self.truth_adapter.fit(X, y)
+            self._truth_adapter_needs_retrain = False
+        except Exception:
+            self.logger.exception("truth adapter fit failed")
 
     def _record_warning_summary(
         self, delta: float, warnings: dict[str, list[dict[str, Any]]]
@@ -5164,6 +5178,22 @@ class SelfImprovementEngine:
                     self.logger.exception("post-cycle profit lookup failed: %s", exc)
                     after_roi = before_roi
             roi_value = result.roi.roi if result.roi else 0.0
+            roi_realish = roi_value
+            try:
+                features = np.array([[float(roi_value)]], dtype=np.float64)
+                drift = self.truth_adapter.check_drift(features)
+                preds, low_conf = self.truth_adapter.predict(features)
+                roi_realish = float(preds[0])
+                if drift or low_conf:
+                    self.logger.warning(
+                        "truth adapter low confidence; scheduling retrain"
+                    )
+                    self._truth_adapter_needs_retrain = True
+            except Exception:
+                self.logger.exception("truth adapter predict failed")
+            self.logger.info(
+                "roi realish", extra=log_record(roi_realish=roi_realish)
+            )
             if self.roi_tracker and predicted is not None:
                 try:
                     self.roi_tracker.record_roi_prediction(
@@ -5995,6 +6025,12 @@ def cli(argv: list[str] | None = None) -> None:
     p_plot.add_argument("history", help="synergy_history.db file")
     p_plot.add_argument("output", help="output PNG file")
 
+    p_fit = sub.add_parser(
+        "fit-truth-adapter", help="retrain TruthAdapter with live and shadow data"
+    )
+    p_fit.add_argument("live", help="NPZ file with live data")
+    p_fit.add_argument("shadow", help="NPZ file with shadow data")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "synergy-dashboard":
@@ -6026,6 +6062,15 @@ def cli(argv: list[str] | None = None) -> None:
         plt.tight_layout()
         plt.savefig(args.output)
         plt.close()
+        return
+
+    if args.cmd == "fit-truth-adapter":
+        live = np.load(args.live)
+        shadow = np.load(args.shadow)
+        X = np.vstack([live["X"], shadow["X"]])
+        y = np.concatenate([live["y"], shadow["y"]])
+        engine = SelfImprovementEngine()
+        engine.fit_truth_adapter(X, y)
         return
 
     parser.error("unknown command")
