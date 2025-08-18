@@ -10,6 +10,7 @@ from typing import Dict, List, Tuple
 
 from unsafe_patterns import find_matches
 from analysis.semantic_diff_filters import find_unsafe_nodes
+from analysis.semantic_diff_filter import find_semantic_risks
 
 
 _KEYWORDS = {"reward", "self_improve", "security_ai", "dispatch", "monitor", "override"}
@@ -106,7 +107,10 @@ def save_diff_report(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]], outp
         json.dump(diff_data, f, indent=2)
 
 
-def flag_risky_changes(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]]) -> List[str]:
+def flag_risky_changes(
+    diff_data: Dict[str, Dict[str, Dict[str, List[str]]]],
+    semantic_threshold: float = 0.5,
+) -> List[str]:
     """Return a list of locations where risky patterns appear in diffs."""
     flagged: List[str] = []
     for path, info in diff_data.items():
@@ -129,6 +133,13 @@ def flag_risky_changes(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]]) ->
                             flagged.append(f"{path}:{name}: {msg}")
                         for _, msg in find_unsafe_nodes(text):
                             flagged.append(f"{path}:{name}: {msg}: {line}")
+                        if line.startswith("+"):
+                            for l, msg, score in find_semantic_risks(
+                                [text], threshold=semantic_threshold
+                            ):
+                                flagged.append(
+                                    f"{path}:{name}: {msg} ({score:.2f}): +{l}"
+                                )
     return flagged
 
 

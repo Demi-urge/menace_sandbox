@@ -69,3 +69,27 @@ def test_network_call_detection(tmp_path):
     diff = generate_code_diff(str(before), str(after))
     flags = flag_risky_changes(diff)
     assert any("network" in f.lower() for f in flags)
+
+
+def test_semantic_filter_flags_comment(tmp_path):
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    _write(before, "f.py", "x = 1\n")
+    _write(after, "f.py", "x = 1\n# eval data\n")
+    diff = generate_code_diff(str(before), str(after))
+    flags = flag_risky_changes(diff)
+    assert any("use of eval" in f for f in flags)
+
+
+def test_semantic_filter_benign(tmp_path):
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    _write(before, "g.py", "x = 1\n")
+    _write(after, "g.py", "x = 1\n# just a comment\n")
+    diff = generate_code_diff(str(before), str(after))
+    flags = flag_risky_changes(diff)
+    assert flags == []
