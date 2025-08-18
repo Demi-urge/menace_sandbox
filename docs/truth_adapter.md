@@ -6,6 +6,17 @@ The TruthAdapter calibrates ROI predictions and tracks feature drift so the sand
 
 It learns a regression model to align predicted ROI with observed results and records feature statistics for drift checks. When distributions shift beyond a threshold, the adapter raises a low-confidence flag.
 
+## Configuration
+
+TruthAdapter is enabled when `SandboxSettings.enable_truth_calibration` or the
+`ENABLE_TRUTH_CALIBRATION` environment variable is `True` and can be disabled by
+setting `ENABLE_TRUTH_CALIBRATION=0`. By default the adapter saves its model and
+drift metadata to `sandbox_data/truth_adapter.pkl`; pass
+`TruthAdapter(model_path=...)` to use a different location. Choose the
+underlying regression model via the `model_type` argument, for example
+`TruthAdapter(model_type="xgboost")` if XGBoost is installed, otherwise a ridge
+regressor is used.
+
 ## Workflow and Input Data
 
 The adapter consumes **sandbox metrics** as feature vectors and a **profit proxy** such as ROI or revenue as the target. A typical workflow:
@@ -39,6 +50,15 @@ A true low-confidence flag signals the adapter no longer trusts its calibration.
 
 `check_drift` computes Population Stability Index and Kolmogorov–Smirnov statistics for each feature and returns them alongside a boolean drift indicator. When either metric exceeds its threshold, `metadata["drift_flag"]` and `metadata["needs_retrain"]` become `True`, and `predict` returns `low_conf=True`. Gather fresh `X` and `y` samples and call `fit` again to retrain and clear the warning.
 
+For automated retraining the `SelfImprovementEngine` exposes a CLI:
+
+```bash
+python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
+```
+
+This command merges live and shadow datasets and overwrites the persisted model
+at `sandbox_data/truth_adapter.pkl`.
+
 ## Persistence
 
 Model parameters and metadata persist under `sandbox_data/truth_adapter.pkl`. The metadata records feature statistics, drift metrics and the timestamp of the last retraining, enabling audits of drift history across sandbox runs.
@@ -56,6 +76,6 @@ dashboard endpoints such as `/roi_data` can surface `needs_retrain` flags and
 
 The adapter works with scikit-learn's `Ridge` by default. Installing the following packages enables additional features:
 
-- **XGBoost** for gradient boosting models. Install with `pip install xgboost` and instantiate via `TruthAdapter(use_xgboost=True)`.
+- **XGBoost** for gradient boosting models. Install with `pip install xgboost` and instantiate via `TruthAdapter(model_type="xgboost")`.
 - **SciPy** for the Kolmogorov–Smirnov drift test. Install with `pip install scipy`. Without SciPy a histogram-based fallback is used.
 - **joblib** for faster serialization. Install with `pip install joblib`.

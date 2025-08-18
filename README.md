@@ -1426,6 +1426,32 @@ review.
 - `ComplianceAuditService` runs continuous security and compliance audits.
 - `MutationLogger` records code changes and `MutationLineage` reconstructs trees and clones branches for A/B tests (see [docs/mutation_lineage.md](docs/mutation_lineage.md)).
 
+### TruthAdapter calibration
+
+`TruthAdapter` calibrates ROI predictions and flags feature drift. Instantiate
+and train it with sandbox metrics and a profit proxy:
+
+```python
+from menace.truth_adapter import TruthAdapter
+
+adapter = TruthAdapter()
+adapter.fit(X, y)
+metrics, drift = adapter.check_drift(X_recent)
+preds, low_conf = adapter.predict(X_recent)
+```
+
+`low_conf` becomes `True` when drift metrics exceed their thresholds. The
+adapter's state persists to `sandbox_data/truth_adapter.pkl`; set
+`ENABLE_TRUTH_CALIBRATION=0` to disable calibration. When drift occurs, gather
+fresh samples and call `fit` again or run:
+
+```bash
+python self_improvement_engine.py fit-truth-adapter live.npz shadow.npz
+```
+
+See [docs/truth_adapter.md](docs/truth_adapter.md) for details and additional
+configuration options.
+
 ## Legal Notice
 
 See [LEGAL.md](LEGAL.md) for the full legal terms. In short, this project may
