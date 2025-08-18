@@ -31,7 +31,9 @@ def test_run_scenarios_all_paths(monkeypatch):
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    summary = env.run_scenarios(["simple_functions:print_ten"], tracker=rt.ROITracker())
+    tracker_obj, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker()
+    )
 
     assert set(summary["scenarios"]) == set(scenario_data)
 
@@ -40,6 +42,7 @@ def test_run_scenarios_all_paths(monkeypatch):
         info = summary["scenarios"][scen]
         assert info["roi_delta"] == pytest.approx(roi - baseline)
         assert {r["flag"] for r in info["runs"]} == {"on", "off"}
+        assert tracker_obj.get_scenario_roi_delta(scen) == pytest.approx(roi - baseline)
 
     assert summary["worst_scenario"] == "concurrency_spike"
 

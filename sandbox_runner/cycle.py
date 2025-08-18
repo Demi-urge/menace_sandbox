@@ -230,7 +230,7 @@ def run_workflow_scenarios(
     report: Dict[str, Dict[str, float]] = {}
 
     for wf in workflows:
-        summary = run_scenarios(wf, tracker=tracker)
+        tracker, summary = run_scenarios(wf, tracker=tracker)
         deltas = {
             scen: info.get("roi_delta", 0.0)
             for scen, info in summary.get("scenarios", {}).items()

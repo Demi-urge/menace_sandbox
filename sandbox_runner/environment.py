@@ -5146,7 +5146,7 @@ def run_scenarios(
     workflow: Any,
     other_workflows: Iterable[Any] | None = None,
     tracker: "ROITracker" | None = None,
-) -> Dict[str, Any]:
+) -> tuple["ROITracker", Dict[str, Any]]:
     """Run *workflow* across several environment presets and compare ROI.
 
     The workflow is executed in five predefined scenarios: a baseline "normal"
@@ -5172,10 +5172,12 @@ def run_scenarios(
 
     Returns
     -------
-    Dict[str, Any]
-        Mapping with per-scenario results and the worst performing scenario.
-        The ``scenarios`` key maps scenario names to dictionaries containing the
-        ROI, ROI delta, raw metrics, metric deltas and recorded synergy metrics.
+    tuple[ROITracker, Dict[str, Any]]
+        A pair consisting of the :class:`ROITracker` used for the simulations
+        and a mapping with per-scenario results. ``scenarios`` maps scenario
+        names to dictionaries containing the ROI, ROI delta, raw metrics,
+        metric deltas and recorded synergy metrics. ``worst_scenario``
+        identifies the scenario causing the largest ROI drop.
     """
 
     from menace.roi_tracker import ROITracker
@@ -5319,7 +5321,8 @@ def run_scenarios(
     except Exception:  # pragma: no cover - best effort
         logger.exception("failed to write scenario deltas")
 
-    return {"scenarios": results, "worst_scenario": worst}
+    summary = {"scenarios": results, "worst_scenario": worst}
+    return tracker, summary
 
 
 # ----------------------------------------------------------------------
