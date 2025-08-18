@@ -76,6 +76,7 @@ from .adaptive_roi_dataset import build_dataset, _label_growth
 from .roi_tracker import ROITracker
 from .evaluation_history_db import EvaluationHistoryDB
 from .evolution_history_db import EvolutionHistoryDB
+from .truth_adapter import TruthAdapter
 
 __all__ = [
     "AdaptiveROIPredictor",
@@ -173,6 +174,7 @@ class AdaptiveROIPredictor:
         self._trained_size: int = 0
         self.selected_features: list[str] | None = None
         self.drift_metrics: Dict[str, float] = {}
+        self.truth_adapter = TruthAdapter()
         self._load()
         if slope_threshold is not None:
             self.slope_threshold = slope_threshold
@@ -794,6 +796,13 @@ class AdaptiveROIPredictor:
             return [], "marginal", [], None
         feats = feats[:h]
         preds, conf = self._predict_sequence(feats)
+        try:
+            realish, low_conf = self.truth_adapter.predict(feats)
+            preds = np.asarray(realish, dtype=float).reshape(preds.shape)
+            if low_conf:
+                logger.warning("truth adapter low confidence; consider retraining")
+        except Exception:
+            logger.exception("truth adapter predict failed")
         growth: str
         growth_conf: float | None = None
         if self._classifier is not None and getattr(self._classifier, "predict", None) is not None:

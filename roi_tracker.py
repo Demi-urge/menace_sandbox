@@ -17,6 +17,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
 from .logging_utils import get_logger, log_record
+from .truth_adapter import TruthAdapter
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - best effort
@@ -210,13 +211,12 @@ class ROITracker:
         self.evaluate_every = max(1, int(evaluate_every))
         self._next_prediction: float | None = None
         self._next_category: str | None = None
-        self._adaptive_predictor = None
         try:
-            from .adaptive_roi_predictor import AdaptiveROIPredictor
-
-            self._adaptive_predictor = AdaptiveROIPredictor()
+            from .adaptive_roi_predictor import AdaptiveROIPredictor  # noqa: F401
         except Exception:
-            self._adaptive_predictor = None
+            pass
+        self._adaptive_predictor = None
+        self.truth_adapter = TruthAdapter()
         if self.resource_db:
             try:
                 df = self.resource_db.history()
@@ -419,6 +419,18 @@ class ROITracker:
             if isinstance(actual, (list, tuple, np.ndarray))
             else [float(actual)]
         )
+        try:
+            arr = np.array(pred_seq, dtype=float).reshape(-1, 1)
+            realish, low_conf = self.truth_adapter.predict(arr)
+            pred_seq = [float(x) for x in realish]
+            if low_conf and self._adaptive_predictor is not None:
+                logger.warning("truth adapter low confidence; consider retraining")
+                try:
+                    self._adaptive_predictor.train()
+                except Exception:
+                    logger.exception("failed to trigger adaptive ROI retrain")
+        except Exception:
+            logger.exception("truth adapter predict failed")
 
         self.predicted_roi.append(float(pred_seq[0]))
         self.actual_roi.append(float(act_seq[0]))
@@ -661,13 +673,16 @@ class ROITracker:
                 self._adaptive_predictor = None
         if self._adaptive_predictor is not None:
             try:
-                self._adaptive_predictor.record_drift(
-                    acc,
-                    mae,
-                    acc_threshold=acc_threshold,
-                    mae_threshold=mae_threshold,
-                    retrain=True,
-                )
+                if hasattr(self._adaptive_predictor, "record_drift"):
+                    self._adaptive_predictor.record_drift(
+                        acc,
+                        mae,
+                        acc_threshold=acc_threshold,
+                        mae_threshold=mae_threshold,
+                        retrain=True,
+                    )
+                elif hasattr(self._adaptive_predictor, "train"):
+                    self._adaptive_predictor.train()
             except Exception:
                 logger.exception("failed to update adaptive ROI predictor")
 

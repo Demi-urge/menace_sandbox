@@ -13,10 +13,12 @@ import time
 import logging
 from pathlib import Path
 from typing import Sequence, Dict, Any
+import numpy as np
 
 from .adaptive_roi_predictor import AdaptiveROIPredictor, load_training_data
 from .adaptive_roi_dataset import build_dataset
 from .roi_tracker import ROITracker
+from .truth_adapter import TruthAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +53,10 @@ def _train(args: argparse.Namespace) -> None:
         curvature_threshold=args.curvature_threshold,
     )
     predictor.train(dataset, cv=args.cv, param_grid=param_grid, feature_names=names)
+    try:
+        TruthAdapter().fit(X, y)
+    except Exception:
+        logging.getLogger(__name__).exception("truth adapter training failed")
     print(f"model trained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -76,6 +82,14 @@ def _predict(args: argparse.Namespace) -> None:
         curvature_threshold=args.curvature_threshold,
     )
     roi_seq, growth, conf = predictor.predict(features, horizon=args.horizon)
+    try:
+        arr = np.asarray(features, dtype=float)
+        realish, low_conf = TruthAdapter().predict(arr)
+        roi_seq = realish.tolist()
+        if low_conf:
+            print("truth adapter low confidence; retrain suggested")
+    except Exception:
+        logging.getLogger(__name__).exception("truth adapter predict failed")
     print(json.dumps({"roi": roi_seq, "growth": growth, "confidence": conf}))
 
 
@@ -111,6 +125,10 @@ def _retrain(args: argparse.Namespace) -> None:
         curvature_threshold=args.curvature_threshold,
     )
     predictor.train(dataset, cv=args.cv, param_grid=param_grid, feature_names=names)
+    try:
+        TruthAdapter().fit(X, y)
+    except Exception:
+        logging.getLogger(__name__).exception("truth adapter training failed")
     print(f"model retrained on {len(dataset[0])} samples -> {args.model}")
     if predictor.validation_scores:
         print("validation MAE:")
@@ -173,6 +191,7 @@ def _schedule(args: argparse.Namespace) -> None:
     param_grid: Dict[str, Dict[str, Any]] | None = None
     if args.param_grid:
         param_grid = json.loads(args.param_grid)
+    adapter = TruthAdapter()
 
     while True:
         try:
@@ -203,6 +222,10 @@ def _schedule(args: argparse.Namespace) -> None:
                 return_feature_names=True,
             )
             dataset = (X, y, g)
+            try:
+                adapter.fit(X, y)
+            except Exception:
+                logger.exception("truth adapter training failed")
             slope_thr = getattr(args, "slope_threshold", None)
             curv_thr = getattr(args, "curvature_threshold", None)
             from .adaptive_roi_predictor import AdaptiveROIPredictor as Predictor
