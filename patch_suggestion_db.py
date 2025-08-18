@@ -9,6 +9,8 @@ import sqlite3
 import threading
 from filelock import FileLock
 
+from analysis.semantic_diff_filter import find_semantic_risks
+
 
 @dataclass
 class SuggestionRecord:
@@ -20,10 +22,13 @@ class SuggestionRecord:
 class PatchSuggestionDB:
     """Store successful patch descriptions per module."""
 
-    def __init__(self, path: Path | str = "suggestions.db") -> None:
+    def __init__(
+        self, path: Path | str = "suggestions.db", *, semantic_threshold: float = 0.5
+    ) -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._file_lock = FileLock(str(self.path) + ".lock")
+        self._semantic_threshold = semantic_threshold
         with self._file_lock:
             with sqlite3.connect(self.path) as conn:
                 conn.execute(
@@ -35,13 +40,18 @@ class PatchSuggestionDB:
                 ts TEXT
             )
             """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_suggestions_module ON suggestions(module)"
-            )
-            conn.commit()
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_suggestions_module ON suggestions(module)"
+                )
+                conn.commit()
 
     def add(self, rec: SuggestionRecord) -> None:
+        risks = find_semantic_risks(
+            rec.description.splitlines(), threshold=self._semantic_threshold
+        )
+        if risks:
+            raise ValueError(f"unsafe suggestion: {risks[0][1]}")
         with self._file_lock:
             with self._lock:
                 with sqlite3.connect(self.path) as conn:
