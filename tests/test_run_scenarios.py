@@ -29,6 +29,10 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
     expected = {scen: roi - scenario_data["normal"] for scen, roi in scenario_data.items()}
     assert set(summary["scenarios"]) == set(expected)
     for scen, delta in expected.items():
-        assert summary["scenarios"][scen]["roi_delta"] == pytest.approx(delta)
+        info = summary["scenarios"][scen]
+        assert info["roi_delta"] == pytest.approx(delta)
+        flags = {r["flag"] for r in info["runs"]}
+        assert flags == {"on", "off"}
+        assert info["target_delta"]["roi"] == pytest.approx(0.0)
     worst = min(expected, key=lambda k: expected[k])
     assert summary["worst_scenario"] == worst

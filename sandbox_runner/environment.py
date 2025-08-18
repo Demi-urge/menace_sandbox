@@ -5114,10 +5114,12 @@ def run_scenarios(
 
     The workflow is executed in five predefined scenarios: a baseline "normal"
     environment followed by ``concurrency_spike``, ``hostile_input``,
-    ``schema_drift`` and ``flaky_upstream``.  For each scenario the ROI and
-    metrics are recorded.  The ROI and metric deltas are calculated relative to
-    the baseline run and synergy metrics are tracked through
-    :class:`menace.roi_tracker.ROITracker`.
+    ``schema_drift`` and ``flaky_upstream``.  Each scenario is executed twice –
+    once with the target workflow enabled and once with it disabled – to
+    measure the direct contribution of the workflow.  For each run the ROI and
+    metrics are recorded, per-scenario ROI/metric deltas are calculated relative
+    to the baseline (with the workflow enabled) and synergy metrics are tracked
+    through :class:`menace.roi_tracker.ROITracker`.
 
     Parameters
     ----------
@@ -5175,7 +5177,8 @@ def run_scenarios(
     for wf in other_workflows:
         other_steps.extend(_steps(wf))
 
-    snippet = _wf_snippet(other_steps + wf_steps)
+    snippet_on = _wf_snippet(other_steps + wf_steps)
+    snippet_off = _wf_snippet(other_steps)
 
     presets = [
         {"SCENARIO_NAME": "normal"},
@@ -5195,37 +5198,56 @@ def run_scenarios(
             env_input = dict(preset)
             scenario = env_input.get("SCENARIO_NAME", "")
 
-            _, updates = await _section_worker(
-                snippet, env_input, tracker.diminishing()
+            _, updates_on = await _section_worker(
+                snippet_on, env_input, tracker.diminishing()
             )
-            roi = updates[-1][1] if updates else 0.0
-            metrics = updates[-1][2] if updates else {}
+            roi_on = updates_on[-1][1] if updates_on else 0.0
+            metrics_on = updates_on[-1][2] if updates_on else {}
+
+            _, updates_off = await _section_worker(
+                snippet_off, env_input, tracker.diminishing()
+            )
+            roi_off = updates_off[-1][1] if updates_off else 0.0
+            metrics_off = updates_off[-1][2] if updates_off else {}
 
             if idx == 0:
-                baseline_roi, baseline_metrics = roi, metrics
-                metrics_delta = {k: 0.0 for k in metrics}
+                baseline_roi, baseline_metrics = roi_on, metrics_on
+                metrics_delta = {k: 0.0 for k in metrics_on}
             else:
                 metrics_delta = {
-                    k: metrics.get(k, 0.0) - baseline_metrics.get(k, 0.0)
-                    for k in set(metrics) | set(baseline_metrics)
+                    k: metrics_on.get(k, 0.0) - baseline_metrics.get(k, 0.0)
+                    for k in set(metrics_on) | set(baseline_metrics)
                 }
 
             synergy_metrics = tracker.record_scenario_delta(
-                scenario, roi, baseline_roi, metrics_delta
+                scenario, roi_on, baseline_roi, metrics_delta
             )
             tracker.update(
                 baseline_roi,
-                roi,
+                roi_on,
                 modules=[f"workflow_{wf_id}", scenario],
-                metrics={**metrics, **synergy_metrics},
+                metrics={**metrics_on, **synergy_metrics},
             )
 
+            target_metrics_delta = {
+                k: metrics_on.get(k, 0.0) - metrics_off.get(k, 0.0)
+                for k in set(metrics_on) | set(metrics_off)
+            }
+
             results[scenario] = {
-                "roi": roi,
-                "roi_delta": roi - baseline_roi,
-                "metrics": metrics,
+                "roi": roi_on,
+                "roi_delta": roi_on - baseline_roi,
+                "metrics": metrics_on,
                 "metrics_delta": metrics_delta,
                 "synergy": synergy_metrics,
+                "runs": [
+                    {"flag": "on", "roi": roi_on, "metrics": metrics_on},
+                    {"flag": "off", "roi": roi_off, "metrics": metrics_off},
+                ],
+                "target_delta": {
+                    "roi": roi_on - roi_off,
+                    "metrics": target_metrics_delta,
+                },
             }
 
     asyncio.run(_run())
