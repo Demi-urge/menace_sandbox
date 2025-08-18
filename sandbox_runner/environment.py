@@ -5083,6 +5083,132 @@ def _scenario_specific_metrics(
 
 
 # ----------------------------------------------------------------------
+def run_scenarios(
+    workflow: Any,
+    other_workflows: Iterable[Any] | None = None,
+    tracker: "ROITracker" | None = None,
+) -> "ROITracker":
+    """Replay *workflow* under several scenarios and record ROI deltas.
+
+    Parameters
+    ----------
+    workflow:
+        Workflow record or object providing ``workflow`` (steps) and ``wid``
+        attributes. A plain list of steps is also accepted.
+    other_workflows:
+        Optional iterable of additional workflows that remain constant across
+        runs. These are included in both the workflow-enabled and
+        counterfactual executions.
+    tracker:
+        Optional :class:`ROITracker` used to record ROI deltas. When omitted a
+        new tracker is created.
+
+    Returns
+    -------
+    ROITracker
+        The tracker containing recorded metrics. The attribute
+        ``worst_scenario`` identifies the scenario with the most negative ROI
+        delta and ``scenario_deltas`` maps each scenario to its ROI delta.
+    """
+
+    from menace.roi_tracker import ROITracker
+
+    if tracker is None:
+        tracker = ROITracker()
+    if other_workflows is None:
+        other_workflows = []
+
+    def _steps(obj: Any) -> list[str]:
+        if isinstance(obj, (list, tuple)):
+            return [str(s) for s in obj]
+        return [str(s) for s in getattr(obj, "workflow", [])]
+
+    def _wf_snippet(steps: list[str]) -> str:
+        imports: list[str] = []
+        calls: list[str] = []
+        for idx, step in enumerate(steps):
+            alias = f"_wf_{idx}"
+            if ":" in step:
+                mod, func = step.split(":", 1)
+            else:
+                if "." in step:
+                    mod, func = step.rsplit(".", 1)
+                else:
+                    mod, func = "simple_functions", step
+            imports.append(f"from {mod} import {func} as {alias}")
+            calls.append(f"{alias}()")
+        if not calls:
+            return "pass\n"
+        return "\n".join(imports + [""] + calls) + "\n"
+
+    wf_id = getattr(workflow, "wid", getattr(workflow, "id", "0"))
+    wf_steps = _steps(workflow)
+    other_steps: list[str] = []
+    for wf in other_workflows:
+        other_steps.extend(_steps(wf))
+
+    snippet_with = _wf_snippet(other_steps + wf_steps)
+    snippet_without = _wf_snippet(other_steps)
+
+    presets = [
+        {"SCENARIO_NAME": "normal"},
+        {"SCENARIO_NAME": "concurrency_spike", "CONCURRENCY_LEVEL": "8"},
+        {"SCENARIO_NAME": "hostile_input", "FAILURE_MODES": "hostile_input"},
+        {"SCENARIO_NAME": "schema_drift"},
+        {"SCENARIO_NAME": "flaky_upstream"},
+    ]
+
+    roi_deltas: Dict[str, float] = {}
+
+    async def _run() -> None:
+        nonlocal roi_deltas
+        for preset in presets:
+            env_input = dict(preset)
+            scenario = env_input.get("SCENARIO_NAME", "")
+
+            base_res, base_updates = await _section_worker(
+                snippet_without, env_input, tracker.diminishing()
+            )
+            base_roi = base_updates[-1][1] if base_updates else 0.0
+            base_metrics = base_updates[-1][2] if base_updates else {}
+
+            res, updates = await _section_worker(
+                snippet_with, env_input, tracker.diminishing()
+            )
+            roi = updates[-1][1] if updates else 0.0
+            metrics = updates[-1][2] if updates else {}
+
+            delta = roi - base_roi
+            roi_deltas[scenario] = delta
+
+            synergy_metrics = {
+                f"synergy_{k}": metrics.get(k, 0.0) - base_metrics.get(k, 0.0)
+                for k in set(metrics) | set(base_metrics)
+            }
+            synergy_metrics["synergy_roi"] = delta
+            synergy_metrics.setdefault("synergy_profitability", delta)
+            synergy_metrics.setdefault("synergy_revenue", delta)
+            synergy_metrics.setdefault("synergy_projected_lucrativity", delta)
+
+            if hasattr(tracker, "register_metrics"):
+                tracker.register_metrics(*synergy_metrics.keys())
+            tracker.update(
+                base_roi,
+                roi,
+                modules=[f"workflow_{wf_id}", scenario],
+                metrics={**metrics, **synergy_metrics},
+            )
+            tracker.scenario_synergy.setdefault(scenario, []).append(synergy_metrics)
+
+    asyncio.run(_run())
+
+    worst = min(roi_deltas.items(), key=lambda kv: kv[1])[0] if roi_deltas else ""
+    tracker.worst_scenario = worst
+    tracker.scenario_deltas = roi_deltas
+    return tracker
+
+
+# ----------------------------------------------------------------------
 def run_repo_section_simulations(
     repo_path: str,
     input_stubs: List[Dict[str, Any]] | None = None,
