@@ -9,7 +9,11 @@ import types
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
 from code_database import PatchHistoryDB
-from patch_provenance import get_patch_provenance, search_patches_by_vector
+from patch_provenance import (
+    get_patch_provenance,
+    search_patches_by_vector,
+    build_chain,
+)
 
 
 def _rec_to_dict(rec):
@@ -60,7 +64,29 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
         if rec is None:
             return jsonify({"error": "not found"}), 404
         prov = get_patch_provenance(patch_id, patch_db=pdb)
-        return jsonify({"id": patch_id, "record": _rec_to_dict(rec), "provenance": prov})
+        chain = build_chain(patch_id, patch_db=pdb)
+        return jsonify(
+            {
+                "id": patch_id,
+                "record": _rec_to_dict(rec),
+                "provenance": prov,
+                "chain": chain,
+            }
+        )
+
+    @app.get("/vectors/<vector_id>")
+    def by_vector(vector_id: str):
+        res = search_patches_by_vector(vector_id, patch_db=pdb)
+        patches = [
+            {
+                "id": r["patch_id"],
+                "filename": r["filename"],
+                "description": r["description"],
+                "influence": r["influence"],
+            }
+            for r in res
+        ]
+        return jsonify(patches)
 
     @app.get("/search")
     def search():

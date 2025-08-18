@@ -48,6 +48,10 @@ def test_cli_and_service(tmp_path):
     show = _run_cli(["show", str(p1)], root)
     assert show["id"] == p1
     assert show["provenance"][0]["vector_id"] == "vec1"
+    assert show["chain"][0]["patch_id"] == p1
+
+    chain = _run_cli(["chain", str(p1)], root)
+    assert chain[0]["patch_id"] == p1
 
     res = _run_cli(["search", "vec2"], root)
     assert res[0]["id"] == p2
@@ -63,6 +67,11 @@ def test_cli_and_service(tmp_path):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["provenance"][0]["vector_id"] == "vec1"
+    assert body["chain"][0]["patch_id"] == p1
+
+    resp = client.get("/vectors/vec1")
+    body = resp.get_json()
+    assert body and body[0]["id"] == p1
 
     resp = client.get("/search", query_string={"q": "vec1"})
     body = resp.get_json()
