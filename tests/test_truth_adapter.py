@@ -72,3 +72,8 @@ def test_drift_detection_sets_low_confidence(tmp_path: Path) -> None:
     # PSI values should be recorded for each feature.
     assert isinstance(ta.metadata["psi"], list)
     assert len(ta.metadata["psi"]) == X.shape[1]
+    # KS statistics and timestamps should also persist.
+    assert isinstance(ta.metadata["ks"], list)
+    assert len(ta.metadata["ks"]) == X.shape[1]
+    assert ta.metadata["last_drift_check"] is not None
+    assert "warning" in ta.metadata
