@@ -1167,6 +1167,24 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
+    def get_ancestry_chain(self, patch_id: int) -> List[Tuple[int, PatchRecord]]:
+        """Return the ancestry chain for ``patch_id``.
+
+        Each entry in the returned list is a ``(id, PatchRecord)`` tuple.  The
+        list starts with ``patch_id`` and follows ``parent_patch_id`` links until
+        reaching the root of the chain.
+        """
+
+        chain: List[Tuple[int, PatchRecord]] = []
+        current: Optional[int] = patch_id
+        while current is not None:
+            rec = self.get(current)
+            if rec is None:
+                break
+            chain.append((current, rec))
+            current = rec.parent_patch_id
+        return chain
+
     def find_patches_by_vector(
         self, vector_id: str
     ) -> List[Tuple[int, float, str, str]]:
@@ -1188,6 +1206,21 @@ class PatchHistoryDB:
                 (int(pid), float(infl), fname, desc)
                 for pid, infl, fname, desc in rows
             ]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def find_patches_by_hash(self, code_hash: str) -> List[Tuple[int, str, str]]:
+        """Return patches matching ``code_hash``.
+
+        Results include the patch id, filename and description.
+        """
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[int, str, str]]:
+            rows = conn.execute(
+                "SELECT id, filename, description FROM patch_history WHERE code_hash=?",
+                (code_hash,),
+            ).fetchall()
+            return [(int(pid), fname, desc) for pid, fname, desc in rows]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 

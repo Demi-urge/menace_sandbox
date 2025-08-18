@@ -49,6 +49,20 @@ def search_patches_by_vector(
 
 
 # ---------------------------------------------------------------------------
+def search_patches_by_hash(
+    code_hash: str, *, patch_db: PatchHistoryDB | None = None
+) -> List[Dict[str, Any]]:
+    """Return patches matching ``code_hash``."""
+
+    db = patch_db or PatchHistoryDB()
+    rows = db.find_patches_by_hash(code_hash)
+    return [
+        {"patch_id": pid, "filename": filename, "description": desc}
+        for pid, filename, desc in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 def build_chain(
     patch_id: int, *, patch_db: PatchHistoryDB | None = None
 ) -> List[Dict[str, Any]]:
@@ -56,22 +70,22 @@ def build_chain(
 
     db = patch_db or PatchHistoryDB()
     chain: List[Dict[str, Any]] = []
-    current: int | None = patch_id
-    while current is not None:
-        rec = db.get(current)
-        if rec is None:
-            break
+    for pid, rec in db.get_ancestry_chain(patch_id):
         chain.append(
             {
-                "patch_id": current,
+                "patch_id": pid,
                 "filename": rec.filename,
                 "parent_patch_id": rec.parent_patch_id,
-                "vectors": get_patch_provenance(current, patch_db=db),
+                "vectors": get_patch_provenance(pid, patch_db=db),
             }
         )
-        current = rec.parent_patch_id
     return chain
 
 
-__all__ = ["get_patch_provenance", "search_patches_by_vector", "build_chain"]
+__all__ = [
+    "get_patch_provenance",
+    "search_patches_by_vector",
+    "search_patches_by_hash",
+    "build_chain",
+]
 

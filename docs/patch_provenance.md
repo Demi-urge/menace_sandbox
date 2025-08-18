@@ -7,16 +7,19 @@ patch and their influence scores.
 
 ## CLI
 
-Use `patch_provenance_cli.py` to inspect patch records:
+Use `tools/patch_provenance_cli.py` to inspect patch records:
 
 ```bash
-python patch_provenance_cli.py show 1
-python patch_provenance_cli.py search-vector vec123
+python tools/patch_provenance_cli.py list
+python tools/patch_provenance_cli.py show 1
+python tools/patch_provenance_cli.py search vec123
+python tools/patch_provenance_cli.py search --hash <code_hash>
 ```
 
-`show` prints the ancestry chain for a patch including the vectors and their
-influence scores.  `search-vector` lists patches influenced by a particular
-vector ordered by influence.
+`list` displays recent patches with their IDs.  `show` prints the ancestry
+chain for a patch including the vectors and their influence scores.
+`search` performs a reverse lookup either by vector ID (default) or by code
+snippet hash when ``--hash`` is supplied.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
 SQLite database.
@@ -51,8 +54,9 @@ get_patch_provenance(1)              # -> vectors for a patch
 ```
 
 The underlying :class:`PatchHistoryDB` also exposes
-``get_ancestry(patch_id)`` and ``find_patches_by_vector(vector_id)`` for direct
-database access.
+``get_ancestry(patch_id)``, ``get_ancestry_chain(patch_id)``,
+``find_patches_by_vector(vector_id)``, and ``find_patches_by_hash(code_hash)``
+for direct database access.
 
 These functions integrate with `lineage_tracker.py` and `mutation_lineage.py`
 to provide vector ancestry alongside existing lineage data.
