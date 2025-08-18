@@ -15,6 +15,8 @@ from typing import Any, Dict, Iterable, List, Sequence
 
 from redaction_utils import redact_dict as pii_redact_dict, redact_text
 from security.secret_redactor import redact, redact_dict as secret_redact_dict
+from license_detector import detect as license_detect
+from analysis.semantic_diff_filter import find_semantic_risks
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
@@ -62,6 +64,7 @@ class Retriever:
     top_k: int = 5
     similarity_threshold: float = 0.1
     retriever_kwargs: Dict[str, Any] = field(default_factory=dict)
+    content_filtering: bool = False
     _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -82,9 +85,11 @@ class Retriever:
             if isinstance(h, ResultBundle):
                 item = h.to_dict()
                 item["record_id"] = getattr(h, "record_id", None)
+                meta = item.get("metadata", meta)
             elif hasattr(h, "to_dict"):
                 item = h.to_dict()
                 item.setdefault("record_id", getattr(h, "record_id", None))
+                meta = item.get("metadata", meta)
             else:  # pragma: no cover - very defensive
                 item = {
                     "origin_db": getattr(h, "origin_db", ""),
@@ -93,6 +98,14 @@ class Retriever:
                     "reason": getattr(h, "reason", ""),
                     "metadata": meta,
                 }
+            if self.content_filtering:
+                text = str(item.get("text") or "")
+                lic = license_detect(text)
+                if lic:
+                    continue
+                alerts = find_semantic_risks(text.splitlines())
+                if alerts:
+                    meta.setdefault("semantic_alerts", alerts)
             results.append(secret_redact_dict(pii_redact_dict(item)))
         return results
 
