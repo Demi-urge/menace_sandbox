@@ -538,7 +538,10 @@ MENACE_HARDWARE=1 pytest tests/hardware
 Some features such as anomaly detection and the `ErrorForecaster` make use of
 additional libraries. **pandas** and **PyTorch** are now installed by default,
 yet the modules still implement fallbacks so functionality remains intact even
-if those libraries are unavailable.
+if those libraries are unavailable. The `TruthAdapter` tests rely on SciPy for
+Kolmogorov–Smirnov based drift detection and stub XGBoost to exercise model
+selection; both dependencies are optional and have lightweight fallbacks when
+absent.
 
 ### Cloud deployment
 

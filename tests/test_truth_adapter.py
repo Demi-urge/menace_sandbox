@@ -8,6 +8,7 @@ from pathlib import Path
 import logging
 
 import numpy as np
+import pytest
 
 # ---------------------------------------------------------------------------
 # TruthAdapter optionally uses xgboost; stub the module so the tests avoid
@@ -17,6 +18,20 @@ xgb_stub.XGBRegressor = None
 sys.modules.setdefault("xgboost", xgb_stub)
 
 from menace.truth_adapter import TruthAdapter
+
+
+class DummyXGBRegressor:
+    """Minimal stand-in for :class:`xgboost.XGBRegressor` used in tests."""
+
+    def __init__(self, **kwargs):
+        self.coef_: np.ndarray | None = None
+
+    def fit(self, X: np.ndarray, y: np.ndarray, **kwargs) -> None:
+        self.coef_, *_ = np.linalg.lstsq(X, y, rcond=None)
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        assert self.coef_ is not None
+        return X @ self.coef_
 
 
 def _make_data(n: int = 200) -> tuple[np.ndarray, np.ndarray]:
@@ -95,6 +110,80 @@ def test_drift_logging(tmp_path: Path, caplog) -> None:
     rec = next(r for r in caplog.records if "feature drift detected" in r.message)
     assert hasattr(rec, "drift_features")
     assert rec.drift_features
+
+
+def test_scipy_ks_drift_detection(monkeypatch, tmp_path: Path) -> None:
+    """When SciPy is available, the KS statistic should come from ``ks_2samp``."""
+
+    def fake_ks_2samp(a, b):
+        return 0.5, 0.0
+
+    stats_mod = types.SimpleNamespace(ks_2samp=fake_ks_2samp)
+    scipy_mod = types.SimpleNamespace(stats=stats_mod)
+    monkeypatch.setitem(sys.modules, "scipy", scipy_mod)
+    monkeypatch.setitem(sys.modules, "scipy.stats", stats_mod)
+    monkeypatch.setattr("menace.truth_adapter.ks_2samp", fake_ks_2samp, raising=False)
+
+    X, y = _make_data()
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X, y)
+    metrics, drift_flag = adapter.check_drift(X + 5.0)
+    assert drift_flag is True
+    assert metrics["ks"][0] == 0.5
+
+
+def test_histogram_ks_fallback(monkeypatch, tmp_path: Path) -> None:
+    """If SciPy is missing, histogram-based KS approximation is used."""
+
+    monkeypatch.setattr("menace.truth_adapter.ks_2samp", None, raising=False)
+    X, y = _make_data()
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X, y)
+    X_shifted = X + 5.0
+    metrics, drift_flag = adapter.check_drift(X_shifted)
+    assert drift_flag is True
+    fs0 = adapter.metadata["feature_stats"][0]
+    expected = np.array(fs0["counts"])
+    bins = fs0["bins"]
+    actual_counts, _ = np.histogram(X_shifted[:, 0], bins=bins)
+    actual = actual_counts / actual_counts.sum() if actual_counts.sum() else actual_counts
+    expected = np.where(expected == 0, 0.0001, expected)
+    actual = np.where(actual == 0, 0.0001, actual)
+    exp_cdf = np.cumsum(expected)
+    act_cdf = np.cumsum(actual)
+    ks_expected = float(np.max(np.abs(exp_cdf - act_cdf)))
+    assert metrics["ks"][0] == pytest.approx(ks_expected)
+
+
+def test_xgboost_model_selection(monkeypatch, tmp_path: Path) -> None:
+    """Cross-validation should pick XGBoost when it performs better."""
+
+    class BadRidge:
+        def __init__(self, **kwargs):
+            pass
+
+        def fit(self, X, y):
+            pass
+
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    monkeypatch.setattr("menace.truth_adapter.XGBRegressor", DummyXGBRegressor, raising=False)
+    monkeypatch.setattr("menace.truth_adapter.Ridge", BadRidge, raising=False)
+
+    X, y = _make_data()
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X, y, cross_validate=True)
+    assert adapter.metadata["model_type"] == "xgboost"
+    preds, low_conf = adapter.predict(X)
+    assert not low_conf
+    assert np.allclose(preds, y, atol=0.1)
+
+    adapter2 = TruthAdapter(tmp_path / "truth.pkl")
+    assert adapter2.metadata["model_type"] == "xgboost"
+    preds2, low_conf2 = adapter2.predict(X)
+    assert not low_conf2
+    assert np.allclose(preds, preds2)
 
 
 def test_partial_fit_updates_metadata(tmp_path: Path) -> None:
