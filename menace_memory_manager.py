@@ -72,6 +72,8 @@ try:  # optional dependency for embeddings
 except Exception:  # pragma: no cover - optional
     SentenceTransformer = None  # type: ignore
 
+from governed_embeddings import governed_embed, get_embedder
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - circular imports
@@ -136,13 +138,8 @@ class MenaceMemoryManager(GPTMemoryInterface):
         self.graph = KnowledgeGraph()
         if embedder is not None:
             self.embedder = embedder
-        elif SentenceTransformer:
-            try:  # instantiate a default model, falling back to ``None`` if it fails
-                self.embedder = SentenceTransformer("all-MiniLM-L6-v2")
-            except Exception:  # pragma: no cover - defensive against stub models
-                self.embedder = None
         else:
-            self.embedder = None
+            self.embedder = get_embedder()
         self.cluster_backend = cluster_backend if cluster_backend in {"hdbscan", "faiss"} else "hdbscan"
         self.recluster_interval = max(1, recluster_interval)
         self._log_count = 0
@@ -206,12 +203,7 @@ class MenaceMemoryManager(GPTMemoryInterface):
             self.subscribers.remove(callback)
 
     def _embed(self, text: str) -> Optional[List[float]]:
-        if self.embedder:
-            try:
-                return self.embedder.encode([text])[0].tolist()
-            except Exception:  # pragma: no cover - runtime issues
-                return None
-        return None
+        return governed_embed(text, self.embedder)
 
     # ------------------------------------------------------------------
     def _load_vector_index(self) -> None:
