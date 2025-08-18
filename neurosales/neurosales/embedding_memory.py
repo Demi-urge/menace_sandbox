@@ -20,18 +20,10 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     def find_semantic_risks(lines, threshold: float = 0.5):  # type: ignore[override]
         return []
+import logging
+from governed_embeddings import governed_embed
 
-try:
-    from compliance.license_fingerprint import check as license_check
-except Exception:  # pragma: no cover - optional dependency
-    def license_check(text: str):  # type: ignore[override]
-        return None
-
-try:
-    from security.secret_redactor import redact
-except Exception:  # pragma: no cover - optional dependency
-    def redact(text: str) -> str:  # type: ignore[override]
-        return text
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -82,20 +74,21 @@ class EmbeddingConversationMemory:
         original = content.strip()
         if not original:
             return
-        lic = license_check(original)
-        if lic:
+        alerts = find_semantic_risks(original.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
             return
-        redacted = redact(original)
         if SentenceTransformer is None or faiss is None or np is None:
-            msg = EmbeddedMessage(time.time(), role, redacted, [])
+            msg = EmbeddedMessage(time.time(), role, original, [])
             self._messages.append(msg)
             if len(self._messages) > self.max_messages:
                 self._messages.popleft()
             self._prune()
             return
 
-        embedding = self._model.encode(redacted, convert_to_numpy=True).astype("float32")
-        msg = EmbeddedMessage(time.time(), role, redacted, embedding)
+        vec = governed_embed(original, self._model)
+        emb_list = np.array(vec, dtype="float32").tolist() if vec is not None else []
+        msg = EmbeddedMessage(time.time(), role, original, emb_list)
         self._messages.append(msg)
         if len(self._messages) > self.max_messages:
             self._messages.popleft()
@@ -110,7 +103,14 @@ class EmbeddingConversationMemory:
             return []
         if not self._messages:
             return []
-        query = self._model.encode(redact(text), convert_to_numpy=True).astype("float32")
+        alerts = find_semantic_risks(text.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return []
+        vec = governed_embed(text, self._model)
+        if vec is None:
+            return []
+        query = np.array(vec, dtype="float32")
         D, indices = self._index.search(
             query.reshape(1, -1), min(top_k, len(self._messages))
         )

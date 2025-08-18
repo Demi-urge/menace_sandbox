@@ -4,6 +4,7 @@ import time
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+import logging
 
 try:
     from neo4j import GraphDatabase  # type: ignore
@@ -19,7 +20,11 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
     np = None  # type: ignore
 
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 from .engagement_graph import pagerank, shortest_path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -64,8 +69,14 @@ class PsychologicalGraph:
     def _encode(self, text: str) -> List[float]:
         if self._model is None or np is None:
             return []
-        vec = self._model.encode(text, convert_to_numpy=True).astype("float32")
-        return vec.tolist()
+        alerts = find_semantic_risks(text.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return []
+        vec = governed_embed(text, self._model)
+        if vec is None:
+            return []
+        return vec
 
     def _add_to_index(self, rule: RuleNode) -> None:
         if self._index is None or np is None:
@@ -137,7 +148,14 @@ class PsychologicalGraph:
             return None
         if not self.rules:
             return None
-        query = self._model.encode(text, convert_to_numpy=True).astype("float32")
+        alerts = find_semantic_risks(text.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return None
+        vec = governed_embed(text, self._model)
+        if vec is None:
+            return None
+        query = np.array(vec, dtype="float32")
         D, I = self._index.search(query.reshape(1, -1), min(top_k, len(self._ids)))
         if not I.size:
             return None

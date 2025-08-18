@@ -5,6 +5,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, List, Optional, Any
 import os
+import logging
 
 try:
     import faiss  # type: ignore
@@ -15,7 +16,11 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
     np = None  # type: ignore
 
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 from .external_integrations import PineconeLogger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -87,12 +92,15 @@ class VectorDB:
     # ------------------------------------------------------------------
     def add_message(self, role: str, content: str) -> None:
         if self._model is not None and np is not None:
-            embedding = self._model.encode(content, convert_to_numpy=True).astype(
-                "float32"
-            )
-            emb_list = embedding.tolist()
+            alerts = find_semantic_risks(content.splitlines())
+            if alerts:
+                logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+                return
+            vec = governed_embed(content, self._model)
+            if vec is None:
+                return
+            emb_list = np.array(vec, dtype="float32").tolist()
         else:
-            embedding = []
             emb_list = []
         msg = VectorMessage(time.time(), role, content, emb_list)
         self._messages.append(msg)
@@ -115,7 +123,14 @@ class VectorDB:
             return []
         if not self._messages:
             return []
-        query = self._model.encode(text, convert_to_numpy=True).astype("float32")
+        alerts = find_semantic_risks(text.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return []
+        vec = governed_embed(text, self._model)
+        if vec is None:
+            return []
+        query = np.array(vec, dtype="float32")
         D, I = self._index.search(query.reshape(1, -1), min(top_k, len(self._messages)))
         return [self._messages[i] for i in I[0]]
 

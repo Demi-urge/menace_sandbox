@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Optional
 import re
+import logging
 
 try:
     from celery import Celery
@@ -33,7 +34,11 @@ try:
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 from .influence_graph import InfluenceGraph
+
+logger = logging.getLogger(__name__)
 
 HARVARD_OXFORD_ATLAS = {
     "ventromedial pfc": "Frontal_Medial_Cortex",
@@ -96,8 +101,14 @@ class InMemoryFaiss:
         self.sentences.append(sentence)
         self.ids.append(idx)
         if self.model is not None and self.index is not None and np is not None:
-            vec = self.model.encode(sentence, convert_to_numpy=True).astype("float32")
-            self.index.add(vec.reshape(1, -1))
+            alerts = find_semantic_risks(sentence.splitlines())
+            if alerts:
+                logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            else:
+                vec = governed_embed(sentence, self.model)
+                if vec is not None:
+                    arr = np.array(vec, dtype="float32")
+                    self.index.add(arr.reshape(1, -1))
         return idx
 
 

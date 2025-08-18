@@ -3,22 +3,14 @@ from __future__ import annotations
 
 try:
     from sentence_transformers import SentenceTransformer
-    import numpy as np
 except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
-    np = None  # type: ignore
 
-try:
-    from compliance.license_fingerprint import check as license_check
-except Exception:  # pragma: no cover - optional dependency
-    def license_check(text: str):  # type: ignore[override]
-        return None
+import logging
+from governed_embeddings import governed_embed
+from analysis.semantic_diff_filter import find_semantic_risks
 
-try:
-    from security.secret_redactor import redact
-except Exception:  # pragma: no cover - optional dependency
-    def redact(text: str) -> str:  # type: ignore[override]
-        return text
+logger = logging.getLogger(__name__)
 
 _MODEL: SentenceTransformer | None = None
 _DEFAULT_DIM = 384
@@ -40,14 +32,18 @@ def embed_text(text: str) -> list[float]:
     caller can ensure the dependency is available.
     """
     model = get_model()
-    if model is None or np is None:
+    if model is None:
         raise RuntimeError("sentence-transformers is required for embed_text")
-    lic = license_check(text)
-    if lic:
-        raise ValueError(f"Disallowed license detected: {lic}")
-    clean = redact(text)
-    arr = model.encode(clean, convert_to_numpy=True).astype("float32")
-    return arr.tolist()
+
+    alerts = find_semantic_risks(text.splitlines())
+    if alerts:
+        logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+        raise ValueError("Semantic risks detected")
+
+    vec = governed_embed(text, model)
+    if vec is None:
+        raise RuntimeError("Embedding failed or skipped")
+    return vec
 
 
 def embedding_dimension() -> int:
