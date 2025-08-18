@@ -38,7 +38,7 @@ class DummyTracker:
         return 0.01
 
     def rankings(self):
-        return [("m", 0.1)]
+        return [("m", 0.1, 0.1)]
 
 
 def test_full_autonomous_run_cli(monkeypatch):
@@ -204,7 +204,7 @@ def test_full_autonomous_run_auto_thresholds(monkeypatch):
             return 0.0
 
         def rankings(self):
-            return [("m", 0.0)]
+            return [("m", 0.0, 0.0)]
 
     monkeypatch.setattr(cli, "_capture_run", lambda p, a: Tracker())
 

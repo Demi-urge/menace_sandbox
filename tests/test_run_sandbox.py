@@ -405,6 +405,9 @@ def test_section_short_circuit(monkeypatch, tmp_path):
         def save_history(self, path):
             pass
 
+        def rankings(self):
+            return []
+
     _stub_module(monkeypatch, "menace.roi_tracker", ROITracker=DummyTracker)
 
     class DummyImprover:
@@ -589,6 +592,12 @@ def test_workflow_run_called(monkeypatch, tmp_path):
             pass
         def save_history(self, *a, **k):
             pass
+
+        def rankings(self):
+            return []
+
+        def rankings(self):
+            return []
 
     _stub_module(monkeypatch, "menace.error_bot", ErrorBot=DummyBot, ErrorDB=lambda p: DummyBot())
     _stub_module(monkeypatch, "menace.data_bot", MetricsDB=DummyBot, DataBot=DummyBot)

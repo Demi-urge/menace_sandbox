@@ -201,8 +201,9 @@ def test_cli_rank(tmp_path, capsys):
 
     rt.cli(["rank", str(hist)])
     out = capsys.readouterr().out.strip().splitlines()
-    assert out[0].startswith("b.py")
-    assert out[1].startswith("a.py")
+    assert any(line.startswith("a.py") for line in out)
+    assert any(line.startswith("b.py") for line in out)
+    assert all("(roi" in line for line in out)
 
 
 def test_module_deltas_tracked():

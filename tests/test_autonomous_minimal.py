@@ -30,7 +30,7 @@ def test_minimal_autonomous_run(monkeypatch, tmp_path):
             return 0.0
 
         def rankings(self):
-            return [("m", 0.1)]
+            return [("m", 0.1, 0.1)]
 
     def fake_capture(preset, args):
         tracker = DummyTracker()

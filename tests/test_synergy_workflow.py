@@ -68,7 +68,7 @@ def _setup(monkeypatch, roi_seq, syn_seq):
 
         def rankings(self):
             total = sum(self.module_deltas.get("mod", []))
-            return [("mod", total)]
+            return [("mod", total, total)]
 
     tracker_mod = types.ModuleType("menace.roi_tracker")
     tracker_mod.ROITracker = DummyTracker

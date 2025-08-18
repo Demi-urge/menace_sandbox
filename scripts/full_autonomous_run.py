@@ -126,8 +126,8 @@ def main() -> None:
 
     if last_tracker:
         print("=== Final Module Rankings ===")
-        for mod, total in last_tracker.rankings():
-            print(f"{mod}: {total:.3f}")
+        for mod, raroi, roi in last_tracker.rankings():
+            print(f"{mod}: {raroi:.3f} (roi {roi:.3f})")
         print("=== Metrics ===")
         for name, vals in last_tracker.metrics_history.items():
             if vals:
