@@ -22,6 +22,8 @@ import json
 import logging
 from secret_redactor import redact_secrets
 
+import license_detector
+
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
 except Exception:  # pragma: no cover - Annoy not installed
@@ -182,6 +184,16 @@ class EmbeddableDBMixin:
 
         raise NotImplementedError
 
+    def license_text(self, record: Any) -> str | None:
+        """Return textual content to scan for license violations.
+
+        Subclasses can override this to extract text from structured
+        records. By default, if ``record`` is a string it is returned as-is
+        otherwise ``None`` is returned, skipping the license check.
+        """
+
+        return record if isinstance(record, str) else None
+
     # ------------------------------------------------------------------
     # index persistence
     def load_index(self) -> None:
@@ -260,6 +272,22 @@ class EmbeddableDBMixin:
         source_id: str = "",
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
+        text = self.license_text(record)
+        if text:
+            lic = license_detector.detect(text)
+            if lic:
+                try:  # pragma: no cover - best effort
+                    hash_ = license_detector.fingerprint(text)
+                    log_fn = getattr(self, "log_license_violation", None)
+                    if callable(log_fn):
+                        log_fn("", lic, hash_)
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception("failed to log license violation for %s", record_id)
+                log_embedding_metrics(
+                    self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
+                )
+                logger.warning("skipping embedding for %s due to license %s", record_id, lic)
+                return
         record = redact_secrets(record) if isinstance(record, str) else record
 
         start = perf_counter()

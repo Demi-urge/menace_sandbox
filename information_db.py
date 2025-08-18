@@ -114,6 +114,9 @@ class InformationDB(EmbeddableDBMixin):
             }
         return " ".join(self._flatten_fields(data))
 
+    def license_text(self, rec: InformationRecord | dict[str, Any]) -> str | None:
+        return self._embed_text(rec)
+
     # ------------------------------------------------------------------
     def _embed_record_on_write(
         self, info_id: int, rec: InformationRecord | dict[str, Any]
