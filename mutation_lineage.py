@@ -10,6 +10,7 @@ from typing import List, Dict, Any, Optional
 
 from .evolution_history_db import EvolutionHistoryDB
 from .code_database import PatchHistoryDB, PatchRecord
+from .patch_provenance import get_patch_provenance
 
 
 @dataclass
@@ -79,7 +80,9 @@ class MutationLineage:
             "reason",
             "trigger",
         ]
-        return dict(zip(keys, row))
+        patch = dict(zip(keys, row))
+        patch["provenance"] = get_patch_provenance(patch_id, patch_db=self.patch_db)
+        return patch
 
     # ------------------------------------------------------------------
     def backtrack_failed_path(self, patch_id: int) -> List[int]:

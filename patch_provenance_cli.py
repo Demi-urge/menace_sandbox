@@ -12,6 +12,7 @@ from typing import Any
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
 from code_database import PatchHistoryDB
+from patch_provenance import get_patch_provenance, search_patches_by_vector
 
 
 def _rec_to_dict(rec: Any) -> dict:
@@ -65,29 +66,34 @@ def main() -> None:
         rec = db.get(args.patch_id)
         if rec is None:
             raise SystemExit(1)
-        prov = db.get_provenance(args.patch_id)
+        prov = get_patch_provenance(args.patch_id, patch_db=db)
         out = {
             "id": args.patch_id,
             "record": _rec_to_dict(rec),
-            "provenance": [
-                {
-                    "origin": o,
-                    "vector_id": v,
-                    "influence": s,
-                    "retrieved_at": t,
-                }
-                for o, v, s, t in prov
-            ],
+            "provenance": prov,
         }
         print(json.dumps(out))
     elif args.cmd == "search":
-        res = db.find_by_vector(args.term)
-        if not res:
-            res = db.search_with_ids(args.term)
-        patches = [
-            {"id": pid, "filename": rec.filename, "description": rec.description}
-            for pid, rec in res
-        ]
+        res = search_patches_by_vector(args.term, patch_db=db)
+        if res:
+            patches = [
+                {
+                    "id": r["patch_id"],
+                    "filename": r["filename"],
+                    "description": r["description"],
+                    "contribution": r["contribution"],
+                }
+                for r in res
+            ]
+        else:
+            patches = [
+                {
+                    "id": pid,
+                    "filename": rec.filename,
+                    "description": rec.description,
+                }
+                for pid, rec in db.search_with_ids(args.term)
+            ]
         print(json.dumps(patches))
 
 

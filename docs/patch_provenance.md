@@ -1,7 +1,9 @@
 # Patch Provenance
 
 The patch provenance utilities expose information about patches stored in
-`PatchHistoryDB`.
+`PatchHistoryDB`.  They surface the vector ancestry recorded in the
+`patch_ancestry` table so that developers can see which vectors influenced a
+patch and how much each contributed.
 
 ## CLI
 
@@ -13,8 +15,10 @@ python patch_provenance_cli.py show 1
 python patch_provenance_cli.py search vec123
 ```
 
-`search` will first look for matching vector IDs in provenance records and
-fallback to keyword search over patch descriptions and filenames.
+`search` looks for matching vector IDs in the ancestry records and orders the
+results by contribution score.  If no vectors match the term it falls back to a
+keyword search over patch descriptions and filenames.  `show` displays the
+vectors influencing a patch ordered by their contribution.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
 SQLite database.
@@ -36,3 +40,17 @@ Endpoints:
 
 The service uses the same `PATCH_HISTORY_DB_PATH` environment variable to
 locate the database.
+
+## Python helpers
+
+Two helpers are available for programmatic access:
+
+```python
+from patch_provenance import search_patches_by_vector, get_patch_provenance
+
+search_patches_by_vector("vec123")  # -> list of patches ordered by contribution
+get_patch_provenance(1)              # -> vectors for a patch
+```
+
+These functions integrate with `lineage_tracker.py` and `mutation_lineage.py`
+to provide vector ancestry alongside existing lineage data.

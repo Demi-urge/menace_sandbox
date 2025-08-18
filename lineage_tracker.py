@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Optional
 import argparse
 
 from evolution_history_db import EvolutionHistoryDB
+from patch_provenance import get_patch_provenance
 
 
 @dataclass
@@ -95,6 +96,12 @@ class LineageTracker:
         avg_roi = sum(rois) / count if count else 0.0
         avg_perf = sum(perfs) / count if count else 0.0
         return LineageStats(count=count, avg_roi=avg_roi, avg_performance=avg_perf)
+
+    # ------------------------------------------------------------------
+    def patch_provenance(self, patch_id: int) -> List[dict]:
+        """Expose vector ancestry for the given ``patch_id``."""
+
+        return get_patch_provenance(patch_id)
 
 
 # ----------------------------------------------------------------------
