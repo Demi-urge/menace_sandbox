@@ -1282,6 +1282,11 @@ def main(argv: List[str] | None = None) -> None:
     )
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
 
+    p_run = sub.add_parser(
+        "run-scenarios", help="run scenario simulations for a workflow"
+    )
+    p_run.add_argument("workflow_id", type=int, help="workflow ID to simulate")
+
     sub.add_parser(
         "relevancy-report",
         help="print modules flagged by relevancy radar",
@@ -1631,6 +1636,25 @@ def main(argv: List[str] | None = None) -> None:
 
     if getattr(args, "cmd", None) == "run-complete":
         run_complete(args)
+        return
+
+    if getattr(args, "cmd", None) == "run-scenarios":
+        from sandbox_runner.environment import run_scenarios
+        from task_handoff_bot import WorkflowDB
+
+        wf_db = WorkflowDB(Path(args.workflow_db))
+        row = wf_db.conn.execute(
+            "SELECT * FROM workflows WHERE id=?",
+            (args.workflow_id,),
+        ).fetchone()
+        if not row:
+            print(f"workflow {args.workflow_id} not found")
+            return
+        wf = wf_db._row_to_record(row)
+        tracker = run_scenarios(wf)
+        for scen, delta in sorted(tracker.scenario_roi_deltas.items()):
+            print(f"{scen}: {delta:+.3f}")
+        print(f"worst_scenario: {tracker.worst_scenario}")
         return
 
     if args.workflow_sim:
