@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Sequence, Tuple
 from collections import defaultdict
+import logging
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -17,6 +18,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
+
+logger = logging.getLogger(__name__)
 
 
 class IntentClassifier:
@@ -56,8 +61,23 @@ class IntentClassifier:
 
     def _embed(self, texts: Sequence[str]):
         if self._sbert is not None:
-            return self._sbert.encode(texts)
+            vectors = []
+            for t in texts:
+                alerts = find_semantic_risks(t.splitlines())
+                if alerts:
+                    logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+                    raise ValueError("Semantic risks detected")
+                vec = governed_embed(t, self._sbert)
+                if vec is None:
+                    raise RuntimeError("Embedding failed")
+                vectors.append(vec)
+            return vectors
         if self._use is not None:
+            for t in texts:
+                alerts = find_semantic_risks(t.splitlines())
+                if alerts:
+                    logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+                    raise ValueError("Semantic risks detected")
             return self._use(texts).numpy()
         assert self.vectorizer is not None
         return self.vectorizer.transform(texts)
