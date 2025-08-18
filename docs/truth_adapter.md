@@ -17,6 +17,16 @@ underlying regression model via the `model_type` argument, for example
 `TruthAdapter(model_type="xgboost")` if XGBoost is installed, otherwise a ridge
 regressor is used.
 
+Drift thresholds default to ``0.25`` for PSI and ``0.2`` for the KS statistic.
+They can be overridden explicitly:
+
+```python
+TruthAdapter(psi_threshold=0.3, ks_threshold=0.25)
+```
+
+or configured globally via ``SandboxSettings`` with the ``psi_threshold`` and
+``ks_threshold`` fields.
+
 Hyperparameters for the underlying models can be provided through
 `ridge_params` and `xgb_params`:
 

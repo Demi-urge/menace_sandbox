@@ -106,6 +106,16 @@ class SandboxSettings(BaseSettings):
         env="ENABLE_TRUTH_CALIBRATION",
         description="Enable TruthAdapter calibration of ROI metrics.",
     )
+    psi_threshold: float | None = Field(
+        None,
+        env="PSI_THRESHOLD",
+        description="Population Stability Index threshold for feature drift.",
+    )
+    ks_threshold: float | None = Field(
+        None,
+        env="KS_THRESHOLD",
+        description="Kolmogorov–Smirnov statistic threshold for feature drift.",
+    )
     roi_threshold: float | None = Field(None, env="ROI_THRESHOLD")
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")

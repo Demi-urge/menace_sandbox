@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
+import logging
 
 import numpy as np
 
@@ -69,4 +70,29 @@ def test_shifted_features_trigger_drift(tmp_path: Path) -> None:
     assert adapter.metadata["drift_flag"] is True
     # Predict should surface a warning message when drift is present
     assert "warning" in adapter.metadata
+
+
+def test_thresholds_from_config(monkeypatch, tmp_path: Path) -> None:
+    ss_mod = types.ModuleType("sandbox_settings")
+    ss_mod.SandboxSettings = lambda: types.SimpleNamespace(
+        psi_threshold=0.1, ks_threshold=0.05
+    )
+    monkeypatch.setitem(sys.modules, "sandbox_settings", ss_mod)
+
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    assert adapter.drift_threshold == 0.1
+    assert adapter.ks_threshold == 0.05
+    assert adapter.metadata["thresholds"] == {"psi": 0.1, "ks": 0.05}
+
+
+def test_drift_logging(tmp_path: Path, caplog) -> None:
+    X, y = _make_data()
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X, y)
+    X_shifted = X + 5.0
+    with caplog.at_level(logging.WARNING):
+        adapter.check_drift(X_shifted)
+    rec = next(r for r in caplog.records if "feature drift detected" in r.message)
+    assert hasattr(rec, "drift_features")
+    assert rec.drift_features
 

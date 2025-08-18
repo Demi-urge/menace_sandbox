@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Tuple
 
+from .logging_utils import get_logger, log_record
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -31,6 +33,9 @@ except Exception:  # pragma: no cover - import guard
     ks_2samp = None  # type: ignore
 
 
+logger = None  # lazily initialized
+
+
 class TruthAdapter:
     """Calibrates ROI predictions and monitors feature drift."""
 
@@ -40,6 +45,8 @@ class TruthAdapter:
         model_type: str = "ridge",
         ridge_params: dict[str, Any] | None = None,
         xgb_params: dict[str, Any] | None = None,
+        psi_threshold: float | None = None,
+        ks_threshold: float | None = None,
     ) -> None:
         """Create adapter.
 
@@ -54,6 +61,10 @@ class TruthAdapter:
             Optional parameters passed to :class:`~sklearn.linear_model.Ridge`.
         xgb_params:
             Optional parameters passed to :class:`xgboost.XGBRegressor`.
+        psi_threshold:
+            Override the Population Stability Index threshold for drift detection.
+        ks_threshold:
+            Override the Kolmogorov–Smirnov statistic threshold for drift detection.
         """
 
         self.model_path = Path(model_path)
@@ -62,9 +73,28 @@ class TruthAdapter:
         self.xgb_params = xgb_params or {}
         self.model = None
         self.metadata: dict = {}
-        self.drift_threshold = 0.25  # PSI threshold for drift
-        self.ks_threshold = 0.2  # KS statistic threshold
         self._load()
+
+        thresholds = self.metadata.get("thresholds", {})
+        if psi_threshold is None:
+            psi_threshold = thresholds.get("psi")
+        if ks_threshold is None:
+            ks_threshold = thresholds.get("ks")
+        if psi_threshold is None or ks_threshold is None:
+            try:  # pragma: no cover - optional dependency
+                from sandbox_settings import SandboxSettings
+
+                cfg = SandboxSettings()
+                if psi_threshold is None:
+                    psi_threshold = getattr(cfg, "psi_threshold", None)
+                if ks_threshold is None:
+                    ks_threshold = getattr(cfg, "ks_threshold", None)
+            except Exception:
+                pass
+        self.drift_threshold = float(psi_threshold) if psi_threshold is not None else 0.25
+        self.ks_threshold = float(ks_threshold) if ks_threshold is not None else 0.2
+        self.metadata.setdefault("thresholds", {})
+        self.metadata["thresholds"].update({"psi": self.drift_threshold, "ks": self.ks_threshold})
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -118,6 +148,8 @@ class TruthAdapter:
         # Ensure drift metrics keys exist for persistence
         self.metadata.setdefault("model_type", self.metadata.get("model_type", "ridge"))
         self.metadata.setdefault("drift_metrics", self.metadata.get("drift_metrics", {"psi": [], "ks": []}))
+        self.metadata.setdefault("thresholds", {})
+        self.metadata["thresholds"].update({"psi": self.drift_threshold, "ks": self.ks_threshold})
         self.metadata.setdefault("last_drift_check", None)
         self.metadata.setdefault("training_stats", None)
         self.metadata.setdefault("last_retrained", self.metadata.get("last_retrained"))
@@ -247,9 +279,14 @@ class TruthAdapter:
         if not stats:
             return {"psi": [], "ks": []}, False
 
+        thresholds = self.metadata.get("thresholds", {})
+        psi_threshold = thresholds.get("psi", self.drift_threshold)
+        ks_threshold = thresholds.get("ks", self.ks_threshold)
+
         psi_values: list[float] = []
         ks_values: list[float] = []
         drift_detected = False
+        drift_features: list[dict[str, float | int]] = []
 
         for i, fs in enumerate(stats):
             expected = np.array(fs["counts"])
@@ -277,8 +314,9 @@ class TruthAdapter:
                 ks_val = float(np.max(np.abs(exp_cdf - act_cdf)))
             ks_values.append(ks_val)
 
-            if psi > self.drift_threshold or ks_val > self.ks_threshold:
+            if psi > psi_threshold or ks_val > ks_threshold:
                 drift_detected = True
+                drift_features.append({"index": i, "psi": float(psi), "ks": ks_val})
 
         metrics = {"psi": psi_values, "ks": ks_values}
 
@@ -290,5 +328,13 @@ class TruthAdapter:
         self.metadata["retraining_required"] = drift_detected
         self.metadata["needs_retrain"] = drift_detected
         self.metadata["last_drift_check"] = time.time()
+        if drift_detected:
+            global logger
+            if logger is None:
+                logger = get_logger(__name__)
+            logger.warning(
+                "feature drift detected",
+                extra=log_record(drift_features=drift_features),
+            )
         self._save()
         return metrics, drift_detected
