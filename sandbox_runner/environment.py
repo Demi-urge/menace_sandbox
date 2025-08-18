@@ -40,6 +40,7 @@ from typing import (
     List,
     Callable,
     Iterable,
+    Sequence,
     Mapping,
     get_origin,
     get_args,
@@ -5150,32 +5151,29 @@ def _scenario_specific_metrics(
 
 # ----------------------------------------------------------------------
 def run_scenarios(
-    workflow: Any,
-    other_workflows: Iterable[Any] | None = None,
+    workflow: Sequence[str] | str,
     tracker: "ROITracker" | None = None,
 ) -> tuple["ROITracker", Dict[str, Any]]:
-    """Run *workflow* across several environment presets and compare ROI.
+    """Run ``workflow`` across predefined sandbox scenarios and compare ROI.
 
-    The workflow is executed in five predefined scenarios: a baseline "normal"
-    environment followed by ``concurrency_spike``, ``hostile_input``,
-    ``schema_drift`` and ``flaky_upstream``.  Each scenario is executed twice –
-    once with the target workflow enabled and once with it disabled – to
-    measure the direct contribution of the workflow.  For each run the ROI and
-    metrics are recorded, per-scenario ROI/metric deltas are calculated relative
-    to the baseline (with the workflow enabled) and synergy metrics are tracked
-    through :class:`menace.roi_tracker.ROITracker`.
+    The workflow is executed in a baseline "normal" environment followed by
+    four adverse scenarios: ``high_concurrency``, ``hostile_input``,
+    ``schema_drift`` and ``flaky_upstreams``.  Each scenario is executed twice –
+    once with the workflow enabled and once with it disabled – to measure the
+    direct contribution of the workflow.  For each run the ROI and metrics are
+    recorded, per-scenario ROI/metric deltas are calculated relative to the
+    baseline run and synergy metrics are tracked through
+    :class:`menace.roi_tracker.ROITracker`.
 
     Parameters
     ----------
     workflow:
-        Workflow record or list of step strings.  Objects providing ``workflow``
-        and ``wid`` attributes are also accepted.
-    other_workflows:
-        Optional iterable of additional workflows that are executed alongside
-        ``workflow`` in every scenario.
+        Sequence of step strings or single step name forming the workflow to
+        execute. Objects providing a ``workflow`` attribute are also accepted for
+        backward compatibility.
     tracker:
         Optional ROI tracker used to calculate diminishing returns and record
-        synergy metrics.  When omitted a new tracker is created.
+        synergy metrics. When omitted a new tracker is created.
 
     Returns
     -------
@@ -5183,21 +5181,22 @@ def run_scenarios(
         A pair consisting of the :class:`ROITracker` used for the simulations
         and a mapping with per-scenario results. ``scenarios`` maps scenario
         names to dictionaries containing the ROI, ROI delta, raw metrics,
-        metric deltas and recorded synergy metrics. ``worst_scenario``
-        identifies the scenario causing the largest ROI drop.
+        metric deltas and recorded synergy metrics. ``worst_scenario`` identifies
+        the scenario causing the largest ROI drop.
     """
 
     from menace.roi_tracker import ROITracker
 
     if tracker is None:
         tracker = ROITracker()
-    if other_workflows is None:
-        other_workflows = []
 
-    def _steps(obj: Any) -> list[str]:
-        if isinstance(obj, (list, tuple)):
+    def _steps(obj: Sequence[str] | str) -> list[str]:
+        if isinstance(obj, str):
+            return [obj]
+        try:
             return [str(s) for s in obj]
-        return [str(s) for s in getattr(obj, "workflow", [])]
+        except TypeError:
+            return [str(s) for s in getattr(obj, "workflow", [])]
 
     def _wf_snippet(steps: list[str]) -> str:
         imports: list[str] = []
@@ -5219,17 +5218,21 @@ def run_scenarios(
 
     wf_id = getattr(workflow, "wid", getattr(workflow, "id", "0"))
     wf_steps = _steps(workflow)
-    other_steps: list[str] = []
-    for wf in other_workflows:
-        other_steps.extend(_steps(wf))
 
-    snippet_on = _wf_snippet(other_steps + wf_steps)
-    snippet_off = _wf_snippet(other_steps)
+    snippet_on = _wf_snippet(wf_steps)
+    snippet_off = _wf_snippet([])
 
     presets = [
         {"SCENARIO_NAME": "normal"},
-        {"SCENARIO_NAME": "concurrency_spike", "CONCURRENCY_LEVEL": "8"},
-        {"SCENARIO_NAME": "hostile_input", "FAILURE_MODES": "hostile_input"},
+        {
+            "SCENARIO_NAME": "high_concurrency",
+            "FAILURE_MODES": "concurrency_spike",
+            "CONCURRENCY_LEVEL": "8",
+        },
+        {
+            "SCENARIO_NAME": "hostile_input",
+            "FAILURE_MODES": "hostile_input",
+        },
         {
             "SCENARIO_NAME": "schema_drift",
             "FAILURE_MODES": "schema_drift",
@@ -5237,7 +5240,7 @@ def run_scenarios(
             "SCHEMA_CHECKS": 100,
         },
         {
-            "SCENARIO_NAME": "flaky_upstream",
+            "SCENARIO_NAME": "flaky_upstreams",
             "FAILURE_MODES": "flaky_upstream",
             "UPSTREAM_FAILURES": 1,
             "UPSTREAM_REQUESTS": 20,
