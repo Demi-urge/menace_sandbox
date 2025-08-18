@@ -108,7 +108,7 @@ __all__ = [
     "generate_sandbox_report",
     "run_repo_section_simulations",
     "run_workflow_simulations",
-    "run_scenarios",
+    "run_scenarios",  # export scenario runner for external callers
     "auto_include_modules",
     "discover_orphan_modules",
     "discover_recursive_orphans",
