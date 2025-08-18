@@ -5319,9 +5319,19 @@ def run_scenarios(
                     k: metrics_on.get(k, 0.0) - baseline_metrics.get(k, 0.0)
                     for k in set(metrics_on) | set(baseline_metrics)
                 }
+            target_metrics_delta = {
+                k: metrics_on.get(k, 0.0) - metrics_off.get(k, 0.0)
+                for k in set(metrics_on) | set(metrics_off)
+            }
 
             delta = roi_on - roi_off
-            tracker.record_scenario_delta(scenario, delta)
+            synergy_diff = {
+                f"synergy_{k}": float(v) for k, v in target_metrics_delta.items()
+            }
+            synergy_diff["synergy_roi"] = delta
+            tracker.record_scenario_delta(
+                scenario, delta, metrics_delta, synergy_diff
+            )
             synergy_metrics = {
                 f"synergy_{k}": float(v) for k, v in metrics_delta.items()
             }
@@ -5337,11 +5347,6 @@ def run_scenarios(
                 modules=[f"workflow_{wf_id}", scenario],
                 metrics={**metrics_on, **synergy_metrics},
             )
-
-            target_metrics_delta = {
-                k: metrics_on.get(k, 0.0) - metrics_off.get(k, 0.0)
-                for k in set(metrics_on) | set(metrics_off)
-            }
 
             results[scenario] = {
                 "roi": roi_on,
@@ -5361,7 +5366,7 @@ def run_scenarios(
 
     asyncio.run(_run())
 
-    worst, _ = tracker.worst_scenario()
+    worst, _ = tracker.biggest_drop()
 
     export = {
         scen: {"roi_delta": delta, "worst": scen == worst}

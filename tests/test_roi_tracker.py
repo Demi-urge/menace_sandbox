@@ -81,8 +81,8 @@ def test_save_and_load_json(tmp_path):
     tracker.record_prediction(0.7, 0.8)
     tracker.record_metric_prediction("metric", 1.0, 0.5)
     tracker.synergy_history.append({"synergy_roi": 0.5})
-    tracker.record_scenario_delta("normal", 1.0)
-    tracker.record_scenario_delta("concurrency_spike", -1.0)
+    tracker.record_scenario_delta("normal", 1.0, {"metric": 0.0}, {"synergy_metric": 0.0})
+    tracker.record_scenario_delta("concurrency_spike", -1.0, {"metric": -1.0}, {"synergy_metric": -1.0})
     path = tmp_path / "hist.json"
     tracker.save_history(str(path))
 
@@ -98,6 +98,8 @@ def test_save_and_load_json(tmp_path):
     assert new_tracker.actual_metrics.get("metric") == tracker.actual_metrics.get("metric")
     assert new_tracker.synergy_history == tracker.synergy_history
     assert new_tracker.scenario_roi_deltas == tracker.scenario_roi_deltas
+    assert new_tracker.scenario_metrics_delta == tracker.scenario_metrics_delta
+    assert new_tracker.scenario_synergy_delta == tracker.scenario_synergy_delta
     assert new_tracker.worst_scenario() == tracker.worst_scenario()
 
 
@@ -107,8 +109,8 @@ def test_save_and_load_sqlite(tmp_path):
         tracker.update(0.0, float(i), [f"x{i}.py"], metrics={"m": float(i)})
     tracker.record_prediction(1.0, 0.9)
     tracker.synergy_history.append({"synergy_roi": 0.2})
-    tracker.record_scenario_delta("normal", 0.5)
-    tracker.record_scenario_delta("concurrency_spike", -1.0)
+    tracker.record_scenario_delta("normal", 0.5, {"m": 0.0}, {"synergy_m": 0.0})
+    tracker.record_scenario_delta("concurrency_spike", -1.0, {"m": -1.0}, {"synergy_m": -1.0})
     tracker.metrics_history.setdefault("synergy_roi", [0.0] * len(tracker.roi_history))
     path = tmp_path / "hist.db"
     tracker.save_history(str(path))
@@ -123,6 +125,8 @@ def test_save_and_load_sqlite(tmp_path):
     assert other.metrics_history == tracker.metrics_history
     assert other.synergy_history == tracker.synergy_history
     assert other.scenario_roi_deltas == tracker.scenario_roi_deltas
+    assert other.scenario_metrics_delta == tracker.scenario_metrics_delta
+    assert other.scenario_synergy_delta == tracker.scenario_synergy_delta
     assert other.worst_scenario() == tracker.worst_scenario()
 
 

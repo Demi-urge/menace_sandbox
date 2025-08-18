@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Track ROI deltas across self-improvement iterations."""
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping
 
 import argparse
 import csv
@@ -199,6 +199,8 @@ class ROITracker:
         self.synergy_history: list[dict[str, float]] = []
         self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
         self.scenario_roi_deltas: Dict[str, float] = {}
+        self.scenario_metrics_delta: Dict[str, Dict[str, float]] = {}
+        self.scenario_synergy_delta: Dict[str, Dict[str, float]] = {}
         self._worst_scenario: str | None = None
         self._best_order: Optional[Tuple[int, int, int]] = None
         self._order_history: Tuple[float, ...] = ()
@@ -892,7 +894,9 @@ class ROITracker:
             "mae_trend": self.rolling_mae_trend(window),
             "accuracy_trend": self.rolling_accuracy_trend(window),
             "scenario_roi_deltas": dict(self.scenario_roi_deltas),
-            "worst_scenario": self.worst_scenario()[0] if self.scenario_roi_deltas else None,
+            "scenario_metrics_delta": dict(self.scenario_metrics_delta),
+            "scenario_synergy_delta": dict(self.scenario_synergy_delta),
+            "worst_scenario": self.biggest_drop()[0] if self.scenario_roi_deltas else None,
         }
 
     # ------------------------------------------------------------------
@@ -1849,17 +1853,39 @@ class ROITracker:
         return list(self.scenario_synergy.get(str(name), []))
 
     # ------------------------------------------------------------------
-    def record_scenario_delta(self, name: str, delta: float) -> None:
-        """Record ROI ``delta`` for scenario ``name``.
+    def record_scenario_delta(
+        self,
+        name: str,
+        delta: float,
+        metrics_delta: Mapping[str, float] | None = None,
+        synergy_delta: Mapping[str, float] | None = None,
+    ) -> None:
+        """Record ROI ``delta`` and related information for scenario ``name``.
 
-        The method stores the ROI change associated with ``name`` and updates
-        the cached worst-scenario label when ``delta`` represents the largest
-        drop encountered so far.
+        Parameters
+        ----------
+        name:
+            Scenario identifier.
+        delta:
+            ROI delta for the scenario.
+        metrics_delta:
+            Optional mapping of metric deltas relative to the baseline run.
+        synergy_delta:
+            Optional mapping capturing the difference between workflow-on and
+            workflow-off runs for each synergy metric.
         """
 
         scen = str(name)
         delta = float(delta)
         self.scenario_roi_deltas[scen] = delta
+        if metrics_delta is not None:
+            self.scenario_metrics_delta[scen] = {
+                str(k): float(v) for k, v in metrics_delta.items()
+            }
+        if synergy_delta is not None:
+            self.scenario_synergy_delta[scen] = {
+                str(k): float(v) for k, v in synergy_delta.items()
+            }
         if (
             self._worst_scenario is None
             or delta < self.scenario_roi_deltas.get(self._worst_scenario, float("inf"))
@@ -1867,8 +1893,8 @@ class ROITracker:
             self._worst_scenario = scen
 
     # ------------------------------------------------------------------
-    def worst_scenario(self) -> Tuple[str, float]:
-        """Return the scenario with the largest ROI drop."""
+    def biggest_drop(self) -> Tuple[str, float]:
+        """Return the scenario with the largest negative ROI delta."""
 
         if not self.scenario_roi_deltas:
             return "", 0.0
@@ -1877,12 +1903,29 @@ class ROITracker:
         return worst
 
     # ------------------------------------------------------------------
+    def worst_scenario(self) -> Tuple[str, float]:
+        """Alias for :meth:`biggest_drop` for backward compatibility."""
+
+        return self.biggest_drop()
+
+    # ------------------------------------------------------------------
     def get_scenario_roi_delta(self, name: str) -> float:
         """Return ROI delta recorded for scenario ``name``."""
 
         return float(self.scenario_roi_deltas.get(str(name), 0.0))
 
     # ------------------------------------------------------------------
+    def get_scenario_metrics_delta(self, name: str) -> Dict[str, float]:
+        """Return metrics delta mapping recorded for ``name`` scenario."""
+
+        return dict(self.scenario_metrics_delta.get(str(name), {}))
+
+    # ------------------------------------------------------------------
+    def get_scenario_synergy_delta(self, name: str) -> Dict[str, float]:
+        """Return synergy difference mapping recorded for ``name`` scenario."""
+
+        return dict(self.scenario_synergy_delta.get(str(name), {}))
+
     def save_history(self, path: str) -> None:
         """Persist ``roi_history`` and ``module_deltas`` to ``path``."""
         if path.endswith(".json"):
@@ -1913,7 +1956,9 @@ class ROITracker:
                 "synergy_history": self.synergy_history,
                 "scenario_synergy": self.scenario_synergy,
                 "scenario_roi_deltas": self.scenario_roi_deltas,
-                "worst_scenario": self.worst_scenario()[0] if self.scenario_roi_deltas else None,
+                "scenario_metrics_delta": self.scenario_metrics_delta,
+                "scenario_synergy_delta": self.scenario_synergy_delta,
+                "worst_scenario": self.biggest_drop()[0] if self.scenario_roi_deltas else None,
                 "predicted_metrics": self.predicted_metrics,
                 "actual_metrics": self.actual_metrics,
                 "metric_predictions": metric_preds,
@@ -2094,10 +2139,34 @@ class ROITracker:
                     ],
                 )
             conn.execute(
+                "CREATE TABLE IF NOT EXISTS scenario_metrics_delta (scenario TEXT, data TEXT)"
+            )
+            conn.execute("DELETE FROM scenario_metrics_delta")
+            if self.scenario_metrics_delta:
+                conn.executemany(
+                    "INSERT INTO scenario_metrics_delta (scenario, data) VALUES (?, ?)",
+                    [
+                        (scen, json.dumps(data))
+                        for scen, data in self.scenario_metrics_delta.items()
+                    ],
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS scenario_synergy_delta (scenario TEXT, data TEXT)"
+            )
+            conn.execute("DELETE FROM scenario_synergy_delta")
+            if self.scenario_synergy_delta:
+                conn.executemany(
+                    "INSERT INTO scenario_synergy_delta (scenario, data) VALUES (?, ?)",
+                    [
+                        (scen, json.dumps(data))
+                        for scen, data in self.scenario_synergy_delta.items()
+                    ],
+                )
+            conn.execute(
                 "CREATE TABLE IF NOT EXISTS worst_scenario (scenario TEXT)"
             )
             conn.execute("DELETE FROM worst_scenario")
-            worst_label, _ = self.worst_scenario()
+            worst_label, _ = self.biggest_drop()
             if worst_label:
                 conn.execute(
                     "INSERT INTO worst_scenario (scenario) VALUES (?)",
@@ -2235,6 +2304,20 @@ class ROITracker:
                         str(k): float(v)
                         for k, v in data.get("scenario_roi_deltas", {}).items()
                     }
+                    self.scenario_metrics_delta = {
+                        str(n): {
+                            str(k): float(v)
+                            for k, v in (entry or {}).items()
+                        }
+                        for n, entry in data.get("scenario_metrics_delta", {}).items()
+                    }
+                    self.scenario_synergy_delta = {
+                        str(n): {
+                            str(k): float(v)
+                            for k, v in (entry or {}).items()
+                        }
+                        for n, entry in data.get("scenario_synergy_delta", {}).items()
+                    }
                     worst = data.get("worst_scenario")
                     self._worst_scenario = str(worst) if worst is not None else None
                     if not self.synergy_metrics_history:
@@ -2299,6 +2382,8 @@ class ROITracker:
                 self.metrics_history = {}
                 self.scenario_synergy = {}
                 self.scenario_roi_deltas = {}
+                self.scenario_metrics_delta = {}
+                self.scenario_synergy_delta = {}
                 self._worst_scenario = None
             return
         try:
@@ -2366,6 +2451,18 @@ class ROITracker:
                     ).fetchall()
                 except Exception:
                     scen_delta_rows = []
+                try:
+                    scen_metric_rows = conn.execute(
+                        "SELECT scenario, data FROM scenario_metrics_delta ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    scen_metric_rows = []
+                try:
+                    scen_syn_rows = conn.execute(
+                        "SELECT scenario, data FROM scenario_synergy_delta ORDER BY rowid"
+                    ).fetchall()
+                except Exception:
+                    scen_syn_rows = []
                 try:
                     worst_row = conn.execute(
                         "SELECT scenario FROM worst_scenario ORDER BY rowid LIMIT 1"
@@ -2476,6 +2573,26 @@ class ROITracker:
         self.scenario_roi_deltas = {
             str(scen): float(delta) for scen, delta in scen_delta_rows
         }
+        self.scenario_metrics_delta = {}
+        for scen, json_data in scen_metric_rows:
+            try:
+                entry = json.loads(str(json_data))
+                if isinstance(entry, dict):
+                    self.scenario_metrics_delta[str(scen)] = {
+                        str(k): float(v) for k, v in entry.items()
+                    }
+            except Exception:
+                continue
+        self.scenario_synergy_delta = {}
+        for scen, json_data in scen_syn_rows:
+            try:
+                entry = json.loads(str(json_data))
+                if isinstance(entry, dict):
+                    self.scenario_synergy_delta[str(scen)] = {
+                        str(k): float(v) for k, v in entry.items()
+                    }
+            except Exception:
+                continue
         self._worst_scenario = (
             str(worst_row[0]) if worst_row and worst_row[0] is not None else None
         )

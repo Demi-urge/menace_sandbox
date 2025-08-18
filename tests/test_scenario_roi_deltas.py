@@ -91,11 +91,14 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
     assert cs_info["roi_delta"] == pytest.approx(-1.0)
     assert tracker_obj.get_scenario_roi_delta("concurrency_spike") == pytest.approx(-1.0)
     assert summary["worst_scenario"] == "concurrency_spike"
+    assert tracker_obj.biggest_drop()[0] == "concurrency_spike"
 
     delta_profit = scenario_data["concurrency_spike"]["on"][1]["profitability"] - scenario_data["normal"]["on"][1]["profitability"]
     assert cs_info["metrics_delta"]["profitability"] == pytest.approx(delta_profit)
     assert cs_info["synergy"]["synergy_roi"] == pytest.approx(-1.0)
     assert cs_info["synergy"]["synergy_profitability"] == pytest.approx(delta_profit)
+    assert tracker_obj.scenario_metrics_delta["concurrency_spike"]["profitability"] == pytest.approx(delta_profit)
+    assert tracker_obj.scenario_synergy_delta["concurrency_spike"]["synergy_profitability"] == pytest.approx(delta_profit)
     flags = {r["flag"] for r in cs_info["runs"]}
     assert flags == {"on", "off"}
     assert cs_info["target_delta"]["roi"] == pytest.approx(-1.0)
