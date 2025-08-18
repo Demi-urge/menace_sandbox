@@ -1,0 +1,4 @@
+{
+  "input": "<script>alert('x')</script>",
+  "expected_roi": 2.5
+}
