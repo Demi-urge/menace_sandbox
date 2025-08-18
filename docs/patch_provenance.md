@@ -12,12 +12,14 @@ Use `tools/patch_provenance_cli.py` to inspect patch records:
 ```bash
 python tools/patch_provenance_cli.py list
 python tools/patch_provenance_cli.py show 1
+python tools/patch_provenance_cli.py chain 1
 python tools/patch_provenance_cli.py search vec123
 python tools/patch_provenance_cli.py search --hash <code_hash>
 ```
 
 `list` displays recent patches with their IDs.  `show` prints the ancestry
-chain for a patch including the vectors and their influence scores.
+details for a patch including the vectors and their influence scores while
+`chain` returns only the ancestry chain for a patch.
 `search` performs a reverse lookup either by vector ID (default) or by code
 snippet hash when ``--hash`` is supplied.
 
@@ -36,8 +38,9 @@ python patch_provenance_service.py
 Endpoints:
 
 - `GET /patches` – list patches
-- `GET /patches/<patch_id>` – show a patch and its provenance
-- `GET /search?q=<term>` – search by vector ID or keyword
+- `GET /patches/<patch_id>` – show a patch, its provenance and ancestry chain
+- `GET /vectors/<vector_id>` – find patches influenced by a vector ID
+- `GET /search?q=<term>` – search patches by vector ID or keyword
 
 The service uses the same `PATCH_HISTORY_DB_PATH` environment variable to
 locate the database.

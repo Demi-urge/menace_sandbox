@@ -29,6 +29,11 @@ def main() -> None:
     show_p = sub.add_parser("show", help="show provenance for a patch")
     show_p.add_argument("patch_id", type=int)
 
+    chain_p = sub.add_parser(
+        "chain", help="show full ancestry chain for a patch"
+    )
+    chain_p.add_argument("patch_id", type=int)
+
     search_p = sub.add_parser("search", help="search patches by vector or code hash")
     search_p.add_argument("term", help="vector id or code hash")
     search_p.add_argument(
@@ -65,6 +70,9 @@ def main() -> None:
             "chain": chain,
         }
         print(json.dumps(out))
+    elif args.cmd == "chain":
+        chain = build_chain(args.patch_id, patch_db=db)
+        print(json.dumps(chain))
     elif args.cmd == "search":
         if args.hash:
             rows = search_patches_by_hash(args.term, patch_db=db)
