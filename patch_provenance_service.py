@@ -13,6 +13,8 @@ from patch_provenance import (
     get_patch_provenance,
     search_patches_by_vector,
     build_chain,
+    search_patches_by_license,
+    search_patches_by_semantic_alert,
 )
 
 
@@ -54,11 +56,17 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
     def list_patches():
         lic = request.args.get("license")
         alert = request.args.get("semantic_alert")
-        if lic or alert:
-            rows = pdb.find_patches_by_provenance(license=lic, semantic_alert=alert)
+        if alert:
+            rows = search_patches_by_semantic_alert(alert, patch_db=pdb)
             patches = [
-                {"id": pid, "filename": fname, "description": desc}
-                for pid, fname, desc in rows
+                {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
+                for r in rows
+            ]
+        elif lic:
+            rows = search_patches_by_license(lic, patch_db=pdb)
+            patches = [
+                {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
+                for r in rows
             ]
         else:
             patches = [
