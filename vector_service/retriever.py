@@ -64,7 +64,7 @@ class Retriever:
     top_k: int = 5
     similarity_threshold: float = 0.1
     retriever_kwargs: Dict[str, Any] = field(default_factory=dict)
-    content_filtering: bool = False
+    content_filtering: bool = True
     _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------

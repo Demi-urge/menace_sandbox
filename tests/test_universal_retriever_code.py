@@ -7,7 +7,11 @@ class _Hit:
     origin_db = "code"
     score = 1.0
     reason = "match"
-    metadata = {"code": "print('hello')", "contextual_metrics": {"complexity": 2.0, "model_score": 1.0}}
+    metadata = {
+        "code": "print('hello')",
+        "contextual_metrics": {"complexity": 2.0, "model_score": 1.0},
+        "redacted": True,
+    }
 
 
 class _DummyUR:
@@ -16,7 +20,7 @@ class _DummyUR:
 
 
 def test_code_snippet_retrieval():
-    retriever = Retriever(retriever=_DummyUR())
+    retriever = Retriever(retriever=_DummyUR(), content_filtering=False)
     hits = retriever.search("greeting", top_k=1)
     assert hits and hits[0]["origin_db"] == "code"
     assert "print('hello')" in hits[0]["metadata"]["code"]
