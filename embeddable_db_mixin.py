@@ -159,7 +159,10 @@ class EmbeddableDBMixin:
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
 
+        original = text
         text = redact(text)
+        if text != original:
+            logger.warning("redacted secrets prior to embedding")
 
         start = perf_counter()
         tokens = 0

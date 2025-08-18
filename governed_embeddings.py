@@ -7,8 +7,15 @@ try:  # pragma: no cover - optional heavy dependency
 except Exception:  # pragma: no cover - simplify in environments without the package
     SentenceTransformer = None  # type: ignore
 
-from redaction_utils import redact_text
-from license_detector import detect
+import logging
+
+from security.secret_redactor import redact
+from compliance.license_fingerprint import (
+    check as license_check,
+    fingerprint as license_fingerprint,
+)
+
+logger = logging.getLogger(__name__)
 
 _EMBEDDER: SentenceTransformer | None = None
 
@@ -41,9 +48,19 @@ def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Op
 
     if not text:
         return None
-    if detect(text):
+    lic = license_check(text)
+    if lic:
+        try:  # pragma: no cover - best effort logging
+            logger.warning(
+                "skipping embedding due to license %s", lic,
+                extra={"fingerprint": license_fingerprint(text)},
+            )
+        except Exception:
+            logger.warning("skipping embedding due to license %s", lic)
         return None
-    cleaned = redact_text(text)
+    cleaned = redact(text)
+    if cleaned != text:
+        logger.warning("redacted secrets prior to embedding")
     model = embedder or get_embedder()
     if model is None:
         return None

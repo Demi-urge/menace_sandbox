@@ -20,6 +20,7 @@ import json
 import sqlite3
 import argparse
 import warnings
+import logging
 from time import perf_counter
 from typing import Any, List, Sequence, Mapping, Dict, Optional
 
@@ -31,7 +32,10 @@ try:
 except Exception:  # pragma: no cover - legacy path
     from secret_redactor import redact_secrets  # type: ignore
 
-from compliance.license_fingerprint import check as license_check
+from compliance.license_fingerprint import (
+    check as license_check,
+    fingerprint as license_fingerprint,
+)
 
 try:  # Optional dependency used for event publication
     from unified_event_bus import UnifiedEventBus
@@ -68,6 +72,8 @@ except Exception:  # pragma: no cover - flat layout fallback
 
 # Standardised tag set for GPT interaction logging
 STANDARD_TAGS = {FEEDBACK, IMPROVEMENT_PATH, ERROR_FIX, INSIGHT}
+
+logger = logging.getLogger(__name__)
 
 
 def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
@@ -155,6 +161,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         """Record a GPT interaction in persistent storage."""
         original_prompt = prompt
         prompt = redact_secrets(prompt)
+        if prompt != original_prompt:
+            logger.warning("redacted secrets in prompt before embedding")
         timestamp = datetime.utcnow().isoformat()
         tag_list = list(tags or [])
         tag_str = ",".join(tag_list)
@@ -169,6 +177,17 @@ class GPTMemoryManager(GPTMemoryInterface):
         tokens = 0
         wall_time = 0.0
         disallowed = license_check(original_prompt)
+        if disallowed:
+            try:  # pragma: no cover - best effort logging
+                logger.warning(
+                    "skipping embedding for prompt due to license %s",
+                    disallowed,
+                    extra={"fingerprint": license_fingerprint(original_prompt)},
+                )
+            except Exception:
+                logger.warning(
+                    "skipping embedding for prompt due to license %s", disallowed
+                )
         if self.embedder is not None and not disallowed:
             try:
                 start = perf_counter()
@@ -242,6 +261,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         """
 
         redacted_query = redact_secrets(query)
+        if redacted_query != query:
+            logger.warning("redacted secrets in query before embedding")
         params: list[Any] = []
         where: list[str] = []
         if tags:
@@ -256,29 +277,42 @@ class GPTMemoryManager(GPTMemoryInterface):
         rows = cur.fetchall()
 
         if use_embeddings and self.embedder is not None:
-            try:
-                q_emb = self.embedder.encode(redacted_query)
-                scored: list[tuple[float, MemoryEntry]] = []
-                for prompt, response, tag_str, ts, emb_json in rows:
-                    if not emb_json:
-                        continue
-                    try:
-                        emb = json.loads(emb_json)
-                    except Exception:
-                        continue
-                    score = _cosine_similarity(q_emb, emb)
-                    entry = MemoryEntry(
-                        redact_secrets(prompt),
-                        redact_secrets(response),
-                        [redact_secrets(t) for t in tag_str.split(",") if t],
-                        ts,
-                        score,
+            disallowed = license_check(query)
+            if disallowed:
+                try:  # pragma: no cover - best effort logging
+                    logger.warning(
+                        "skipping embedding for query due to license %s",
+                        disallowed,
+                        extra={"fingerprint": license_fingerprint(query)},
                     )
-                    scored.append((score, entry))
-                scored.sort(key=lambda x: x[0], reverse=True)
-                return [e for _, e in scored[:limit]]
-            except Exception:  # pragma: no cover - embedding is optional
-                pass
+                except Exception:
+                    logger.warning(
+                        "skipping embedding for query due to license %s", disallowed
+                    )
+            else:
+                try:
+                    q_emb = self.embedder.encode(redacted_query)
+                    scored: list[tuple[float, MemoryEntry]] = []
+                    for prompt, response, tag_str, ts, emb_json in rows:
+                        if not emb_json:
+                            continue
+                        try:
+                            emb = json.loads(emb_json)
+                        except Exception:
+                            continue
+                        score = _cosine_similarity(q_emb, emb)
+                        entry = MemoryEntry(
+                            redact_secrets(prompt),
+                            redact_secrets(response),
+                            [redact_secrets(t) for t in tag_str.split(",") if t],
+                            ts,
+                            score,
+                        )
+                        scored.append((score, entry))
+                    scored.sort(key=lambda x: x[0], reverse=True)
+                    return [e for _, e in scored[:limit]]
+                except Exception:  # pragma: no cover - embedding is optional
+                    pass
 
         results: list[MemoryEntry] = []
         for prompt, response, tag_str, ts, _ in rows:

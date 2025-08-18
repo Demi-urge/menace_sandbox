@@ -1,4 +1,5 @@
 from gpt_memory import GPTMemoryManager
+import logging
 
 try:
     from security.secret_redactor import redact as redact_secrets
@@ -22,12 +23,13 @@ class DummyEmbedder:
         return _Tok()
 
 
-def test_prompt_redaction_and_search_returns_redacted():
+def test_prompt_redaction_and_search_returns_redacted(caplog):
     emb = DummyEmbedder()
     mem = GPTMemoryManager(db_path=":memory:", embedder=emb)
     prompt = "my password=abc12345"
     response = "Bearer ABCDEFGHIJKLMNOPQRSTUV"
-    mem.log_interaction(prompt, response)
+    with caplog.at_level(logging.WARNING):
+        mem.log_interaction(prompt, response)
 
     expected_prompt = redact_secrets(prompt)
 
@@ -41,20 +43,24 @@ def test_prompt_redaction_and_search_returns_redacted():
     assert "ABCDEFGHIJKLMNOPQRSTUV" in db_response
 
     # Query with unredacted secret still retrieves entry and redacts fields
-    res = mem.search_context("password=abc12345")
+    with caplog.at_level(logging.WARNING):
+        res = mem.search_context("password=abc12345")
     assert res and res[0].prompt == expected_prompt
     assert "[REDACTED]" in res[0].response
+    assert any("redacted" in r.msg for r in caplog.records)
     mem.close()
 
 
-def test_disallowed_license_skips_embedding():
+def test_disallowed_license_skips_embedding(caplog):
     emb = DummyEmbedder()
     mem = GPTMemoryManager(db_path=":memory:", embedder=emb)
     prompt = "This uses code under the GNU General Public License"
-    mem.log_interaction(prompt, "resp")
+    with caplog.at_level(logging.WARNING):
+        mem.log_interaction(prompt, "resp")
 
     cur = mem.conn.execute("SELECT embedding FROM interactions")
     (embedding,) = cur.fetchone()
     assert embedding is None
     assert emb.last is None  # encode was not called
+    assert any("license" in r.msg for r in caplog.records)
     mem.close()
