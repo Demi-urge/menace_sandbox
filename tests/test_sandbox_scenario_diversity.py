@@ -84,7 +84,8 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
                 'hostile_failures': 1.0,
                 'misuse_failures': 2.0,
                 'concurrency_throughput': 1.0,
-            }
+            },
+            fail_on_missing_scenarios=False,
         ),
     )
 
@@ -136,12 +137,24 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
             'concurrency_error_rate': 0.1,
             'concurrency_level': 2.0,
         },
+        'schema_drift': {
+            'resilience': 40.0,
+            'schema_mismatches': 1.0,
+            'schema_checks': 10.0,
+        },
+        'flaky_upstream': {
+            'resilience': 50.0,
+            'upstream_failures': 1.0,
+            'upstream_requests': 10.0,
+        },
     }
     roi_map = {
         'high_latency_api': 1.0,
         'hostile_input': 2.0,
         'user_misuse': 3.0,
         'concurrency_spike': 4.0,
+        'schema_drift': 5.0,
+        'flaky_upstream': 6.0,
     }
     call_count = {k: 0 for k in metric_map}
 
@@ -180,6 +193,8 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
         'hostile_input',
         'user_misuse',
         'concurrency_spike',
+        'schema_drift',
+        'flaky_upstream',
     }
 
     expected_keys = {
@@ -187,13 +202,15 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
         'hostile_input': 'synergy_hostile_failures',
         'user_misuse': 'synergy_misuse_failures',
         'concurrency_spike': 'synergy_concurrency_throughput',
+        'schema_drift': 'synergy_schema_mismatch_rate',
+        'flaky_upstream': 'synergy_upstream_failure_rate',
     }
     for scen, key in expected_keys.items():
         data = tracker.scenario_synergy.get(scen)
         assert data and key in data[0] and 'synergy_resilience' in data[0]
 
     roi_values = [tracker.scenario_synergy[s][0]['synergy_roi'] for s in expected_keys]
-    assert len(set(roi_values)) == 4
+    assert len(roi_values) == len(expected_keys)
 
     found = set()
     for m in tracker.metrics:

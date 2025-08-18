@@ -114,7 +114,14 @@ def test_profiles_results(monkeypatch):
     monkeypatch.setattr(env, "simulate_execution_environment", lambda *a, **k: {})
     from environment_generator import generate_presets
 
-    profiles = ["high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"]
+    profiles = [
+        "high_latency_api",
+        "hostile_input",
+        "user_misuse",
+        "concurrency_spike",
+        "schema_drift",
+        "flaky_upstream",
+    ]
     presets = generate_presets(profiles=profiles)
     tracker = env.run_workflow_simulations("wf.db", env_presets=presets)
     for name in profiles:
@@ -148,6 +155,14 @@ def test_canonical_profiles_autoload(monkeypatch):
             "low": {"SCENARIO_NAME": "concurrency_spike"},
             "high": {"SCENARIO_NAME": "concurrency_spike"},
         },
+        "schema_drift": {
+            "low": {"SCENARIO_NAME": "schema_drift"},
+            "high": {"SCENARIO_NAME": "schema_drift"},
+        },
+        "flaky_upstream": {
+            "low": {"SCENARIO_NAME": "flaky_upstream"},
+            "high": {"SCENARIO_NAME": "flaky_upstream"},
+        },
     }
     _stub_module(
         monkeypatch,
@@ -161,6 +176,8 @@ def test_canonical_profiles_autoload(monkeypatch):
         "hostile_input",
         "user_misuse",
         "concurrency_spike",
+        "schema_drift",
+        "flaky_upstream",
     ]:
         assert f"throughput:{name}" in tracker.metrics_history
 
@@ -210,3 +227,18 @@ def test_concurrency_spike_metrics(monkeypatch):
     thr = float(presets[0]["THREAD_BURST"]) + float(presets[0]["ASYNC_TASK_BURST"])
     assert tracker.metrics_history.get("throughput")
     assert thr in tracker.metrics_history["throughput"]
+
+
+def test_new_scenario_specific_metrics(monkeypatch):
+    _setup_runner(monkeypatch)
+    from sandbox_runner.environment import _scenario_specific_metrics
+
+    extra = _scenario_specific_metrics(
+        "schema_drift", {"schema_mismatches": 2, "schema_checks": 10}
+    )
+    assert extra["schema_mismatch_rate"] == 0.2
+
+    extra = _scenario_specific_metrics(
+        "flaky_upstream", {"upstream_failures": 1, "upstream_requests": 5}
+    )
+    assert extra["upstream_failure_rate"] == 0.2
