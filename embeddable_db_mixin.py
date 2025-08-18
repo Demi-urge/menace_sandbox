@@ -284,6 +284,8 @@ class EmbeddableDBMixin:
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
         text = self.license_text(record)
+        if text is None and isinstance(record, str):
+            text = record
         if text:
             lic = license_check(text)
             if lic:
@@ -495,6 +497,8 @@ class EmbeddableDBMixin:
             if rid in self._metadata:
                 continue
             text = self.license_text(record)
+            if text is None and isinstance(record, str):
+                text = record
             if text:
                 lic = license_check(text)
                 if lic:
@@ -518,6 +522,22 @@ class EmbeddableDBMixin:
                     logger.warning(
                         "skipping embedding for %s due to license %s", record_id, lic
                     )
+                    continue
+                alerts = find_semantic_risks(text.splitlines())
+                if alerts:
+                    self._metadata[rid] = {
+                        "created_at": datetime.utcnow().isoformat(),
+                        "embedding_version": self.embedding_version,
+                        "kind": kind,
+                        "source_id": "",
+                        "redacted": False,
+                        "semantic_risks": alerts,
+                    }
+                    logger.warning(
+                        "skipping embedding for %s due to semantic risks", record_id
+                    )
+                    for line, msg, score in alerts:
+                        logger.warning("semantic risk %.2f for %s: %s", score, line, msg)
                     continue
             record = redact(record) if isinstance(record, str) else record
             self.add_embedding(record_id, record, kind)
