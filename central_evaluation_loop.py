@@ -137,13 +137,11 @@ def process_action(raw_line: str) -> bool:
     roi_score = None
     if "metrics" in action and "roi_profile" in action:
         calc = ROICalculator()
-        roi_score = calc.compute(
-            action["metrics"],
-            action["roi_profile"],
-            action.get("flags", {}),
-        )
-        calc.log_debug(action["metrics"], action["roi_profile"], action.get("flags", {}))
-        if calc.hard_fail:
+        metrics = {**action["metrics"], **action.get("flags", {})}
+        score, vetoed, _ = calc.calculate(metrics, action["roi_profile"])
+        roi_score = score
+        calc.log_debug(metrics, action["roi_profile"])
+        if vetoed:
             append_audit(
                 {
                     "timestamp": int(time.time()),
