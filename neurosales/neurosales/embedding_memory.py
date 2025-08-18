@@ -15,6 +15,24 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None
     np = None
 
+try:
+    from analysis.semantic_diff_filter import find_semantic_risks
+except Exception:  # pragma: no cover - optional dependency
+    def find_semantic_risks(lines, threshold: float = 0.5):  # type: ignore[override]
+        return []
+
+try:
+    from compliance.license_fingerprint import check as license_check
+except Exception:  # pragma: no cover - optional dependency
+    def license_check(text: str):  # type: ignore[override]
+        return None
+
+try:
+    from security.secret_redactor import redact
+except Exception:  # pragma: no cover - optional dependency
+    def redact(text: str) -> str:  # type: ignore[override]
+        return text
+
 
 @dataclass
 class EmbeddedMessage:
@@ -22,6 +40,7 @@ class EmbeddedMessage:
     role: str
     content: str
     embedding: List[float]
+    alerts: Optional[List[tuple[str, str, float]]] = None
 
 
 @dataclass
@@ -60,16 +79,23 @@ class EmbeddingConversationMemory:
         self._index.add(embeddings)
 
     def add_message(self, role: str, content: str) -> None:
+        original = content.strip()
+        if not original:
+            return
+        lic = license_check(original)
+        if lic:
+            return
+        redacted = redact(original)
         if SentenceTransformer is None or faiss is None or np is None:
-            msg = EmbeddedMessage(time.time(), role, content, [])
+            msg = EmbeddedMessage(time.time(), role, redacted, [])
             self._messages.append(msg)
             if len(self._messages) > self.max_messages:
                 self._messages.popleft()
             self._prune()
             return
 
-        embedding = self._model.encode(content, convert_to_numpy=True).astype("float32")
-        msg = EmbeddedMessage(time.time(), role, content, embedding)
+        embedding = self._model.encode(redacted, convert_to_numpy=True).astype("float32")
+        msg = EmbeddedMessage(time.time(), role, redacted, embedding)
         self._messages.append(msg)
         if len(self._messages) > self.max_messages:
             self._messages.popleft()
@@ -84,11 +110,18 @@ class EmbeddingConversationMemory:
             return []
         if not self._messages:
             return []
-        query = self._model.encode(text, convert_to_numpy=True).astype("float32")
+        query = self._model.encode(redact(text), convert_to_numpy=True).astype("float32")
         D, indices = self._index.search(
             query.reshape(1, -1), min(top_k, len(self._messages))
         )
-        return [self._messages[i] for i in indices[0]]
+        results: List[EmbeddedMessage] = []
+        for i in indices[0]:
+            msg = self._messages[i]
+            alerts = find_semantic_risks(msg.content.splitlines())
+            if alerts:
+                msg = EmbeddedMessage(msg.timestamp, msg.role, msg.content, msg.embedding, alerts)
+            results.append(msg)
+        return results
 
 
 @dataclass
@@ -124,7 +157,10 @@ class DatabaseEmbeddingMemory(EmbeddingConversationMemory):
         self._prune()
 
     def add_message(self, role: str, content: str) -> None:  # type: ignore[override]
+        before = len(self._messages)
         super().add_message(role, content)
+        if len(self._messages) == before:
+            return
         from .sql_db import EmbeddingMessage
 
         Session = self.session_factory
@@ -134,7 +170,7 @@ class DatabaseEmbeddingMemory(EmbeddingConversationMemory):
                 EmbeddingMessage(
                     timestamp=msg.timestamp,
                     role=role,
-                    content=content,
+                    content=msg.content,
                     embedding=[float(x) for x in msg.embedding],
                 )
             )
