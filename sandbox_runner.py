@@ -193,11 +193,25 @@ from sandbox_runner.environment import (
     generate_sandbox_report,
     run_repo_section_simulations,
     run_workflow_simulations,
+    run_scenarios as _env_run_scenarios,
     _section_worker,
     validate_preset,
 )
 from sandbox_runner.cycle import _sandbox_cycle_runner, map_module_identifier
 from sandbox_runner.cli import _run_sandbox, rank_scenarios, main
+
+
+# ----------------------------------------------------------------------
+def run_scenarios(workflow, tracker=None, presets=None):
+    """Proxy to :func:`sandbox_runner.environment.run_scenarios`.
+
+    Exposes the scenario runner at the top-level ``sandbox_runner`` module so
+    callers can simply ``from sandbox_runner import run_scenarios``. All
+    arguments are forwarded to
+    :func:`sandbox_runner.environment.run_scenarios`.
+    """
+
+    return _env_run_scenarios(workflow, tracker=tracker, presets=presets)
 
 
 # ----------------------------------------------------------------------
@@ -1561,6 +1575,7 @@ __all__ = [
     "simulate_full_environment",
     "generate_sandbox_report",
     "run_repo_section_simulations",
+    "run_scenarios",
     "run_workflow_simulations",
     "_section_worker",
     "_sandbox_cycle_runner",

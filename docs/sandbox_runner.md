@@ -21,16 +21,23 @@ Use `--preset-file` or the `SANDBOX_ENV_PRESETS` environment variable to supply
 scenario presets. When omitted the runner generates a small set of defaults.
 
 To evaluate a specific workflow across common sandbox scenarios use the
-`--run-scenarios` option:
+`--run-scenarios` option or call the helper directly from Python:
 
 ```bash
 python -m sandbox_runner.cli --run-scenarios 42
 ```
 
-The command loads workflow **42** from `workflows.db` and executes five
-predefined scenarios. Each scenario is run twice – once with the workflow
-enabled and once with it disabled – so the ROI delta reflects the workflow's
-direct contribution. The scenarios are:
+```python
+from sandbox_runner import run_scenarios
+
+tracker, summary = run_scenarios(["simple_functions:print_ten"])
+print(summary["worst_scenario"], summary["scenarios"]["normal"]["roi_delta"])
+```
+
+Both forms run the workflow in five predefined scenarios. Each scenario is
+executed twice – once with the workflow enabled and once with it disabled – so
+the ROI delta reflects the workflow's direct contribution. The disabled run
+serves as the counterfactual baseline. The scenarios are:
 
 | Scenario | Description |
 | --- | --- |
@@ -49,11 +56,11 @@ schema_drift: -0.100
 flaky_upstream: +0.050
 ```
 
-ROI delta represents the difference between the ROI recorded with the workflow
-enabled and the baseline without it. Positive values indicate an improvement
-over the baseline, while negative values mean the workflow performs worse. The
-worst-case scenario is reported separately as the scenario with the most
-negative ROI delta.
+ROI delta is calculated as ``roi_with_workflow - roi_without_workflow``. The
+second run therefore acts as a counterfactual that reveals the workflow's
+impact. Positive values indicate an improvement over the baseline, while
+negative values mean the workflow performs worse. The scenario with the most
+negative delta is reported as the worst case.
 
 ## Algorithm Overview
 
