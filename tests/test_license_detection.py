@@ -40,3 +40,15 @@ def test_add_embedding_skips_gpl(tmp_path, caplog):
     meta = db._metadata.get("1")
     assert meta and meta.get("license") == "GPL-3.0"
     assert any("license" in rec.message.lower() for rec in caplog.records)
+
+
+def test_add_embedding_detects_semantic_risk(tmp_path, caplog):
+    db = DummyDB(tmp_path)
+    risky = "eval('data')"
+    with caplog.at_level(logging.WARNING):
+        db.add_embedding("2", risky, "code")
+    assert db.calls == 0
+    meta = db._metadata.get("2")
+    alerts = meta.get("semantic_risks") if meta else None
+    assert alerts and any("eval" in a[0] for a in alerts)
+    assert any("semantic" in rec.message.lower() for rec in caplog.records)
