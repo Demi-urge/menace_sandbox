@@ -52,10 +52,19 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
 
     @app.get("/patches")
     def list_patches():
-        patches = [
-            {"id": pid, "filename": rec.filename, "description": rec.description}
-            for pid, rec in pdb.list_patches()
-        ]
+        lic = request.args.get("license")
+        alert = request.args.get("semantic_alert")
+        if lic or alert:
+            rows = pdb.find_patches_by_provenance(license=lic, semantic_alert=alert)
+            patches = [
+                {"id": pid, "filename": fname, "description": desc}
+                for pid, fname, desc in rows
+            ]
+        else:
+            patches = [
+                {"id": pid, "filename": rec.filename, "description": rec.description}
+                for pid, rec in pdb.list_patches()
+            ]
         return jsonify(patches)
 
     @app.get("/patches/<int:patch_id>")
