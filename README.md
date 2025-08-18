@@ -266,6 +266,18 @@ Example `sandbox_data/orphan_modules.json`:
 
 A new `menace` CLI wraps common workflows so you no longer need to remember individual scripts.
 
+### Patch provenance queries
+
+Use the `patches` subcommand to inspect the patch history database. Commands
+output JSON for downstream processing:
+
+```bash
+python menace_cli.py patches list --limit 5
+python menace_cli.py patches ancestry 42
+python menace_cli.py patches search --vector v1
+python menace_cli.py patches search --license MIT
+```
+
 ## Self-Optimisation Loop
 
 1. **Monitor metrics** – `DataBot` tracks ROI, errors and energy scores and
