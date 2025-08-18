@@ -18,12 +18,7 @@ def get_patch_provenance(
     """
 
     db = patch_db or PatchHistoryDB()
-    with db._connect() as conn:  # type: ignore[attr-defined]
-        rows = conn.execute(
-            "SELECT origin, vector_id, influence FROM patch_ancestry "
-            "WHERE patch_id=? ORDER BY influence DESC",
-            (patch_id,),
-        ).fetchall()
+    rows = db.get_ancestry(patch_id)
     return [
         {
             "origin": origin,
@@ -41,22 +36,15 @@ def search_patches_by_vector(
     """Return patches influenced by ``vector_id`` ordered by influence."""
 
     db = patch_db or PatchHistoryDB()
-    like = f"%{vector_id}%"
-    with db._connect() as conn:  # type: ignore[attr-defined]
-        rows = conn.execute(
-            "SELECT a.patch_id, a.influence, h.filename, h.description "
-            "FROM patch_ancestry a JOIN patch_history h ON h.id=a.patch_id "
-            "WHERE a.vector_id LIKE ? ORDER BY a.influence DESC",
-            (like,),
-        ).fetchall()
+    rows = db.find_patches_by_vector(vector_id)
     return [
         {
-            "patch_id": int(pid),
-            "influence": float(contrib),
+            "patch_id": pid,
+            "influence": infl,
             "filename": filename,
             "description": desc,
         }
-        for pid, contrib, filename, desc in rows
+        for pid, infl, filename, desc in rows
     ]
 
 
