@@ -1,24 +1,27 @@
 import governed_embeddings
 from governed_embeddings import governed_embed
 import menace.menace_memory_manager as mmm
+import logging
 import menace.local_knowledge_module as lkm
 import types
 
 
-def test_governed_embed_blocks_gpl():
+def test_governed_embed_blocks_gpl(caplog):
     text = "This code is licensed under the GNU General Public License"
-    assert governed_embed(text) is None
+    with caplog.at_level(logging.WARNING):
+        assert governed_embed(text) is None
+    assert any("license" in r.msg for r in caplog.records)
 
 
-def test_governed_embed_redacts_and_embeds(monkeypatch):
+def test_governed_embed_redacts_and_embeds(monkeypatch, caplog):
     recorded = {}
 
     def fake_redact(text: str) -> str:
         recorded["redacted"] = text
         return "clean"
 
-    def fake_detect(text: str):
-        recorded["detected"] = text
+    def fake_check(text: str):
+        recorded["checked"] = text
         return None
 
     class DummyEmbedder:
@@ -26,14 +29,15 @@ def test_governed_embed_redacts_and_embeds(monkeypatch):
             assert arr[0] == "clean"
             return [types.SimpleNamespace(tolist=lambda: [0.1, 0.2])]
 
-    monkeypatch.setattr(governed_embeddings, "redact_text", fake_redact)
-    monkeypatch.setattr(governed_embeddings, "detect", fake_detect)
+    monkeypatch.setattr(governed_embeddings, "redact", fake_redact)
+    monkeypatch.setattr(governed_embeddings, "license_check", fake_check)
     monkeypatch.setattr(governed_embeddings, "get_embedder", lambda: DummyEmbedder())
-
-    vec = governed_embed("secret token")
+    with caplog.at_level(logging.WARNING):
+        vec = governed_embed("secret token")
     assert vec == [0.1, 0.2]
     assert recorded["redacted"] == "secret token"
-    assert recorded["detected"] == "secret token"
+    assert recorded["checked"] == "secret token"
+    assert any("redacted" in r.msg for r in caplog.records)
 
 
 def test_memory_manager_uses_governed_embed(monkeypatch):
