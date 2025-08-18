@@ -44,6 +44,7 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
         assert info["target_delta"]["roi"] == pytest.approx(delta)
     worst = min(expected, key=lambda k: expected[k])
     assert summary["worst_scenario"] == worst
+    assert tracker_obj.biggest_drop()[0] == worst
 
     data = json.loads(out.read_text())
     for scen, delta in expected.items():
