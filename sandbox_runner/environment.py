@@ -5150,17 +5150,78 @@ def _scenario_specific_metrics(
 
 
 # ----------------------------------------------------------------------
+def _preset_concurrency_spike(multiplier: int = 4) -> Dict[str, Any]:
+    """Preset stressing concurrency limits."""
+
+    return {
+        "SCENARIO_NAME": "concurrency_spike",
+        "FAILURE_MODES": "concurrency_spike",
+        "CONCURRENCY_MULTIPLIER": multiplier,
+        "CONCURRENCY_LEVEL": 8,
+    }
+
+
+def _preset_hostile_input() -> Dict[str, Any]:
+    """Preset injecting adversarial or malformed inputs."""
+
+    return {
+        "SCENARIO_NAME": "hostile_input",
+        "FAILURE_MODES": "hostile_input",
+        "SANDBOX_STUB_STRATEGY": "hostile",
+        "HOSTILE_INPUT": True,
+    }
+
+
+def _preset_schema_drift() -> Dict[str, Any]:
+    """Preset simulating legacy or mismatched schemas."""
+
+    return {
+        "SCENARIO_NAME": "schema_drift",
+        "FAILURE_MODES": "schema_drift",
+        "SANDBOX_STUB_STRATEGY": "legacy_schema",
+        "SCHEMA_MISMATCHES": 5,
+        "SCHEMA_CHECKS": 100,
+    }
+
+
+def _preset_flaky_upstream() -> Dict[str, Any]:
+    """Preset emulating unreliable upstream dependencies."""
+
+    return {
+        "SCENARIO_NAME": "flaky_upstream",
+        "FAILURE_MODES": "flaky_upstream",
+        "UPSTREAM_FAILURES": 1,
+        "UPSTREAM_REQUESTS": 20,
+        "SANDBOX_STUB_STRATEGY": "flaky_upstream",
+        "API_LATENCY_MS": 500,
+    }
+
+
+def default_scenario_presets() -> List[Dict[str, Any]]:
+    """Return the standard set of scenario presets used by ``run_scenarios``."""
+
+    return [
+        {"SCENARIO_NAME": "normal"},
+        _preset_concurrency_spike(),
+        _preset_hostile_input(),
+        _preset_schema_drift(),
+        _preset_flaky_upstream(),
+    ]
+
+
+# ----------------------------------------------------------------------
 def run_scenarios(
     workflow: Sequence[str] | str,
     tracker: "ROITracker" | None = None,
+    presets: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple["ROITracker", Dict[str, Any]]:
     """Run ``workflow`` across predefined sandbox scenarios and compare ROI.
 
     The workflow is executed in a baseline "normal" environment followed by
-    four adverse scenarios: ``high_concurrency``, ``hostile_input``,
-    ``schema_drift`` and ``flaky_upstreams``.  Each scenario is executed twice –
+    four adverse scenarios: ``concurrency_spike``, ``hostile_input``,
+    ``schema_drift`` and ``flaky_upstream``. Each scenario is executed twice –
     once with the workflow enabled and once with it disabled – to measure the
-    direct contribution of the workflow.  For each run the ROI and metrics are
+    direct contribution of the workflow. For each run the ROI and metrics are
     recorded, per-scenario ROI/metric deltas are calculated relative to the
     baseline run and synergy metrics are tracked through
     :class:`menace.roi_tracker.ROITracker`.
@@ -5174,6 +5235,11 @@ def run_scenarios(
     tracker:
         Optional ROI tracker used to calculate diminishing returns and record
         synergy metrics. When omitted a new tracker is created.
+    presets:
+        Optional sequence of environment preset dictionaries. When omitted the
+        :func:`default_scenario_presets` helper provides a baseline "normal"
+        run plus canonical adverse scenarios for concurrency pressure, hostile
+        input, schema drift and flaky upstreams.
 
     Returns
     -------
@@ -5221,31 +5287,7 @@ def run_scenarios(
 
     snippet_on = _wf_snippet(wf_steps)
     snippet_off = _wf_snippet([])
-
-    presets = [
-        {"SCENARIO_NAME": "normal"},
-        {
-            "SCENARIO_NAME": "high_concurrency",
-            "FAILURE_MODES": "concurrency_spike",
-            "CONCURRENCY_LEVEL": "8",
-        },
-        {
-            "SCENARIO_NAME": "hostile_input",
-            "FAILURE_MODES": "hostile_input",
-        },
-        {
-            "SCENARIO_NAME": "schema_drift",
-            "FAILURE_MODES": "schema_drift",
-            "SCHEMA_MISMATCHES": 5,
-            "SCHEMA_CHECKS": 100,
-        },
-        {
-            "SCENARIO_NAME": "flaky_upstreams",
-            "FAILURE_MODES": "flaky_upstream",
-            "UPSTREAM_FAILURES": 1,
-            "UPSTREAM_REQUESTS": 20,
-        },
-    ]
+    presets = list(presets) if presets is not None else default_scenario_presets()
 
     results: Dict[str, Dict[str, Any]] = {}
     baseline_roi: float = 0.0
