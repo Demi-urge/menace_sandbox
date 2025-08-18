@@ -96,3 +96,31 @@ def test_drift_logging(tmp_path: Path, caplog) -> None:
     assert hasattr(rec, "drift_features")
     assert rec.drift_features
 
+
+def test_partial_fit_updates_metadata(tmp_path: Path) -> None:
+    X, y = _make_data(200)
+    X1, y1 = X[:100], y[:100]
+    X2, y2 = X[100:], y[100:]
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X1, y1)
+    v1 = adapter.metadata["version"]
+    n1 = adapter.metadata["samples_seen"]
+    preds_before, _ = adapter.predict(X2)
+    err_before = float(np.mean(np.abs(preds_before - y2)))
+    adapter.partial_fit(X2, y2)
+    assert adapter.metadata["version"] == v1 + 1
+    assert adapter.metadata["samples_seen"] == n1 + len(X2)
+    preds_after, _ = adapter.predict(X2)
+    err_after = float(np.mean(np.abs(preds_after - y2)))
+    assert err_after <= err_before + 1e-3
+
+
+def test_reset_clears_state(tmp_path: Path) -> None:
+    X, y = _make_data(50)
+    adapter = TruthAdapter(tmp_path / "truth.pkl")
+    adapter.fit(X, y)
+    adapter.reset()
+    assert adapter.metadata["version"] == 0
+    assert adapter.metadata["samples_seen"] == 0
+    assert adapter.metadata["feature_stats"] is None
+
