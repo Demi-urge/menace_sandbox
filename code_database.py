@@ -16,6 +16,9 @@ from datetime import datetime, timedelta
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from dataclasses import asdict
 
+import license_detector
+from embeddable_db_mixin import log_embedding_metrics
+
 try:  # optional dependency for future scalability
     from sqlalchemy.engine import Engine  # type: ignore
 except Exception:  # pragma: no cover - optional
@@ -423,6 +426,17 @@ class CodeDB:
                 raise ValueError("code cannot be empty")
             if not rec.summary or not rec.summary.strip():
                 raise ValueError("summary cannot be empty")
+            lic = license_detector.detect(rec.code)
+            if lic:
+                hash_ = license_detector.fingerprint(rec.code)
+                try:
+                    self.log_license_violation("", lic, hash_)
+                except Exception:
+                    pass
+                log_embedding_metrics(
+                    self.__class__.__name__, 0, 0.0, 0.0, vector_id=""
+                )
+                raise ValueError(f"disallowed license detected: {lic}")
             rec.cid = self._insert(
                 conn,
                 SQL_INSERT_CODE,

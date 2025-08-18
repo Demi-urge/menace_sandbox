@@ -254,6 +254,35 @@ class BotDB(EmbeddableDBMixin):
         except Exception as exc:  # pragma: no cover - best effort
             logger.exception("embedding hook failed for %s: %s", bot_id, exc)
 
+    def license_text(self, rec: BotRecord | dict[str, Any]) -> str | None:
+        if isinstance(rec, (int, str)):
+            row = self.conn.execute(
+                "SELECT purpose, tags, toolchain FROM bots WHERE id=?",
+                (rec,),
+            ).fetchone()
+            if not row:
+                return None
+            rec = dict(row)
+        if isinstance(rec, BotRecord):
+            purpose = rec.purpose
+            tags = rec.tags
+            toolchain = rec.toolchain
+        else:
+            purpose = rec.get("purpose", "")
+            tags_val = rec.get("tags", [])
+            tags = (
+                _deserialize_list(tags_val)
+                if isinstance(tags_val, str)
+                else list(tags_val)
+            )
+            tc_val = rec.get("toolchain", [])
+            toolchain = (
+                _deserialize_list(tc_val)
+                if isinstance(tc_val, str)
+                else list(tc_val)
+            )
+        return " ".join(filter(None, [purpose, ",".join(tags), ",".join(toolchain)]))
+
     @auto_link({"models": "link_model", "workflows": "link_workflow", "enhancements": "link_enhancement"})
     def add_bot(
         self,
