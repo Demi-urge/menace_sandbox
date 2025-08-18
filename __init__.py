@@ -10,6 +10,7 @@ import os
 import sys
 
 from .roi_calculator import ROICalculator
+from .truth_adapter import TruthAdapter
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -93,6 +94,8 @@ __all__ = [
     "__version__",
     "ROICalculator",
     "roi_calculator",
+    "TruthAdapter",
+    "truth_adapter",
     "newsreader_bot",
     "preliminary_research_bot",
     "passive_discovery_bot",

@@ -56,7 +56,7 @@ class TruthAdapter:
         self.metadata: dict = {}
         self.drift_threshold = 0.25  # PSI threshold for drift
         self.ks_threshold = 0.2  # KS statistic threshold
-        self._load_state()
+        self._load()
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -70,7 +70,7 @@ class TruthAdapter:
         self.metadata["model_type"] = "ridge"
         return Ridge()
 
-    def _load_state(self) -> None:
+    def _load(self) -> None:
         """Load model and metadata from disk if available."""
         if self.model_path.exists():
             try:
@@ -92,10 +92,10 @@ class TruthAdapter:
                 "feature_stats": None,
                 "training_stats": None,
                 "last_retrained": None,
-                "psi": None,
-                "ks": None,
+                "drift_metrics": {"psi": [], "ks": []},
                 "drift_flag": False,
-                "needs_retrain": False,
+                "retraining_required": False,
+                "needs_retrain": False,  # backwards compatibility
                 "last_drift_check": None,
             }
         else:
@@ -104,16 +104,18 @@ class TruthAdapter:
                 self.metadata["last_retrained"] = self.metadata.get("last_fit")
                 self.metadata.pop("last_fit", None)
 
-    def _save_state(self) -> None:
+    def _save(self) -> None:
         """Persist model and metadata to disk."""
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         # Ensure drift metrics keys exist for persistence
         self.metadata.setdefault("model_type", self.metadata.get("model_type", "ridge"))
-        self.metadata.setdefault("psi", None)
-        self.metadata.setdefault("ks", None)
+        self.metadata.setdefault("drift_metrics", self.metadata.get("drift_metrics", {"psi": [], "ks": []}))
         self.metadata.setdefault("last_drift_check", None)
         self.metadata.setdefault("training_stats", None)
         self.metadata.setdefault("last_retrained", self.metadata.get("last_retrained"))
+        self.metadata.setdefault("drift_flag", False)
+        self.metadata.setdefault("retraining_required", False)
+        self.metadata.setdefault("needs_retrain", self.metadata.get("retraining_required", False))
         state = {"model": self.model, "metadata": self.metadata}
         if joblib is not None:
             joblib.dump(state, self.model_path)
@@ -149,19 +151,20 @@ class TruthAdapter:
         ss_tot = float(np.sum((y - np.mean(y)) ** 2)) or 1.0
         r2 = 1.0 - ss_res / ss_tot
 
+        zeros = [0.0 for _ in feature_stats]
         self.metadata.update(
             {
                 "feature_stats": feature_stats,
                 "training_stats": {"mae": mae, "r2": r2},
                 "last_retrained": time.time(),
-                "psi": [0.0 for _ in feature_stats],
-                "ks": [0.0 for _ in feature_stats],
+                "drift_metrics": {"psi": zeros.copy(), "ks": zeros.copy()},
                 "drift_flag": False,
+                "retraining_required": False,
                 "needs_retrain": False,
                 "last_drift_check": None,
             }
         )
-        self._save_state()
+        self._save()
 
     def predict(self, X: NDArray[np.float64]) -> Tuple[NDArray[np.float64], bool]:
         """Return predictions and flag if distribution drift is detected."""
@@ -175,7 +178,7 @@ class TruthAdapter:
             self.metadata.pop("warning", None)
         low_conf = bool(self.metadata.get("drift_flag", False))
         # Persist warning state
-        self._save_state()
+        self._save()
         return preds, low_conf
 
     # ------------------------------------------------------------------
@@ -221,10 +224,13 @@ class TruthAdapter:
 
         metrics = {"psi": psi_values, "ks": ks_values}
 
+        self.metadata["drift_metrics"] = metrics
+        # Keep legacy keys for compatibility
         self.metadata["psi"] = psi_values
         self.metadata["ks"] = ks_values
         self.metadata["drift_flag"] = drift_detected
+        self.metadata["retraining_required"] = drift_detected
         self.metadata["needs_retrain"] = drift_detected
         self.metadata["last_drift_check"] = time.time()
-        self._save_state()
+        self._save()
         return metrics, drift_detected
