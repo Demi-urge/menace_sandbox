@@ -101,6 +101,11 @@ class SandboxSettings(BaseSettings):
         env="SANDBOX_USE_MEMORY",
         description="Enable GPT memory integration during sandbox runs.",
     )
+    enable_truth_calibration: bool = Field(
+        True,
+        env="ENABLE_TRUTH_CALIBRATION",
+        description="Enable TruthAdapter calibration of ROI metrics.",
+    )
     roi_threshold: float | None = Field(None, env="ROI_THRESHOLD")
     synergy_threshold: float | None = Field(None, env="SYNERGY_THRESHOLD")
     roi_confidence: float | None = Field(None, env="ROI_CONFIDENCE")
