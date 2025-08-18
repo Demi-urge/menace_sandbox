@@ -33,3 +33,39 @@ def test_semantic_detection(tmp_path):
     diff = generate_code_diff(str(before), str(after))
     flags = flag_risky_changes(diff)
     assert any("eval" in f.lower() for f in flags)
+
+
+def test_exec_detection(tmp_path):
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    _write(before, "c.py", "x = 1\n")
+    _write(after, "c.py", "x = 1\n\nexec('print(1)')\n")
+    diff = generate_code_diff(str(before), str(after))
+    flags = flag_risky_changes(diff)
+    assert any("exec" in f.lower() for f in flags)
+
+
+def test_weak_hash_detection(tmp_path):
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    _write(before, "d.py", "x = 1\n")
+    _write(after, "d.py", "import hashlib\nhashlib.md5(b'd').hexdigest()\n")
+    diff = generate_code_diff(str(before), str(after))
+    flags = flag_risky_changes(diff)
+    assert any("md5" in f.lower() for f in flags)
+
+
+def test_network_call_detection(tmp_path):
+    before = tmp_path / "before"
+    after = tmp_path / "after"
+    before.mkdir()
+    after.mkdir()
+    _write(before, "e.py", "x = 1\n")
+    _write(after, "e.py", "import requests\nrequests.get('http://a')\n")
+    diff = generate_code_diff(str(before), str(after))
+    flags = flag_risky_changes(diff)
+    assert any("network" in f.lower() for f in flags)
