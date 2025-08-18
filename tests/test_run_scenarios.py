@@ -28,13 +28,16 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
 
     out = Path("sandbox_data/scenario_deltas.json")
     out.unlink(missing_ok=True)
-    summary = env.run_scenarios(["simple_functions:print_ten"], tracker=rt.ROITracker())
+    tracker_obj, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker()
+    )
 
     expected = {scen: roi - scenario_data["normal"] for scen, roi in scenario_data.items()}
     assert set(summary["scenarios"]) == set(expected)
     for scen, delta in expected.items():
         info = summary["scenarios"][scen]
         assert info["roi_delta"] == pytest.approx(delta)
+        assert tracker_obj.get_scenario_roi_delta(scen) == pytest.approx(delta)
         flags = {r["flag"] for r in info["runs"]}
         assert flags == {"on", "off"}
         assert info["target_delta"]["roi"] == pytest.approx(0.0)

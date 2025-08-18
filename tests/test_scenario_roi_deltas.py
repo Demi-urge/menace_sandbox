@@ -66,11 +66,12 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    summary = env.run_scenarios([], tracker=rt.ROITracker())
+    tracker_obj, summary = env.run_scenarios([], tracker=rt.ROITracker())
 
     assert summary["scenarios"]["normal"]["roi_delta"] == pytest.approx(0.0)
     cs_info = summary["scenarios"]["concurrency_spike"]
     assert cs_info["roi_delta"] == pytest.approx(-1.0)
+    assert tracker_obj.get_scenario_roi_delta("concurrency_spike") == pytest.approx(-1.0)
     assert summary["worst_scenario"] == "concurrency_spike"
 
     delta_profit = scenario_data["concurrency_spike"][1]["profitability"] - scenario_data["normal"][1]["profitability"]
