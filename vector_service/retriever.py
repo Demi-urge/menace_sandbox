@@ -64,7 +64,7 @@ class Retriever:
     top_k: int = 5
     similarity_threshold: float = 0.1
     retriever_kwargs: Dict[str, Any] = field(default_factory=dict)
-    content_filtering: bool = True
+    content_filtering: bool = field(default=True)
     _cache: Dict[str, List[Dict[str, Any]]] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -98,14 +98,13 @@ class Retriever:
                     "reason": getattr(h, "reason", ""),
                     "metadata": meta,
                 }
-            if self.content_filtering:
-                text = str(item.get("text") or "")
-                lic = license_detect(text)
-                if lic:
-                    continue
-                alerts = find_semantic_risks(text.splitlines())
-                if alerts:
-                    meta.setdefault("semantic_alerts", alerts)
+            text = str(item.get("text") or "")
+            lic = license_detect(text)
+            if lic:
+                continue
+            alerts = find_semantic_risks(text.splitlines())
+            if alerts:
+                meta.setdefault("semantic_alerts", alerts)
             results.append(secret_redact_dict(pii_redact_dict(item)))
         return results
 

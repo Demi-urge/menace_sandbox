@@ -51,7 +51,7 @@ class _DummyUR:
 
 
 def test_retriever_filters_license_and_flags_semantic_risk():
-    retriever = Retriever(retriever=_DummyUR(), content_filtering=True)
+    retriever = Retriever(retriever=_DummyUR())
     hits = retriever.search("query", top_k=2)
     assert len(hits) == 1
     assert UNSAFE_TEXT in hits[0].get("text", "")

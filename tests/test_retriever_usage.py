@@ -19,7 +19,7 @@ class _DummyUR:
 
 
 def test_retriever_search():
-    retriever = Retriever(retriever=_DummyUR(), content_filtering=False)
+    retriever = Retriever(retriever=_DummyUR())
     hits = retriever.search("q", top_k=5)
     assert hits and {h["origin_db"] for h in hits} == {"bot", "workflow"}
 

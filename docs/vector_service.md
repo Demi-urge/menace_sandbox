@@ -19,8 +19,10 @@ results = r.search("upload failed", session_id="abc123")
 ```
 
 `Retriever` delegates to `universal_retriever.UniversalRetriever` and returns
-serialisable dictionaries. Log entries include latency, result size and an
-optional `session_id` for tracing queries.
+serialisable dictionaries. Results are always filtered to drop hits flagged by
+the license detector and to attach semantic risk annotations. This filtering is
+mandatory and cannot be disabled. Log entries include latency, result size and
+an optional `session_id` for tracing queries.
 
 ## ContextBuilder
 
