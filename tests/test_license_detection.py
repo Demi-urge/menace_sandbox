@@ -52,3 +52,30 @@ def test_add_embedding_detects_semantic_risk(tmp_path, caplog):
     alerts = meta.get("semantic_risks") if meta else None
     assert alerts and any("eval" in a[0] for a in alerts)
     assert any("semantic" in rec.message.lower() for rec in caplog.records)
+
+
+class BackfillDB(EmbeddableDBMixin):
+    def __init__(self, tmp_path):
+        super().__init__(index_path=tmp_path / "b.ann", metadata_path=tmp_path / "b.json")
+        self.calls = 0
+
+    def vector(self, record):
+        self.calls += 1
+        return [0.0]
+
+    def iter_records(self):
+        return iter([
+            ("1", "safe", "code"),
+            ("2", "eval('data')", "code"),
+        ])
+
+
+def test_backfill_detects_semantic_risk(tmp_path, caplog):
+    db = BackfillDB(tmp_path)
+    with caplog.at_level(logging.WARNING):
+        db.backfill_embeddings()
+    assert db.calls == 1
+    meta = db._metadata.get("2")
+    alerts = meta.get("semantic_risks") if meta else None
+    assert alerts and any("eval" in a[0] for a in alerts)
+    assert any("semantic" in rec.message.lower() for rec in caplog.records)
