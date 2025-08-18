@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from dataclasses import dataclass, field
+from typing import Iterable, List, Optional, Dict, Any
 import re
 from collections import Counter
 import math
@@ -29,6 +29,10 @@ except Exception:  # pragma: no cover - optional dependency
 from .research_aggregator_bot import InfoDB, ResearchItem
 from .chatgpt_research_bot import summarise_text
 from .proxy_manager import get_proxy
+from security.secret_redactor import redact
+from license_detector import detect as detect_license
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 
 
 @dataclass
@@ -36,6 +40,7 @@ class FallbackResult:
     url: str
     summary: str
     embedding: Optional[List[float]]
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class ResearchFallbackBot:
@@ -104,13 +109,13 @@ class ResearchFallbackBot:
         return summarise_text(text, ratio=0.2)
 
     def _embed(self, text: str) -> Optional[List[float]]:
-        if self.embedder:
-            try:
-                return self.embedder.encode([text])[0].tolist()
-            except Exception:  # pragma: no cover - runtime issues
-                pass
-        # simple hashed tf-idf fallback
-        tokens = re.findall(r"\w+", text.lower())
+        cleaned = redact(text)
+        if detect_license(cleaned):
+            return None
+        vec = governed_embed(cleaned, self.embedder)
+        if vec is not None:
+            return vec
+        tokens = re.findall(r"\w+", cleaned.lower())
         dim = self.embedding_dim
         if not tokens:
             return [0.0] * dim
@@ -140,6 +145,14 @@ class ResearchFallbackBot:
             if not html:
                 continue
             summary = self._summarise(html)
+            summary = redact(summary)
+            lic = detect_license(summary)
+            if lic:
+                continue
+            alerts = find_semantic_risks(summary.splitlines())
+            metadata: Dict[str, Any] = {}
+            if alerts:
+                metadata["semantic_alerts"] = alerts
             embedding = self._embed(summary)
             item = ResearchItem(
                 topic=query,
@@ -150,8 +163,12 @@ class ResearchFallbackBot:
                 source_url=url,
                 summary=summary,
             )
+            if alerts:
+                item.tags.append("semantic-risk")
             self.info_db.add(item, embedding=embedding)
-            results.append(FallbackResult(url=url, summary=summary, embedding=embedding))
+            results.append(
+                FallbackResult(url=url, summary=summary, embedding=embedding, metadata=metadata)
+            )
         return results
 
 
