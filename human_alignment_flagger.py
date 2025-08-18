@@ -56,6 +56,7 @@ from reward_sanity_checker import check_risk_reward_alignment
 from sandbox_settings import SandboxSettings
 from secret_redactor import redact_secrets
 from license_detector import detect as detect_license
+from analysis.semantic_diff_filter import find_semantic_risks
 
 
 class Rule(Protocol):
@@ -486,6 +487,19 @@ class HumanAlignmentFlagger:
                         "severity": sev,
                         "tier": _tier(sev),
                         "message": f"High cyclomatic complexity in {path}: score {complexity}",
+                    }
+                )
+
+            # Semantic similarity checks against known unsafe patterns
+            for line, pat_msg, score in find_semantic_risks(added):
+                sev = 4 if score >= 0.8 else 3 if score >= 0.6 else 2
+                issues.append(
+                    {
+                        "severity": sev,
+                        "tier": _tier(sev),
+                        "message": (
+                            f"Semantic similarity to unsafe pattern ({pat_msg}) in {path}: {line}"
+                        ),
                     }
                 )
 
