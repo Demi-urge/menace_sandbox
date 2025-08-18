@@ -54,4 +54,7 @@ def test_retriever_redacts_and_logs():
     pl = PatchLogger(patch_db=pdb)
     ids = {f"{o}:{v}": s for o, v, s in vectors}
     pl.track_contributors(ids, True, patch_id="1", session_id=sid)
-    assert pdb.ancestry == [("db", "v1", hits[0].score), ("db", "v2", hits[1].score)]
+    assert pdb.ancestry == [
+        ("db", "v1", hits[0].score, None, None),
+        ("db", "v2", hits[1].score, None, None),
+    ]
