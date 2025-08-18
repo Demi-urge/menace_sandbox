@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterator, List, Sequence, Tuple
 from time import perf_counter
 import json
 import logging
+from secret_redactor import redact_secrets
 
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
@@ -259,6 +260,7 @@ class EmbeddableDBMixin:
         source_id: str = "",
     ) -> None:
         """Embed ``record`` and store the vector and metadata."""
+        record = redact_secrets(record) if isinstance(record, str) else record
 
         start = perf_counter()
         vec = self.vector(record)
@@ -416,4 +418,5 @@ class EmbeddableDBMixin:
 
         for record_id, record, kind in self.iter_records():
             if str(record_id) not in self._metadata:
+                record = redact_secrets(record) if isinstance(record, str) else record
                 self.add_embedding(record_id, record, kind)

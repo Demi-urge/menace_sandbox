@@ -12,6 +12,7 @@ from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
 from datetime import datetime
+from secret_redactor import redact_secrets, redact_secrets_dict
 
 _ALIASES = (
     "universal_retriever",
@@ -1456,6 +1457,8 @@ class UniversalRetriever:
                 meta["linked_records"] = links
             if self._last_fallback_sources:
                 meta["fallback_sources"] = list(self._last_fallback_sources)
+            meta = redact_secrets_dict(meta)
+            reason = redact_secrets(reason)
             hits.append(
                 ResultBundle(
                     origin_db=entry["source"],
