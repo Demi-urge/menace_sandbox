@@ -891,6 +891,8 @@ class ROITracker:
             "confusion_matrix": self.confusion_matrix(window),
             "mae_trend": self.rolling_mae_trend(window),
             "accuracy_trend": self.rolling_accuracy_trend(window),
+            "scenario_roi_deltas": dict(self.scenario_roi_deltas),
+            "worst_scenario": self.worst_scenario,
         }
 
     # ------------------------------------------------------------------
