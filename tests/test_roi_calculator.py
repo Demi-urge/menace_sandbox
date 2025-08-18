@@ -1,7 +1,7 @@
 import logging
 
-import yaml
 import pytest
+import yaml
 
 from menace_sandbox.roi_calculator import ROICalculator
 
@@ -75,6 +75,13 @@ def test_log_debug_outputs_components_and_veto(tmp_path, caplog):
     assert "Veto triggers" in caplog.text
 
 
+def test_unknown_profile_raises(tmp_path):
+    profile_path = _write_profiles(tmp_path / "roi_profiles.yaml")
+    calc = ROICalculator(profiles_path=profile_path)
+    with pytest.raises(ValueError):
+        calc.calculate({}, "unknown")
+
+
 def test_profile_missing_metric_raises(tmp_path):
     weights = {
         "profitability": 1,
@@ -101,6 +108,22 @@ def test_profile_invalid_weight_sum_raises(tmp_path):
         "security": 0,
         "latency": 0,
         "energy": 1,
+    }
+    profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
+    with pytest.raises(ValueError):
+        ROICalculator(profiles_path=profile_path)
+
+
+def test_profile_weight_sum_too_low_raises(tmp_path):
+    weights = {
+        "profitability": 0.2,
+        "efficiency": 0.1,
+        "reliability": 0.1,
+        "resilience": 0.1,
+        "maintainability": 0.1,
+        "security": 0.1,
+        "latency": 0.1,
+        "energy": 0.1,
     }
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
     with pytest.raises(ValueError):
