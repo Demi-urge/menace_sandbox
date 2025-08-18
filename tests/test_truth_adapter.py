@@ -64,4 +64,6 @@ def test_shifted_features_trigger_drift(tmp_path: Path) -> None:
     preds, low_conf = adapter.predict(X_shifted)
     assert low_conf is True
     assert adapter.metadata["drift_flag"] is True
+    # Predict should surface a warning message when drift is present
+    assert "warning" in adapter.metadata
 
