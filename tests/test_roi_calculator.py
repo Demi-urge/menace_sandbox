@@ -1,25 +1,25 @@
 import yaml
 import pytest
 
-import yaml
-import pytest
-
 from menace_sandbox.roi_calculator import ROICalculator
 
 
-def _write_profiles(path):
+def _write_profiles(path, weights=None):
+    base_weights = {
+        "profitability": 0.3,
+        "efficiency": 0.25,
+        "reliability": 0.2,
+        "resilience": 0.15,
+        "maintainability": 0.1,
+        "security": 0.1,
+        "latency": -0.05,
+        "energy": -0.05,
+    }
+    if weights is not None:
+        base_weights = weights
     profiles = {
         "scraper_bot": {
-            "weights": {
-                "profitability": 0.3,
-                "efficiency": 0.2,
-                "reliability": 0.1,
-                "resilience": 0.1,
-                "maintainability": 0.1,
-                "security": 0.1,
-                "latency": -0.1,
-                "energy": -0.05,
-            },
+            "weights": base_weights,
             "veto": {
                 "security": {"min": 0.4},
                 "alignment_violation": {"equals": True},
@@ -44,7 +44,7 @@ def test_weighted_roi(tmp_path):
         "energy": 1,
     }
     score, vetoed, triggers = calc.calculate(metrics, "scraper_bot")
-    assert score == pytest.approx(0.75)
+    assert score == pytest.approx(1.0)
     assert vetoed is False
     assert triggers == []
 
@@ -71,3 +71,35 @@ def test_log_debug_outputs_components_and_veto(tmp_path, capsys):
     assert "profitability * 0.3 = 0.3" in out
     assert "Final score: -inf" in out
     assert "Veto triggers" in out
+
+
+def test_profile_missing_metric_raises(tmp_path):
+    weights = {
+        "profitability": 1,
+        "efficiency": 0,
+        "reliability": 0,
+        "resilience": 0,
+        "maintainability": 0,
+        "security": 0,
+        "latency": 0,
+        # 'energy' omitted
+    }
+    profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
+    with pytest.raises(ValueError):
+        ROICalculator(profiles_path=profile_path)
+
+
+def test_profile_invalid_weight_sum_raises(tmp_path):
+    weights = {
+        "profitability": 1,
+        "efficiency": 0,
+        "reliability": 0,
+        "resilience": 0,
+        "maintainability": 0,
+        "security": 0,
+        "latency": 0,
+        "energy": 1,
+    }
+    profile_path = _write_profiles(tmp_path / "roi_profiles.yaml", weights)
+    with pytest.raises(ValueError):
+        ROICalculator(profiles_path=profile_path)
