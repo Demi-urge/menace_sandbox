@@ -30,6 +30,10 @@ if _me is not None:  # pragma: no cover - metrics optional
             "Average ROI contribution per origin database",
             ["origin_db"],
         )
+        _TA_LOW_CONF_GAUGE = _me.Gauge(
+            "truth_adapter_low_confidence",
+            "TruthAdapter low confidence flag",
+        )
     except Exception:  # pragma: no cover - gauge already registered
         try:
             from prometheus_client import REGISTRY  # type: ignore
@@ -37,10 +41,15 @@ if _me is not None:  # pragma: no cover - metrics optional
             _DB_ROI_GAUGE = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
                 "db_roi_contribution"
             )
+            _TA_LOW_CONF_GAUGE = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
+                "truth_adapter_low_confidence"
+            )
         except Exception:
             _DB_ROI_GAUGE = None
+            _TA_LOW_CONF_GAUGE = None
 else:  # pragma: no cover - metrics optional
     _DB_ROI_GAUGE = None
+    _TA_LOW_CONF_GAUGE = None
 
 logger = get_logger(__name__)
 
@@ -67,6 +76,7 @@ class ROITracker:
         mae_threshold: float = 0.1,
         acc_threshold: float = 0.6,
         evaluate_every: int = 1,
+        calibrate: bool | None = None,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -216,7 +226,15 @@ class ROITracker:
         except Exception:
             pass
         self._adaptive_predictor = None
-        self.truth_adapter = TruthAdapter()
+        if calibrate is None:
+            calibrate = (
+                os.getenv("ENABLE_TRUTH_CALIBRATION", "1").lower()
+                not in {"0", "false"}
+            )
+        self.calibrate = calibrate
+        self.truth_adapter = TruthAdapter() if self.calibrate else None
+        if self.truth_adapter is None and _TA_LOW_CONF_GAUGE is not None:
+            _TA_LOW_CONF_GAUGE.set(0)
         if self.resource_db:
             try:
                 df = self.resource_db.history()
@@ -419,18 +437,25 @@ class ROITracker:
             if isinstance(actual, (list, tuple, np.ndarray))
             else [float(actual)]
         )
-        try:
-            arr = np.array(pred_seq, dtype=float).reshape(-1, 1)
-            realish, low_conf = self.truth_adapter.predict(arr)
-            pred_seq = [float(x) for x in realish]
-            if low_conf and self._adaptive_predictor is not None:
-                logger.warning("truth adapter low confidence; consider retraining")
-                try:
-                    self._adaptive_predictor.train()
-                except Exception:
-                    logger.exception("failed to trigger adaptive ROI retrain")
-        except Exception:
-            logger.exception("truth adapter predict failed")
+        low_conf = False
+        if self.truth_adapter is not None:
+            try:
+                arr = np.array(pred_seq, dtype=float).reshape(-1, 1)
+                realish, low_conf = self.truth_adapter.predict(arr)
+                pred_seq = [float(x) for x in realish]
+                if _TA_LOW_CONF_GAUGE is not None:
+                    _TA_LOW_CONF_GAUGE.set(1 if low_conf else 0)
+                if low_conf and self._adaptive_predictor is not None:
+                    logger.warning(
+                        "truth adapter low confidence; consider retraining",
+                        extra=log_record(low_confidence=True),
+                    )
+                    try:
+                        self._adaptive_predictor.train()
+                    except Exception:
+                        logger.exception("failed to trigger adaptive ROI retrain")
+            except Exception:
+                logger.exception("truth adapter predict failed")
 
         self.predicted_roi.append(float(pred_seq[0]))
         self.actual_roi.append(float(act_seq[0]))
@@ -1853,7 +1878,7 @@ class ROITracker:
                 "actual_metrics": self.actual_metrics,
                 "metric_predictions": metric_preds,
                 "drift_metrics": self.drift_metrics,
-                "truth_adapter": self.truth_adapter.metadata,
+                "truth_adapter": self.truth_adapter.metadata if self.truth_adapter else {},
             }
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
@@ -2192,7 +2217,7 @@ class ROITracker:
                         for k, v in data.get("drift_metrics", {}).items()
                     }
                     ta = data.get("truth_adapter")
-                    if isinstance(ta, dict):
+                    if self.truth_adapter is not None and isinstance(ta, dict):
                         try:
                             self.truth_adapter.metadata.update(ta)
                         except Exception:

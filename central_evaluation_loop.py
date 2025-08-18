@@ -20,10 +20,43 @@ import time
 from typing import Any, List
 
 from dotenv import load_dotenv
+import numpy as np
 
 from .kpi_reward_core import compute_reward, explain_reward
 from . import reward_dispatcher
 from .roi_calculator import ROICalculator
+from .truth_adapter import TruthAdapter
+from .logging_utils import log_record
+
+try:  # pragma: no cover - metrics optional
+    from . import metrics_exporter as _me
+except Exception:  # pragma: no cover - best effort
+    _me = None
+
+if _me is not None:  # pragma: no cover - metrics optional
+    try:
+        _TA_LOW_CONF_GAUGE = _me.Gauge(
+            "truth_adapter_low_confidence",
+            "TruthAdapter low confidence flag",
+        )
+    except Exception:  # pragma: no cover - gauge already registered
+        try:
+            from prometheus_client import REGISTRY  # type: ignore
+
+            _TA_LOW_CONF_GAUGE = REGISTRY._names_to_collectors.get(  # type: ignore[attr-defined]
+                "truth_adapter_low_confidence"
+            )
+        except Exception:
+            _TA_LOW_CONF_GAUGE = None
+else:  # pragma: no cover - metrics optional
+    _TA_LOW_CONF_GAUGE = None
+
+ENABLE_TRUTH_CALIBRATION = (
+    os.getenv("ENABLE_TRUTH_CALIBRATION", "1").lower() not in {"0", "false"}
+)
+TRUTH_ADAPTER = TruthAdapter() if ENABLE_TRUTH_CALIBRATION else None
+if TRUTH_ADAPTER is None and _TA_LOW_CONF_GAUGE is not None:  # pragma: no cover - init
+    _TA_LOW_CONF_GAUGE.set(0)
 
 load_dotenv()
 
@@ -139,7 +172,31 @@ def process_action(raw_line: str) -> bool:
         calc = ROICalculator()
         metrics = {**action["metrics"], **action.get("flags", {})}
         score, vetoed, _ = calc.calculate(metrics, action["roi_profile"])
+        low_conf = False
+        if TRUTH_ADAPTER is not None:
+            try:
+                arr = np.array(
+                    [
+                        float(v)
+                        for v in metrics.values()
+                        if isinstance(v, (int, float))
+                    ],
+                    dtype=float,
+                ).reshape(1, -1)
+                realish, low_conf = TRUTH_ADAPTER.predict(arr)
+                score = float(realish[0])
+                if _TA_LOW_CONF_GAUGE is not None:
+                    _TA_LOW_CONF_GAUGE.set(1 if low_conf else 0)
+                if low_conf:
+                    logging.warning(
+                        "TruthAdapter low confidence; consider retraining",
+                        extra=log_record(low_confidence=True),
+                    )
+            except Exception:  # pragma: no cover - prediction best effort
+                logging.exception("TruthAdapter predict failed")
         roi_score = score
+        if low_conf:
+            action.setdefault("flags", {})["low_confidence"] = True
         calc.log_debug(metrics, action["roi_profile"])
         if vetoed:
             append_audit(
@@ -182,6 +239,8 @@ def process_action(raw_line: str) -> bool:
     }
     if roi_score is not None:
         audit_record["roi"] = roi_score
+        if action.get("flags", {}).get("low_confidence"):
+            audit_record["truth_adapter_low_confidence"] = True
     if dispatch_error:
         audit_record["dispatch_error"] = dispatch_error
     append_audit(audit_record)
@@ -232,11 +291,24 @@ if __name__ == "__main__":
     parser.add_argument(
         "--sleep-interval", type=float, default=SLEEP_INTERVAL, help="Sleep seconds"
     )
+    parser.add_argument(
+        "--disable-calibration",
+        action="store_true",
+        help="Disable TruthAdapter ROI calibration",
+    )
     args = parser.parse_args()
 
     ACTIONS_FILE = args.actions_file
     CURSOR_FILE = args.cursor_file
     AUDIT_DIR = args.audit_dir
     SLEEP_INTERVAL = args.sleep_interval
+
+    global ENABLE_TRUTH_CALIBRATION, TRUTH_ADAPTER
+    ENABLE_TRUTH_CALIBRATION = not args.disable_calibration and (
+        os.getenv("ENABLE_TRUTH_CALIBRATION", "1").lower() not in {"0", "false"}
+    )
+    TRUTH_ADAPTER = TruthAdapter() if ENABLE_TRUTH_CALIBRATION else None
+    if TRUTH_ADAPTER is None and _TA_LOW_CONF_GAUGE is not None:
+        _TA_LOW_CONF_GAUGE.set(0)
 
     main_loop()
