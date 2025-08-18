@@ -67,6 +67,20 @@ def search_patches_by_hash(
 
 
 # ---------------------------------------------------------------------------
+def search_patches_by_license(
+    license: str, *, patch_db: PatchHistoryDB | None = None
+) -> List[Dict[str, Any]]:
+    """Return patches matching ``license``."""
+
+    db = patch_db or PatchHistoryDB()
+    rows = db.find_patches_by_provenance(license=license)
+    return [
+        {"patch_id": pid, "filename": filename, "description": desc}
+        for pid, filename, desc in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 def build_chain(
     patch_id: int, *, patch_db: PatchHistoryDB | None = None
 ) -> List[Dict[str, Any]]:
@@ -90,6 +104,7 @@ __all__ = [
     "get_patch_provenance",
     "search_patches_by_vector",
     "search_patches_by_hash",
+    "search_patches_by_license",
     "build_chain",
 ]
 
