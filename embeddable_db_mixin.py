@@ -22,11 +22,10 @@ import json
 import logging
 from security.secret_redactor import redact
 
-# Lightweight license detection based on simple fingerprints.  This avoids
+# Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
-from legal.license_fingerprint import (
-    LicenseType,
-    detect_license,
+from compliance.license_fingerprint import (
+    check as license_check,
     fingerprint as license_fingerprint,
 )
 
@@ -282,22 +281,31 @@ class EmbeddableDBMixin:
         """Embed ``record`` and store the vector and metadata."""
         text = self.license_text(record)
         if text:
-            lic = detect_license(text)
-            if lic is not LicenseType.UNKNOWN:
+            lic = license_check(text)
+            if lic:
                 try:  # pragma: no cover - best effort
                     hash_ = license_fingerprint(text)
                     log_fn = getattr(self, "log_license_violation", None)
                     if callable(log_fn):
-                        log_fn("", lic.value, hash_)
+                        log_fn("", lic, hash_)
                 except Exception:  # pragma: no cover - best effort
                     logger.exception(
                         "failed to log license violation for %s", record_id
                     )
+                rid = str(record_id)
+                self._metadata[rid] = {
+                    "created_at": datetime.utcnow().isoformat(),
+                    "embedding_version": self.embedding_version,
+                    "kind": kind,
+                    "source_id": source_id,
+                    "redacted": False,
+                    "license": lic,
+                }
                 log_embedding_metrics(
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
                 )
                 logger.warning(
-                    "skipping embedding for %s due to license %s", record_id, lic.value
+                    "skipping embedding for %s due to license %s", record_id, lic
                 )
                 return
         record = redact(record) if isinstance(record, str) else record
@@ -458,8 +466,34 @@ class EmbeddableDBMixin:
 
     def backfill_embeddings(self) -> None:
         """Generate embeddings for all records lacking them."""
-
         for record_id, record, kind in self.iter_records():
-            if str(record_id) not in self._metadata:
-                record = redact(record) if isinstance(record, str) else record
-                self.add_embedding(record_id, record, kind)
+            rid = str(record_id)
+            if rid in self._metadata:
+                continue
+            text = self.license_text(record)
+            if text:
+                lic = license_check(text)
+                if lic:
+                    hash_ = license_fingerprint(text)
+                    log_fn = getattr(self, "log_license_violation", None)
+                    if callable(log_fn):
+                        try:  # pragma: no cover - best effort
+                            log_fn("", lic, hash_)
+                        except Exception:  # pragma: no cover - best effort
+                            logger.exception(
+                                "failed to log license violation for %s", record_id
+                            )
+                    self._metadata[rid] = {
+                        "created_at": datetime.utcnow().isoformat(),
+                        "embedding_version": self.embedding_version,
+                        "kind": kind,
+                        "source_id": "",
+                        "redacted": False,
+                        "license": lic,
+                    }
+                    logger.warning(
+                        "skipping embedding for %s due to license %s", record_id, lic
+                    )
+                    continue
+            record = redact(record) if isinstance(record, str) else record
+            self.add_embedding(record_id, record, kind)
