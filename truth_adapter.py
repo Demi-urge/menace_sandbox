@@ -135,12 +135,18 @@ class TruthAdapter:
                 "retraining_required": False,
                 "needs_retrain": False,  # backwards compatibility
                 "last_drift_check": None,
+                "version": 0,
+                "samples_seen": 0,
             }
         else:
             # Backwards compatibility for older metadata keys
             if "last_retrained" not in self.metadata:
                 self.metadata["last_retrained"] = self.metadata.get("last_fit")
                 self.metadata.pop("last_fit", None)
+            if "version" not in self.metadata:
+                self.metadata["version"] = 0
+            if "samples_seen" not in self.metadata:
+                self.metadata["samples_seen"] = 0
 
     def _save(self) -> None:
         """Persist model and metadata to disk."""
@@ -156,6 +162,8 @@ class TruthAdapter:
         self.metadata.setdefault("drift_flag", False)
         self.metadata.setdefault("retraining_required", False)
         self.metadata.setdefault("needs_retrain", self.metadata.get("retraining_required", False))
+        self.metadata.setdefault("version", self.metadata.get("version", 0))
+        self.metadata.setdefault("samples_seen", self.metadata.get("samples_seen", 0))
         state = {"model": self.model, "metadata": self.metadata}
         if joblib is not None:
             joblib.dump(state, self.model_path)
@@ -252,6 +260,100 @@ class TruthAdapter:
                 "retraining_required": False,
                 "needs_retrain": False,
                 "last_drift_check": None,
+                "version": self.metadata.get("version", 0) + 1,
+                "samples_seen": self.metadata.get("samples_seen", 0) + len(X),
+            }
+        )
+        self._save()
+
+    def partial_fit(self, X: NDArray[np.float64], y: NDArray[np.float64]) -> None:
+        """Incrementally update the model with a new batch of data."""
+        if self.model is None:
+            self.model = self._make_model()
+
+        if self.metadata.get("feature_stats") is None:
+            # No existing training; fall back to full fit
+            self.fit(X, y)
+            return
+
+        if hasattr(self.model, "partial_fit"):
+            self.model.partial_fit(X, y)
+        elif self.metadata.get("model_type") == "xgboost" and hasattr(self.model, "fit"):
+            # XGBoost supports warm starting via the ``xgb_model`` parameter
+            self.model.fit(X, y, xgb_model=self.model)
+        else:  # fallback to refitting on new batch
+            self.model.fit(X, y)
+
+        n_prev = self.metadata.get("samples_seen", 0)
+        n_new = X.shape[0]
+        n_total = n_prev + n_new
+
+        stats = self.metadata.get("feature_stats")
+        if stats and len(stats) == X.shape[1]:
+            updated_stats = []
+            for i, fs in enumerate(stats):
+                col = X[:, i]
+                mean_old = fs["mean"]
+                std_old = fs["std"]
+                bins = np.asarray(fs["bins"])
+                counts_old = np.asarray(fs["counts"]) * n_prev
+
+                mean_new = float(np.mean(col))
+                std_new = float(np.std(col) + 1e-8)
+                counts_new, _ = np.histogram(col, bins=bins)
+                counts_total = counts_old + counts_new
+
+                mean_total = (mean_old * n_prev + mean_new * n_new) / n_total
+                var_old = std_old ** 2
+                var_new = std_new ** 2
+                m2 = (
+                    n_prev * (var_old + mean_old ** 2)
+                    + n_new * (var_new + mean_new ** 2)
+                ) / n_total
+                std_total = float(np.sqrt(max(m2 - mean_total ** 2, 0.0)) + 1e-8)
+
+                updated_stats.append(
+                    {
+                        "mean": mean_total,
+                        "std": std_total,
+                        "bins": bins,
+                        "counts": counts_total / counts_total.sum()
+                        if counts_total.sum()
+                        else counts_total,
+                    }
+                )
+            feature_stats = updated_stats
+        else:
+            feature_stats = []
+            for col in range(X.shape[1]):
+                col_data = X[:, col]
+                mean = float(np.mean(col_data))
+                std = float(np.std(col_data) + 1e-8)
+                counts, bins = np.histogram(col_data, bins=10)
+                counts = counts / counts.sum() if counts.sum() else counts
+                feature_stats.append(
+                    {"mean": mean, "std": std, "bins": bins, "counts": counts}
+                )
+
+        preds = self.model.predict(X)
+        mae = float(np.mean(np.abs(preds - y)))
+        ss_res = float(np.sum((preds - y) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2)) or 1.0
+        r2 = 1.0 - ss_res / ss_tot
+
+        zeros = [0.0 for _ in feature_stats]
+        self.metadata.update(
+            {
+                "feature_stats": feature_stats,
+                "training_stats": {"mae": mae, "r2": r2},
+                "last_retrained": time.time(),
+                "drift_metrics": {"psi": zeros.copy(), "ks": zeros.copy()},
+                "drift_flag": False,
+                "retraining_required": False,
+                "needs_retrain": False,
+                "last_drift_check": None,
+                "version": self.metadata.get("version", 0) + 1,
+                "samples_seen": n_total,
             }
         )
         self._save()
@@ -338,3 +440,32 @@ class TruthAdapter:
             )
         self._save()
         return metrics, drift_detected
+
+    # ------------------------------------------------------------------
+    # Reset / retrain helpers
+    def reset(self) -> None:
+        """Clear model state and metadata for a fresh retrain."""
+        self.model = self._make_model()
+        thresholds = self.metadata.get(
+            "thresholds", {"psi": self.drift_threshold, "ks": self.ks_threshold}
+        )
+        self.metadata = {
+            "model_type": self.metadata.get("model_type", self.model_type),
+            "feature_stats": None,
+            "training_stats": None,
+            "last_retrained": None,
+            "drift_metrics": {"psi": [], "ks": []},
+            "drift_flag": False,
+            "retraining_required": False,
+            "needs_retrain": False,
+            "last_drift_check": None,
+            "version": 0,
+            "samples_seen": 0,
+            "thresholds": thresholds,
+        }
+        self._save()
+
+    def retrain(self, X: NDArray[np.float64], y: NDArray[np.float64], *, cross_validate: bool = False) -> None:
+        """Reset the model and fit from scratch on ``X`` and ``y``."""
+        self.reset()
+        self.fit(X, y, cross_validate=cross_validate)

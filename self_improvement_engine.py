@@ -6036,6 +6036,13 @@ def cli(argv: list[str] | None = None) -> None:
     p_fit.add_argument("live", help="NPZ file with live data")
     p_fit.add_argument("shadow", help="NPZ file with shadow data")
 
+    p_update = sub.add_parser(
+        "update-truth-adapter",
+        help="incrementally update TruthAdapter or reset if retraining required",
+    )
+    p_update.add_argument("live", help="NPZ file with live data")
+    p_update.add_argument("shadow", help="NPZ file with shadow data")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "synergy-dashboard":
@@ -6076,6 +6083,20 @@ def cli(argv: list[str] | None = None) -> None:
         y = np.concatenate([live["y"], shadow["y"]])
         engine = SelfImprovementEngine()
         engine.fit_truth_adapter(X, y)
+        return
+
+    if args.cmd == "update-truth-adapter":
+        live = np.load(args.live)
+        shadow = np.load(args.shadow)
+        X = np.vstack([live["X"], shadow["X"]])
+        y = np.concatenate([live["y"], shadow["y"]])
+        engine = SelfImprovementEngine()
+        adapter = engine.truth_adapter
+        if adapter.metadata.get("retraining_required"):
+            adapter.reset()
+            engine.fit_truth_adapter(X, y)
+        else:
+            adapter.partial_fit(X, y)
         return
 
     parser.error("unknown command")
