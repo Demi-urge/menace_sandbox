@@ -26,6 +26,13 @@ from typing import Any, List, Sequence, Mapping, Dict, Optional
 from gpt_memory_interface import GPTMemoryInterface
 from embeddable_db_mixin import log_embedding_metrics
 
+try:
+    from security.secret_redactor import redact as redact_secrets
+except Exception:  # pragma: no cover - legacy path
+    from secret_redactor import redact_secrets  # type: ignore
+
+from compliance.license_fingerprint import check as license_check
+
 try:  # Optional dependency used for event publication
     from unified_event_bus import UnifiedEventBus
 except Exception:  # pragma: no cover - optional
@@ -146,7 +153,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         tags: Sequence[str] | None = None,
     ) -> None:
         """Record a GPT interaction in persistent storage."""
-
+        original_prompt = prompt
+        prompt = redact_secrets(prompt)
         timestamp = datetime.utcnow().isoformat()
         tag_list = list(tags or [])
         tag_str = ",".join(tag_list)
@@ -160,7 +168,8 @@ class GPTMemoryManager(GPTMemoryInterface):
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
-        if self.embedder is not None:
+        disallowed = license_check(original_prompt)
+        if self.embedder is not None and not disallowed:
             try:
                 start = perf_counter()
                 tokenizer = getattr(self.embedder, "tokenizer", None)
@@ -232,6 +241,7 @@ class GPTMemoryManager(GPTMemoryInterface):
         simple substring search over prompt/response is performed.
         """
 
+        redacted_query = redact_secrets(query)
         params: list[Any] = []
         where: list[str] = []
         if tags:
@@ -247,7 +257,7 @@ class GPTMemoryManager(GPTMemoryInterface):
 
         if use_embeddings and self.embedder is not None:
             try:
-                q_emb = self.embedder.encode(query)
+                q_emb = self.embedder.encode(redacted_query)
                 scored: list[tuple[float, MemoryEntry]] = []
                 for prompt, response, tag_str, ts, emb_json in rows:
                     if not emb_json:
@@ -258,7 +268,11 @@ class GPTMemoryManager(GPTMemoryInterface):
                         continue
                     score = _cosine_similarity(q_emb, emb)
                     entry = MemoryEntry(
-                        prompt, response, tag_str.split(",") if tag_str else [], ts, score
+                        redact_secrets(prompt),
+                        redact_secrets(response),
+                        [redact_secrets(t) for t in tag_str.split(",") if t],
+                        ts,
+                        score,
                     )
                     scored.append((score, entry))
                 scored.sort(key=lambda x: x[0], reverse=True)
@@ -268,9 +282,14 @@ class GPTMemoryManager(GPTMemoryInterface):
 
         results: list[MemoryEntry] = []
         for prompt, response, tag_str, ts, _ in rows:
-            if query.lower() in prompt.lower() or query.lower() in response.lower():
+            if redacted_query.lower() in prompt.lower() or redacted_query.lower() in response.lower():
                 results.append(
-                    MemoryEntry(prompt, response, tag_str.split(",") if tag_str else [], ts)
+                    MemoryEntry(
+                        redact_secrets(prompt),
+                        redact_secrets(response),
+                        [redact_secrets(t) for t in tag_str.split(",") if t],
+                        ts,
+                    )
                 )
         return results[:limit]
 
