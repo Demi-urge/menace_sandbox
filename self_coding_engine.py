@@ -234,7 +234,7 @@ class SelfCodingEngine:
                     o, v = item  # type: ignore[misc]
                     s = 0.0
                 detailed.append((o, v, float(s)))
-            ids = [(f"{o}:{v}", s) for o, v, s in detailed]
+            ids = {f"{o}:{v}": s for o, v, s in detailed}
             try:
                 self.patch_logger.track_contributors(
                     ids,

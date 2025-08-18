@@ -11,26 +11,26 @@ from code_database import PatchHistoryDB
 def get_patch_provenance(
     patch_id: int, *, patch_db: PatchHistoryDB | None = None
 ) -> List[Dict[str, Any]]:
-    """Return vectors influencing ``patch_id`` ordered by contribution.
+    """Return vectors influencing ``patch_id`` ordered by influence.
 
     Results are read from the ``patch_ancestry`` table and include the
-    original rank and contribution score for each vector.
+    origin and influence score for each vector.
     """
 
     db = patch_db or PatchHistoryDB()
     with db._connect() as conn:  # type: ignore[attr-defined]
         rows = conn.execute(
-            "SELECT vector_id, rank, contribution FROM patch_ancestry "
-            "WHERE patch_id=? ORDER BY contribution DESC",
+            "SELECT origin, vector_id, influence FROM patch_ancestry "
+            "WHERE patch_id=? ORDER BY influence DESC",
             (patch_id,),
         ).fetchall()
     return [
         {
+            "origin": origin,
             "vector_id": vid,
-            "rank": int(rank),
-            "contribution": float(contrib),
+            "influence": float(infl),
         }
-        for vid, rank, contrib in rows
+        for origin, vid, infl in rows
     ]
 
 
@@ -38,21 +38,21 @@ def get_patch_provenance(
 def search_patches_by_vector(
     vector_id: str, *, patch_db: PatchHistoryDB | None = None
 ) -> List[Dict[str, Any]]:
-    """Return patches influenced by ``vector_id`` ordered by contribution."""
+    """Return patches influenced by ``vector_id`` ordered by influence."""
 
     db = patch_db or PatchHistoryDB()
     like = f"%{vector_id}%"
     with db._connect() as conn:  # type: ignore[attr-defined]
         rows = conn.execute(
-            "SELECT a.patch_id, a.contribution, h.filename, h.description "
+            "SELECT a.patch_id, a.influence, h.filename, h.description "
             "FROM patch_ancestry a JOIN patch_history h ON h.id=a.patch_id "
-            "WHERE a.vector_id LIKE ? ORDER BY a.contribution DESC",
+            "WHERE a.vector_id LIKE ? ORDER BY a.influence DESC",
             (like,),
         ).fetchall()
     return [
         {
             "patch_id": int(pid),
-            "contribution": float(contrib),
+            "influence": float(contrib),
             "filename": filename,
             "description": desc,
         }

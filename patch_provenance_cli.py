@@ -81,7 +81,7 @@ def main() -> None:
                     "id": r["patch_id"],
                     "filename": r["filename"],
                     "description": r["description"],
-                    "contribution": r["contribution"],
+                    "influence": r["influence"],
                 }
                 for r in res
             ]

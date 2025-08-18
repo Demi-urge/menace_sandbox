@@ -2,7 +2,7 @@ from __future__ import annotations
 
 """Helper for recording patch outcomes for contributing vectors."""
 
-from typing import Any, Iterable, List, Sequence, Tuple, Union
+from typing import Any, Iterable, List, Mapping, Sequence, Tuple, Union
 
 import asyncio
 import time
@@ -57,10 +57,19 @@ class PatchLogger:
 
     # ------------------------------------------------------------------
     def _parse_vectors(
-        self, vector_ids: Iterable[Union[str, Tuple[str, float]]]
+        self,
+        vector_ids: Union[
+            Iterable[Union[str, Tuple[str, float]]],
+            Mapping[str, float],
+        ],
     ) -> List[Tuple[str, str, float]]:
         pairs: List[Tuple[str, str, float]] = []
-        for item in vector_ids:
+        items: Iterable[Union[str, Tuple[str, float]]]
+        if isinstance(vector_ids, Mapping):
+            items = vector_ids.items()  # type: ignore[assignment]
+        else:
+            items = vector_ids
+        for item in items:
             if isinstance(item, tuple):
                 vid, score = item
             else:
@@ -76,7 +85,7 @@ class PatchLogger:
     @log_and_measure
     def track_contributors(
         self,
-        vector_ids: Sequence[Union[str, Tuple[str, float]]],
+        vector_ids: Union[Mapping[str, float], Sequence[Union[str, Tuple[str, float]]]],
         result: bool,
         *,
         patch_id: str = "",
@@ -99,43 +108,44 @@ class PatchLogger:
                     )
                 except Exception:
                     pass
-            elif self.patch_db is not None and patch_id:
-                try:  # pragma: no cover - best effort
-                    self.patch_db.record_vector_metrics(
-                        session_id,
-                        pairs,
-                        patch_id=int(patch_id),
-                        contribution=0.0 if contribution is None else contribution,
-                        win=result,
-                        regret=not result,
-                    )
-                except Exception:
-                    pass
-                try:
-                    self.patch_db.record_provenance(int(patch_id), detailed)
-                except Exception:
-                    pass
-                try:
-                    self.patch_db.record_ancestry(int(patch_id), detailed)
-                except Exception:
-                    pass
-            elif self.vector_metrics is not None:
-                try:  # pragma: no cover - best effort
-                    self.vector_metrics.update_outcome(
-                        session_id,
-                        pairs,
-                        contribution=0.0 if contribution is None else contribution,
-                        patch_id=patch_id,
-                        win=result,
-                        regret=not result,
-                    )
-                except Exception:
-                    pass
-                if patch_id:
-                    try:
-                        self.vector_metrics.record_patch_ancestry(patch_id, scored)
+            else:
+                if self.patch_db is not None and patch_id:
+                    try:  # pragma: no cover - best effort
+                        self.patch_db.record_vector_metrics(
+                            session_id,
+                            pairs,
+                            patch_id=int(patch_id),
+                            contribution=0.0 if contribution is None else contribution,
+                            win=result,
+                            regret=not result,
+                        )
                     except Exception:
                         pass
+                    try:
+                        self.patch_db.record_provenance(int(patch_id), detailed)
+                    except Exception:
+                        pass
+                    try:
+                        self.patch_db.log_ancestry(int(patch_id), detailed)
+                    except Exception:
+                        pass
+                if self.vector_metrics is not None:
+                    try:  # pragma: no cover - best effort
+                        self.vector_metrics.update_outcome(
+                            session_id,
+                            pairs,
+                            contribution=0.0 if contribution is None else contribution,
+                            patch_id=patch_id,
+                            win=result,
+                            regret=not result,
+                        )
+                    except Exception:
+                        pass
+                    if patch_id:
+                        try:
+                            self.vector_metrics.record_patch_ancestry(patch_id, scored)
+                        except Exception:
+                            pass
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
@@ -148,7 +158,7 @@ class PatchLogger:
     @log_and_measure
     async def track_contributors_async(
         self,
-        vector_ids: Sequence[Union[str, Tuple[str, float]]],
+        vector_ids: Union[Mapping[str, float], Sequence[Union[str, Tuple[str, float]]]],
         result: bool,
         *,
         patch_id: str = "",
