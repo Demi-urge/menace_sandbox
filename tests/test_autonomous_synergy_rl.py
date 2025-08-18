@@ -26,7 +26,7 @@ class DummyTracker:
         return 0.01
 
     def rankings(self):
-        return [("m", 0.1)]
+        return [("m", 0.1, 0.1)]
 
 class CaptureImprover:
     def __init__(self, *a, **k):

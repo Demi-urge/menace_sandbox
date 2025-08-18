@@ -101,6 +101,7 @@ class ROITracker:
             forecasts.
         """
         self.roi_history: List[float] = []
+        self.raroi_history: List[float] = []
         self.confidence_history: List[float] = []
         self.category_history: List[str] = []
         self.entropy_history: List[float] = []
@@ -123,11 +124,13 @@ class ROITracker:
         self._poly = PolynomialFeatures(degree=2)
         self._model = LinearRegression()
         self.module_deltas: Dict[str, List[float]] = {}
+        self.module_raroi: Dict[str, List[float]] = {}
         self.module_entropy_deltas: Dict[str, List[float]] = {}
         self.origin_db_deltas: Dict[str, List[float]] = {}
         self.db_roi_metrics: Dict[str, Dict[str, float]] = {}
         self.cluster_map: Dict[str, int] = dict(cluster_map or {})
         self.cluster_deltas: Dict[int, List[float]] = {}
+        self.cluster_raroi: Dict[int, List[float]] = {}
         self.metrics_history: Dict[str, List[float]] = {
             "recovery_time": [],
             "latency_error_rate": [],
@@ -327,6 +330,7 @@ class ROITracker:
 
         pre_len = len(self.roi_history)
         self.roi_history.extend(other.roi_history)
+        self.raroi_history.extend(getattr(other, "raroi_history", []))
         self.confidence_history.extend(other.confidence_history)
         self.entropy_history.extend(getattr(other, "entropy_history", []))
         self.entropy_delta_history.extend(getattr(other, "entropy_delta_history", []))
@@ -356,10 +360,14 @@ class ROITracker:
         self.resource_metrics.extend(getattr(other, "resource_metrics", []))
         for name, deltas in getattr(other, "module_deltas", {}).items():
             self.module_deltas.setdefault(name, []).extend(deltas)
+        for name, deltas in getattr(other, "module_raroi", {}).items():
+            self.module_raroi.setdefault(name, []).extend(deltas)
         for name, deltas in getattr(other, "module_entropy_deltas", {}).items():
             self.module_entropy_deltas.setdefault(name, []).extend(deltas)
         for name, deltas in getattr(other, "cluster_deltas", {}).items():
             self.cluster_deltas.setdefault(name, []).extend(deltas)
+        for name, deltas in getattr(other, "cluster_raroi", {}).items():
+            self.cluster_raroi.setdefault(name, []).extend(deltas)
         for db, deltas in getattr(other, "origin_db_deltas", {}).items():
             self.origin_db_deltas.setdefault(db, []).extend(deltas)
 
@@ -1102,14 +1110,20 @@ class ROITracker:
         if filtered is not None:
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
+            _base_roi, raroi = self.calculate_raroi(
+                adjusted, str(metrics.get("workflow_type", "standard")), metrics
+            )
+            self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
             if modules:
                 for m in modules:
                     cid = self.cluster_map.get(m)
                     key = str(cid) if cid is not None else m
                     self.module_deltas.setdefault(key, []).append(adjusted)
+                    self.module_raroi.setdefault(key, []).append(raroi)
                     if cid is not None:
                         self.cluster_deltas.setdefault(cid, []).append(adjusted)
+                        self.cluster_raroi.setdefault(cid, []).append(raroi)
             if retrieval_metrics:
                 hits = [m for m in retrieval_metrics if m.get("hit")]
                 if hits:
@@ -1941,8 +1955,10 @@ class ROITracker:
             }
             data = {
                 "roi_history": self.roi_history,
+                "raroi_history": self.raroi_history,
                 "confidence_history": self.confidence_history,
                 "module_deltas": self.module_deltas,
+                "module_raroi": self.module_raroi,
                 "module_entropy_deltas": self.module_entropy_deltas,
                 "origin_db_deltas": self.origin_db_deltas,
                 "db_roi_metrics": self.db_roi_metrics,
@@ -1970,11 +1986,11 @@ class ROITracker:
             return
         with sqlite3.connect(path) as conn:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL)"
+                "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL, raroi REAL)"
             )
             conn.execute("DELETE FROM roi_history")
             conn.executemany(
-                "INSERT INTO roi_history (delta, confidence) VALUES (?, ?)",
+                "INSERT INTO roi_history (delta, confidence, raroi) VALUES (?, ?, ?)",
                 [
                     (
                         float(d),
@@ -1983,20 +1999,28 @@ class ROITracker:
                             if i < len(self.confidence_history)
                             else 0.0
                         ),
+                        float(
+                            self.raroi_history[i]
+                            if i < len(self.raroi_history)
+                            else 0.0
+                        ),
                     )
                     for i, d in enumerate(self.roi_history)
                 ],
             )
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS module_deltas (module TEXT, delta REAL)"
+                "CREATE TABLE IF NOT EXISTS module_deltas (module TEXT, delta REAL, raroi REAL)"
             )
             conn.execute("DELETE FROM module_deltas")
-            rows = [
-                (m, float(v)) for m, vals in self.module_deltas.items() for v in vals
-            ]
+            rows = []
+            for m, vals in self.module_deltas.items():
+                r_vals = self.module_raroi.get(m, [])
+                for i, v in enumerate(vals):
+                    rv = r_vals[i] if i < len(r_vals) else 0.0
+                    rows.append((m, float(v), float(rv)))
             if rows:
                 conn.executemany(
-                    "INSERT INTO module_deltas (module, delta) VALUES (?, ?)",
+                    "INSERT INTO module_deltas (module, delta, raroi) VALUES (?, ?, ?)",
                     rows,
                 )
             conn.execute(
@@ -2208,8 +2232,10 @@ class ROITracker:
                     data = json.load(fh)
                 if isinstance(data, list):
                     self.roi_history = [float(x) for x in data]
+                    self.raroi_history = [0.0] * len(self.roi_history)
                     self.confidence_history = [0.0] * len(self.roi_history)
                     self.module_deltas = {}
+                    self.module_raroi = {}
                     self.module_entropy_deltas = {}
                     self.origin_db_deltas = {}
                     self.db_roi_metrics = {}
@@ -2227,6 +2253,7 @@ class ROITracker:
                     self._worst_scenario = None
                 else:
                     self.roi_history = [float(x) for x in data.get("roi_history", [])]
+                    self.raroi_history = [float(x) for x in data.get("raroi_history", [])]
                     self.confidence_history = [
                         float(x) for x in data.get("confidence_history", [])
                     ]
@@ -2236,9 +2263,19 @@ class ROITracker:
                         )
                     elif len(self.confidence_history) > len(self.roi_history):
                         self.confidence_history = self.confidence_history[: len(self.roi_history)]
+                    if len(self.raroi_history) < len(self.roi_history):
+                        self.raroi_history.extend(
+                            [0.0] * (len(self.roi_history) - len(self.raroi_history))
+                        )
+                    elif len(self.raroi_history) > len(self.roi_history):
+                        self.raroi_history = self.raroi_history[: len(self.roi_history)]
                     self.module_deltas = {
                         str(m): [float(v) for v in vals]
                         for m, vals in data.get("module_deltas", {}).items()
+                    }
+                    self.module_raroi = {
+                        str(m): [float(v) for v in vals]
+                        for m, vals in data.get("module_raroi", {}).items()
                     }
                     self.module_entropy_deltas = {
                         str(m): [float(v) for v in vals]
@@ -2390,16 +2427,28 @@ class ROITracker:
             with sqlite3.connect(path) as conn:
                 try:
                     rows = conn.execute(
-                        "SELECT delta, confidence FROM roi_history ORDER BY rowid"
+                        "SELECT delta, confidence, raroi FROM roi_history ORDER BY rowid"
                     ).fetchall()
                 except Exception:
-                    rows = conn.execute(
-                        "SELECT delta FROM roi_history ORDER BY rowid"
+                    try:
+                        rows = conn.execute(
+                            "SELECT delta, confidence FROM roi_history ORDER BY rowid"
+                        ).fetchall()
+                        rows = [(r[0], r[1], 0.0) for r in rows]
+                    except Exception:
+                        rows = conn.execute(
+                            "SELECT delta FROM roi_history ORDER BY rowid"
+                        ).fetchall()
+                        rows = [(r[0], 0.0, 0.0) for r in rows]
+                try:
+                    mod_rows = conn.execute(
+                        "SELECT module, delta, raroi FROM module_deltas ORDER BY rowid"
                     ).fetchall()
-                    rows = [(r[0], 0.0) for r in rows]
-                mod_rows = conn.execute(
-                    "SELECT module, delta FROM module_deltas ORDER BY rowid"
-                ).fetchall()
+                except Exception:
+                    mod_rows = conn.execute(
+                        "SELECT module, delta FROM module_deltas ORDER BY rowid"
+                    ).fetchall()
+                    mod_rows = [(r[0], r[1], 0.0) for r in mod_rows]
                 try:
                     ent_rows = conn.execute(
                         "SELECT module, delta FROM module_entropy_deltas ORDER BY rowid"
@@ -2506,12 +2555,13 @@ class ROITracker:
             self.db_roi_metrics = {}
             return
         self.roi_history = [float(r[0]) for r in rows]
-        self.confidence_history = [
-            float(r[1]) if len(r) > 1 else 0.0 for r in rows
-        ]
+        self.confidence_history = [float(r[1]) for r in rows]
+        self.raroi_history = [float(r[2]) for r in rows]
         self.module_deltas = {}
-        for mod, delta in mod_rows:
+        self.module_raroi = {}
+        for mod, delta, raroi in mod_rows:
             self.module_deltas.setdefault(str(mod), []).append(float(delta))
+            self.module_raroi.setdefault(str(mod), []).append(float(raroi))
         self.module_entropy_deltas = {}
         for mod, delta in ent_rows:
             self.module_entropy_deltas.setdefault(str(mod), []).append(float(delta))
@@ -2779,16 +2829,32 @@ class ROITracker:
         return flags
 
     # ------------------------------------------------------------------
-    def rankings(self) -> List[Tuple[str, float]]:
-        """Return modules sorted by cumulative ROI contribution."""
-        totals = {m: sum(v) for m, v in self.module_deltas.items()}
-        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+    def rankings(self) -> List[Tuple[str, float, float]]:
+        """Return modules sorted by cumulative risk-adjusted ROI.
+
+        Each tuple contains ``(module, raroi_total, roi_total)``.
+        """
+        modules = set(self.module_deltas) | set(self.module_raroi)
+        rows: List[Tuple[str, float, float]] = []
+        for mod in modules:
+            raroi_total = sum(self.module_raroi.get(mod, []))
+            roi_total = sum(self.module_deltas.get(mod, []))
+            rows.append((mod, raroi_total, roi_total))
+        return sorted(rows, key=lambda x: x[1], reverse=True)
 
     # ------------------------------------------------------------------
-    def cluster_rankings(self) -> List[Tuple[int, float]]:
-        """Return clusters sorted by cumulative ROI contribution."""
-        totals = {cid: sum(v) for cid, v in self.cluster_deltas.items()}
-        return sorted(totals.items(), key=lambda x: x[1], reverse=True)
+    def cluster_rankings(self) -> List[Tuple[int, float, float]]:
+        """Return clusters sorted by cumulative risk-adjusted ROI.
+
+        Each tuple contains ``(cluster_id, raroi_total, roi_total)``.
+        """
+        clusters = set(self.cluster_deltas) | set(self.cluster_raroi)
+        rows: List[Tuple[int, float, float]] = []
+        for cid in clusters:
+            raroi_total = sum(self.cluster_raroi.get(cid, []))
+            roi_total = sum(self.cluster_deltas.get(cid, []))
+            rows.append((cid, raroi_total, roi_total))
+        return sorted(rows, key=lambda x: x[1], reverse=True)
 
     # ------------------------------------------------------------------
     def update_db_metrics(
@@ -3035,8 +3101,8 @@ def cli(argv: List[str] | None = None) -> None:
         print(f"Predicted ROI: {pred:.3f} (CI {lo:.3f} - {hi:.3f})")
     elif args.cmd == "rank":
         tracker.load_history(args.history)
-        for mod, total in tracker.rankings():
-            print(f"{mod} {total:.3f}")
+        for mod, raroi, roi in tracker.rankings():
+            print(f"{mod} {raroi:.3f} (roi {roi:.3f})")
     elif args.cmd == "reliability":
         tracker.load_history(args.history)
         if args.metric:

@@ -1546,7 +1546,7 @@ def _sandbox_main(preset: Dict[str, Any], args: argparse.Namespace) -> "ROITrack
         except Exception:
             logger.exception("workflow simulations failed")
 
-    ranking = ctx.meta_log.rankings()
+    ranking = ctx.tracker.rankings()
     e_thr = ctx.settings.entropy_plateau_threshold or ctx.tracker.diminishing()
     e_consec = ctx.settings.entropy_plateau_consecutive or 3
     flags = ctx.meta_log.diminishing(

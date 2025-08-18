@@ -883,12 +883,18 @@ def full_autonomous_run(
 
     if last_tracker:
         logger.info("=== Final Module Rankings ===", extra={"iteration": iteration})
-        for mod, total in last_tracker.rankings():
+        for mod, raroi, roi in last_tracker.rankings():
             logger.info(
-                "%s: %.3f",
+                "%s: RAROI %.3f ROI %.3f",
                 mod,
-                total,
-                extra={"iteration": iteration, "module": mod, "total": total},
+                raroi,
+                roi,
+                extra={
+                    "iteration": iteration,
+                    "module": mod,
+                    "raroi": raroi,
+                    "roi": roi,
+                },
             )
         logger.info("=== Metrics ===", extra={"iteration": iteration})
         for name, vals in last_tracker.metrics_history.items():

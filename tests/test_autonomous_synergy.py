@@ -112,7 +112,7 @@ class DummyTracker:
 
     def rankings(self):
         total = sum(self.module_deltas.get("mod", []))
-        return [("mod", total)]
+        return [("mod", total, total)]
 
 
 def test_autonomous_synergy_loop(monkeypatch):

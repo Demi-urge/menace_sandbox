@@ -224,7 +224,7 @@ def test_full_autonomous_updates_histories(monkeypatch, tmp_path):
             return 0.01
 
         def rankings(self):
-            return [("m", 0.1)]
+            return [("m", 0.1, 0.1)]
 
     def fake_capture(preset, args):
         t = DummyTracker()
