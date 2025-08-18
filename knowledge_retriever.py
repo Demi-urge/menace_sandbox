@@ -7,7 +7,9 @@ functions for bots to fetch feedback, error fixes and other insights.
 
 from __future__ import annotations
 
+from dataclasses import asdict, replace
 from gpt_memory import GPTMemoryManager
+from secret_redactor import redact_secrets, redact_secrets_dict
 try:  # pragma: no cover - allow flat imports
     from .gpt_knowledge_service import GPTKnowledgeService
 except Exception:  # pragma: no cover - fallback for flat layout
@@ -31,6 +33,10 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Raw interaction retrieval helpers
 
+
+def _redact(entries):
+    return [replace(e, **redact_secrets_dict(asdict(e))) for e in entries]
+
 def get_feedback(
     manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
 ):
@@ -40,9 +46,10 @@ def get_feedback(
     ``use_embeddings`` is ``True`` semantic search is employed.
     """
 
-    return manager.search_context(
+    res = manager.search_context(
         key, tags=[FEEDBACK], limit=limit, use_embeddings=use_embeddings
     )
+    return _redact(res)
 
 
 def get_error_fixes(
@@ -50,9 +57,10 @@ def get_error_fixes(
 ):
     """Return past error fix suggestions related to ``key``."""
 
-    return manager.search_context(
+    res = manager.search_context(
         key, tags=[ERROR_FIX], limit=limit, use_embeddings=use_embeddings
     )
+    return _redact(res)
 
 
 def get_improvement_paths(
@@ -60,9 +68,10 @@ def get_improvement_paths(
 ):
     """Return previous improvement path suggestions for ``key``."""
 
-    return manager.search_context(
+    res = manager.search_context(
         key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=use_embeddings
     )
+    return _redact(res)
 
 
 # ---------------------------------------------------------------------------
@@ -71,16 +80,16 @@ def get_improvement_paths(
 def recent_feedback(service: GPTKnowledgeService) -> str:
     """Return the latest summarised feedback insight."""
 
-    return service.get_recent_insights(FEEDBACK)
+    return redact_secrets(service.get_recent_insights(FEEDBACK))
 
 
 def recent_error_fix(service: GPTKnowledgeService) -> str:
     """Return the latest summarised error fix insight."""
 
-    return service.get_recent_insights(ERROR_FIX)
+    return redact_secrets(service.get_recent_insights(ERROR_FIX))
 
 
 def recent_improvement_path(service: GPTKnowledgeService) -> str:
     """Return the latest summarised improvement path insight."""
 
-    return service.get_recent_insights(IMPROVEMENT_PATH)
+    return redact_secrets(service.get_recent_insights(IMPROVEMENT_PATH))

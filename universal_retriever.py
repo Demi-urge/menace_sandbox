@@ -328,7 +328,7 @@ class RetrievalResult(list):
         self,
         items: Sequence[Any],
         session_id: str,
-        vectors: List[Tuple[str, str]],
+        vectors: List[Tuple[str, str, float]],
         fallback_sources: Sequence[str] | None = None,
     ) -> None:
         super().__init__(items)
@@ -1256,8 +1256,8 @@ class UniversalRetriever:
         adjust_weights: bool = False,
         dbs: Sequence[str] | None = None,
     ) -> Union[
-        Tuple["RetrievalResult", str, List[Tuple[str, str]]],
-        Tuple["RetrievalResult", str, List[Tuple[str, str]], List[dict[str, Any]]],
+        Tuple["RetrievalResult", str, List[Tuple[str, str, float]]],
+        Tuple["RetrievalResult", str, List[Tuple[str, str, float]], List[dict[str, Any]]],
     ]:
         """Retrieve results with scores and reasons.
 
@@ -1265,7 +1265,7 @@ class UniversalRetriever:
         -------
         ``(results, session_id, vectors)`` or
         ``(results, session_id, vectors, metrics)`` when ``return_metrics`` is
-        true.  ``vectors`` is a list of ``(db_name, vector_id)`` tuples for all
+        true.  ``vectors`` is a list of ``(db_name, vector_id, score)`` tuples for all
         retrieved items.  ``session_id`` uniquely identifies the retrieval
         session.
 
@@ -1560,7 +1560,7 @@ class UniversalRetriever:
             )
 
         results = hits[:top_k]
-        vector_info = []
+        vector_info: List[Tuple[str, str, float]] = []
         for h in results:
             vid = ""
             try:
@@ -1569,7 +1569,7 @@ class UniversalRetriever:
                 vid = ""
             if not vid:
                 vid = str(h.record_id)
-            vector_info.append((h.origin_db, vid))
+            vector_info.append((h.origin_db, vid, float(h.score)))
         result_container = RetrievalResult(
             results, session_id, vector_info, self._last_fallback_sources
         )

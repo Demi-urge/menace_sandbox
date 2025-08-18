@@ -54,7 +54,7 @@ def _retry(func: Callable[[], T], tries: int = 3, delay: float = 1.0, backoff: f
 
 
 def attach_retrieval_info(
-    record: Dict[str, object], session_id: str, vectors: List[Tuple[str, str]]
+    record: Dict[str, object], session_id: str, vectors: List[Tuple[str, str, float]]
 ) -> Dict[str, object]:
     """Return a copy of *record* with retrieval metadata attached."""
 
@@ -96,7 +96,7 @@ def _log_outcome(record: Dict[str, object]) -> None:
                 vid = item.get("vector_id") or item.get("id")
             else:
                 try:
-                    origin, vid = item  # type: ignore[misc]
+                    origin, vid, *_ = item  # type: ignore[misc]
                 except Exception:  # pragma: no cover - best effort
                     continue
             if origin is not None and vid is not None:

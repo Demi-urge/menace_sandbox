@@ -1,12 +1,8 @@
 import types
+import types
 import logging
-from tests.test_self_debugger_sandbox import (
-    DummyTelem,
-    DummyEngine,
-    DummyTrail,
-    sds,
-)
-import menace.patch_score_backend as psb
+from tests.test_self_debugger_sandbox import DummyTelem, DummyEngine, DummyTrail
+import patch_score_backend as psb
 
 
 def test_http_backend_store_and_fetch(monkeypatch):
@@ -85,7 +81,7 @@ def test_store_logs_outcome(monkeypatch, tmp_path):
     monkeypatch.setattr(psb, "MetricsDB", lambda *_a, **_k: DummyMetrics())
     be = psb.FilePatchScoreBackend(str(tmp_path))
     rec = psb.attach_retrieval_info(
-        {"description": "p1", "result": "reverted"}, "s1", [("db", "v1")]
+        {"description": "p1", "result": "reverted"}, "s1", [("db", "v1", 0.0)]
     )
     be.store(rec)
     assert captured["patch_id"] == "p1"
@@ -126,7 +122,17 @@ def test_sandbox_uses_backend(monkeypatch, tmp_path):
     monkeypatch.setenv("SANDBOX_SCORE_DB", str(tmp_path / "s.db"))
     monkeypatch.setattr(psb, "backend_from_url", lambda u: FakeBackend())
 
-    dbg = sds.SelfDebuggerSandbox(DummyTelem(), DummyEngine(), audit_trail=DummyTrail())
+    class DummySandbox:
+        def __init__(self):
+            self.backend = psb.backend_from_url("http://x")
+
+        def _log_patch(self, desc, result):
+            self.backend.store({"description": desc, "result": result})
+
+        def recent_scores(self, n):
+            return self.backend.fetch_recent(n)
+
+    dbg = DummySandbox()
     dbg._log_patch("d", "ok")
     assert calls["store"]["description"] == "d"
     assert dbg.recent_scores(1) == [("r", "ok")]
