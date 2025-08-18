@@ -18,6 +18,7 @@ def test_error_logger_with_sentry(monkeypatch):
     monkeypatch.setitem(sys.modules, "sentry_sdk", sdk)
     importlib.reload(sc)
     importlib.reload(elog)
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
 
     sentry = sc.SentryClient("http://dsn")
     events = []

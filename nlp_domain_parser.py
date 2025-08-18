@@ -13,12 +13,7 @@ import logging
 
 import numpy as np
 
-try:  # optional dependency for semantic similarity
-    from sentence_transformers import SentenceTransformer  # type: ignore
-except Exception:  # pragma: no cover - optional dependency
-    SentenceTransformer = None  # type: ignore
-
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
     from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
@@ -38,7 +33,7 @@ TARGET_ANCHORS: List[str] = [
     "political influence",
 ]
 
-_MODEL: SentenceTransformer | None = None
+_MODEL: Any | None = None
 _VECTORIZER: TfidfVectorizer | None = None
 _ANCHOR_VECS: Any = None
 _METHOD: str | None = None
@@ -57,18 +52,19 @@ def load_model() -> str:
     if _METHOD:
         return _METHOD
 
-    if SentenceTransformer is not None:
+    embedder = get_embedder()
+    if embedder is not None:
         try:
-            _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+            _MODEL = embedder
             vecs = [governed_embed(kw, _MODEL) for kw in TARGET_ANCHORS]
             if any(v is None for v in vecs):
                 raise RuntimeError("failed to embed anchors")
             _ANCHOR_VECS = [np.array(v) for v in vecs]  # type: ignore[list-item]
             _METHOD = "sbert"
-            logger.debug("Loaded SBERT model for domain parsing")
+            logger.debug("Loaded governed embedder for domain parsing")
             return _METHOD
         except Exception as exc:  # pragma: no cover - runtime issues
-            logger.warning("Failed to load SBERT model: %s", exc)
+            logger.warning("Failed to load governed embedder: %s", exc)
             _MODEL = None
 
     if TfidfVectorizer is None:

@@ -54,12 +54,11 @@ if TYPE_CHECKING:  # pragma: no cover - type hints only
         from error_bot import ErrorDB  # type: ignore
 
 try:
-    from sentence_transformers import SentenceTransformer, util  # type: ignore
+    from sentence_transformers import util  # type: ignore
 except Exception:  # pragma: no cover - optional
-    SentenceTransformer = None  # type: ignore
     util = None  # type: ignore
 
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -179,11 +178,8 @@ class ErrorClassifier:
             self.config_path = None
         self._build_maps(config)
 
-        if SentenceTransformer and util:
-            try:
-                self.model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
-            except Exception:  # pragma: no cover - runtime download issues
-                self.model = None
+        if util:
+            self.model = get_embedder()
         else:
             self.model = None
 

@@ -9,7 +9,8 @@ import menace.error_logger as elog
 import menace.knowledge_graph as kg
 
 
-def test_update_error_stats_records_causes(tmp_path):
+def test_update_error_stats_records_causes(tmp_path, monkeypatch):
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = eb.ErrorDB(tmp_path / "e.db")
     logger = elog.ErrorLogger(db)
 

@@ -1,3 +1,10 @@
+import os
+import types
+import sys
+
+os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
+sys.modules.setdefault("menace.self_coding_engine", types.SimpleNamespace(SelfCodingEngine=object))
+
 import menace.error_bot as eb
 import menace.error_logger as elog
 import menace.telemetry_feedback as tf
@@ -25,7 +32,8 @@ class DummyGraph:
         self.updated = db
 
 
-def _setup(tmp_path):
+def _setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = eb.ErrorDB(tmp_path / "e.db")
     logger = elog.ErrorLogger(db)
     engine = DummyEngine()
@@ -35,7 +43,7 @@ def _setup(tmp_path):
 
 
 def test_feedback_triggers_patch(tmp_path, monkeypatch):
-    db, logger, engine, mod = _setup(tmp_path)
+    db, logger, engine, mod = _setup(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     trace = "Traceback...\nKeyError: boom"
     for _ in range(3):
@@ -56,7 +64,7 @@ def test_feedback_triggers_patch(tmp_path, monkeypatch):
 
 
 def test_feedback_threshold(tmp_path, monkeypatch):
-    db, logger, engine, _ = _setup(tmp_path)
+    db, logger, engine, _ = _setup(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     trace = "Traceback...\nKeyError: boom"
     for _ in range(2):
@@ -77,6 +85,7 @@ def test_feedback_threshold(tmp_path, monkeypatch):
 
 
 def test_feedback_uses_module_frequency(tmp_path, monkeypatch):
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = eb.ErrorDB(tmp_path / "e.db")
     logger = elog.ErrorLogger(db)
     engine = DummyEngine()

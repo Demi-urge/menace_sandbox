@@ -49,6 +49,7 @@ def test_error_logger_telemetry_replication(monkeypatch):
     monkeypatch.setattr(elog, "TelemetryReplicator", StubReplicator)
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     logger = elog.ErrorLogger(db)
     try:
         raise RuntimeError("boom")
@@ -70,6 +71,7 @@ def test_replicator_flush_after_failure(monkeypatch):
     monkeypatch.setattr(elog, "TelemetryReplicator", StubReplicator)
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     logger = elog.ErrorLogger(db)
     inst = StubReplicator.instances[-1]
     inst.fail = True
@@ -90,6 +92,7 @@ def test_event_checksum_and_validation(monkeypatch):
     monkeypatch.setattr(elog, "TelemetryReplicator", StubReplicator)
     events = []
     db = types.SimpleNamespace(add_telemetry=lambda e: events.append(e))
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     logger = elog.ErrorLogger(db)
     try:
         raise RuntimeError("boom3")

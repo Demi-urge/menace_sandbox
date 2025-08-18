@@ -1,12 +1,14 @@
 import yaml
 from datetime import datetime
 
+import menace.error_logger as elog
 from menace.error_logger import ErrorClassifier, TelemetryEvent
 from menace.error_ontology import ErrorType
 from menace.error_bot import ErrorDB
 
 
-def test_classifier_updates_from_db(tmp_path):
+def test_classifier_updates_from_db(tmp_path, monkeypatch):
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = ErrorDB(path=tmp_path / "errors.db")
     cfg_path = tmp_path / "rules.yaml"
     clf = ErrorClassifier(config_path=str(cfg_path))

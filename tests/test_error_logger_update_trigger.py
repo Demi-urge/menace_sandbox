@@ -1,8 +1,10 @@
+import menace.error_logger as elog
 from menace.error_logger import ErrorLogger
 from menace.error_bot import ErrorDB
 
 
 def test_error_logger_triggers_rule_update(monkeypatch, tmp_path):
+    monkeypatch.setattr(elog, "get_embedder", lambda: None)
     db = ErrorDB(path=tmp_path / "errors.db")
     logger = ErrorLogger(db=db)
 
