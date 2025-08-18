@@ -21,6 +21,7 @@ from time import perf_counter
 import json
 import logging
 from security.secret_redactor import redact
+from analysis.semantic_diff_filter import find_semantic_risks
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -307,6 +308,26 @@ class EmbeddableDBMixin:
                 logger.warning(
                     "skipping embedding for %s due to license %s", record_id, lic
                 )
+                return
+            alerts = find_semantic_risks(text.splitlines())
+            if alerts:
+                rid = str(record_id)
+                self._metadata[rid] = {
+                    "created_at": datetime.utcnow().isoformat(),
+                    "embedding_version": self.embedding_version,
+                    "kind": kind,
+                    "source_id": source_id,
+                    "redacted": False,
+                    "semantic_risks": alerts,
+                }
+                log_embedding_metrics(
+                    self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
+                )
+                logger.warning(
+                    "skipping embedding for %s due to semantic risks", record_id
+                )
+                for line, msg, score in alerts:
+                    logger.warning("semantic risk %.2f for %s: %s", score, line, msg)
                 return
         record = redact(record) if isinstance(record, str) else record
 
