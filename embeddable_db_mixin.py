@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterator, List, Sequence, Tuple
 from time import perf_counter
 import json
 import logging
-from secret_redactor import redact_secrets
+from security.redaction import redact_secrets
 
 import license_detector
 
@@ -152,6 +152,8 @@ class EmbeddableDBMixin:
 
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
+
+        text = redact_secrets(text)
 
         start = perf_counter()
         tokens = 0
