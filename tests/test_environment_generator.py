@@ -170,9 +170,11 @@ def test_generate_presets_profiles():
     sd = next(p for p in presets if p.get("SCENARIO_NAME") == "schema_drift")
     assert sd.get("SCHEMA_MISMATCHES") is not None
     assert sd.get("SCHEMA_CHECKS") is not None
+    assert sd.get("SANDBOX_STUB_STRATEGY") == "legacy_schema"
     fu = next(p for p in presets if p.get("SCENARIO_NAME") == "flaky_upstream")
     assert fu.get("UPSTREAM_FAILURES") is not None
     assert fu.get("UPSTREAM_REQUESTS") is not None
+    assert fu.get("SANDBOX_STUB_STRATEGY") == "flaky_upstream"
 
 
 def test_generate_presets_new_scenario_keys():

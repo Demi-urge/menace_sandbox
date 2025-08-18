@@ -144,12 +144,14 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
                 "SCHEMA_MISMATCHES": 5,
                 "SCHEMA_CHECKS": 100,
                 "THREAT_INTENSITY": 20,
+                "SANDBOX_STUB_STRATEGY": "legacy_schema",
             },
             "high": {
                 "FAILURE_MODES": "schema_drift",
                 "SCHEMA_MISMATCHES": 20,
                 "SCHEMA_CHECKS": 100,
                 "THREAT_INTENSITY": 40,
+                "SANDBOX_STUB_STRATEGY": "legacy_schema",
             },
         }
     },
@@ -160,12 +162,14 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
                 "UPSTREAM_FAILURES": 1,
                 "UPSTREAM_REQUESTS": 20,
                 "THREAT_INTENSITY": 20,
+                "SANDBOX_STUB_STRATEGY": "flaky_upstream",
             },
             "high": {
                 "FAILURE_MODES": "flaky_upstream",
                 "UPSTREAM_FAILURES": 5,
                 "UPSTREAM_REQUESTS": 20,
                 "THREAT_INTENSITY": 40,
+                "SANDBOX_STUB_STRATEGY": "flaky_upstream",
             },
         }
     },
@@ -201,6 +205,8 @@ _KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
     "cache": ["high_latency_api"],
     "auth": ["user_misuse", "hostile_input"],
     "schema": ["schema_drift"],
+    "legacy": ["schema_drift"],
+    "flaky": ["flaky_upstream"],
     "upstream": ["flaky_upstream"],
     # ambiguous or generic modules should exercise all core scenarios
     "util": CANONICAL_PROFILES,

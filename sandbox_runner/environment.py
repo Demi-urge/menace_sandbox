@@ -215,9 +215,23 @@ COVERAGE_TRACKER: Dict[str, Dict[str, int]] = {}
 
 
 def _update_coverage(module: str, scenario: str) -> None:
-    """Increment coverage counter for ``module`` under ``scenario``."""
+    """Increment coverage counter for ``module`` under ``scenario``.
+
+    Scenario names are normalised to their canonical form using the alias map
+    from :mod:`environment_generator` so that coverage for e.g. ``schema_mismatch``
+    is recorded under ``schema_drift``.  This keeps the coverage tracker in
+    sync with :data:`CANONICAL_PROFILES` which now includes ``schema_drift`` and
+    ``flaky_upstream``.
+    """
+
+    try:  # pragma: no cover - environment generator optional
+        from menace.environment_generator import _PROFILE_ALIASES
+    except Exception:  # pragma: no cover - fallback when generator unavailable
+        _PROFILE_ALIASES = {}
+
+    canonical = _PROFILE_ALIASES.get(scenario, scenario)
     mod_map = COVERAGE_TRACKER.setdefault(module, {})
-    mod_map[scenario] = mod_map.get(scenario, 0) + 1
+    mod_map[canonical] = mod_map.get(canonical, 0) + 1
 
 
 def coverage_summary() -> Dict[str, Dict[str, Any]]:
@@ -240,6 +254,11 @@ def verify_scenario_coverage(
 ) -> Dict[str, List[str]]:
     """Verify that each module covers all canonical scenarios.
 
+    Scenario names stored in :data:`COVERAGE_TRACKER` may include legacy
+    aliases. This helper normalises those aliases and recomputes missing
+    scenarios against the canonical list so that new profiles such as
+    ``schema_drift`` and ``flaky_upstream`` are validated correctly.
+
     Parameters
     ----------
     raise_on_missing:
@@ -250,16 +269,32 @@ def verify_scenario_coverage(
     -------
     Mapping of modules to lists of missing scenario names.
     """
+
     summary = coverage_summary()
-    missing: Dict[str, List[str]] = {
-        mod: info["missing"] for mod, info in summary.items() if info["missing"]
-    }
-    for mod, scenarios in missing.items():
-        msg = f"module {mod} missing scenarios: {', '.join(scenarios)}"
-        if raise_on_missing:
-            logger.error(msg)
-        else:
-            logger.warning(msg)
+    try:  # pragma: no cover - environment generator optional
+        from menace.environment_generator import (
+            CANONICAL_PROFILES,
+            _PROFILE_ALIASES,
+        )
+    except Exception:  # pragma: no cover - graceful fallback
+        CANONICAL_PROFILES = []
+        _PROFILE_ALIASES = {}
+
+    profiles = set(CANONICAL_PROFILES)
+    missing: Dict[str, List[str]] = {}
+    for mod, info in summary.items():
+        counts = dict(info.get("counts", {}))
+        for alias, canonical in _PROFILE_ALIASES.items():
+            if alias in counts:
+                counts[canonical] = counts.get(canonical, 0) + counts.pop(alias)
+        absent = [p for p in profiles if p not in counts]
+        if absent:
+            missing[mod] = absent
+            msg = f"module {mod} missing scenarios: {', '.join(absent)}"
+            if raise_on_missing:
+                logger.error(msg)
+            else:
+                logger.warning(msg)
     if raise_on_missing and missing:
         raise RuntimeError("scenario coverage incomplete")
     return missing
@@ -5089,6 +5124,7 @@ def _scenario_specific_metrics(
                 metrics.get("schema_check_count", metrics.get("records_checked", 0.0)),
             )
         )
+        extra["schema_errors"] = mismatches
         extra["schema_mismatch_rate"] = mismatches / total if total else 0.0
     if "flaky_upstream" in name or "upstream" in name:
         failures = float(
@@ -5100,6 +5136,7 @@ def _scenario_specific_metrics(
                 metrics.get("request_count", metrics.get("calls", 0.0)),
             )
         )
+        extra["upstream_failures"] = failures
         extra["upstream_failure_rate"] = failures / calls if calls else 0.0
     return extra
 
@@ -5314,9 +5351,17 @@ def run_repo_section_simulations(
         collect_plugin_metrics,
     )
     try:
-        from menace.environment_generator import _PROFILE_ALIASES
+        from menace.environment_generator import _PROFILE_ALIASES, CANONICAL_PROFILES
     except Exception:  # pragma: no cover - environment generator optional
         _PROFILE_ALIASES = {}
+        CANONICAL_PROFILES = [
+            "high_latency_api",
+            "hostile_input",
+            "user_misuse",
+            "concurrency_spike",
+            "schema_drift",
+            "flaky_upstream",
+        ]
     try:
         from sandbox_settings import SandboxSettings
         metric_thresholds = (
@@ -6289,9 +6334,17 @@ def run_workflow_simulations(
     from menace.menace_memory_manager import MenaceMemoryManager
     from sandbox_settings import SandboxSettings
     try:
-        from menace.environment_generator import _PROFILE_ALIASES
+        from menace.environment_generator import _PROFILE_ALIASES, CANONICAL_PROFILES
     except Exception:  # pragma: no cover - environment generator optional
         _PROFILE_ALIASES = {}
+        CANONICAL_PROFILES = [
+            "high_latency_api",
+            "hostile_input",
+            "user_misuse",
+            "concurrency_spike",
+            "schema_drift",
+            "flaky_upstream",
+        ]
 
     if env_presets is None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
@@ -6324,14 +6377,7 @@ def run_workflow_simulations(
         preset_map = {}
         all_presets = list(env_presets)
 
-    required = {
-        "high_latency_api",
-        "hostile_input",
-        "user_misuse",
-        "concurrency_spike",
-        "schema_drift",
-        "flaky_upstream",
-    }
+    required = set(CANONICAL_PROFILES)
     existing = {
         _PROFILE_ALIASES.get(p.get("SCENARIO_NAME"), p.get("SCENARIO_NAME"))
         for p in all_presets
