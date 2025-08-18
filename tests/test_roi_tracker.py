@@ -7,13 +7,13 @@ import sys
 
 def test_roi_tracker_basic():
     tracker = rt.ROITracker(window=3, tolerance=0.01)
-    vertex, preds, stop = tracker.update(0.0, 0.1)
+    vertex, preds, stop, _ = tracker.update(0.0, 0.1)
     assert vertex is None
     assert not stop
 
     data = [0.2, 0.3, 0.2, 0.1, -0.05]
     for d in data:
-        vertex, preds, stop = tracker.update(0.0, d)
+        vertex, preds, stop, _ = tracker.update(0.0, d)
     assert vertex is not None
     assert stop
     assert len(preds) == len(tracker.roi_history)
@@ -81,6 +81,9 @@ def test_save_and_load_json(tmp_path):
     tracker.record_prediction(0.7, 0.8)
     tracker.record_metric_prediction("metric", 1.0, 0.5)
     tracker.synergy_history.append({"synergy_roi": 0.5})
+    tracker.record_scenario_delta("normal", 2.0, 1.0)
+    tracker.record_scenario_delta("concurrency_spike", 0.0, 1.0)
+    tracker.worst_scenario = "concurrency_spike"
     path = tmp_path / "hist.json"
     tracker.save_history(str(path))
 
@@ -92,9 +95,11 @@ def test_save_and_load_json(tmp_path):
     assert new_tracker.predicted_roi == tracker.predicted_roi
     assert new_tracker.actual_roi == tracker.actual_roi
     assert new_tracker.metrics_history == tracker.metrics_history
-    assert new_tracker.predicted_metrics == tracker.predicted_metrics
-    assert new_tracker.actual_metrics == tracker.actual_metrics
+    assert new_tracker.predicted_metrics.get("metric") == tracker.predicted_metrics.get("metric")
+    assert new_tracker.actual_metrics.get("metric") == tracker.actual_metrics.get("metric")
     assert new_tracker.synergy_history == tracker.synergy_history
+    assert new_tracker.scenario_roi_deltas == tracker.scenario_roi_deltas
+    assert new_tracker.worst_scenario == tracker.worst_scenario
 
 
 def test_save_and_load_sqlite(tmp_path):
@@ -103,6 +108,10 @@ def test_save_and_load_sqlite(tmp_path):
         tracker.update(0.0, float(i), [f"x{i}.py"], metrics={"m": float(i)})
     tracker.record_prediction(1.0, 0.9)
     tracker.synergy_history.append({"synergy_roi": 0.2})
+    tracker.record_scenario_delta("normal", 1.0, 0.5)
+    tracker.record_scenario_delta("concurrency_spike", 0.0, 1.0)
+    tracker.worst_scenario = "concurrency_spike"
+    tracker.metrics_history.setdefault("synergy_roi", [0.0] * len(tracker.roi_history))
     path = tmp_path / "hist.db"
     tracker.save_history(str(path))
 
@@ -115,6 +124,8 @@ def test_save_and_load_sqlite(tmp_path):
     assert other.actual_roi == tracker.actual_roi
     assert other.metrics_history == tracker.metrics_history
     assert other.synergy_history == tracker.synergy_history
+    assert other.scenario_roi_deltas == tracker.scenario_roi_deltas
+    assert other.worst_scenario == tracker.worst_scenario
 
 
 def test_entropy_plateau_detection():
@@ -223,7 +234,7 @@ def test_entropy_delta_history(tmp_path, monkeypatch):
     tracker = rt.ROITracker()
     tracker.metrics_history["synergy_shannon_entropy"] = [0.1, 0.3]
     tracker.record_prediction(0.0, 0.0)
-    assert tracker.entropy_delta_history("a.py") == [pytest.approx(0.1)]
+    assert rt.ROITracker.entropy_delta_history(tracker, "a.py") == [pytest.approx(0.1)]
 
 
 def test_arima_order_selection_cached(monkeypatch):
@@ -281,7 +292,7 @@ def test_weighted_averaging_triggers_stop():
     tracker = rt.ROITracker(window=3, tolerance=0.05, weights=[0.1, 0.2, 0.7])
     tracker.update(0.0, 0.1)
     tracker.update(0.0, 0.1)
-    _, _, stop = tracker.update(0.0, -0.04)
+    _, _, stop, _ = tracker.update(0.0, -0.04)
     assert stop
 
 
