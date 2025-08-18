@@ -17,16 +17,12 @@ from typing import Iterable, List, Optional, Callable
 import re
 from collections import Counter
 np = _deps.load("numpy", lambda: __import__("numpy"))  # type: ignore
-SentenceTransformer = _deps.load(
-    "sentence_transformers_model",
-    lambda: __import__("sentence_transformers", fromlist=["SentenceTransformer"]).SentenceTransformer,
-)
 
 from .retry_utils import with_retry
 
 logger = logging.getLogger(__name__)
 
-from governed_embeddings import governed_embed
+from governed_embeddings import governed_embed, get_embedder
 
 
 def _env_int(
@@ -445,14 +441,10 @@ _SBERT_MODEL: Optional[object] = None
 
 
 def _get_sbert_model() -> object | None:
-    """Lazily load the Sentence-BERT model for semantic similarity."""
+    """Lazily load the shared embedder for semantic similarity."""
     global _SBERT_MODEL
-    if _SBERT_MODEL is None and SentenceTransformer:
-        try:
-            _SBERT_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-        except Exception as exc:  # pragma: no cover - optional
-            logger.warning("failed to load SBERT model: %s", exc)
-            _SBERT_MODEL = None
+    if _SBERT_MODEL is None:
+        _SBERT_MODEL = get_embedder()
     return _SBERT_MODEL
 
 
