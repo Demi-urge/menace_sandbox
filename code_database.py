@@ -1113,6 +1113,30 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
+    def find_patches_by_vector(
+        self, vector_id: str
+    ) -> List[Tuple[int, float, str, str]]:
+        """Return patches influenced by ``vector_id`` ordered by influence.
+
+        Results are joined with :class:`PatchRecord` metadata.
+        """
+
+        pattern = f"%{vector_id}%"
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[int, float, str, str]]:
+            rows = conn.execute(
+                "SELECT a.patch_id, a.influence, h.filename, h.description "
+                "FROM patch_ancestry a JOIN patch_history h ON h.id=a.patch_id "
+                "WHERE a.vector_id LIKE ? ORDER BY a.influence DESC",
+                (pattern,),
+            ).fetchall()
+            return [
+                (int(pid), float(infl), fname, desc)
+                for pid, infl, fname, desc in rows
+            ]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
     def get_provenance(self, patch_id: int) -> List[Tuple[str, str, float, str]]:
         """Return provenance rows for ``patch_id`` ordered by original ranking."""
 
