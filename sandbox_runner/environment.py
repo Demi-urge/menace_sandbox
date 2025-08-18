@@ -5130,7 +5130,7 @@ def run_scenarios(
     ROITracker
         The tracker containing recorded metrics. The attribute
         ``worst_scenario`` identifies the scenario with the most negative ROI
-        delta and ``scenario_deltas`` maps each scenario to its ROI delta.
+        delta and ``scenario_roi_deltas`` maps each scenario to its ROI delta.
     """
 
     from menace.roi_tracker import ROITracker
@@ -5180,10 +5180,7 @@ def run_scenarios(
         {"SCENARIO_NAME": "flaky_upstream"},
     ]
 
-    roi_deltas: Dict[str, float] = {}
-
     async def _run() -> None:
-        nonlocal roi_deltas
         for preset in presets:
             env_input = dict(preset)
             scenario = env_input.get("SCENARIO_NAME", "")
@@ -5200,33 +5197,28 @@ def run_scenarios(
             roi = updates[-1][1] if updates else 0.0
             metrics = updates[-1][2] if updates else {}
 
-            delta = roi - base_roi
-            roi_deltas[scenario] = delta
-
-            synergy_metrics = {
-                f"synergy_{k}": metrics.get(k, 0.0) - base_metrics.get(k, 0.0)
+            metrics_delta = {
+                k: metrics.get(k, 0.0) - base_metrics.get(k, 0.0)
                 for k in set(metrics) | set(base_metrics)
             }
-            synergy_metrics["synergy_roi"] = delta
-            synergy_metrics.setdefault("synergy_profitability", delta)
-            synergy_metrics.setdefault("synergy_revenue", delta)
-            synergy_metrics.setdefault("synergy_projected_lucrativity", delta)
-
-            if hasattr(tracker, "register_metrics"):
-                tracker.register_metrics(*synergy_metrics.keys())
+            synergy_metrics = tracker.record_scenario_delta(
+                scenario, roi, base_roi, metrics_delta
+            )
             tracker.update(
                 base_roi,
                 roi,
                 modules=[f"workflow_{wf_id}", scenario],
                 metrics={**metrics, **synergy_metrics},
             )
-            tracker.scenario_synergy.setdefault(scenario, []).append(synergy_metrics)
 
     asyncio.run(_run())
 
-    worst = min(roi_deltas.items(), key=lambda kv: kv[1])[0] if roi_deltas else ""
+    worst = (
+        min(tracker.scenario_roi_deltas.items(), key=lambda kv: kv[1])[0]
+        if tracker.scenario_roi_deltas
+        else ""
+    )
     tracker.worst_scenario = worst
-    tracker.scenario_deltas = roi_deltas
     return tracker
 
 
