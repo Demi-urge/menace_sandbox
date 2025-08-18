@@ -8,6 +8,18 @@ from typing import Any
 import yaml
 
 
+EXPECTED_METRICS = {
+    "profitability",
+    "efficiency",
+    "reliability",
+    "resilience",
+    "maintainability",
+    "security",
+    "latency",
+    "energy",
+}
+
+
 class ROICalculator:
     """Calculate ROI scores from weighted metrics and veto rules."""
 
@@ -16,6 +28,7 @@ class ROICalculator:
         path = Path(profiles_path)
         with path.open("r", encoding="utf-8") as fh:
             self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
+        self._validate_profiles()
         self.hard_fail: bool = False
 
     def calculate(
@@ -55,6 +68,31 @@ class ROICalculator:
         if vetoed:
             return (float("-inf"), True, triggers)
         return (score, False, [])
+
+    def _validate_profiles(self) -> None:
+        """Validate that profiles contain expected numeric weights."""
+        for name, profile in self.profiles.items():
+            weights = profile.get("weights", {})
+            missing = EXPECTED_METRICS - weights.keys()
+            if missing:
+                raise ValueError(
+                    f"profile '{name}' missing weight(s) for: {', '.join(sorted(missing))}"
+                )
+            non_numeric = [
+                metric
+                for metric, weight in weights.items()
+                if isinstance(weight, bool)
+                or not isinstance(weight, (int, float))
+            ]
+            if non_numeric:
+                raise ValueError(
+                    f"profile '{name}' has non-numeric weight(s) for: {', '.join(sorted(non_numeric))}"
+                )
+            total = float(sum(float(weights[m]) for m in EXPECTED_METRICS))
+            if not (0.99 <= total <= 1.01):
+                raise ValueError(
+                    f"profile '{name}' weight sum {total} outside acceptable range"
+                )
 
     def log_debug(self, metrics: dict[str, Any], profile_type: str) -> None:
         """Print per-metric contributions, final score and veto triggers."""
