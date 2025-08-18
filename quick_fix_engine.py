@@ -271,8 +271,16 @@ class QuickFixEngine:
             desc += "\n\n" + ctx_block
         session_id = ""
         vectors: list[tuple[str, str, float]] = []
+        retrieval_metadata: dict[str, dict[str, Any]] = {}
         if self.retriever is not None:
             _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
+            retrieval_metadata = {
+                f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
+                    "license": h.get("license"),
+                    "semantic_alerts": h.get("semantic_alerts"),
+                }
+                for h in _hits
+            }
         if session_id:
             context_meta["retrieval_session_id"] = session_id
             context_meta["retrieval_vectors"] = vectors
@@ -309,6 +317,7 @@ class QuickFixEngine:
                     patch_id=str(patch_id or ""),
                     session_id=session_id,
                     contribution=1.0 if result else 0.0,
+                    retrieval_metadata=retrieval_metadata,
                 )
             except Exception:
                 self.logger.debug("patch logging failed", exc_info=True)
@@ -361,8 +370,16 @@ class QuickFixEngine:
                 desc += "\n\n" + ctx
             session_id = ""
             vectors: list[tuple[str, str, float]] = []
+            retrieval_metadata: dict[str, dict[str, Any]] = {}
             if self.retriever is not None:
                 _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
+                retrieval_metadata = {
+                    f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
+                        "license": h.get("license"),
+                        "semantic_alerts": h.get("semantic_alerts"),
+                    }
+                    for h in _hits
+                }
             if session_id:
                 meta["retrieval_session_id"] = session_id
                 meta["retrieval_vectors"] = vectors
@@ -414,6 +431,7 @@ class QuickFixEngine:
                         patch_id=str(patch_id or ""),
                         session_id=session_id,
                         contribution=1.0 if result else 0.0,
+                        retrieval_metadata=retrieval_metadata,
                     )
                 except Exception:
                     self.logger.debug("patch logging failed", exc_info=True)
