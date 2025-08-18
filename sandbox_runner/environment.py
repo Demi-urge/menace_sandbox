@@ -5184,8 +5184,18 @@ def run_scenarios(
         {"SCENARIO_NAME": "normal"},
         {"SCENARIO_NAME": "concurrency_spike", "CONCURRENCY_LEVEL": "8"},
         {"SCENARIO_NAME": "hostile_input", "FAILURE_MODES": "hostile_input"},
-        {"SCENARIO_NAME": "schema_drift"},
-        {"SCENARIO_NAME": "flaky_upstream"},
+        {
+            "SCENARIO_NAME": "schema_drift",
+            "FAILURE_MODES": "schema_drift",
+            "SCHEMA_MISMATCHES": 5,
+            "SCHEMA_CHECKS": 100,
+        },
+        {
+            "SCENARIO_NAME": "flaky_upstream",
+            "FAILURE_MODES": "flaky_upstream",
+            "UPSTREAM_FAILURES": 1,
+            "UPSTREAM_REQUESTS": 20,
+        },
     ]
 
     results: Dict[str, Dict[str, Any]] = {}
