@@ -5,7 +5,7 @@ from __future__ import annotations
 import pickle
 import time
 from pathlib import Path
-from typing import Tuple
+from typing import Any, Tuple
 
 import numpy as np
 from numpy.typing import NDArray
@@ -38,6 +38,8 @@ class TruthAdapter:
         self,
         model_path: str | Path = "sandbox_data/truth_adapter.pkl",
         model_type: str = "ridge",
+        ridge_params: dict[str, Any] | None = None,
+        xgb_params: dict[str, Any] | None = None,
     ) -> None:
         """Create adapter.
 
@@ -48,10 +50,16 @@ class TruthAdapter:
         model_type:
             ``"ridge"`` or ``"xgboost"``. If ``"xgboost"`` is requested but
             the dependency is unavailable, a ridge model is used instead.
+        ridge_params:
+            Optional parameters passed to :class:`~sklearn.linear_model.Ridge`.
+        xgb_params:
+            Optional parameters passed to :class:`xgboost.XGBRegressor`.
         """
 
         self.model_path = Path(model_path)
         self.model_type = model_type
+        self.ridge_params = ridge_params or {}
+        self.xgb_params = xgb_params or {}
         self.model = None
         self.metadata: dict = {}
         self.drift_threshold = 0.25  # PSI threshold for drift
@@ -64,11 +72,11 @@ class TruthAdapter:
         """Instantiate the underlying regression model."""
         if self.model_type.lower() == "xgboost" and XGBRegressor is not None:
             self.metadata["model_type"] = "xgboost"
-            return XGBRegressor()
+            return XGBRegressor(**self.xgb_params)
 
         # Fallback to ridge regression by default
         self.metadata["model_type"] = "ridge"
-        return Ridge()
+        return Ridge(**self.ridge_params)
 
     def _load(self) -> None:
         """Load model and metadata from disk if available."""
@@ -125,10 +133,60 @@ class TruthAdapter:
 
     # ------------------------------------------------------------------
     # Training / prediction
-    def fit(self, X: NDArray[np.float64], y: NDArray[np.float64]) -> None:
-        """Train the underlying model and record feature distributions."""
-        if self.model is None:
-            self.model = self._make_model()
+    def fit(
+        self,
+        X: NDArray[np.float64],
+        y: NDArray[np.float64],
+        *,
+        cross_validate: bool = False,
+    ) -> None:
+        """Train the underlying model and record feature distributions.
+
+        Parameters
+        ----------
+        X, y:
+            Training features and targets.
+        cross_validate:
+            When ``True`` and both ridge and XGBoost are available, evaluates
+            both models on a hold-out split and keeps the one with the lowest
+            validation error.
+        """
+
+        if (
+            cross_validate
+            and Ridge is not None
+            and XGBRegressor is not None
+        ):
+            rng = np.random.default_rng(0)
+            idx = rng.permutation(len(X))
+            split = int(len(X) * 0.8)
+            split = min(max(1, split), len(X) - 1)
+            train_idx, val_idx = idx[:split], idx[split:]
+            X_train, y_train = X[train_idx], y[train_idx]
+            X_val, y_val = X[val_idx], y[val_idx]
+
+            ridge_model = Ridge(**self.ridge_params)
+            ridge_model.fit(X_train, y_train)
+            ridge_mae = float(
+                np.mean(np.abs(ridge_model.predict(X_val) - y_val))
+            )
+
+            xgb_model = XGBRegressor(**self.xgb_params)
+            xgb_model.fit(X_train, y_train)
+            xgb_mae = float(
+                np.mean(np.abs(xgb_model.predict(X_val) - y_val))
+            )
+
+            if xgb_mae < ridge_mae:
+                self.model = xgb_model
+                self.model_type = "xgboost"
+            else:
+                self.model = ridge_model
+                self.model_type = "ridge"
+            self.metadata["model_type"] = self.model_type
+        else:
+            if self.model is None:
+                self.model = self._make_model()
         self.model.fit(X, y)
 
         feature_stats = []

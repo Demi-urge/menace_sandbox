@@ -17,6 +17,14 @@ underlying regression model via the `model_type` argument, for example
 `TruthAdapter(model_type="xgboost")` if XGBoost is installed, otherwise a ridge
 regressor is used.
 
+Hyperparameters for the underlying models can be provided through
+`ridge_params` and `xgb_params`:
+
+```python
+TruthAdapter(model_type="ridge", ridge_params={"alpha": 2.0})
+TruthAdapter(model_type="xgboost", xgb_params={"learning_rate": 0.1, "max_depth": 4})
+```
+
 ## Workflow and Input Data
 
 The adapter consumes **sandbox metrics** as feature vectors and a **profit proxy** such as ROI or revenue as the target. A typical workflow:
@@ -32,6 +40,13 @@ Train the adapter on live ROI metrics or shadow evaluation data. `fit` expects `
 from truth_adapter import TruthAdapter
 adapter = TruthAdapter()
 adapter.fit(X_live, y_live)  # or adapter.fit(X_shadow, y_shadow)
+```
+
+Enable simple cross-validation to automatically select between ridge and
+XGBoost (when both are available):
+
+```python
+adapter.fit(X_live, y_live, cross_validate=True)
 ```
 
 During operation, update drift statistics and retrieve calibrated values. `predict` returns both predictions and a flag indicating if drift has pushed the model into a low-confidence state:
