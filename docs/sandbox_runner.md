@@ -20,6 +20,31 @@ SANDBOX_REPO_PATH=$(pwd) python sandbox_runner.py --runs 1
 Use `--preset-file` or the `SANDBOX_ENV_PRESETS` environment variable to supply
 scenario presets. When omitted the runner generates a small set of defaults.
 
+To evaluate an existing workflow across common sandbox scenarios use the
+`run-scenarios` subcommand:
+
+```bash
+python -m sandbox_runner.cli run-scenarios 42
+```
+
+The command loads workflow **42** from `workflows.db`, replays it with and
+without the workflow under several predefined scenarios and prints the ROI delta
+for each scenario along with the worst case. The scenarios are:
+
+| Scenario | Description |
+| --- | --- |
+| `normal` | baseline environment |
+| `concurrency_spike` | increased concurrency level |
+| `hostile_input` | adversarial or malicious input |
+| `schema_drift` | changes in dependent data schemas |
+| `flaky_upstream` | unstable upstream service |
+
+ROI delta represents the difference between the ROI recorded with the workflow
+enabled and the baseline without it. Positive values indicate an improvement
+over the baseline, while negative values mean the workflow performs worse. The
+worst-case scenario is reported separately as the scenario with the most
+negative ROI delta.
+
 ## Algorithm Overview
 
 Each cycle proceeds through a consistent set of stages:
