@@ -16,7 +16,7 @@ try:
 except Exception:  # pragma: no cover - fallback for legacy path
     from secret_redactor import redact_secrets  # type: ignore
 
-from compliance.license_fingerprint import check as license_check
+from governed_embeddings import governed_embed
 
 try:  # optional dependency for embeddings
     from sentence_transformers import SentenceTransformer
@@ -88,21 +88,16 @@ class VectorMemoryStorage(MemoryStorage):
         )
 
     def _embed(self, text: str) -> Optional[List[float]]:
-        if self.embedder:
-            try:
-                return self.embedder.encode([text])[0].tolist()
-            except Exception:  # pragma: no cover - runtime issues
-                return None
-        return None
+        if not self.embedder:
+            return None
+        return governed_embed(text, self.embedder)
 
     def add(self, rec: MemoryRecord) -> None:  # type: ignore[override]
         original = rec.text.strip()
         if not original:
             return
         rec.text = redact_secrets(original)
-        embedding: Optional[List[float]] = None
-        if not license_check(original):
-            embedding = self._embed(rec.text)
+        embedding = self._embed(original)
         if embedding is not None:
             meta = rec.meta or {}
             meta["embedding"] = embedding
@@ -110,8 +105,8 @@ class VectorMemoryStorage(MemoryStorage):
         super().add(rec)
 
     def query_vector(self, text: str, limit: int = 5) -> List[MemoryRecord]:
+        embedding = self._embed(text)
         redacted_query = redact_secrets(text)
-        embedding = self._embed(redacted_query)
         if embedding is None:
             results = self.query(redacted_query, limit)
         else:

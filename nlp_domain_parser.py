@@ -18,6 +18,7 @@ try:  # optional dependency for semantic similarity
 except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
 
+from governed_embeddings import governed_embed
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer  # type: ignore
     from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
@@ -59,7 +60,10 @@ def load_model() -> str:
     if SentenceTransformer is not None:
         try:
             _MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-            _ANCHOR_VECS = _MODEL.encode(TARGET_ANCHORS)
+            vecs = [governed_embed(kw, _MODEL) for kw in TARGET_ANCHORS]
+            if any(v is None for v in vecs):
+                raise RuntimeError("failed to embed anchors")
+            _ANCHOR_VECS = [np.array(v) for v in vecs]  # type: ignore[list-item]
             _METHOD = "sbert"
             logger.debug("Loaded SBERT model for domain parsing")
             return _METHOD
@@ -113,9 +117,12 @@ def classify_text(text: str | Dict[str, Any]) -> List[Tuple[str, float]]:
         return []
 
     if _METHOD == "sbert" and _MODEL is not None:
-        vec = _MODEL.encode([query])[0]
+        vec = governed_embed(query, _MODEL)
+        if vec is None:
+            return []
+        arr = np.array(vec)
         scores = [
-            _cosine_sim(vec, anchor_vec) for anchor_vec in _ANCHOR_VECS  # type: ignore[arg-type]
+            _cosine_sim(arr, anchor_vec) for anchor_vec in _ANCHOR_VECS  # type: ignore[arg-type]
         ]
     else:
         assert _VECTORIZER is not None and cosine_similarity is not None

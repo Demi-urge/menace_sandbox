@@ -22,6 +22,7 @@ import json
 import logging
 from security.secret_redactor import redact
 from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 
 # Lightweight license detection based on SPDX‑style fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -159,23 +160,19 @@ class EmbeddableDBMixin:
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
 
-        original = text
-        text = redact(text)
-        if text != original:
-            logger.warning("redacted secrets prior to embedding")
-
         start = perf_counter()
-        tokens = 0
-        try:  # pragma: no cover - optional dependency
-            tokenizer = getattr(self.model, "tokenizer", None)
-            if tokenizer:
-                tokens = len(tokenizer.encode(text))
-        except Exception:
-            tokens = 0
-        vec = self.model.encode(text).tolist()  # pragma: no cover - heavy
-        self._last_embedding_tokens = tokens
+        vec = governed_embed(text, self.model)
         self._last_embedding_time = perf_counter() - start
-        return vec
+        tokens = 0
+        if vec is not None:
+            try:  # pragma: no cover - optional dependency
+                tokenizer = getattr(self.model, "tokenizer", None)
+                if tokenizer:
+                    tokens = len(tokenizer.encode(redact(text)))
+            except Exception:
+                tokens = 0
+        self._last_embedding_tokens = tokens
+        return vec or []
 
     # ------------------------------------------------------------------
     # methods expected to be overridden

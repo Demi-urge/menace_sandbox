@@ -14,6 +14,7 @@ from compliance.license_fingerprint import (
     check as license_check,
     fingerprint as license_fingerprint,
 )
+from analysis.semantic_diff_filter import find_semantic_risks
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,11 @@ def governed_embed(text: str, embedder: SentenceTransformer | None = None) -> Op
             )
         except Exception:
             logger.warning("skipping embedding due to license %s", lic)
+        return None
+
+    risks = find_semantic_risks(text.splitlines())
+    if risks:
+        logger.warning("skipping embedding due to semantic risks: %s", [r[1] for r in risks])
         return None
     cleaned = redact(text)
     if cleaned != text:

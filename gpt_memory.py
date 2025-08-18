@@ -32,10 +32,7 @@ try:
 except Exception:  # pragma: no cover - legacy path
     from secret_redactor import redact_secrets  # type: ignore
 
-from compliance.license_fingerprint import (
-    check as license_check,
-    fingerprint as license_fingerprint,
-)
+from governed_embeddings import governed_embed
 
 try:  # Optional dependency used for event publication
     from unified_event_bus import UnifiedEventBus
@@ -176,27 +173,16 @@ class GPTMemoryManager(GPTMemoryInterface):
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
-        disallowed = license_check(original_prompt)
-        if disallowed:
-            try:  # pragma: no cover - best effort logging
-                logger.warning(
-                    "skipping embedding for prompt due to license %s",
-                    disallowed,
-                    extra={"fingerprint": license_fingerprint(original_prompt)},
-                )
-            except Exception:
-                logger.warning(
-                    "skipping embedding for prompt due to license %s", disallowed
-                )
-        if self.embedder is not None and not disallowed:
+        if self.embedder is not None:
             try:
                 start = perf_counter()
-                tokenizer = getattr(self.embedder, "tokenizer", None)
-                if tokenizer:
-                    tokens = len(tokenizer.encode(prompt))
-                vec = self.embedder.encode(prompt)
+                vec = governed_embed(original_prompt, self.embedder)
                 wall_time = perf_counter() - start
-                embedding = json.dumps([float(x) for x in vec])
+                if vec is not None:
+                    tokenizer = getattr(self.embedder, "tokenizer", None)
+                    if tokenizer:
+                        tokens = len(tokenizer.encode(prompt))
+                    embedding = json.dumps([float(x) for x in vec])
             except Exception:  # pragma: no cover - embedding is optional
                 embedding = None
                 tokens = 0
@@ -277,21 +263,9 @@ class GPTMemoryManager(GPTMemoryInterface):
         rows = cur.fetchall()
 
         if use_embeddings and self.embedder is not None:
-            disallowed = license_check(query)
-            if disallowed:
-                try:  # pragma: no cover - best effort logging
-                    logger.warning(
-                        "skipping embedding for query due to license %s",
-                        disallowed,
-                        extra={"fingerprint": license_fingerprint(query)},
-                    )
-                except Exception:
-                    logger.warning(
-                        "skipping embedding for query due to license %s", disallowed
-                    )
-            else:
-                try:
-                    q_emb = self.embedder.encode(redacted_query)
+            try:
+                q_emb = governed_embed(query, self.embedder)
+                if q_emb is not None:
                     scored: list[tuple[float, MemoryEntry]] = []
                     for prompt, response, tag_str, ts, emb_json in rows:
                         if not emb_json:
@@ -311,8 +285,8 @@ class GPTMemoryManager(GPTMemoryInterface):
                         scored.append((score, entry))
                     scored.sort(key=lambda x: x[0], reverse=True)
                     return [e for _, e in scored[:limit]]
-                except Exception:  # pragma: no cover - embedding is optional
-                    pass
+            except Exception:  # pragma: no cover - embedding is optional
+                pass
 
         results: list[MemoryEntry] = []
         for prompt, response, tag_str, ts, _ in rows:
