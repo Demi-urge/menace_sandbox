@@ -128,12 +128,18 @@ class SandboxDashboard(MetricsDashboard):
                 if sev is not None:
                     msg = f"severity {sev}"
             warnings[idx] = msg
+        ta_meta = tracker.truth_adapter.metadata
+        ta_status = {
+            'needs_retrain': bool(ta_meta.get('needs_retrain', False)),
+            'last_retrained': ta_meta.get('last_retrained'),
+        }
         return jsonify({
             'labels': labels,
             'roi': tracker.roi_history,
             'security': security,
             'category_counts': tracker.category_summary(),
             'warnings': warnings,
+            'truth_adapter': ta_status,
         }), 200
 
     def weights_data(self) -> tuple[str, int]:

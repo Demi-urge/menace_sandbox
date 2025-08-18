@@ -1853,6 +1853,7 @@ class ROITracker:
                 "actual_metrics": self.actual_metrics,
                 "metric_predictions": metric_preds,
                 "drift_metrics": self.drift_metrics,
+                "truth_adapter": self.truth_adapter.metadata,
             }
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
@@ -2190,6 +2191,12 @@ class ROITracker:
                         str(k): float(v)
                         for k, v in data.get("drift_metrics", {}).items()
                     }
+                    ta = data.get("truth_adapter")
+                    if isinstance(ta, dict):
+                        try:
+                            self.truth_adapter.metadata.update(ta)
+                        except Exception:
+                            pass
             except Exception:
                 self.roi_history = []
                 self.module_deltas = {}

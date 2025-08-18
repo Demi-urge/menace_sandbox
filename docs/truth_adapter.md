@@ -43,6 +43,15 @@ A true low-confidence flag signals the adapter no longer trusts its calibration.
 
 Model parameters and metadata persist under `sandbox_data/truth_adapter.pkl`. The metadata records feature statistics, drift metrics and the timestamp of the last retraining, enabling audits of drift history across sandbox runs.
 
+## Calibration Workflow
+
+Sandbox components that consume sandbox ROI now invoke the adapter to replace raw
+values with calibrated predictions.  The `self_improvement_engine` and
+`action_planner` both run ROI figures through `TruthAdapter.predict` before
+recording them via `ROITracker`.  The tracker persists the adapter's metadata so
+dashboard endpoints such as `/roi_data` can surface `needs_retrain` flags and
+`last_retrained` timestamps.
+
 ## Optional Dependencies
 
 The adapter works with scikit-learn's `Ridge` by default. Installing the following packages enables additional features:

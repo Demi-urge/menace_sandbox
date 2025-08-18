@@ -5179,11 +5179,16 @@ class SelfImprovementEngine:
                     after_roi = before_roi
             roi_value = result.roi.roi if result.roi else 0.0
             roi_realish = roi_value
+            pred_realish = predicted
             try:
                 features = np.array([[float(roi_value)]], dtype=np.float64)
                 drift = self.truth_adapter.check_drift(features)
                 preds, low_conf = self.truth_adapter.predict(features)
                 roi_realish = float(preds[0])
+                if predicted is not None:
+                    p_arr = np.array([[float(predicted)]], dtype=np.float64)
+                    p_preds, _ = self.truth_adapter.predict(p_arr)
+                    pred_realish = float(p_preds[0])
                 if drift or low_conf:
                     self.logger.warning(
                         "truth adapter low confidence; scheduling retrain"
@@ -5197,13 +5202,13 @@ class SelfImprovementEngine:
             if self.roi_tracker and predicted is not None:
                 try:
                     self.roi_tracker.record_roi_prediction(
-                        [float(predicted)], [float(roi_value)],
+                        [float(pred_realish)], [float(roi_realish)],
                         predicted_class=self._last_growth_type,
                     )
                 except Exception:
                     self.logger.exception("roi tracker record failed")
                 self.logger.info(
-                    "cycle roi", extra=log_record(predicted=predicted, actual=roi_value)
+                    "cycle roi", extra=log_record(predicted=pred_realish, actual=roi_realish)
                 )
             if self.evolution_history:
                 try:
@@ -5214,8 +5219,8 @@ class SelfImprovementEngine:
                             action="self_improvement",
                             before_metric=before_roi,
                             after_metric=after_roi,
-                            roi=roi_value,
-                            predicted_roi=predicted,
+                            roi=roi_realish,
+                            predicted_roi=pred_realish,
                             trending_topic=trending_topic,
                             reason="self improvement cycle",
                             trigger="run_cycle",
@@ -5292,7 +5297,7 @@ class SelfImprovementEngine:
                         "self_improvement",
                         before_roi,
                         after_roi,
-                        roi_value,
+                          roi_realish,
                         0.0,
                         patch_success=patch_rate,
                         roi_delta=after_roi - before_roi,
@@ -5489,7 +5494,7 @@ class SelfImprovementEngine:
             ) as mutation:
                 mutation["after_metric"] = after_roi
                 mutation["performance"] = delta
-                mutation["roi"] = roi_value
+                mutation["roi"] = roi_realish
             self._last_mutation_id = int(mutation["event_id"])
             try:
                 flags = radar_scan()
@@ -5499,7 +5504,7 @@ class SelfImprovementEngine:
                 self.logger.exception("relevancy radar scan failed")
             self.logger.info(
                 "cycle complete",
-                extra=log_record(roi=roi_value, predicted_roi=predicted),
+                extra=log_record(roi=roi_realish, predicted_roi=pred_realish),
             )
             return result
         finally:

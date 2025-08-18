@@ -9,6 +9,7 @@ import os
 import random
 import logging
 import json
+import numpy as np
 
 try:
     from .logging_utils import log_record
@@ -486,6 +487,11 @@ class ActionPlanner:
             top_action, _, pred_roi, cat = scored[0]
             try:
                 actual_roi = self._roi(top_action)
+                ta = self.roi_tracker.truth_adapter
+                pred_cal, _ = ta.predict(np.array([[float(pred_roi)]], dtype=np.float64))
+                act_cal, _ = ta.predict(np.array([[float(actual_roi)]], dtype=np.float64))
+                pred_roi = float(pred_cal[0])
+                actual_roi = float(act_cal[0])
                 self.roi_tracker.record_roi_prediction(
                     [pred_roi], [actual_roi], predicted_class=cat
                 )
