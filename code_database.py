@@ -811,6 +811,17 @@ class PatchHistoryDB:
             )
             """
             )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS patch_ancestry(
+                patch_id INTEGER,
+                vector_id TEXT,
+                rank INTEGER,
+                contribution REAL,
+                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            )
+            """
+            )
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
@@ -1062,6 +1073,28 @@ class PatchHistoryDB:
 
         def op(conn: sqlite3.Connection) -> None:
             self._insert_provenance(conn, patch_id, vectors)
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def _insert_ancestry(
+        self,
+        conn: sqlite3.Connection,
+        patch_id: int,
+        vectors: Sequence[tuple[str, str, float]],
+    ) -> None:
+        for rank, (_, vec_id, contrib) in enumerate(vectors):
+            conn.execute(
+                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution) VALUES(?,?,?,?)",
+                (patch_id, vec_id, rank, contrib),
+            )
+
+    def record_ancestry(
+        self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
+    ) -> None:
+        """Persist ranked vector ancestry for a patch."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            self._insert_ancestry(conn, patch_id, vectors)
 
         with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 

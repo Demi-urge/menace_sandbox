@@ -90,6 +90,7 @@ class PatchLogger:
         try:
             detailed = self._parse_vectors(vector_ids)
             pairs = [(o, vid) for o, vid, _ in detailed]
+            scored = [(vid, score) for _, vid, score in detailed]
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
@@ -108,7 +109,14 @@ class PatchLogger:
                         win=result,
                         regret=not result,
                     )
+                except Exception:
+                    pass
+                try:
                     self.patch_db.record_provenance(int(patch_id), detailed)
+                except Exception:
+                    pass
+                try:
+                    self.patch_db.record_ancestry(int(patch_id), detailed)
                 except Exception:
                     pass
             elif self.vector_metrics is not None:
@@ -123,6 +131,11 @@ class PatchLogger:
                     )
                 except Exception:
                     pass
+                if patch_id:
+                    try:
+                        self.vector_metrics.record_patch_ancestry(patch_id, scored)
+                    except Exception:
+                        pass
         except Exception:
             _TRACK_OUTCOME.labels("error").inc()
             _TRACK_DURATION.set(time.time() - start)
