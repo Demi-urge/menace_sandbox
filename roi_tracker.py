@@ -2613,6 +2613,119 @@ class ROITracker:
             self.synergy_metrics_history.setdefault(key, [])
 
     # ------------------------------------------------------------------
+    def _rollback_probability(self, metrics: Mapping[str, float]) -> float:
+        """Estimate probability a workflow needs rollback based on errors.
+
+        A simple heuristic is used combining any available error rate metrics.
+        The result is clamped to the ``[0.0, 1.0]`` interval.
+        """
+
+        if not metrics:
+            return 0.0
+        keys = [
+            "errors_per_minute",
+            "latency_error_rate",
+            "hostile_failures",
+            "misuse_failures",
+        ]
+        vals = [float(metrics.get(k, 0.0)) for k in keys]
+        non_zero = [v for v in vals if v > 0]
+        if not non_zero:
+            return 0.0
+        prob = float(np.mean(non_zero))
+        return max(0.0, min(1.0, prob))
+
+    # ------------------------------------------------------------------
+    def _impact_severity(self, workflow_type: str) -> float:
+        """Return impact severity for ``workflow_type``.
+
+        Severity values may be overridden by ``config/impact_severity.json``.
+        """
+
+        if not hasattr(self, "_impact_severity_map"):
+            defaults = {
+                "experimental": 0.2,
+                "standard": 0.5,
+                "critical": 0.9,
+            }
+            path = os.path.join(
+                os.path.dirname(__file__), "config", "impact_severity.json"
+            )
+            try:
+                with open(path, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                if isinstance(data, Mapping):
+                    overrides = {
+                        str(k): float(v) for k, v in data.items() if isinstance(v, (int, float))
+                    }
+                else:
+                    overrides = {}
+            except Exception:
+                overrides = {}
+            defaults.update(overrides)
+            setattr(self, "_impact_severity_map", defaults)
+        mapping = getattr(self, "_impact_severity_map")
+        return float(mapping.get(workflow_type, mapping.get("standard", 0.5)))
+
+    # ------------------------------------------------------------------
+    def _safety_factor(self, metrics: Mapping[str, float]) -> float:
+        """Derive safety factor from security/alignment metrics."""
+
+        safety_keys = [
+            "safety_rating",
+            "security_score",
+            "synergy_safety_rating",
+            "synergy_security_score",
+        ]
+        vals = [
+            float(metrics.get(k, 0.0))
+            for k in safety_keys
+            if metrics.get(k) is not None
+        ]
+        if not vals:
+            for k in safety_keys:
+                hist = self.metrics_history.get(k) or self.synergy_metrics_history.get(k)
+                if hist:
+                    vals.append(float(hist[-1]))
+        base = float(np.mean(vals)) if vals else 1.0
+        base = max(0.0, min(1.0, base))
+        fail_keys = [
+            "hostile_failures",
+            "misuse_failures",
+            "synergy_hostile_failures",
+            "synergy_misuse_failures",
+        ]
+        failures = sum(float(metrics.get(k, 0.0)) for k in fail_keys)
+        penalty = 1.0 / (1.0 + failures)
+        return max(0.0, min(1.0, base * penalty))
+
+    # ------------------------------------------------------------------
+    def calculate_raroi(
+        self,
+        base_roi: float,
+        workflow_type: str,
+        metrics: Mapping[str, float],
+    ) -> Tuple[float, float]:
+        """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
+
+        The risk-adjusted ROI (RAROI) scales the provided ``base_roi`` by
+        catastrophic risk, recent ROI stability and security/alignment safety
+        metrics.
+        """
+
+        rollback_probability = self._rollback_probability(metrics)
+        impact_severity = self._impact_severity(workflow_type)
+        catastrophic_risk = rollback_probability * impact_severity
+        N = 10
+        recent = self.roi_history[-N:]
+        stability_factor = max(0.0, 1.0 - float(np.std(recent))) if recent else 1.0
+        safety_factor = self._safety_factor(metrics)
+        raroi = float(
+            base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
+        )
+        return float(base_roi), raroi
+
+    # ------------------------------------------------------------------
     def plot_history(self, output_path: str) -> None:
         """Plot recorded ROI deltas and fitted regression curve."""
 
