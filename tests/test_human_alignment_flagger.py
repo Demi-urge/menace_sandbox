@@ -121,6 +121,19 @@ def subprocess_patch() -> str:
 
 
 @pytest.fixture
+def semantic_subprocess_patch() -> str:
+    return (
+        """diff --git a/run.py b/run.py
+--- a/run.py
++++ b/run.py
+@@ -0,0 +2 @@
++import subprocess
++subprocess.call('ls', shell=True)
+"""
+    )
+
+
+@pytest.fixture
 def missing_type_hints_patch() -> str:
     return (
         """diff --git a/types.py b/types.py
@@ -326,6 +339,15 @@ def test_unsafe_subprocess_flagged(subprocess_patch):
     flagger = haf.HumanAlignmentFlagger()
     report = flagger.flag_patch(subprocess_patch, {})
     assert any("Unsafe subprocess" in issue["message"] for issue in report["issues"])
+
+
+def test_semantic_subprocess_flagged(semantic_subprocess_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(semantic_subprocess_patch, {})
+    assert any(
+        "Semantic similarity to unsafe pattern" in issue["message"]
+        for issue in report["issues"]
+    )
 
 
 def test_missing_type_hints_flagged(missing_type_hints_patch):
