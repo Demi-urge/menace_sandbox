@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import logging
 import yaml
 
 
@@ -23,13 +24,27 @@ EXPECTED_METRICS = {
 class ROICalculator:
     """Calculate ROI scores from weighted metrics and veto rules."""
 
-    def __init__(self, profiles_path: str | Path = "configs/roi_profiles.yaml") -> None:
-        """Initialise calculator with profiles loaded from *profiles_path*."""
+    def __init__(
+        self,
+        profiles_path: str | Path = "configs/roi_profiles.yaml",
+        logger: logging.Logger | None = None,
+    ) -> None:
+        """Initialise calculator with profiles loaded from *profiles_path*.
+
+        Parameters
+        ----------
+        profiles_path:
+            Path to the YAML file containing ROI profiles.
+        logger:
+            Optional logger instance. If omitted, ``logging.getLogger(__name__)``
+            is used.
+        """
         path = Path(profiles_path)
         with path.open("r", encoding="utf-8") as fh:
             self.profiles: dict[str, dict[str, Any]] = yaml.safe_load(fh) or {}
         self._validate_profiles()
         self.hard_fail: bool = False
+        self.logger = logger or logging.getLogger(__name__)
 
     def calculate(
         self, metrics: dict[str, Any], profile_type: str
@@ -95,17 +110,17 @@ class ROICalculator:
                 )
 
     def log_debug(self, metrics: dict[str, Any], profile_type: str) -> None:
-        """Print per-metric contributions, final score and veto triggers."""
+        """Log per-metric contributions, final score and veto triggers."""
         score, vetoed, triggers = self.calculate(metrics, profile_type)
         weights = self.profiles[profile_type].get("weights", {})
         for name, weight in weights.items():
             value = float(metrics.get(name, 0.0))
-            print(f"{name} * {weight} = {value * weight}")
-        print(f"Final score: {score}")
+            self.logger.debug("%s * %s = %s", name, weight, value * weight)
+        self.logger.debug("Final score: %s", score)
         if triggers:
-            print(f"Veto triggers: {triggers}")
+            self.logger.debug("Veto triggers: %s", triggers)
         else:
-            print("Veto triggers: none")
+            self.logger.debug("Veto triggers: none")
 
     def compute(self, metrics: dict[str, Any], profile_type: str) -> float:
         """Backward compatible alias for :meth:`calculate` returning only the score."""

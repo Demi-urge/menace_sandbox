@@ -1,3 +1,5 @@
+import logging
+
 import yaml
 import pytest
 
@@ -62,15 +64,15 @@ def test_veto_triggers(tmp_path, metrics, trigger):
     assert any(trigger in t for t in triggers)
 
 
-def test_log_debug_outputs_components_and_veto(tmp_path, capsys):
+def test_log_debug_outputs_components_and_veto(tmp_path, caplog):
     profile_path = _write_profiles(tmp_path / "roi_profiles.yaml")
     calc = ROICalculator(profiles_path=profile_path)
     metrics = {"profitability": 1, "security": 0.2}
-    calc.log_debug(metrics, "scraper_bot")
-    out = capsys.readouterr().out
-    assert "profitability * 0.3 = 0.3" in out
-    assert "Final score: -inf" in out
-    assert "Veto triggers" in out
+    with caplog.at_level(logging.DEBUG, logger="menace_sandbox.roi_calculator"):
+        calc.log_debug(metrics, "scraper_bot")
+    assert "profitability * 0.3 = 0.3" in caplog.text
+    assert "Final score: -inf" in caplog.text
+    assert "Veto triggers" in caplog.text
 
 
 def test_profile_missing_metric_raises(tmp_path):
