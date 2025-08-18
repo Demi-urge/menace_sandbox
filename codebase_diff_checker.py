@@ -9,6 +9,7 @@ import difflib
 from typing import Dict, List, Tuple
 
 from unsafe_patterns import find_matches
+from analysis.semantic_diff_filters import find_unsafe_nodes
 
 
 _KEYWORDS = {"reward", "self_improve", "security_ai", "dispatch", "monitor", "override"}
@@ -126,6 +127,8 @@ def flag_risky_changes(diff_data: Dict[str, Dict[str, Dict[str, List[str]]]]) ->
                             continue
                         for msg in find_matches(text):
                             flagged.append(f"{path}:{name}: {msg}")
+                        for _, msg in find_unsafe_nodes(text):
+                            flagged.append(f"{path}:{name}: {msg}: {line}")
     return flagged
 
 
