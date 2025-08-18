@@ -3,6 +3,7 @@ from __future__ import annotations
 """Helpers for querying patch vector ancestry information."""
 
 from typing import Any, Dict, List
+import json
 
 from code_database import PatchHistoryDB
 
@@ -14,7 +15,8 @@ def get_patch_provenance(
     """Return vectors influencing ``patch_id`` ordered by influence.
 
     Results are read from the ``patch_ancestry`` table and include the
-    origin and influence score for each vector.
+    origin, influence score, detected license and any semantic alerts for each
+    vector.
     """
 
     db = patch_db or PatchHistoryDB()
@@ -24,8 +26,10 @@ def get_patch_provenance(
             "origin": origin,
             "vector_id": vid,
             "influence": float(infl),
+            "license": lic,
+            "semantic_alerts": json.loads(alerts) if alerts else [],
         }
-        for origin, vid, infl in rows
+        for origin, vid, infl, lic, alerts in rows
     ]
 
 

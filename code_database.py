@@ -7,6 +7,7 @@ import threading
 import hashlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Callable, Iterator, TypeVar, Sequence, Tuple
+import json
 from collections import deque, Counter
 import re
 import time
@@ -807,6 +808,8 @@ class PatchHistoryDB:
                 influence REAL,
                 retrieved_at TEXT,
                 position INTEGER,
+                license TEXT,
+                semantic_alerts TEXT,
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
@@ -818,6 +821,8 @@ class PatchHistoryDB:
                 origin TEXT,
                 vector_id TEXT,
                 influence REAL,
+                license TEXT,
+                semantic_alerts TEXT,
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
@@ -862,6 +867,27 @@ class PatchHistoryDB:
             for name, stmt in migrations.items():
                 if name not in cols:
                     conn.execute(stmt)
+            # Ensure patch_provenance and patch_ancestry have alert columns
+            cols = [
+                r[1]
+                for r in conn.execute("PRAGMA table_info(patch_provenance)").fetchall()
+            ]
+            if "license" not in cols:
+                conn.execute("ALTER TABLE patch_provenance ADD COLUMN license TEXT")
+            if "semantic_alerts" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_provenance ADD COLUMN semantic_alerts TEXT"
+                )
+            cols = [
+                r[1]
+                for r in conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()
+            ]
+            if "license" not in cols:
+                conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+            if "semantic_alerts" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_patch_filename ON patch_history(filename)"
             )
@@ -1072,20 +1098,19 @@ class PatchHistoryDB:
         self,
         conn: sqlite3.Connection,
         patch_id: int,
-        vectors: Sequence[tuple[str, str, float]],
+        vectors: Sequence[tuple],
         *,
         ts: str | None = None,
     ) -> None:
         ts = ts or datetime.utcnow().isoformat()
-        for pos, (origin, vec_id, score) in enumerate(vectors):
+        for pos, vec in enumerate(vectors):
+            origin, vec_id, score, lic, alerts = (list(vec) + [None, None, None])[:5]
             conn.execute(
-                "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position) VALUES(?,?,?,?,?,?)",
-                (patch_id, origin, vec_id, score, ts, pos),
+                "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position, license, semantic_alerts) VALUES(?,?,?,?,?,?,?,?)",
+                (patch_id, origin, vec_id, score, ts, pos, lic, json.dumps(alerts) if alerts is not None else None),
             )
 
-    def record_provenance(
-        self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
-    ) -> None:
+    def record_provenance(self, patch_id: int, vectors: Sequence[tuple]) -> None:
         """Persist retrieval provenance for a patch."""
 
         def op(conn: sqlite3.Connection) -> None:
@@ -1097,12 +1122,13 @@ class PatchHistoryDB:
         self,
         conn: sqlite3.Connection,
         patch_id: int,
-        vectors: Sequence[tuple[str, str, float]],
+        vectors: Sequence[tuple],
     ) -> None:
-        for origin, vec_id, influence in vectors:
+        for vec in vectors:
+            origin, vec_id, influence, lic, alerts = (list(vec) + [None, None, None])[:5]
             conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence) VALUES(?,?,?,?)",
-                (patch_id, origin, vec_id, influence),
+                "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence, license, semantic_alerts) VALUES(?,?,?,?,?,?)",
+                (patch_id, origin, vec_id, influence, lic, json.dumps(alerts) if alerts is not None else None),
             )
 
     def _insert_contributors(
@@ -1118,9 +1144,7 @@ class PatchHistoryDB:
                 (patch_id, f"{origin}:{vec_id}" if origin else vec_id, influence, session_id),
             )
 
-    def log_ancestry(
-        self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
-    ) -> None:
+    def log_ancestry(self, patch_id: int, vectors: Sequence[tuple]) -> None:
         """Persist vector ancestry for a patch."""
 
         def op(conn: sqlite3.Connection) -> None:
@@ -1155,15 +1179,17 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
-    def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float]]:
+    def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float, str | None, str | None]]:
         """Return ancestry rows for ``patch_id`` ordered by influence."""
 
-        def op(conn: sqlite3.Connection) -> List[Tuple[str, str, float]]:
+        def op(conn: sqlite3.Connection) -> List[Tuple[str, str, float, str | None, str | None]]:
             rows = conn.execute(
-                "SELECT origin, vector_id, influence FROM patch_ancestry WHERE patch_id=? ORDER BY influence DESC",
+                "SELECT origin, vector_id, influence, license, semantic_alerts FROM patch_ancestry WHERE patch_id=? ORDER BY influence DESC",
                 (patch_id,),
             ).fetchall()
-            return [(o, v, float(i)) for o, v, i in rows]
+            return [
+                (o, v, float(i), lic, alerts) for o, v, i, lic, alerts in rows
+            ]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
