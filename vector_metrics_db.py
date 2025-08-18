@@ -92,6 +92,16 @@ class VectorMetricsDB:
                 ON vector_metrics(event_type, db, ts)
             """
         )
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS patch_ancestry(
+                patch_id TEXT,
+                vector_id TEXT,
+                rank INTEGER,
+                contribution REAL
+            )
+            """
+        )
         self.conn.commit()
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(vector_metrics)").fetchall()]
         migrations = {
@@ -314,6 +324,16 @@ class VectorMetricsDB:
                     session_id,
                     vec_id,
                 ),
+            )
+        self.conn.commit()
+
+    def record_patch_ancestry(
+        self, patch_id: str, vectors: list[tuple[str, float]]
+    ) -> None:
+        for rank, (vec_id, contrib) in enumerate(vectors):
+            self.conn.execute(
+                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution) VALUES(?,?,?,?)",
+                (patch_id, vec_id, rank, contrib),
             )
         self.conn.commit()
 

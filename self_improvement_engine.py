@@ -2016,7 +2016,7 @@ class SelfImprovementEngine:
             if category == "marginal" and not allow_marginal:
                 ctx = getattr(self, "_current_context", {}) or {}
                 session_id = ""
-                vectors: list[tuple[str, str]] = []
+                vectors: list[tuple[str, str, float]] = []
                 if isinstance(ctx, dict):
                     session_id = ctx.get("retrieval_session_id", "")
                     raw_vecs = ctx.get("retrieval_vectors") or []
@@ -2024,19 +2024,33 @@ class SelfImprovementEngine:
                         if isinstance(item, dict):
                             origin = item.get("origin_db") or item.get("origin")
                             vec_id = item.get("vector_id") or item.get("id")
+                            score = item.get("score") or item.get("similarity")
                         else:
-                            origin, vec_id = item
+                            if len(item) == 3:
+                                origin, vec_id, score = item
+                            elif len(item) == 2:
+                                origin, vec_id = item
+                                score = 0.0
+                            else:
+                                continue
                         if origin is not None and vec_id is not None:
-                            vectors.append((str(origin), str(vec_id)))
+                            vectors.append((str(origin), str(vec_id), float(score or 0.0)))
                 if getattr(self, "data_bot", None):
                     try:  # pragma: no cover - best effort
                         self.data_bot.db.log_patch_outcome(
                             f"roi_history_{idx}",
                             False,
-                            vectors,
+                            [(o, v) for o, v, _ in vectors],
                             session_id=session_id,
                             reverted=False,
                         )
+                    except Exception:
+                        self.logger.exception("failed to log patch outcome")
+                pl = getattr(getattr(self, "self_coding_engine", None), "patch_logger", None)
+                if pl and vectors and session_id:
+                    try:  # pragma: no cover - best effort
+                        ids = [(f"{o}:{v}", s) for o, v, s in vectors]
+                        pl.track_contributors(ids, False, session_id=session_id)
                     except Exception:
                         self.logger.exception("failed to log patch outcome")
                 try:  # pragma: no cover - best effort

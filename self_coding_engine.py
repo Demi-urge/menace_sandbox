@@ -147,7 +147,9 @@ class SelfCodingEngine:
             except Exception:  # pragma: no cover - optional dependency missing
                 formal_verifier = None
         self.formal_verifier = formal_verifier
-        self._active_patches: dict[str, tuple[Path, str, str, List[Tuple[str, str]]]] = {}
+        self._active_patches: dict[
+            str, tuple[Path, str, str, List[Tuple[str, str, float]]]
+        ] = {}
         self.bot_roles: Dict[str, str] = bot_roles or {}
         path = audit_trail_path or os.getenv("AUDIT_LOG_PATH", "audit.log")
         key_b64 = audit_privkey or os.getenv("AUDIT_PRIVKEY")
@@ -219,12 +221,20 @@ class SelfCodingEngine:
     def _track_contributors(
         self,
         session_id: str,
-        vectors: List[Tuple[str, str]],
+        vectors: List[Tuple[str, str]] | List[Tuple[str, str, float]],
         result: bool,
         patch_id: int | None = None,
     ) -> None:
         if self.patch_logger and session_id and vectors:
-            ids = [f"{o}:{v}" for o, v in vectors]
+            detailed: List[Tuple[str, str, float]] = []
+            for item in vectors:
+                if len(item) == 3:
+                    o, v, s = item  # type: ignore[misc]
+                else:
+                    o, v = item  # type: ignore[misc]
+                    s = 0.0
+                detailed.append((o, v, float(s)))
+            ids = [(f"{o}:{v}", s) for o, v, s in detailed]
             try:
                 self.patch_logger.track_contributors(
                     ids,
@@ -679,7 +689,7 @@ class SelfCodingEngine:
                 before_complexity = 0.0
         original = path.read_text(encoding="utf-8")
         generated_code = self.patch_file(path, description, context_meta=context_meta)
-        vectors: List[Tuple[str, str]] = []
+        vectors: List[Tuple[str, str, float]] = []
         session_id = ""
         if context_meta:
             raw_vecs = context_meta.get("retrieval_vectors") or []
@@ -688,10 +698,17 @@ class SelfCodingEngine:
                 if isinstance(item, dict):
                     origin = item.get("origin_db") or item.get("origin")
                     vid = item.get("vector_id") or item.get("id")
+                    score = item.get("score") or item.get("similarity")
                 else:
-                    origin, vid = item
+                    if len(item) == 3:
+                        origin, vid, score = item
+                    elif len(item) == 2:
+                        origin, vid = item
+                        score = 0.0
+                    else:
+                        continue
                 if origin is not None and vid is not None:
-                    vectors.append((str(origin), str(vid)))
+                    vectors.append((str(origin), str(vid), float(score or 0.0)))
         if not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
             path.write_text(original, encoding="utf-8")
@@ -701,7 +718,7 @@ class SelfCodingEngine:
                 try:
                     self.patch_db.record_vector_metrics(
                         session_id,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         patch_id=0,
                         contribution=0.0,
                         win=False,
@@ -714,7 +731,7 @@ class SelfCodingEngine:
                     self.data_bot.db.log_patch_outcome(
                         description,
                         False,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         session_id=session_id,
                     )
                 except Exception:
@@ -777,7 +794,7 @@ class SelfCodingEngine:
                 try:
                     self.patch_db.record_vector_metrics(
                         session_id,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         patch_id=patch_id,
                         contribution=0.0,
                         win=False,
@@ -791,7 +808,7 @@ class SelfCodingEngine:
                     self.data_bot.db.log_patch_outcome(
                         pid,
                         False,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         session_id=session_id,
                         reverted=True,
                     )
@@ -808,7 +825,7 @@ class SelfCodingEngine:
                 try:
                     self.patch_db.record_vector_metrics(
                         session_id,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         patch_id=0,
                         contribution=0.0,
                         win=False,
@@ -821,7 +838,7 @@ class SelfCodingEngine:
                     self.data_bot.db.log_patch_outcome(
                         description,
                         False,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         session_id=session_id,
                     )
                 except Exception:
@@ -836,7 +853,7 @@ class SelfCodingEngine:
                 try:
                     self.patch_db.record_vector_metrics(
                         session_id,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         patch_id=0,
                         contribution=0.0,
                         win=False,
@@ -849,7 +866,7 @@ class SelfCodingEngine:
                     self.data_bot.db.log_patch_outcome(
                         description,
                         False,
-                        vectors,
+                        [(o, v) for o, v, _ in vectors],
                         session_id=session_id,
                     )
                 except Exception:
@@ -990,7 +1007,7 @@ class SelfCodingEngine:
                 regret_flag = reverted or roi_delta < 0
                 self.patch_db.record_vector_metrics(
                     session_id,
-                    vectors,
+                    [(o, v) for o, v, _ in vectors],
                     patch_id=patch_id,
                     contribution=roi_delta,
                     win=win_flag,
@@ -1006,7 +1023,7 @@ class SelfCodingEngine:
                 self.data_bot.db.log_patch_outcome(
                     str(patch_id),
                     success,
-                    vectors,
+                    [(o, v) for o, v, _ in vectors],
                     session_id=session_id,
                     reverted=rev_flag,
                 )
@@ -1028,7 +1045,7 @@ class SelfCodingEngine:
                 self.data_bot.db.log_patch_outcome(
                     patch_id,
                     False,
-                    vectors,
+                    [(o, v) for o, v, _ in vectors],
                     session_id=session_id,
                     reverted=True,
                 )
