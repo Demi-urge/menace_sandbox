@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import hashlib
 import importlib
 
-import license_fingerprint
+from compliance import license_fingerprint
 
 
 def _log_violation(path: str, lic: str, hash_: str) -> None:

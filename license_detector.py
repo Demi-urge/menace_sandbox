@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from license_fingerprint import check as _fingerprint_check, fingerprint
+from compliance.license_fingerprint import check as _fingerprint_check, fingerprint
 
 # ---------------------------------------------------------------------------
 # Pattern detection

@@ -8,9 +8,8 @@ from typing import List
 import importlib
 
 from .decorators import log_and_measure
-from legal.license_fingerprint import (
-    LicenseType,
-    detect_license,
+from compliance.license_fingerprint import (
+    check as license_check,
     fingerprint as license_fingerprint,
 )
 
@@ -90,14 +89,14 @@ class EmbeddingBackfill:
         if callable(original_add):
             def wrapped_add(record_id, record, kind, *, source_id=""):
                 text = record if isinstance(record, str) else str(record)
-                lic = detect_license(text)
-                if lic is not LicenseType.UNKNOWN:
+                lic = license_check(text)
+                if lic:
                     _log_violation(
                         str(record_id),
-                        lic.value,
+                        lic,
                         license_fingerprint(text),
                     )
-                    skipped.append((str(record_id), lic.value))
+                    skipped.append((str(record_id), lic))
                     return
                 return original_add(record_id, record, kind, source_id=source_id)
 
