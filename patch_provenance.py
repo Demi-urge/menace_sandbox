@@ -81,6 +81,20 @@ def search_patches_by_license(
 
 
 # ---------------------------------------------------------------------------
+def search_patches_by_semantic_alert(
+    alert: str, *, patch_db: PatchHistoryDB | None = None
+) -> List[Dict[str, Any]]:
+    """Return patches matching ``alert`` semantic alert."""
+
+    db = patch_db or PatchHistoryDB()
+    rows = db.find_patches_by_provenance(semantic_alert=alert)
+    return [
+        {"patch_id": pid, "filename": filename, "description": desc}
+        for pid, filename, desc in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 def build_chain(
     patch_id: int, *, patch_db: PatchHistoryDB | None = None
 ) -> List[Dict[str, Any]]:
@@ -105,6 +119,7 @@ __all__ = [
     "search_patches_by_vector",
     "search_patches_by_hash",
     "search_patches_by_license",
+    "search_patches_by_semantic_alert",
     "build_chain",
 ]
 

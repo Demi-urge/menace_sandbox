@@ -16,6 +16,8 @@ from patch_provenance import (
     build_chain,
     search_patches_by_vector,
     search_patches_by_hash,
+    search_patches_by_license,
+    search_patches_by_semantic_alert,
 )
 
 
@@ -76,13 +78,25 @@ def main() -> None:
         chain = build_chain(args.patch_id, patch_db=db)
         print(json.dumps(chain))
     elif args.cmd == "search":
-        if args.license or args.semantic_alert:
-            rows = db.find_patches_by_provenance(
-                license=args.license, semantic_alert=args.semantic_alert
-            )
+        if args.license:
+            rows = search_patches_by_license(args.license, patch_db=db)
             patches = [
-                {"id": pid, "filename": fname, "description": desc}
-                for pid, fname, desc in rows
+                {
+                    "id": r["patch_id"],
+                    "filename": r["filename"],
+                    "description": r["description"],
+                }
+                for r in rows
+            ]
+        elif args.semantic_alert:
+            rows = search_patches_by_semantic_alert(args.semantic_alert, patch_db=db)
+            patches = [
+                {
+                    "id": r["patch_id"],
+                    "filename": r["filename"],
+                    "description": r["description"],
+                }
+                for r in rows
             ]
         elif args.term:
             if args.hash:
