@@ -91,6 +91,7 @@ class PatchLogger:
         patch_id: str = "",
         session_id: str = "",
         contribution: float | None = None,
+        retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Log patch outcome for vectors contributing to a patch."""
 
@@ -101,6 +102,14 @@ class PatchLogger:
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             scored = [(vid, score) for _, vid, score in detailed]
+            meta = retrieval_metadata or {}
+            detailed_meta = []
+            for o, vid, score in detailed:
+                key = f"{o}:{vid}" if o else vid
+                m = meta.get(key, {})
+                lic = m.get("license")
+                alerts = m.get("semantic_alerts")
+                detailed_meta.append((o, vid, score, lic, alerts))
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
@@ -123,11 +132,11 @@ class PatchLogger:
                     except Exception:
                         pass
                     try:
-                        self.patch_db.record_provenance(int(patch_id), detailed)
+                        self.patch_db.record_provenance(int(patch_id), detailed_meta)
                     except Exception:
                         pass
                     try:
-                        self.patch_db.log_ancestry(int(patch_id), detailed)
+                        self.patch_db.log_ancestry(int(patch_id), detailed_meta)
                     except Exception:
                         pass
                     try:
@@ -171,6 +180,7 @@ class PatchLogger:
         patch_id: str = "",
         session_id: str = "",
         contribution: float | None = None,
+        retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Asynchronous wrapper for :meth:`track_contributors`."""
 
@@ -182,6 +192,7 @@ class PatchLogger:
             patch_id=patch_id,
             session_id=session_id,
             contribution=contribution,
+            retrieval_metadata=retrieval_metadata,
         )
 
 
