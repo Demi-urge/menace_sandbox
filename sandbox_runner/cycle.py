@@ -1224,7 +1224,11 @@ def _sandbox_cycle_runner(
                                 )
                             hits = []
                         vectors = [
-                            (h.get("origin_db", ""), str(h.get("record_id", "")))
+                            (
+                                h.get("origin_db", ""),
+                                str(h.get("record_id", "")),
+                                float(h.get("score") or 0.0),
+                            )
                             for h in hits
                         ]
                     except Exception:
@@ -1246,7 +1250,7 @@ def _sandbox_cycle_runner(
                     )
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v in vectors]
+                        ids = {f"{o}:{v}": s for o, v, s in vectors}
                         try:
                             patch_logger.track_contributors(
                                 ids,
@@ -1571,7 +1575,11 @@ def _sandbox_cycle_runner(
                                 )
                             hits = []
                         vectors = [
-                            (h.get("origin_db", ""), str(h.get("record_id", "")))
+                            (
+                                h.get("origin_db", ""),
+                                str(h.get("record_id", "")),
+                                float(h.get("score") or 0.0),
+                            )
                             for h in hits
                         ]
                     except Exception:
@@ -1596,7 +1604,7 @@ def _sandbox_cycle_runner(
                     )
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v in vectors]
+                        ids = {f"{o}:{v}": s for o, v, s in vectors}
                         try:
                             patch_logger.track_contributors(
                                 ids,

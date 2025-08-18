@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import logging
 import asyncio
+import uuid
 
 from redaction_utils import redact_text
 
@@ -46,6 +47,8 @@ except Exception:  # pragma: no cover - tiny fallback helper
 class _ScoredEntry:
     entry: Dict[str, Any]
     score: float
+    origin: str
+    vector_id: str
 
 
 class ContextBuilder:
@@ -146,23 +149,37 @@ class ContextBuilder:
             "code": "code",
             "discrepancy": "discrepancies",
         }
-        return key_map.get(origin, ""), _ScoredEntry(entry, score)
+        return key_map.get(origin, ""), _ScoredEntry(entry, score, origin, str(bundle.get("record_id", "")))
 
     # ------------------------------------------------------------------
     @log_and_measure
-    def build_context(self, query: str, top_k: int = 5, **_: Any) -> str:
-        """Return a compact JSON context for ``query``."""
+    def build_context(
+        self,
+        query: str,
+        top_k: int = 5,
+        *,
+        include_vectors: bool = False,
+        session_id: str | None = None,
+        **_: Any,
+    ) -> str | Tuple[str, str, List[Tuple[str, str, float]]]:
+        """Return a compact JSON context for ``query``.
+
+        When ``include_vectors`` is True, the return value is a tuple of
+        ``(context_json, session_id, vectors)`` where *vectors* is a list of
+        ``(origin, vector_id, score)`` triples.
+        """
 
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
         query = redact_text(query)
         cache_key = (query, top_k)
-        if cache_key in self._cache:
+        if not include_vectors and cache_key in self._cache:
             return self._cache[cache_key]
 
+        session_id = session_id or uuid.uuid4().hex
         try:
-            hits = self.retriever.search(query, top_k=top_k * 5)
+            hits = self.retriever.search(query, top_k=top_k * 5, session_id=session_id)
         except RateLimitError:
             raise
         except VectorServiceError:
@@ -194,14 +211,19 @@ class ContextBuilder:
                 buckets[bucket].append(scored)
 
         result: Dict[str, List[Dict[str, Any]]] = {}
+        vectors: List[Tuple[str, str, float]] = []
         for key, items in buckets.items():
             if not items:
                 continue
             items.sort(key=lambda e: e.score, reverse=True)
-            result[key] = [e.entry for e in items[:top_k]]
+            chosen = items[:top_k]
+            result[key] = [e.entry for e in chosen]
+            vectors.extend([(e.origin, e.vector_id, e.score) for e in chosen])
 
         context = json.dumps(result, separators=(",", ":"))
         self._cache[cache_key] = context
+        if include_vectors:
+            return context, session_id, vectors
         return context
 
     # ------------------------------------------------------------------

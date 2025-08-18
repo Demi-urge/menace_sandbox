@@ -44,6 +44,8 @@ except Exception:  # pragma: no cover - fallback for tests
         return None
 
 
+_VEC_METRICS = None
+
 def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
@@ -200,7 +202,7 @@ class QuickFixEngine:
         etype, module, mods, count, _ = info
         return etype, module, mods, count
 
-    def _redundant_retrieve(self, query: str, top_k: int) -> Tuple[List[Any], str, List[Tuple[str, str]]]:
+    def _redundant_retrieve(self, query: str, top_k: int) -> Tuple[List[Any], str, List[Tuple[str, str, float]]]:
         if self.retriever is None:
             return [], "", []
         session_id = uuid.uuid4().hex
@@ -217,7 +219,14 @@ class QuickFixEngine:
         except Exception:
             self.logger.debug("retriever lookup failed", exc_info=True)
             return [], "", []
-        vectors = [(h.get("origin_db", ""), str(h.get("record_id", ""))) for h in hits]
+        vectors = [
+            (
+                h.get("origin_db", ""),
+                str(h.get("record_id", "")),
+                float(h.get("score") or 0.0),
+            )
+            for h in hits
+        ]
         return hits, session_id, vectors
 
     def run(self, bot: str) -> None:
@@ -261,7 +270,7 @@ class QuickFixEngine:
         if ctx_block:
             desc += "\n\n" + ctx_block
         session_id = ""
-        vectors: list[tuple[str, str]] = []
+        vectors: list[tuple[str, str, float]] = []
         if self.retriever is not None:
             _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
         if session_id:
@@ -290,8 +299,8 @@ class QuickFixEngine:
         except Exception as exc:
             self.logger.exception("telemetry update failed: %s", exc)
             raise
-        if self.patch_logger is not None and session_id and vectors:
-            ids = [f"{o}:{v}" for o, v in vectors]
+        if self.patch_logger is not None:
+            ids = {f"{o}:{v}": s for o, v, s in vectors}
             try:
                 result = bool(patch_id) and tests_ok
                 self.patch_logger.track_contributors(
@@ -351,7 +360,7 @@ class QuickFixEngine:
             if ctx:
                 desc += "\n\n" + ctx
             session_id = ""
-            vectors: list[tuple[str, str]] = []
+            vectors: list[tuple[str, str, float]] = []
             if self.retriever is not None:
                 _hits, session_id, vectors = self._redundant_retrieve(module, top_k=1)
             if session_id:
@@ -395,8 +404,8 @@ class QuickFixEngine:
                 self.db.log_preemptive_patch(module, risk, patch_id)
             except Exception as exc:  # pragma: no cover - db issues
                 self.logger.error("failed to record preemptive patch for %s: %s", module, exc)
-            if self.patch_logger is not None and session_id and vectors:
-                ids = [f"{o}:{v}" for o, v in vectors]
+            if self.patch_logger is not None:
+                ids = {f"{o}:{v}": s for o, v, s in vectors}
                 try:
                     result = bool(patch_id)
                     self.patch_logger.track_contributors(

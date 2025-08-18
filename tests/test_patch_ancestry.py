@@ -15,3 +15,7 @@ def test_patch_logger_logs_ancestry(tmp_path):
     rows = db.get_ancestry(pid)
     assert [v for _, v, _ in rows] == ["v2", "v3", "v1"]
     assert [round(i, 1) for _, _, i in rows] == [0.9, 0.5, 0.2]
+    contribs = db.get_contributors(pid)
+    assert [v for v, _, _ in contribs] == ["o2:v2", "o3:v3", "o1:v1"]
+    assert [round(i, 1) for _, i, _ in contribs] == [0.9, 0.5, 0.2]
+    assert all(s == "s" for _, _, s in contribs)

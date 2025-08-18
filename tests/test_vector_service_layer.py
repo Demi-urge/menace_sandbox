@@ -37,8 +37,14 @@ class DummyUR:
 
     def retrieve(self, query, top_k=5):
         self.calls.append((query, top_k))
-        hit = SimpleNamespace(origin_db="bot", record_id="1", score=self.score, metadata={}, reason="")
-        return [hit], "sid", [("bot", "1")]
+        hit = SimpleNamespace(
+            origin_db="bot",
+            record_id="1",
+            score=self.score,
+            metadata={"redacted": True},
+            reason="",
+        )
+        return [hit], "sid", [("bot", "1", self.score)]
 
 
 def test_logging_hook_emits_session_id(caplog):
@@ -76,8 +82,8 @@ class DummyPatchLogger:
     def __init__(self):
         self.calls = []
 
-    def track_contributors(self, ids, result, *, patch_id="", session_id=""):
-        self.calls.append((ids, result, patch_id, session_id))
+    def track_contributors(self, ids, result, *, patch_id="", session_id="", contribution=None):
+        self.calls.append((ids, result, patch_id, session_id, contribution))
 
 
 def test_quick_fix_engine_uses_service_layer(monkeypatch, tmp_path):

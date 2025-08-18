@@ -98,6 +98,7 @@ class PatchLogger:
         status = "success" if result else "failure"
         try:
             detailed = self._parse_vectors(vector_ids)
+            detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
             scored = [(vid, score) for _, vid, score in detailed]
 
@@ -127,6 +128,12 @@ class PatchLogger:
                         pass
                     try:
                         self.patch_db.log_ancestry(int(patch_id), detailed)
+                    except Exception:
+                        pass
+                    try:
+                        self.patch_db.log_contributors(
+                            int(patch_id), detailed, session_id
+                        )
                     except Exception:
                         pass
                 if self.vector_metrics is not None:
