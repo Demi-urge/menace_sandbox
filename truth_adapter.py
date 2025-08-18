@@ -37,10 +37,21 @@ class TruthAdapter:
     def __init__(
         self,
         model_path: str | Path = "sandbox_data/truth_adapter.pkl",
-        use_xgboost: bool = False,
+        model_type: str = "ridge",
     ) -> None:
+        """Create adapter.
+
+        Parameters
+        ----------
+        model_path:
+            Where the trained model and metadata are persisted.
+        model_type:
+            ``"ridge"`` or ``"xgboost"``. If ``"xgboost"`` is requested but
+            the dependency is unavailable, a ridge model is used instead.
+        """
+
         self.model_path = Path(model_path)
-        self.use_xgboost = use_xgboost
+        self.model_type = model_type
         self.model = None
         self.metadata: dict = {}
         self.drift_threshold = 0.25  # PSI threshold for drift
@@ -51,8 +62,12 @@ class TruthAdapter:
     # Persistence helpers
     def _make_model(self):  # pragma: no cover - trivial helper
         """Instantiate the underlying regression model."""
-        if self.use_xgboost and XGBRegressor is not None:
+        if self.model_type.lower() == "xgboost" and XGBRegressor is not None:
+            self.metadata["model_type"] = "xgboost"
             return XGBRegressor()
+
+        # Fallback to ridge regression by default
+        self.metadata["model_type"] = "ridge"
         return Ridge()
 
     def _load_state(self) -> None:
@@ -71,8 +86,11 @@ class TruthAdapter:
                 self.metadata = {}
         if self.model is None:
             self.model = self._make_model()
+            model_type = self.metadata.get("model_type")
             self.metadata = {
+                "model_type": model_type,
                 "feature_stats": None,
+                "training_stats": None,
                 "last_fit": None,
                 "psi": None,
                 "ks": None,
@@ -85,9 +103,11 @@ class TruthAdapter:
         """Persist model and metadata to disk."""
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         # Ensure drift metrics keys exist for persistence
+        self.metadata.setdefault("model_type", self.metadata.get("model_type", "ridge"))
         self.metadata.setdefault("psi", None)
         self.metadata.setdefault("ks", None)
         self.metadata.setdefault("last_drift_check", None)
+        self.metadata.setdefault("training_stats", None)
         state = {"model": self.model, "metadata": self.metadata}
         if joblib is not None:
             joblib.dump(state, self.model_path)
@@ -117,9 +137,16 @@ class TruthAdapter:
                 "counts": counts,
             })
 
+        preds = self.model.predict(X)
+        mae = float(np.mean(np.abs(preds - y)))
+        ss_res = float(np.sum((preds - y) ** 2))
+        ss_tot = float(np.sum((y - np.mean(y)) ** 2)) or 1.0
+        r2 = 1.0 - ss_res / ss_tot
+
         self.metadata.update(
             {
                 "feature_stats": feature_stats,
+                "training_stats": {"mae": mae, "r2": r2},
                 "last_fit": time.time(),
                 "psi": [0.0 for _ in feature_stats],
                 "ks": [0.0 for _ in feature_stats],
