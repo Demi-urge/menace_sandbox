@@ -54,6 +54,8 @@ from ethics_violation_detector import flag_violations, scan_log_entry
 from risk_domain_classifier import classify_action
 from reward_sanity_checker import check_risk_reward_alignment
 from sandbox_settings import SandboxSettings
+from secret_redactor import redact_secrets
+from license_detector import detect as detect_license
 
 
 class Rule(Protocol):
@@ -119,6 +121,46 @@ def _parse_diff_paths(diff: str) -> Dict[str, Dict[str, Any]]:
     return files
 
 
+def _secret_diff_rule(path: str, added: list[str], removed: list[str]) -> list[dict]:
+    """Flag potential secrets introduced in ``added`` lines using secret_redactor."""
+    issues: list[dict] = []
+    for line in added:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            redacted = redact_secrets(stripped)
+        except Exception:
+            continue
+        if redacted != stripped:
+            issues.append(
+                {
+                    "severity": 4,
+                    "tier": "critical",
+                    "message": f"Secret detected in {path}: {stripped}",
+                }
+            )
+    return issues
+
+
+def _license_diff_rule(path: str, added: list[str], removed: list[str]) -> list[dict]:
+    """Flag disallowed licenses in added text using license_detector."""
+    text = "\n".join(added)
+    try:
+        lic = detect_license(text)
+    except Exception:
+        lic = None
+    if lic:
+        return [
+            {
+                "severity": 4,
+                "tier": "critical",
+                "message": f"Restricted license ({lic}) detected in {path}",
+            }
+        ]
+    return []
+
+
 class HumanAlignmentFlagger:
     """Analyse diffs for alignment risks and maintainability issues."""
 
@@ -136,6 +178,8 @@ class HumanAlignmentFlagger:
         self.network_call_severity = getattr(cfg, "network_call_severity", 3)
 
         self.rules: List[Rule] = list(rules or [])
+        # Built-in diff rules for secrets and license checks
+        self.rules.extend([_secret_diff_rule, _license_diff_rule])
         module_paths = getattr(cfg, "rule_modules", []) if cfg else []
         for mod in module_paths:
             module = None

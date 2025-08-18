@@ -1524,9 +1524,11 @@ class SelfImprovementEngine:
             commit_hash = "unknown"
         try:
             report = self.alignment_flagger.flag_patch(diff, context)
+            context["alignment_report"] = report
             score = report.get("score", 0)
             issues = report.get("issues", [])
             max_severity = max((i.get("severity", 0) for i in issues), default=0) / 4.0
+            context["alignment_blocked"] = max_severity >= settings.alignment_failure_threshold
             self.logger.info(
                 "alignment score computed",
                 extra=log_record(patch_id=patch_id, score=score, severity=max_severity),

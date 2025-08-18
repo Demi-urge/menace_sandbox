@@ -25,6 +25,14 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - metrics logging is optional
     MetricsDB = None  # type: ignore
 
+try:  # pragma: no cover - optional dependency
+    from .human_alignment_flagger import HumanAlignmentFlagger  # type: ignore
+except Exception:  # pragma: no cover - fallback for flat layout
+    try:
+        from human_alignment_flagger import HumanAlignmentFlagger  # type: ignore
+    except Exception:  # pragma: no cover - alignment flagger may be unavailable
+        HumanAlignmentFlagger = None  # type: ignore
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +66,20 @@ def attach_retrieval_info(
 
 def _log_outcome(record: Dict[str, object]) -> None:
     """Best-effort logging of patch outcomes for retrieval metrics."""
+
+    if isinstance(record, dict) and HumanAlignmentFlagger is not None:
+        diff = record.get("diff")
+        if diff:
+            try:
+                report = HumanAlignmentFlagger().flag_patch(diff, {})
+                issues = report.get("issues", [])
+                max_sev = max((i.get("severity", 0) for i in issues), default=0)
+                record["alignment_report"] = report
+                record["alignment_severity"] = max_sev
+                if max_sev >= 3:
+                    record["result"] = "blocked"
+            except Exception:
+                pass
 
     if MetricsDB is None:
         return

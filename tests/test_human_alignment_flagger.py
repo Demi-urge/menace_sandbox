@@ -194,6 +194,30 @@ def json_credential_patch() -> str:
 
 
 @pytest.fixture
+def secret_diff_patch() -> str:
+    return (
+        """diff --git a/secrets.py b/secrets.py
+--- a/secrets.py
++++ b/secrets.py
+@@ -0,0 +1 @@
++password = \"supersecret\"
+"""
+    )
+
+
+@pytest.fixture
+def license_diff_patch() -> str:
+    return (
+        """diff --git a/LICENSE.txt b/LICENSE.txt
+--- a/LICENSE.txt
++++ b/LICENSE.txt
+@@ -0,0 +1 @@
++This code is released under the GNU General Public License
+"""
+    )
+
+
+@pytest.fixture
 def shell_exec_flag_patch() -> str:
     return (
         """diff --git a/run.sh b/run.sh
@@ -330,6 +354,20 @@ def test_json_embedded_credential_flagged(json_credential_patch):
     report = flagger.flag_patch(json_credential_patch, {})
     assert any(
         "Embedded credential" in issue["message"] for issue in report["issues"]
+    )
+
+
+def test_secret_rule_detects_secret(secret_diff_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(secret_diff_patch, {})
+    assert any("Secret detected" in issue["message"] for issue in report["issues"])
+
+
+def test_license_rule_detects_restricted_license(license_diff_patch):
+    flagger = haf.HumanAlignmentFlagger()
+    report = flagger.flag_patch(license_diff_patch, {})
+    assert any(
+        "Restricted license" in issue["message"] for issue in report["issues"]
     )
 
 
