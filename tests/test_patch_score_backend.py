@@ -179,6 +179,23 @@ def test_engine_uses_backend(monkeypatch, tmp_path):
     assert engine.recent_scores(1) == [("e", "ok")]
 
 
+def test_alignment_check_blocks_secret_diff():
+    rec = {
+        "description": "p1",
+        "result": "ok",
+        "diff": (
+            "diff --git a/x.py b/x.py\n"
+            "--- a/x.py\n"
+            "+++ b/x.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+password = 'secret'\n"
+        ),
+    }
+    psb._log_outcome(rec)
+    assert rec.get("result") == "blocked"
+    assert rec.get("alignment_severity") >= 3
+
+
 def test_http_backend_retries(monkeypatch):
     calls = {"post": 0, "get": 0}
 
