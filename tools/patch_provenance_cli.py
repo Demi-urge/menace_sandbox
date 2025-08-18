@@ -34,13 +34,15 @@ def main() -> None:
     )
     chain_p.add_argument("patch_id", type=int)
 
-    search_p = sub.add_parser("search", help="search patches by vector or code hash")
-    search_p.add_argument("term", help="vector id or code hash")
+    search_p = sub.add_parser("search", help="search patches by vector, hash or filters")
+    search_p.add_argument("term", nargs="?", help="vector id or code hash")
     search_p.add_argument(
         "--hash",
         action="store_true",
         help="interpret TERM as a code snippet hash",
     )
+    search_p.add_argument("--license")
+    search_p.add_argument("--semantic-alert")
 
     args = parser.parse_args()
     db = PatchHistoryDB()
@@ -74,27 +76,38 @@ def main() -> None:
         chain = build_chain(args.patch_id, patch_db=db)
         print(json.dumps(chain))
     elif args.cmd == "search":
-        if args.hash:
-            rows = search_patches_by_hash(args.term, patch_db=db)
+        if args.license or args.semantic_alert:
+            rows = db.find_patches_by_provenance(
+                license=args.license, semantic_alert=args.semantic_alert
+            )
             patches = [
-                {
-                    "id": r["patch_id"],
-                    "filename": r["filename"],
-                    "description": r["description"],
-                }
-                for r in rows
+                {"id": pid, "filename": fname, "description": desc}
+                for pid, fname, desc in rows
             ]
+        elif args.term:
+            if args.hash:
+                rows = search_patches_by_hash(args.term, patch_db=db)
+                patches = [
+                    {
+                        "id": r["patch_id"],
+                        "filename": r["filename"],
+                        "description": r["description"],
+                    }
+                    for r in rows
+                ]
+            else:
+                rows = search_patches_by_vector(args.term, patch_db=db)
+                patches = [
+                    {
+                        "id": r["patch_id"],
+                        "filename": r["filename"],
+                        "description": r["description"],
+                        "influence": r["influence"],
+                    }
+                    for r in rows
+                ]
         else:
-            rows = search_patches_by_vector(args.term, patch_db=db)
-            patches = [
-                {
-                    "id": r["patch_id"],
-                    "filename": r["filename"],
-                    "description": r["description"],
-                    "influence": r["influence"],
-                }
-                for r in rows
-            ]
+            patches = []
         print(json.dumps(patches))
 
 

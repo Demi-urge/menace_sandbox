@@ -1250,6 +1250,34 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
+    def find_patches_by_provenance(
+        self,
+        license: str | None = None,
+        semantic_alert: str | None = None,
+    ) -> List[Tuple[int, str, str]]:
+        """Return patches filtered by license and/or semantic alert."""
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[int, str, str]]:
+            query = (
+                "SELECT DISTINCT a.patch_id, h.filename, h.description "
+                "FROM patch_ancestry a JOIN patch_history h ON h.id=a.patch_id"
+            )
+            conditions: List[str] = []
+            params: List[str] = []
+            if license is not None:
+                conditions.append("a.license=?")
+                params.append(license)
+            if semantic_alert is not None:
+                conditions.append("a.semantic_alerts LIKE ?")
+                params.append(f'%"{semantic_alert}"%')
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY a.patch_id"
+            rows = conn.execute(query, params).fetchall()
+            return [(int(pid), fname, desc) for pid, fname, desc in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
     def get_provenance(self, patch_id: int) -> List[Tuple[str, str, float, str]]:
         """Return provenance rows for ``patch_id`` ordered by original ranking."""
 

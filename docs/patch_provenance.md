@@ -15,13 +15,17 @@ python tools/patch_provenance_cli.py show 1
 python tools/patch_provenance_cli.py chain 1
 python tools/patch_provenance_cli.py search vec123
 python tools/patch_provenance_cli.py search --hash <code_hash>
+python tools/patch_provenance_cli.py search --license MIT
+python tools/patch_provenance_cli.py search --semantic-alert malware
 ```
 
 `list` displays recent patches with their IDs.  `show` prints the ancestry
-details for a patch including the vectors and their influence scores while
-`chain` returns only the ancestry chain for a patch.
+details for a patch including the vectors, their influence scores and any
+semantic alerts while `chain` returns only the ancestry chain for a patch.
 `search` performs a reverse lookup either by vector ID (default) or by code
-snippet hash when ``--hash`` is supplied.
+snippet hash when ``--hash`` is supplied.  It can also filter patches by
+detected license or semantic alert using ``--license`` and
+``--semantic-alert``.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
 SQLite database.
@@ -41,6 +45,8 @@ Endpoints:
 - `GET /patches/<patch_id>` – show a patch, its provenance and ancestry chain
 - `GET /vectors/<vector_id>` – find patches influenced by a vector ID
 - `GET /search?q=<term>` – search patches by vector ID or keyword
+- `GET /patches?license=<name>&semantic_alert=<alert>` – filter patches by
+  detected license and/or semantic alert
 
 The service uses the same `PATCH_HISTORY_DB_PATH` environment variable to
 locate the database.
