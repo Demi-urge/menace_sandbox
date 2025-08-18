@@ -27,6 +27,7 @@ primitives.serialization = serialization
 sys.modules.setdefault("cryptography.hazmat.primitives.serialization", serialization)
 sys.modules.setdefault("env_config", types.SimpleNamespace(DATABASE_URL="sqlite:///:memory:"))
 sys.modules.setdefault("httpx", types.ModuleType("httpx"))
+sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 
 import sqlite3
 import menace.self_coding_engine as sce
@@ -54,7 +55,7 @@ def test_skipped_enhancement_logs_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
     path = tmp_path / "bot.py"
     path.write_text("def z():\n    pass\n")
-    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1")]}
+    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)
     assert patch_id is None and not reverted
     with sqlite3.connect(mdb_path) as conn:

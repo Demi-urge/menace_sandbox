@@ -822,6 +822,17 @@ class PatchHistoryDB:
             )
             """
             )
+            conn.execute(
+                """
+            CREATE TABLE IF NOT EXISTS patch_contributors(
+                patch_id INTEGER,
+                vector_id TEXT,
+                influence REAL,
+                session_id TEXT,
+                FOREIGN KEY(patch_id) REFERENCES patch_history(id)
+            )
+            """
+            )
             cols = [
                 r[1]
                 for r in conn.execute("PRAGMA table_info(patch_history)").fetchall()
@@ -869,6 +880,9 @@ class PatchHistoryDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_ancestry_patch ON patch_ancestry(patch_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_contributors_patch ON patch_contributors(patch_id)"
             )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
@@ -1091,6 +1105,19 @@ class PatchHistoryDB:
                 (patch_id, origin, vec_id, influence),
             )
 
+    def _insert_contributors(
+        self,
+        conn: sqlite3.Connection,
+        patch_id: int,
+        vectors: Sequence[tuple[str, str, float]],
+        session_id: str,
+    ) -> None:
+        for origin, vec_id, influence in vectors:
+            conn.execute(
+                "INSERT INTO patch_contributors(patch_id, vector_id, influence, session_id) VALUES(?,?,?,?)",
+                (patch_id, f"{origin}:{vec_id}" if origin else vec_id, influence, session_id),
+            )
+
     def log_ancestry(
         self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
     ) -> None:
@@ -1100,6 +1127,33 @@ class PatchHistoryDB:
             self._insert_ancestry(conn, patch_id, vectors)
 
         with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def log_contributors(
+        self,
+        patch_id: int,
+        vectors: Sequence[tuple[str, str, float]],
+        session_id: str,
+    ) -> None:
+        """Persist contributor vectors for a patch."""
+
+        def op(conn: sqlite3.Connection) -> None:
+            self._insert_contributors(conn, patch_id, vectors, session_id)
+
+        with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def get_contributors(
+        self, patch_id: int
+    ) -> List[Tuple[str, float, str]]:
+        """Return contributors for ``patch_id`` ordered by influence."""
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[str, float, str]]:
+            rows = conn.execute(
+                "SELECT vector_id, influence, session_id FROM patch_contributors WHERE patch_id=? ORDER BY influence DESC",
+                (patch_id,),
+            ).fetchall()
+            return [(v, float(i), s) for v, i, s in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
     def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float]]:
         """Return ancestry rows for ``patch_id`` ordered by influence."""

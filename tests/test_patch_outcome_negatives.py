@@ -42,6 +42,7 @@ neuro.peek_chain = lambda *a, **k: None
 neuro.MessageEntry = object
 neuro.CTAChain = object
 sys.modules.setdefault("neurosales", neuro)
+sys.modules.setdefault("menace.chatgpt_idea_bot", types.SimpleNamespace(ChatGPTClient=object))
 loguru_mod = types.ModuleType("loguru")
 
 class DummyLogger:
@@ -193,7 +194,7 @@ def test_rollback_logs_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
     path = tmp_path / "bot.py"
     path.write_text("def x():\n    pass\n")
-    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1")]} 
+    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)
     assert patch_id is not None and not reverted
     engine.rollback_patch(str(patch_id))
@@ -225,7 +226,7 @@ def test_failed_tests_log_negative_outcome(tmp_path, monkeypatch):
     monkeypatch.setattr(engine, "_current_errors", lambda: 0)
     path = tmp_path / "bot.py"
     path.write_text("def y():\n    pass\n")
-    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1")]} 
+    context = {"retrieval_session_id": "s1", "retrieval_vectors": [("db", "v1", 0.0)]}
     patch_id, reverted, _ = engine.apply_patch(path, "test", context_meta=context)
     assert patch_id is None and not reverted
     with sqlite3.connect(mdb_path) as conn:
@@ -257,7 +258,7 @@ def test_skipped_enhancement_logs_negative_outcome(tmp_path):
     engine.logger = logging.getLogger("test")
     engine._current_context = {
         "retrieval_session_id": "s1",
-        "retrieval_vectors": [("db", "v1")],
+        "retrieval_vectors": [("db", "v1", 0.0)],
     }
     feats = engine._collect_action_features()
     assert feats == []
