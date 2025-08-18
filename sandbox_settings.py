@@ -218,7 +218,10 @@ class SandboxSettings(BaseSettings):
     sandbox_score_db: str = Field("score_history.db", env="SANDBOX_SCORE_DB")
     synergy_weights_lr: float = Field(0.1, env="SYNERGY_WEIGHTS_LR")
     scenario_metric_thresholds: dict[str, float] = Field(
-        default_factory=dict,
+        default_factory=lambda: {
+            "schema_mismatch_rate": 0.1,
+            "upstream_failure_rate": 0.1,
+        },
         env="SCENARIO_METRIC_THRESHOLDS",
         description="Thresholds for scenario-specific metrics returned by _scenario_specific_metrics.",
     )

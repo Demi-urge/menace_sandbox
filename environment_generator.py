@@ -33,6 +33,8 @@ _FAILURE_MODES = [
     "malicious_data",
     "user_misuse",
     "api_latency",
+    "schema_drift",
+    "flaky_upstream",
 ]
 
 # chance that multiple failure modes will be combined in one preset
@@ -135,6 +137,38 @@ _PROFILES: Dict[str, Dict[str, Any]] = {
             },
         }
     },
+    "schema_drift": {
+        "levels": {
+            "low": {
+                "FAILURE_MODES": "schema_drift",
+                "SCHEMA_MISMATCHES": 5,
+                "SCHEMA_CHECKS": 100,
+                "THREAT_INTENSITY": 20,
+            },
+            "high": {
+                "FAILURE_MODES": "schema_drift",
+                "SCHEMA_MISMATCHES": 20,
+                "SCHEMA_CHECKS": 100,
+                "THREAT_INTENSITY": 40,
+            },
+        }
+    },
+    "flaky_upstream": {
+        "levels": {
+            "low": {
+                "FAILURE_MODES": "flaky_upstream",
+                "UPSTREAM_FAILURES": 1,
+                "UPSTREAM_REQUESTS": 20,
+                "THREAT_INTENSITY": 20,
+            },
+            "high": {
+                "FAILURE_MODES": "flaky_upstream",
+                "UPSTREAM_FAILURES": 5,
+                "UPSTREAM_REQUESTS": 20,
+                "THREAT_INTENSITY": 40,
+            },
+        }
+    },
 }
 
 # canonical profile names for core sandbox scenarios
@@ -143,12 +177,16 @@ CANONICAL_PROFILES: List[str] = [
     "hostile_input",
     "user_misuse",
     "concurrency_spike",
+    "schema_drift",
+    "flaky_upstream",
 ]
 
 # legacy aliases mapping to canonical scenario names
 _PROFILE_ALIASES = {
     "high_latency": "high_latency_api",
     "malicious_data": "hostile_input",
+    "schema_mismatch": "schema_drift",
+    "upstream_failure": "flaky_upstream",
 }
 
 # keyword based suggestions for module-specific profiles
@@ -159,9 +197,11 @@ _KEYWORD_PROFILE_MAP: Dict[str, List[str]] = {
     "input": ["hostile_input"],
     "concurrency": ["concurrency_spike"],
     "thread": ["concurrency_spike"],
-    "database": ["high_latency_api", "concurrency_spike"],
+    "database": ["high_latency_api", "concurrency_spike", "schema_drift"],
     "cache": ["high_latency_api"],
     "auth": ["user_misuse", "hostile_input"],
+    "schema": ["schema_drift"],
+    "upstream": ["flaky_upstream"],
     # ambiguous or generic modules should exercise all core scenarios
     "util": CANONICAL_PROFILES,
     "utils": CANONICAL_PROFILES,

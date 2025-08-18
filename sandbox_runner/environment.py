@@ -5079,6 +5079,28 @@ def _scenario_specific_metrics(
         )
         level = float(metrics.get("concurrency_level", 1.0))
         extra["concurrency_error_count"] = err_rate * level
+    if "schema_drift" in name or "schema_mismatch" in name:
+        mismatches = float(
+            metrics.get("schema_mismatches", metrics.get("schema_mismatch_count", 0.0))
+        )
+        total = float(
+            metrics.get(
+                "schema_checks",
+                metrics.get("schema_check_count", metrics.get("records_checked", 0.0)),
+            )
+        )
+        extra["schema_mismatch_rate"] = mismatches / total if total else 0.0
+    if "flaky_upstream" in name or "upstream" in name:
+        failures = float(
+            metrics.get("upstream_failures", metrics.get("failure_count", 0.0))
+        )
+        calls = float(
+            metrics.get(
+                "upstream_requests",
+                metrics.get("request_count", metrics.get("calls", 0.0)),
+            )
+        )
+        extra["upstream_failure_rate"] = failures / calls if calls else 0.0
     return extra
 
 
@@ -5237,6 +5259,10 @@ def run_repo_section_simulations(
         collect_plugin_metrics,
     )
     try:
+        from menace.environment_generator import _PROFILE_ALIASES
+    except Exception:  # pragma: no cover - environment generator optional
+        _PROFILE_ALIASES = {}
+    try:
         from sandbox_settings import SandboxSettings
         metric_thresholds = (
             SandboxSettings().scenario_metric_thresholds or {}
@@ -5355,9 +5381,11 @@ def run_repo_section_simulations(
             "hostile_input",
             "user_misuse",
             "concurrency_spike",
+            "schema_drift",
+            "flaky_upstream",
         }
         present_names = {
-            p.get("SCENARIO_NAME")
+            _PROFILE_ALIASES.get(p.get("SCENARIO_NAME"), p.get("SCENARIO_NAME"))
             for p in all_presets
             if p.get("SCENARIO_NAME")
         }
@@ -5385,9 +5413,11 @@ def run_repo_section_simulations(
 
         scenario_names: List[str] = []
         for i, preset in enumerate(all_presets):
-            name = preset.get("SCENARIO_NAME", f"scenario_{i}")
+            raw = preset.get("SCENARIO_NAME", f"scenario_{i}")
+            name = _PROFILE_ALIASES.get(raw, raw)
             if name not in scenario_names:
                 scenario_names.append(name)
+            preset["SCENARIO_NAME"] = name
 
         details: Dict[str, Dict[str, list[Dict[str, Any]]]] = {}
         synergy_data: Dict[str, Dict[str, list]] = {
@@ -6203,6 +6233,10 @@ def run_workflow_simulations(
     from menace.code_database import CodeDB
     from menace.menace_memory_manager import MenaceMemoryManager
     from sandbox_settings import SandboxSettings
+    try:
+        from menace.environment_generator import _PROFILE_ALIASES
+    except Exception:  # pragma: no cover - environment generator optional
+        _PROFILE_ALIASES = {}
 
     if env_presets is None:
         if os.getenv("SANDBOX_GENERATE_PRESETS", "1") != "0":
@@ -6235,8 +6269,18 @@ def run_workflow_simulations(
         preset_map = {}
         all_presets = list(env_presets)
 
-    required = {"high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"}
-    existing = {p.get("SCENARIO_NAME") for p in all_presets}
+    required = {
+        "high_latency_api",
+        "hostile_input",
+        "user_misuse",
+        "concurrency_spike",
+        "schema_drift",
+        "flaky_upstream",
+    }
+    existing = {
+        _PROFILE_ALIASES.get(p.get("SCENARIO_NAME"), p.get("SCENARIO_NAME"))
+        for p in all_presets
+    }
     missing = required - existing
     if missing:
         try:
@@ -6316,10 +6360,9 @@ def run_workflow_simulations(
     tracker = tracker or ROITracker()
     scenario_names: List[str] = []
     for i, p in enumerate(all_presets):
-        name = p.get("SCENARIO_NAME")
-        if not name:
-            name = f"scenario_{i}"
-            p["SCENARIO_NAME"] = name
+        raw = p.get("SCENARIO_NAME", f"scenario_{i}")
+        name = _PROFILE_ALIASES.get(raw, raw)
+        p["SCENARIO_NAME"] = name
         if name not in scenario_names:
             scenario_names.append(name)
     for name in required:
