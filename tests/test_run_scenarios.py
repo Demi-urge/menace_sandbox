@@ -10,18 +10,19 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
     rt = _setup_tracker(monkeypatch)
     import sandbox_runner.environment as env
 
-    # ROI returned for each scenario
+    # ROI returned for each scenario with workflow on/off
     scenario_data = {
-        "normal": 3.0,
-        "concurrency_spike": 1.0,
-        "hostile_input": 2.5,
-        "schema_drift": 1.9,
-        "flaky_upstream": 2.2,
+        "normal": (3.0, 2.0),
+        "concurrency_spike": (1.0, 2.0),
+        "hostile_input": (2.5, 2.0),
+        "schema_drift": (1.9, 1.7),
+        "flaky_upstream": (2.2, 1.9),
     }
 
     async def fake_worker(snippet, env_input, threshold):
         scen = env_input.get("SCENARIO_NAME")
-        roi = scenario_data[scen]
+        roi_on, roi_off = scenario_data[scen]
+        roi = roi_off if snippet.strip() == "pass" else roi_on
         return {"exit_code": 0}, [(0.0, roi, {})]
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
@@ -32,7 +33,7 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
         ["simple_functions:print_ten"], tracker=rt.ROITracker()
     )
 
-    expected = {scen: roi - scenario_data["normal"] for scen, roi in scenario_data.items()}
+    expected = {scen: roi_on - roi_off for scen, (roi_on, roi_off) in scenario_data.items()}
     assert set(summary["scenarios"]) == set(expected)
     for scen, delta in expected.items():
         info = summary["scenarios"][scen]
@@ -40,7 +41,7 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
         assert tracker_obj.get_scenario_roi_delta(scen) == pytest.approx(delta)
         flags = {r["flag"] for r in info["runs"]}
         assert flags == {"on", "off"}
-        assert info["target_delta"]["roi"] == pytest.approx(0.0)
+        assert info["target_delta"]["roi"] == pytest.approx(delta)
     worst = min(expected, key=lambda k: expected[k])
     assert summary["worst_scenario"] == worst
 

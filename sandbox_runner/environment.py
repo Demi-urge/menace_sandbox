@@ -5222,9 +5222,9 @@ def run_scenarios(
     ``schema_drift`` and ``flaky_upstream``. Each scenario is executed twice –
     once with the workflow enabled and once with it disabled – to measure the
     direct contribution of the workflow. For each run the ROI and metrics are
-    recorded, per-scenario ROI/metric deltas are calculated relative to the
-    baseline run and synergy metrics are tracked through
-    :class:`menace.roi_tracker.ROITracker`.
+    recorded, metric deltas are calculated relative to the baseline run and the
+    ROI delta between the enabled and disabled states is reported. Synergy
+    metrics are tracked through :class:`menace.roi_tracker.ROITracker`.
 
     Parameters
     ----------
@@ -5320,7 +5320,7 @@ def run_scenarios(
                     for k in set(metrics_on) | set(baseline_metrics)
                 }
 
-            delta = roi_on - baseline_roi
+            delta = roi_on - roi_off
             tracker.record_scenario_delta(scenario, delta)
             synergy_metrics = {
                 f"synergy_{k}": float(v) for k, v in metrics_delta.items()
@@ -5345,7 +5345,7 @@ def run_scenarios(
 
             results[scenario] = {
                 "roi": roi_on,
-                "roi_delta": roi_on - baseline_roi,
+                "roi_delta": delta,
                 "metrics": metrics_on,
                 "metrics_delta": metrics_delta,
                 "synergy": synergy_metrics,
@@ -5354,7 +5354,7 @@ def run_scenarios(
                     {"flag": "off", "roi": roi_off, "metrics": metrics_off},
                 ],
                 "target_delta": {
-                    "roi": roi_on - roi_off,
+                    "roi": delta,
                     "metrics": target_metrics_delta,
                 },
             }

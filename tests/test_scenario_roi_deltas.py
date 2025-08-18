@@ -52,32 +52,50 @@ def test_scenario_roi_deltas_and_synergy(monkeypatch):
     import sandbox_runner.environment as env
 
     scenario_data = {
-        "normal": (1.0, {"profitability": 1.0}),
-        "concurrency_spike": (0.0, {"profitability": 0.0}),
-        "hostile_input": (1.2, {"profitability": 1.2}),
-        "schema_drift": (1.2, {"profitability": 1.2}),
-        "flaky_upstream": (1.2, {"profitability": 1.2}),
+        "normal": {
+            "on": (1.0, {"profitability": 1.0}),
+            "off": (0.0, {"profitability": 0.0}),
+        },
+        "concurrency_spike": {
+            "on": (0.0, {"profitability": 0.0}),
+            "off": (1.0, {"profitability": 1.0}),
+        },
+        "hostile_input": {
+            "on": (1.2, {"profitability": 1.2}),
+            "off": (1.2, {"profitability": 1.2}),
+        },
+        "schema_drift": {
+            "on": (1.2, {"profitability": 1.2}),
+            "off": (1.2, {"profitability": 1.2}),
+        },
+        "flaky_upstream": {
+            "on": (1.2, {"profitability": 1.2}),
+            "off": (1.2, {"profitability": 1.2}),
+        },
     }
 
     async def fake_worker(snippet, env_input, threshold):
         scen = env_input.get("SCENARIO_NAME")
-        roi, metrics = scenario_data[scen]
+        mode = "off" if snippet.strip() == "pass" else "on"
+        roi, metrics = scenario_data[scen][mode]
         return {"exit_code": 0}, [(0.0, roi, metrics)]
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    tracker_obj, summary = env.run_scenarios([], tracker=rt.ROITracker())
+    tracker_obj, summary = env.run_scenarios(
+        ["simple_functions:print_ten"], tracker=rt.ROITracker()
+    )
 
-    assert summary["scenarios"]["normal"]["roi_delta"] == pytest.approx(0.0)
+    assert summary["scenarios"]["normal"]["roi_delta"] == pytest.approx(1.0)
     cs_info = summary["scenarios"]["concurrency_spike"]
     assert cs_info["roi_delta"] == pytest.approx(-1.0)
     assert tracker_obj.get_scenario_roi_delta("concurrency_spike") == pytest.approx(-1.0)
     assert summary["worst_scenario"] == "concurrency_spike"
 
-    delta_profit = scenario_data["concurrency_spike"][1]["profitability"] - scenario_data["normal"][1]["profitability"]
+    delta_profit = scenario_data["concurrency_spike"]["on"][1]["profitability"] - scenario_data["normal"]["on"][1]["profitability"]
     assert cs_info["metrics_delta"]["profitability"] == pytest.approx(delta_profit)
     assert cs_info["synergy"]["synergy_roi"] == pytest.approx(-1.0)
     assert cs_info["synergy"]["synergy_profitability"] == pytest.approx(delta_profit)
     flags = {r["flag"] for r in cs_info["runs"]}
     assert flags == {"on", "off"}
-    assert cs_info["target_delta"]["roi"] == pytest.approx(0.0)
+    assert cs_info["target_delta"]["roi"] == pytest.approx(-1.0)
