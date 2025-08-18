@@ -91,13 +91,18 @@ class TruthAdapter:
                 "model_type": model_type,
                 "feature_stats": None,
                 "training_stats": None,
-                "last_fit": None,
+                "last_retrained": None,
                 "psi": None,
                 "ks": None,
                 "drift_flag": False,
                 "needs_retrain": False,
                 "last_drift_check": None,
             }
+        else:
+            # Backwards compatibility for older metadata keys
+            if "last_retrained" not in self.metadata:
+                self.metadata["last_retrained"] = self.metadata.get("last_fit")
+                self.metadata.pop("last_fit", None)
 
     def _save_state(self) -> None:
         """Persist model and metadata to disk."""
@@ -108,6 +113,7 @@ class TruthAdapter:
         self.metadata.setdefault("ks", None)
         self.metadata.setdefault("last_drift_check", None)
         self.metadata.setdefault("training_stats", None)
+        self.metadata.setdefault("last_retrained", self.metadata.get("last_retrained"))
         state = {"model": self.model, "metadata": self.metadata}
         if joblib is not None:
             joblib.dump(state, self.model_path)
@@ -147,7 +153,7 @@ class TruthAdapter:
             {
                 "feature_stats": feature_stats,
                 "training_stats": {"mae": mae, "r2": r2},
-                "last_fit": time.time(),
+                "last_retrained": time.time(),
                 "psi": [0.0 for _ in feature_stats],
                 "ks": [0.0 for _ in feature_stats],
                 "drift_flag": False,
@@ -161,7 +167,7 @@ class TruthAdapter:
         """Return predictions and flag if distribution drift is detected."""
         if self.model is None:
             raise RuntimeError("Model is not trained")
-        drift = self.check_drift(X)
+        _, drift = self.check_drift(X)
         preds = self.model.predict(X)
         if drift:
             self.metadata["warning"] = "Distribution drift detected; predictions may be unreliable."
@@ -174,11 +180,11 @@ class TruthAdapter:
 
     # ------------------------------------------------------------------
     # Drift detection
-    def check_drift(self, X_recent: NDArray[np.float64]) -> bool:
+    def check_drift(self, X_recent: NDArray[np.float64]) -> Tuple[dict[str, list[float]], bool]:
         """Check for distribution drift using PSI and KS tests."""
         stats = self.metadata.get("feature_stats")
         if not stats:
-            return False
+            return {"psi": [], "ks": []}, False
 
         psi_values: list[float] = []
         ks_values: list[float] = []
@@ -213,10 +219,12 @@ class TruthAdapter:
             if psi > self.drift_threshold or ks_val > self.ks_threshold:
                 drift_detected = True
 
+        metrics = {"psi": psi_values, "ks": ks_values}
+
         self.metadata["psi"] = psi_values
         self.metadata["ks"] = ks_values
         self.metadata["drift_flag"] = drift_detected
         self.metadata["needs_retrain"] = drift_detected
         self.metadata["last_drift_check"] = time.time()
         self._save_state()
-        return drift_detected
+        return metrics, drift_detected
