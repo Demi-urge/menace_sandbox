@@ -815,9 +815,9 @@ class PatchHistoryDB:
                 """
             CREATE TABLE IF NOT EXISTS patch_ancestry(
                 patch_id INTEGER,
+                origin TEXT,
                 vector_id TEXT,
-                rank INTEGER,
-                contribution REAL,
+                influence REAL,
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
             """
@@ -866,6 +866,9 @@ class PatchHistoryDB:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_provenance_patch ON patch_provenance(patch_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ancestry_patch ON patch_ancestry(patch_id)"
             )
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
@@ -1082,21 +1085,33 @@ class PatchHistoryDB:
         patch_id: int,
         vectors: Sequence[tuple[str, str, float]],
     ) -> None:
-        for rank, (_, vec_id, contrib) in enumerate(vectors):
+        for origin, vec_id, influence in vectors:
             conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution) VALUES(?,?,?,?)",
-                (patch_id, vec_id, rank, contrib),
+                "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence) VALUES(?,?,?,?)",
+                (patch_id, origin, vec_id, influence),
             )
 
-    def record_ancestry(
+    def log_ancestry(
         self, patch_id: int, vectors: Sequence[tuple[str, str, float]]
     ) -> None:
-        """Persist ranked vector ancestry for a patch."""
+        """Persist vector ancestry for a patch."""
 
         def op(conn: sqlite3.Connection) -> None:
             self._insert_ancestry(conn, patch_id, vectors)
 
         with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
+
+    def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float]]:
+        """Return ancestry rows for ``patch_id`` ordered by influence."""
+
+        def op(conn: sqlite3.Connection) -> List[Tuple[str, str, float]]:
+            rows = conn.execute(
+                "SELECT origin, vector_id, influence FROM patch_ancestry WHERE patch_id=? ORDER BY influence DESC",
+                (patch_id,),
+            ).fetchall()
+            return [(o, v, float(i)) for o, v, i in rows]
+
+        return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
     def get_provenance(self, patch_id: int) -> List[Tuple[str, str, float, str]]:
         """Return provenance rows for ``patch_id`` ordered by original ranking."""
