@@ -5,11 +5,14 @@ from __future__ import annotations
 import logging
 import time
 from typing import List
-import hashlib
 import importlib
 
 from .decorators import log_and_measure
-import license_fingerprint
+from legal.license_fingerprint import (
+    LicenseType,
+    detect_license,
+    fingerprint as license_fingerprint,
+)
 
 def _log_violation(path: str, lic: str, hash_: str) -> None:
     try:  # pragma: no cover - best effort
@@ -80,19 +83,21 @@ class EmbeddingBackfill:
         *,
         batch_size: int,
         session_id: str = "",
-    ) -> None:
+    ) -> List[tuple[str, str]]:
         original_add = getattr(db, "add_embedding", None)
+        skipped: List[tuple[str, str]] = []
 
         if callable(original_add):
             def wrapped_add(record_id, record, kind, *, source_id=""):
                 text = record if isinstance(record, str) else str(record)
-                lic = license_fingerprint.check(text)
-                if lic:
+                lic = detect_license(text)
+                if lic is not LicenseType.UNKNOWN:
                     _log_violation(
                         str(record_id),
-                        lic,
-                        hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                        lic.value,
+                        license_fingerprint(text),
                     )
+                    skipped.append((str(record_id), lic.value))
                     return
                 return original_add(record_id, record, kind, source_id=source_id)
 
@@ -102,6 +107,7 @@ class EmbeddingBackfill:
             db.backfill_embeddings(batch_size=batch_size)  # type: ignore[call-arg]
         except TypeError:
             db.backfill_embeddings()  # type: ignore[call-arg]
+        return skipped
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -137,7 +143,15 @@ class EmbeddingBackfill:
                     extra={"session_id": session_id},
                 )
                 try:
-                    self._process_db(db, batch_size=bs, session_id=session_id)
+                    skipped = self._process_db(db, batch_size=bs, session_id=session_id)
+                    if skipped:
+                        for rid, lic in skipped:
+                            logger.warning(
+                                "skipped %s due to license %s",
+                                rid,
+                                lic,
+                                extra={"session_id": session_id},
+                            )
                 except Exception:  # pragma: no cover - best effort
                     continue
         except Exception:

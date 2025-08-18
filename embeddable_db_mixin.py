@@ -22,7 +22,13 @@ import json
 import logging
 from security.redaction import redact_secrets
 
-import license_detector
+# Lightweight license detection based on simple fingerprints.  This avoids
+# embedding content that is under GPL or non‑commercial restrictions.
+from legal.license_fingerprint import (
+    LicenseType,
+    detect_license,
+    fingerprint as license_fingerprint,
+)
 
 try:  # pragma: no cover - optional dependency
     from annoy import AnnoyIndex
@@ -276,19 +282,23 @@ class EmbeddableDBMixin:
         """Embed ``record`` and store the vector and metadata."""
         text = self.license_text(record)
         if text:
-            lic = license_detector.detect(text)
-            if lic:
+            lic = detect_license(text)
+            if lic is not LicenseType.UNKNOWN:
                 try:  # pragma: no cover - best effort
-                    hash_ = license_detector.fingerprint(text)
+                    hash_ = license_fingerprint(text)
                     log_fn = getattr(self, "log_license_violation", None)
                     if callable(log_fn):
-                        log_fn("", lic, hash_)
+                        log_fn("", lic.value, hash_)
                 except Exception:  # pragma: no cover - best effort
-                    logger.exception("failed to log license violation for %s", record_id)
+                    logger.exception(
+                        "failed to log license violation for %s", record_id
+                    )
                 log_embedding_metrics(
                     self.__class__.__name__, 0, 0.0, 0.0, vector_id=str(record_id)
                 )
-                logger.warning("skipping embedding for %s due to license %s", record_id, lic)
+                logger.warning(
+                    "skipping embedding for %s due to license %s", record_id, lic.value
+                )
                 return
         record = redact_secrets(record) if isinstance(record, str) else record
 
