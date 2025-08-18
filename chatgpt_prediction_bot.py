@@ -42,7 +42,10 @@ logger = logging.getLogger(__name__)
 from . import RAISE_ERRORS
 
 from .mirror_bot import sentiment_score
-from .chatgpt_idea_bot import ChatGPTClient
+try:  # pragma: no cover - optional dependency
+    from .chatgpt_idea_bot import ChatGPTClient
+except BaseException:  # pragma: no cover - missing or failing dependency
+    ChatGPTClient = None  # type: ignore
 from gpt_memory_interface import GPTMemoryInterface
 try:  # memory-aware wrapper
     from .memory_aware_gpt_client import ask_with_memory
@@ -62,6 +65,14 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency
     SentenceTransformer = None  # type: ignore
     st_util = None  # type: ignore
+
+from security.secret_redactor import redact
+from license_detector import detect as detect_license
+from governed_embeddings import governed_embed
+try:  # pragma: no cover - optional dependency
+    from analysis.semantic_diff_filter import find_semantic_risks
+except Exception:  # pragma: no cover - best effort optional import
+    find_semantic_risks = None  # type: ignore
 
 try:
     import requests  # type: ignore
@@ -634,6 +645,7 @@ class EnhancementEvaluation:
     description: str
     reason: str
     value: float
+    alerts: List[str] = field(default_factory=list)
 
 
 class ChatGPTPredictionBot:
@@ -795,23 +807,33 @@ class ChatGPTPredictionBot:
     def evaluate_enhancement(self, idea: str, rationale: str) -> EnhancementEvaluation:
         """Assess an enhancement's impact using NLP heuristics."""
         logger.debug("evaluating enhancement '%s'", idea)
+        clean_idea = redact(idea)
+        clean_rationale = redact(rationale)
+        alerts: List[str] = []
+
+        lic_idea = detect_license(clean_idea)
+        lic_rat = detect_license(clean_rationale)
+        if lic_idea:
+            alerts.append(f"license violation in idea: {lic_idea}")
+        if lic_rat:
+            alerts.append(f"license violation in rationale: {lic_rat}")
+
         try:
-            sentiment = sentiment_score(rationale)
+            sentiment = sentiment_score(clean_rationale)
         except Exception as exc:  # pragma: no cover - sentiment failures
             logger.exception("sentiment_score failed: %s", exc)
             sentiment = 0.0
         similarity = 0.0
-        if SentenceTransformer is not None and st_util is not None:
+        if not (lic_idea or lic_rat) and st_util is not None:
             try:
-                if not hasattr(self, "_embedder"):
-                    self._embedder = SentenceTransformer("all-MiniLM-L6-v2")
-                emb_idea = self._embedder.encode(idea, normalize_embeddings=True)
-                emb_rat = self._embedder.encode(rationale, normalize_embeddings=True)
-                similarity = float(st_util.cos_sim(emb_idea, emb_rat)[0][0])
+                emb_idea = governed_embed(clean_idea)
+                emb_rat = governed_embed(clean_rationale)
+                if emb_idea is not None and emb_rat is not None:
+                    similarity = float(st_util.cos_sim(emb_idea, emb_rat)[0][0])
             except Exception as exc:  # pragma: no cover - optional dependency
                 logger.debug("embedding similarity failed: %s", exc)
                 similarity = 0.0
-        words = len(rationale.split())
+        words = len(clean_rationale.split())
         length_factor = min(words / float(CFG.max_rationale_words), 1.0)
         raw_value = (
             CFG.sentiment_weight * sentiment
@@ -819,11 +841,19 @@ class ChatGPTPredictionBot:
             + 0.5 * length_factor
         )
         value = max(-1.0, min(1.0, raw_value))
+
+        if find_semantic_risks is not None:
+            try:
+                for line, msg, score in find_semantic_risks(clean_rationale.splitlines()):
+                    alerts.append(f"{msg}: '{line}' ({score:.2f})")
+            except Exception:  # pragma: no cover - best effort analysis
+                logger.debug("semantic risk analysis failed", exc_info=True)
+
         client = getattr(self, "client", None)
         if client is not None:
             try:
                 prompt = (
-                    f"Evaluate enhancement '{idea}' with rationale '{rationale}'."
+                    f"Evaluate enhancement '{clean_idea}' with rationale '{clean_rationale}'."
                     " Provide brief feedback."
                 )
                 ask_with_memory(
@@ -835,7 +865,9 @@ class ChatGPTPredictionBot:
                 )
             except Exception:
                 logger.debug("ChatGPT evaluation failed", exc_info=True)
-        return EnhancementEvaluation(description=idea, reason=rationale, value=value)
+        return EnhancementEvaluation(
+            description=clean_idea, reason=clean_rationale, value=value, alerts=alerts
+        )
 
 
 __all__ = [
