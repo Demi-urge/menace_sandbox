@@ -236,9 +236,11 @@ def test_new_scenario_specific_metrics(monkeypatch):
     extra = _scenario_specific_metrics(
         "schema_drift", {"schema_mismatches": 2, "schema_checks": 10}
     )
+    assert extra["schema_errors"] == 2
     assert extra["schema_mismatch_rate"] == 0.2
 
     extra = _scenario_specific_metrics(
         "flaky_upstream", {"upstream_failures": 1, "upstream_requests": 5}
     )
+    assert extra["upstream_failures"] == 1
     assert extra["upstream_failure_rate"] == 0.2
