@@ -11,6 +11,13 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from gpt_memory_interface import GPTMemoryInterface
 
+try:
+    from security.secret_redactor import redact_secrets
+except Exception:  # pragma: no cover - fallback for legacy path
+    from secret_redactor import redact_secrets  # type: ignore
+
+from compliance.license_fingerprint import check as license_check
+
 try:  # optional dependency for embeddings
     from sentence_transformers import SentenceTransformer
 except Exception:  # pragma: no cover - optional
@@ -89,10 +96,13 @@ class VectorMemoryStorage(MemoryStorage):
         return None
 
     def add(self, rec: MemoryRecord) -> None:  # type: ignore[override]
-        rec.text = rec.text.strip()
-        if not rec.text:
+        original = rec.text.strip()
+        if not original:
             return
-        embedding = self._embed(rec.text)
+        rec.text = redact_secrets(original)
+        embedding: Optional[List[float]] = None
+        if not license_check(original):
+            embedding = self._embed(rec.text)
         if embedding is not None:
             meta = rec.meta or {}
             meta["embedding"] = embedding
@@ -100,24 +110,28 @@ class VectorMemoryStorage(MemoryStorage):
         super().add(rec)
 
     def query_vector(self, text: str, limit: int = 5) -> List[MemoryRecord]:
-        embedding = self._embed(text)
+        redacted_query = redact_secrets(text)
+        embedding = self._embed(redacted_query)
         if embedding is None:
-            return self.query(text, limit)
-        if self.col:
-            cur = self.col.find({"meta.embedding": {"$exists": True}})
-            data = list(cur)
+            results = self.query(redacted_query, limit)
         else:
-            with gzip.open(self.path, "rt", encoding="utf-8") as fh:
-                data = json.load(fh)
-        scored: List[tuple[float, Dict[str, Any]]] = []
-        for row in data:
-            emb = row.get("meta", {}).get("embedding")
-            if not emb:
-                continue
-            score = sum(a * b for a, b in zip(embedding, emb))
-            scored.append((score, row))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        results = [MemoryRecord(**row) for _, row in scored[:limit]]
+            if self.col:
+                cur = self.col.find({"meta.embedding": {"$exists": True}})
+                data = list(cur)
+            else:
+                with gzip.open(self.path, "rt", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            scored: List[tuple[float, Dict[str, Any]]] = []
+            for row in data:
+                emb = row.get("meta", {}).get("embedding")
+                if not emb:
+                    continue
+                score = sum(a * b for a, b in zip(embedding, emb))
+                scored.append((score, row))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            results = [MemoryRecord(**row) for _, row in scored[:limit]]
+        for r in results:
+            r.text = redact_secrets(r.text)
         return results
 
 
