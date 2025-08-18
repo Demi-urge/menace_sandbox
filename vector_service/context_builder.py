@@ -112,23 +112,23 @@ class ContextBuilder:
         meta = bundle.get("metadata", {})
         origin = bundle.get("origin_db", "")
 
-        text = ""
+        text = bundle.get("text") or ""
         entry: Dict[str, Any] = {"id": bundle.get("record_id")}
 
         if origin == "error":
-            text = meta.get("message") or meta.get("description") or ""
+            text = text or meta.get("message") or meta.get("description") or ""
         elif origin == "bot":
-            text = meta.get("name") or meta.get("purpose") or ""
+            text = text or meta.get("name") or meta.get("purpose") or ""
             if "name" in meta:
                 entry["name"] = redact_text(str(meta["name"]))
         elif origin == "workflow":
-            text = meta.get("title") or meta.get("description") or ""
+            text = text or meta.get("title") or meta.get("description") or ""
             if "title" in meta:
                 entry["title"] = redact_text(str(meta["title"]))
         elif origin == "discrepancy":
-            text = meta.get("message") or meta.get("description") or ""
+            text = text or meta.get("message") or meta.get("description") or ""
         elif origin == "code":
-            text = meta.get("summary") or meta.get("code") or ""
+            text = text or meta.get("summary") or meta.get("code") or ""
 
         text = redact_text(str(text))
         entry["desc"] = self._summarise(text)
