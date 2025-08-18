@@ -1108,13 +1108,9 @@ def main(argv: List[str] | None = None) -> None:
     )
     parser.add_argument(
         "--run-scenarios",
-        action="store_true",
-        help="run scenario simulations for each workflow after standard runs",
-    )
-    parser.add_argument(
-        "--print-scenario-deltas",
-        action="store_true",
-        help="output ROI delta report from stored scenario runs",
+        type=int,
+        metavar="WORKFLOW_ID",
+        help="execute predefined scenario simulations for the given workflow and exit",
     )
     parser.add_argument(
         "--alignment-warnings",
@@ -1291,11 +1287,6 @@ def main(argv: List[str] | None = None) -> None:
         help="EMA window for moving average",
     )
     p_metrics.add_argument("--plot", action="store_true", help="show matplotlib plot")
-
-    p_run = sub.add_parser(
-        "run-scenarios", help="run scenario simulations for a workflow"
-    )
-    p_run.add_argument("workflow_id", type=int, help="workflow ID to simulate")
 
     sub.add_parser(
         "relevancy-report",
@@ -1648,23 +1639,26 @@ def main(argv: List[str] | None = None) -> None:
         run_complete(args)
         return
 
-    if getattr(args, "cmd", None) == "run-scenarios":
+    if args.run_scenarios is not None:
         from sandbox_runner.environment import run_scenarios
         from task_handoff_bot import WorkflowDB
 
         wf_db = WorkflowDB(Path(args.workflow_db))
         row = wf_db.conn.execute(
             "SELECT * FROM workflows WHERE id=?",
-            (args.workflow_id,),
+            (args.run_scenarios,),
         ).fetchone()
         if not row:
-            print(f"workflow {args.workflow_id} not found")
+            print(f"workflow {args.run_scenarios} not found")
             return
         wf = wf_db._row_to_record(row)
         _, summary = run_scenarios(wf)
-        for scen, info in sorted(summary["scenarios"].items()):
-            print(f"{scen}: {info['roi_delta']:+.3f}")
-        print(f"worst_scenario: {summary['worst_scenario']}")
+        worst = summary.get("worst_scenario")
+        for scen, info in sorted(summary.get("scenarios", {}).items()):
+            marker = " <== WORST" if scen == worst else ""
+            print(f"{scen}: {info['roi_delta']:+.3f}{marker}")
+        if worst:
+            print(f"worst_scenario: {worst}")
         return
 
     if args.workflow_sim:
@@ -1682,23 +1676,6 @@ def main(argv: List[str] | None = None) -> None:
             else 0.1,
             module_semantic=args.module_semantic,
         )
-        scenario_report = None
-        if getattr(args, "run_scenarios", False):
-            from sandbox_runner.cycle import run_workflow_scenarios
-
-            scenario_report = run_workflow_scenarios(
-                args.workflow_db,
-                args.sandbox_data_dir or "sandbox_data",
-            )
-        if getattr(args, "print_scenario_deltas", False):
-            if scenario_report is None:
-                try:
-                    path = Path(args.sandbox_data_dir or "sandbox_data") / "scenario_deltas.json"
-                    with path.open("r", encoding="utf-8") as fh:
-                        scenario_report = json.load(fh)
-                except Exception:
-                    scenario_report = {}
-            print(json.dumps(scenario_report, indent=2))
         if getattr(args, "print_scenario_summary", False):
             print(json.dumps(load_scenario_summary(), indent=2))
     else:
