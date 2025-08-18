@@ -1,6 +1,8 @@
 import pytest
 from tests.test_menace_master import _setup_mm_stubs
 from tests.test_scenario_roi_deltas import _setup_tracker
+from pathlib import Path
+import json
 
 
 def test_run_scenarios_records_all_deltas(monkeypatch):
@@ -24,6 +26,8 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
+    out = Path("sandbox_data/scenario_deltas.json")
+    out.unlink(missing_ok=True)
     summary = env.run_scenarios(["simple_functions:print_ten"], tracker=rt.ROITracker())
 
     expected = {scen: roi - scenario_data["normal"] for scen, roi in scenario_data.items()}
@@ -36,3 +40,8 @@ def test_run_scenarios_records_all_deltas(monkeypatch):
         assert info["target_delta"]["roi"] == pytest.approx(0.0)
     worst = min(expected, key=lambda k: expected[k])
     assert summary["worst_scenario"] == worst
+
+    data = json.loads(out.read_text())
+    for scen, delta in expected.items():
+        assert data[scen]["roi_delta"] == pytest.approx(delta)
+        assert data[scen]["worst"] is (scen == worst)

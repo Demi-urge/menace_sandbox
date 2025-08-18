@@ -5267,6 +5267,21 @@ def run_scenarios(
         if results
         else ""
     )
+
+    tracker.worst_scenario = worst
+
+    export = {
+        scen: {"roi_delta": info.get("roi_delta", 0.0), "worst": scen == worst}
+        for scen, info in results.items()
+    }
+    try:
+        out_path = Path("sandbox_data") / "scenario_deltas.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as fh:
+            json.dump(export, fh)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to write scenario deltas")
+
     return {"scenarios": results, "worst_scenario": worst}
 
 

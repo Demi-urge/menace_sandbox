@@ -19,4 +19,6 @@ def test_prediction_summary():
     assert stats["mae_trend"][1] == pytest.approx(0.15)
     assert stats["accuracy_trend"][0] == pytest.approx(1.0)
     assert stats["accuracy_trend"][1] == pytest.approx(0.5)
+    assert stats["scenario_roi_deltas"] == {}
+    assert stats["worst_scenario"] is None
 
