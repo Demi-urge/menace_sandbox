@@ -1,26 +1,41 @@
+"""ROI calibration helper with lightweight drift detection."""
+
+from __future__ import annotations
+
 import pickle
+import time
 from pathlib import Path
 from typing import Tuple
-import time
 
 import numpy as np
 from numpy.typing import NDArray
 
-try:
+try:  # pragma: no cover - optional dependency
+    import joblib
+except Exception:  # pragma: no cover - import guard
+    joblib = None  # type: ignore
+
+try:  # pragma: no cover - optional dependency
     from xgboost import XGBRegressor
 except Exception:  # pragma: no cover - import guard
     XGBRegressor = None  # type: ignore
 
-try:
+try:  # pragma: no cover - optional dependency
     from sklearn.linear_model import Ridge
 except Exception:  # pragma: no cover - import guard
     Ridge = None  # type: ignore
 
+
 class TruthAdapter:
     """Calibrates ROI predictions and monitors feature drift."""
 
-    def __init__(self, model_path: str | Path = "sandbox_data/truth_adapter.pkl") -> None:
+    def __init__(
+        self,
+        model_path: str | Path = "sandbox_data/truth_adapter.pkl",
+        use_xgboost: bool = False,
+    ) -> None:
         self.model_path = Path(model_path)
+        self.use_xgboost = use_xgboost
         self.model = None
         self.metadata: dict = {}
         self.drift_threshold = 0.25  # PSI threshold for drift
@@ -28,38 +43,52 @@ class TruthAdapter:
 
     # ------------------------------------------------------------------
     # Persistence helpers
+    def _make_model(self):  # pragma: no cover - trivial helper
+        """Instantiate the underlying regression model."""
+        if self.use_xgboost and XGBRegressor is not None:
+            return XGBRegressor()
+        return Ridge()
+
     def _load_state(self) -> None:
         """Load model and metadata from disk if available."""
         if self.model_path.exists():
             try:
-                with self.model_path.open("rb") as f:
-                    state = pickle.load(f)
+                if joblib is not None:
+                    state = joblib.load(self.model_path)
+                else:
+                    with self.model_path.open("rb") as f:
+                        state = pickle.load(f)
                 self.model = state.get("model")
                 self.metadata = state.get("metadata", {})
             except Exception:
                 self.model = None
                 self.metadata = {}
         if self.model is None:
-            self.model = XGBRegressor() if XGBRegressor is not None else Ridge()
+            self.model = self._make_model()
             self.metadata = {
                 "feature_stats": None,
                 "last_fit": None,
                 "psi": None,
                 "drift_flag": False,
+                "needs_retrain": False,
             }
 
     def _save_state(self) -> None:
         """Persist model and metadata to disk."""
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.model_path.open("wb") as f:
-            pickle.dump({"model": self.model, "metadata": self.metadata}, f)
+        state = {"model": self.model, "metadata": self.metadata}
+        if joblib is not None:
+            joblib.dump(state, self.model_path)
+        else:
+            with self.model_path.open("wb") as f:
+                pickle.dump(state, f)
 
     # ------------------------------------------------------------------
     # Training / prediction
     def fit(self, X: NDArray[np.float64], y: NDArray[np.float64]) -> None:
         """Train the underlying model and record feature distributions."""
         if self.model is None:
-            self.model = XGBRegressor() if XGBRegressor is not None else Ridge()
+            self.model = self._make_model()
         self.model.fit(X, y)
 
         feature_stats = []
@@ -82,14 +111,16 @@ class TruthAdapter:
                 "last_fit": time.time(),
                 "psi": [0.0 for _ in feature_stats],
                 "drift_flag": False,
+                "needs_retrain": False,
             }
         )
         self._save_state()
 
     def predict(self, X: NDArray[np.float64]) -> Tuple[NDArray[np.float64], bool]:
-        """Return model predictions and current low-confidence flag."""
+        """Return predictions and flag if distribution drift is detected."""
         if self.model is None:
             raise RuntimeError("Model is not trained")
+        self.check_drift(X)
         preds = self.model.predict(X)
         low_conf = bool(self.metadata.get("drift_flag", False))
         return preds, low_conf
@@ -119,6 +150,7 @@ class TruthAdapter:
 
         self.metadata["psi"] = psi_values
         self.metadata["drift_flag"] = drift_detected
+        self.metadata["needs_retrain"] = drift_detected
         self.metadata["last_drift_check"] = time.time()
         self._save_state()
         return drift_detected
