@@ -95,6 +95,7 @@ from .environment import (
     SANDBOX_ENV_PRESETS,
     auto_include_modules,
     record_error,
+    run_scenarios,
     ERROR_CATEGORY_COUNTS,
 )
 from .resource_tuner import ResourceTuner
@@ -198,6 +199,54 @@ async def _collect_plugin_metrics_async(
                 except Exception:
                     merged[k] = 0.0
     return merged
+
+
+def run_workflow_scenarios(
+    workflow_db: str | Path,
+    data_dir: str | Path = "sandbox_data",
+    tracker: "ROITracker" | None = None,
+) -> Dict[str, Dict[str, float]]:
+    """Execute :func:`run_scenarios` for every workflow in ``workflow_db``.
+
+    Parameters
+    ----------
+    workflow_db:
+        Path to the workflow database.
+    data_dir:
+        Directory where the aggregated ROI-delta report will be written.
+    tracker:
+        Optional :class:`ROITracker` reused across scenario runs.
+
+    Returns
+    -------
+    Dict[str, Dict[str, float]]
+        Mapping of workflow identifiers to scenario ROI deltas.
+    """
+
+    from task_handoff_bot import WorkflowDB
+
+    wf_db = WorkflowDB(Path(workflow_db))
+    workflows = wf_db.fetch(limit=1000)
+    report: Dict[str, Dict[str, float]] = {}
+
+    for wf in workflows:
+        summary = run_scenarios(wf, tracker=tracker)
+        deltas = {
+            scen: info.get("roi_delta", 0.0)
+            for scen, info in summary.get("scenarios", {}).items()
+        }
+        wf_id = str(getattr(wf, "wid", getattr(wf, "id", "")))
+        report[wf_id] = deltas
+
+    out_path = Path(data_dir) / "scenario_deltas.json"
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open("w", encoding="utf-8") as fh:
+            json.dump(report, fh, indent=2)
+    except Exception:  # pragma: no cover - best effort
+        logger.exception("failed to write scenario deltas")
+
+    return report
 
 
 @radar.track

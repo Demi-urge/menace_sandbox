@@ -1107,6 +1107,16 @@ def main(argv: List[str] | None = None) -> None:
         help="display scenario summary after runs",
     )
     parser.add_argument(
+        "--run-scenarios",
+        action="store_true",
+        help="run scenario simulations for each workflow after standard runs",
+    )
+    parser.add_argument(
+        "--print-scenario-deltas",
+        action="store_true",
+        help="output ROI delta report from stored scenario runs",
+    )
+    parser.add_argument(
         "--alignment-warnings",
         action="store_true",
         help="display recent alignment warnings and exit",
@@ -1672,6 +1682,23 @@ def main(argv: List[str] | None = None) -> None:
             else 0.1,
             module_semantic=args.module_semantic,
         )
+        scenario_report = None
+        if getattr(args, "run_scenarios", False):
+            from sandbox_runner.cycle import run_workflow_scenarios
+
+            scenario_report = run_workflow_scenarios(
+                args.workflow_db,
+                args.sandbox_data_dir or "sandbox_data",
+            )
+        if getattr(args, "print_scenario_deltas", False):
+            if scenario_report is None:
+                try:
+                    path = Path(args.sandbox_data_dir or "sandbox_data") / "scenario_deltas.json"
+                    with path.open("r", encoding="utf-8") as fh:
+                        scenario_report = json.load(fh)
+                except Exception:
+                    scenario_report = {}
+            print(json.dumps(scenario_report, indent=2))
         if getattr(args, "print_scenario_summary", False):
             print(json.dumps(load_scenario_summary(), indent=2))
     else:
