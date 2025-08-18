@@ -8,6 +8,7 @@ import re
 import traceback
 import json
 import hashlib
+import math
 try:
     import yaml
 except Exception:  # pragma: no cover - optional dependency
@@ -57,6 +58,16 @@ try:
 except Exception:  # pragma: no cover - optional
     SentenceTransformer = None  # type: ignore
     util = None  # type: ignore
+
+from governed_embeddings import governed_embed
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Return cosine similarity between two vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    return dot / (norm_a * norm_b) if norm_a and norm_b else 0.0
 
 try:  # pragma: no cover - optional micro model
     from .micro_models.error_classifier import classify_error
@@ -349,16 +360,23 @@ class ErrorClassifier:
                 return label
         if self.model:
             try:
-                emb = self.model.encode([low])[0]
-                best_score = 0.0
-                best_label: ErrorCategory | None = None
-                for phrase, label in self.semantic_map.items():
-                    sim = float(util.cos_sim(emb, self.model.encode([phrase])[0]))
-                    if sim > best_score:
-                        best_score = sim
-                        best_label = label
-                if best_label and best_score > 0.5:
-                    return best_label
+                emb = governed_embed(low, self.model)
+                if emb is not None:
+                    best_score = 0.0
+                    best_label: ErrorCategory | None = None
+                    for phrase, label in self.semantic_map.items():
+                        p_emb = governed_embed(phrase, self.model)
+                        if p_emb is None:
+                            continue
+                        if util:
+                            sim = float(util.cos_sim(emb, p_emb))
+                        else:
+                            sim = _cosine(emb, p_emb)
+                        if sim > best_score:
+                            best_score = sim
+                            best_label = label
+                    if best_label and best_score > 0.5:
+                        return best_label
             except Exception as e:  # pragma: no cover - runtime issues
                 self.logger.warning("semantic classification failed: %s", e)
         return ErrorCategory.Unknown

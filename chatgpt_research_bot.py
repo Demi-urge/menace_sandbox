@@ -26,6 +26,8 @@ from .retry_utils import with_retry
 
 logger = logging.getLogger(__name__)
 
+from governed_embeddings import governed_embed
+
 
 def _env_int(
     name: str,
@@ -539,7 +541,12 @@ def _filter_redundant_sentences(text: str, threshold: float = 0.8) -> str:
         logger.warning("semantic redundancy filter unavailable; returning text unchanged")
         return text.strip()
     try:
-        vecs = model.encode(sents)
+        vecs = []
+        for s in sents:
+            emb = governed_embed(s, model)
+            if emb is None:
+                return text.strip()
+            vecs.append(np.array(emb))
         kept_idx: List[int] = []
         for i, vec in enumerate(vecs):
             if any(
