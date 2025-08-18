@@ -35,6 +35,10 @@ Each cycle proceeds through a consistent set of stages:
 This high level flow mirrors production behaviour while keeping runs
 self-contained and reproducible.
 
+The sandbox's ROI predictions are calibrated by a dedicated
+[TruthAdapter](truth_adapter.md). It can be trained on live or shadow data and
+flags low-confidence outputs when feature drift is detected.
+
 ## GPT Memory Persistence
 
 `sandbox_runner` and associated bots can persist previous GPT interactions using
