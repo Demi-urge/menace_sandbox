@@ -26,6 +26,7 @@ from typing import Any, List, Sequence, Mapping, Dict, Optional
 
 from gpt_memory_interface import GPTMemoryInterface
 from embeddable_db_mixin import log_embedding_metrics
+from analysis.semantic_diff_filter import find_semantic_risks
 
 try:
     from security.secret_redactor import redact as redact_secrets
@@ -142,10 +143,14 @@ class GPTMemoryManager(GPTMemoryInterface):
                 response TEXT NOT NULL,
                 tags TEXT,
                 ts TEXT NOT NULL,
-                embedding TEXT
+                embedding TEXT,
+                alerts TEXT
             )
             """
         )
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(interactions)").fetchall()]
+        if "alerts" not in cols:
+            self.conn.execute("ALTER TABLE interactions ADD COLUMN alerts TEXT")
         self.conn.commit()
 
     # --------------------------------------------------------------- interface
@@ -170,10 +175,15 @@ class GPTMemoryManager(GPTMemoryInterface):
         )
         if cur.fetchone() is not None:
             return
+        alerts = find_semantic_risks(original_prompt.splitlines())
+        if alerts:
+            logger.warning(
+                "semantic risks detected: %s", [a[1] for a in alerts]
+            )
         embedding: str | None = None
         tokens = 0
         wall_time = 0.0
-        if self.embedder is not None:
+        if self.embedder is not None and not alerts:
             try:
                 start = perf_counter()
                 vec = governed_embed(original_prompt, self.embedder)
@@ -190,9 +200,16 @@ class GPTMemoryManager(GPTMemoryInterface):
 
         store_start = perf_counter()
         cur = self.conn.execute(
-            "INSERT INTO interactions(prompt, response, tags, ts, embedding)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (prompt, response, tag_str, timestamp, embedding),
+            "INSERT INTO interactions(prompt, response, tags, ts, embedding, alerts)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                prompt,
+                response,
+                tag_str,
+                timestamp,
+                embedding,
+                json.dumps(alerts) if alerts else None,
+            ),
         )
         self.conn.commit()
         store_latency = perf_counter() - store_start
