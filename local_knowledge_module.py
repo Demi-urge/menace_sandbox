@@ -16,6 +16,8 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - keep import lightweight
     SentenceTransformer = None  # type: ignore
 
+from governed_embeddings import get_embedder
+
 from gpt_memory import GPTMemoryManager
 from gpt_knowledge_service import GPTKnowledgeService
 try:  # pragma: no cover - allow flat imports
@@ -152,13 +154,7 @@ def init_local_knowledge(mem_db: str | Path) -> LocalKnowledgeModule:
 
     global _LOCAL_KNOWLEDGE
     if _LOCAL_KNOWLEDGE is None:
-        embedder = None
-        if SentenceTransformer is not None:
-            try:  # pragma: no cover - optional heavy dependency
-                embedder = SentenceTransformer("all-MiniLM-L6-v2")
-            except Exception:
-                embedder = None
-        _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=embedder)
+        _LOCAL_KNOWLEDGE = LocalKnowledgeModule(mem_db, embedder=get_embedder())
     return _LOCAL_KNOWLEDGE
 
 
