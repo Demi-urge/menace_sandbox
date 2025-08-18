@@ -61,6 +61,9 @@ def test_shifted_features_trigger_drift(tmp_path: Path) -> None:
     metrics, drift_flag = adapter.check_drift(X_shifted)
     assert drift_flag is True
     assert set(metrics) == {"psi", "ks"}
+    # check_drift should raise flags for downstream callers
+    assert adapter.metadata["retraining_required"] is True
+
     preds, low_conf = adapter.predict(X_shifted)
     assert low_conf is True
     assert adapter.metadata["drift_flag"] is True
