@@ -84,6 +84,8 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
                 'hostile_failures': 1.0,
                 'misuse_failures': 2.0,
                 'concurrency_throughput': 1.0,
+                'schema_mismatch_rate': 0.05,
+                'upstream_failure_rate': 0.05,
             },
             fail_on_missing_scenarios=False,
         ),
@@ -234,9 +236,21 @@ def test_sandbox_scenario_diversity(monkeypatch, tmp_path):
             and m.get('concurrency_throughput_breach') == 1.0
         ):
             found.add('concurrency_spike')
+        if (
+            'schema_mismatch_rate:schema_drift' in m
+            and m.get('schema_mismatch_rate_breach') == 1.0
+        ):
+            found.add('schema_drift')
+        if (
+            'upstream_failure_rate:flaky_upstream' in m
+            and m.get('upstream_failure_rate_breach') == 1.0
+        ):
+            found.add('flaky_upstream')
     assert found == {
         'high_latency_api',
         'hostile_input',
         'user_misuse',
         'concurrency_spike',
+        'schema_drift',
+        'flaky_upstream',
     }

@@ -132,10 +132,24 @@ def test_generate_presets_high_latency_auto(monkeypatch):
 
 def test_generate_presets_profiles():
     presets = eg.generate_presets(
-        profiles=["high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"]
+        profiles=[
+            "high_latency_api",
+            "hostile_input",
+            "user_misuse",
+            "concurrency_spike",
+            "schema_drift",
+            "flaky_upstream",
+        ]
     )
     names = {p.get("SCENARIO_NAME") for p in presets}
-    expected = {"high_latency_api", "hostile_input", "user_misuse", "concurrency_spike"}
+    expected = {
+        "high_latency_api",
+        "hostile_input",
+        "user_misuse",
+        "concurrency_spike",
+        "schema_drift",
+        "flaky_upstream",
+    }
     assert expected <= names
     hl = next(p for p in presets if p.get("SCENARIO_NAME") == "high_latency_api")
     assert hl.get("NETWORK_LATENCY_MS") == 500
@@ -153,21 +167,39 @@ def test_generate_presets_profiles():
     assert cs.get("CPU_SPIKE")
     assert cs.get("MAX_THREADS") == 200
     assert cs.get("CONCURRENCY_LEVEL")
+    sd = next(p for p in presets if p.get("SCENARIO_NAME") == "schema_drift")
+    assert sd.get("SCHEMA_MISMATCHES") is not None
+    assert sd.get("SCHEMA_CHECKS") is not None
+    fu = next(p for p in presets if p.get("SCENARIO_NAME") == "flaky_upstream")
+    assert fu.get("UPSTREAM_FAILURES") is not None
+    assert fu.get("UPSTREAM_REQUESTS") is not None
 
 
 def test_generate_presets_new_scenario_keys():
     presets = eg.generate_presets(
-        profiles=["hostile_input", "user_misuse", "concurrency_spike"]
+        profiles=[
+            "hostile_input",
+            "user_misuse",
+            "concurrency_spike",
+            "schema_drift",
+            "flaky_upstream",
+        ]
     )
     by_name = {p.get("SCENARIO_NAME"): p for p in presets}
     hi = by_name["hostile_input"]
     um = by_name["user_misuse"]
     cs = by_name["concurrency_spike"]
+    sd = by_name["schema_drift"]
+    fu = by_name["flaky_upstream"]
     assert hi.get("THREAT_INTENSITY") is not None
     assert um.get("THREAT_INTENSITY") is not None
     assert cs.get("THREAT_INTENSITY") is not None
+    assert sd.get("THREAT_INTENSITY") is not None
+    assert fu.get("THREAT_INTENSITY") is not None
     assert cs.get("THREAD_BURST") is not None
     assert cs.get("ASYNC_TASK_BURST") is not None
+    assert sd.get("SCHEMA_MISMATCHES") is not None
+    assert fu.get("UPSTREAM_FAILURES") is not None
 
 
 def test_generate_presets_profile_severity_levels():
@@ -177,7 +209,8 @@ def test_generate_presets_profile_severity_levels():
     assert low["THREAT_INTENSITY"] < high["THREAT_INTENSITY"]
 
 
-def test_generate_presets_mixed_severity_profiles():
+def test_generate_presets_mixed_severity_profiles(monkeypatch):
+    monkeypatch.setattr(eg.random, "random", lambda: 1.0)
     presets = eg.generate_presets(
         profiles=["high_latency_api", "concurrency_spike"],
         severity={"high_latency_api": "low", "concurrency_spike": "high"},
@@ -730,6 +763,8 @@ def test_infer_profiles_from_ast(tmp_path):
         "concurrency_spike",
         "user_misuse",
         "hostile_input",
+        "schema_drift",
+        "flaky_upstream",
     }
 
 
