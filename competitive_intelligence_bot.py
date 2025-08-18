@@ -15,6 +15,10 @@ import re
 import math
 
 from .retry_utils import with_retry
+from security.secret_redactor import redact
+import license_detector
+from analysis.semantic_diff_filter import find_semantic_risks
+from governed_embeddings import governed_embed
 
 logger = logging.getLogger(__name__)
 try:
@@ -180,7 +184,13 @@ _AI_EMBEDDINGS: List[List[float]] | None = None
 if SentenceTransformer is not None:
     try:
         _EMBEDDER = SentenceTransformer(_EMBED_MODEL)
-        _AI_EMBEDDINGS = _EMBEDDER.encode(list(_AI_KEYWORDS))
+        _AI_EMBEDDINGS = []
+        for kw in _AI_KEYWORDS:
+            emb = governed_embed(kw, _EMBEDDER)
+            if emb is not None:
+                _AI_EMBEDDINGS.append(emb)
+        if not _AI_EMBEDDINGS:
+            _AI_EMBEDDINGS = None
     except Exception as exc:  # pragma: no cover - optional
         logger.warning("embedding model init failed: %s", exc)
         _EMBEDDER = None
@@ -214,6 +224,7 @@ class CompetitorUpdate:
     sentiment: float = 0.0
     entities: List[str] = field(default_factory=list)
     ai_signals: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class IntelligenceDB:
@@ -485,25 +496,36 @@ def detect_ai_signals(
 ) -> bool:
     """Heuristic detection of AI-related signals."""
     text = f"{update.title} {update.content}"
+    cleaned = redact(text)
+    meta = update.metadata.setdefault("scoring", {})
+    alerts = find_semantic_risks(cleaned.splitlines())
+    if alerts:
+        meta["semantic_alerts"] = alerts
+    lic = license_detector.detect(cleaned)
+    if lic:
+        logger.warning("license detected: %s", lic)
+        return False
     if _EMBEDDER and _AI_EMBEDDINGS:
         try:
-            vec = _EMBEDDER.encode([text])[0]
-            scores = [_cosine_similarity(vec, kw) for kw in _AI_EMBEDDINGS]
-            if _EMBED_STRATEGY == "average":
-                score = sum(scores) / len(scores)
-            elif _EMBED_STRATEGY == "topk":
-                k = min(_EMBED_TOPK, len(scores))
-                scores.sort(reverse=True)
-                score = sum(scores[:k]) / k
-            else:
-                score = max(scores)
-            if score > _AI_THRESHOLD:
-                return True
+            vec = governed_embed(cleaned, _EMBEDDER)
+            if vec is not None:
+                scores = [_cosine_similarity(vec, kw) for kw in _AI_EMBEDDINGS]
+                if _EMBED_STRATEGY == "average":
+                    score = sum(scores) / len(scores)
+                elif _EMBED_STRATEGY == "topk":
+                    k = min(_EMBED_TOPK, len(scores))
+                    scores.sort(reverse=True)
+                    score = sum(scores[:k]) / k
+                else:
+                    score = max(scores)
+                meta["embedding_score"] = score
+                if score > _AI_THRESHOLD:
+                    return True
         except Exception:
             logger.exception("AI embedding detection failed")
             if strict_mode if strict_mode is not None else _STRICT_MODE:
                 raise
-    text_lower = text.lower()
+    text_lower = cleaned.lower()
     return sum(k in text_lower for k in _AI_KEYWORDS) > 1
 
 
