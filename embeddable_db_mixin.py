@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterator, List, Sequence, Tuple
 from time import perf_counter
 import json
 import logging
-from security.redaction import redact_secrets
+from security.secret_redactor import redact
 
 # Lightweight license detection based on simple fingerprints.  This avoids
 # embedding content that is under GPL or non‑commercial restrictions.
@@ -159,7 +159,7 @@ class EmbeddableDBMixin:
     def encode_text(self, text: str) -> List[float]:
         """Encode ``text`` using the SentenceTransformer model."""
 
-        text = redact_secrets(text)
+        text = redact(text)
 
         start = perf_counter()
         tokens = 0
@@ -300,7 +300,7 @@ class EmbeddableDBMixin:
                     "skipping embedding for %s due to license %s", record_id, lic.value
                 )
                 return
-        record = redact_secrets(record) if isinstance(record, str) else record
+        record = redact(record) if isinstance(record, str) else record
 
         start = perf_counter()
         vec = self.vector(record)
@@ -325,6 +325,7 @@ class EmbeddableDBMixin:
             "embedding_version": self.embedding_version,
             "kind": kind,
             "source_id": source_id,
+            "redacted": True,
         }
         self._rebuild_index()
         save_start = perf_counter()
@@ -432,10 +433,11 @@ class EmbeddableDBMixin:
             for i, d in zip(ids, dists):
                 if i < len(self._id_map):
                     rid = self._id_map[i]
-                    results.append((rid, float(d)))
                     meta = self._metadata.get(rid)
-                    if meta:
-                        self._record_staleness(rid, meta.get("created_at"))
+                    if not meta or not meta.get("redacted"):
+                        continue
+                    results.append((rid, float(d)))
+                    self._record_staleness(rid, meta.get("created_at"))
             return results
         elif self.backend == "faiss":
             if not faiss or not np:
@@ -446,10 +448,11 @@ class EmbeddableDBMixin:
             for idx, dist in zip(ids[0], dists[0]):
                 if 0 <= idx < len(self._id_map):
                     rid = self._id_map[idx]
-                    results.append((rid, float(dist)))
                     meta = self._metadata.get(rid)
-                    if meta:
-                        self._record_staleness(rid, meta.get("created_at"))
+                    if not meta or not meta.get("redacted"):
+                        continue
+                    results.append((rid, float(dist)))
+                    self._record_staleness(rid, meta.get("created_at"))
             return results
         return []
 
@@ -458,5 +461,5 @@ class EmbeddableDBMixin:
 
         for record_id, record, kind in self.iter_records():
             if str(record_id) not in self._metadata:
-                record = redact_secrets(record) if isinstance(record, str) else record
+                record = redact(record) if isinstance(record, str) else record
                 self.add_embedding(record_id, record, kind)
