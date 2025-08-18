@@ -51,7 +51,7 @@ def test_retriever_search_async(monkeypatch):
             self.record_id = 1
             self.origin_db = "error"
             self.score = 0.5
-            self.metadata = {"message": "oops"}
+            self.metadata = {"message": "oops", "redacted": True}
 
         def to_dict(self):
             return {
@@ -65,7 +65,7 @@ def test_retriever_search_async(monkeypatch):
         def retrieve_with_confidence(self, query, top_k=5):
             return [DummyResult()], 0.9, None
 
-    r = Retriever(retriever=DummyUR())
+    r = Retriever(retriever=DummyUR(), content_filtering=False)
     result = asyncio.run(r.search_async("test", session_id="s"))
     assert result and result[0]["record_id"] == 1
     assert g1.inc_calls == 1
@@ -78,7 +78,7 @@ def test_context_builder_build_async(monkeypatch):
             self.record_id = 1
             self.origin_db = "error"
             self.score = 0.5
-            self.metadata = {"message": "fail"}
+            self.metadata = {"message": "fail", "redacted": True}
 
         def to_dict(self):
             return {
@@ -97,7 +97,7 @@ def test_context_builder_build_async(monkeypatch):
     monkeypatch.setattr(dec, "_LATENCY_GAUGE", g2)
     monkeypatch.setattr(dec, "_RESULT_SIZE_GAUGE", g3)
 
-    r = Retriever(retriever=DummyUR())
+    r = Retriever(retriever=DummyUR(), content_filtering=False)
     builder = ContextBuilder(retriever=r)
     ctx = asyncio.run(builder.build_async("query"))
     data = json.loads(ctx)

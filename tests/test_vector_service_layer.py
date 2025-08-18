@@ -49,7 +49,7 @@ class DummyUR:
 
 def test_logging_hook_emits_session_id(caplog):
     ur = DummyUR()
-    retriever = Retriever(retriever=ur)
+    retriever = Retriever(retriever=ur, content_filtering=False)
     caplog.set_level(logging.INFO)
     retriever.search("alpha", session_id="sess-1")
     assert ur.calls == [("alpha", 5)]
@@ -58,7 +58,7 @@ def test_logging_hook_emits_session_id(caplog):
 
 def test_retriever_fallback_low_similarity():
     ur = DummyUR(score=0.05)
-    retriever = Retriever(retriever=ur)
+    retriever = Retriever(retriever=ur, content_filtering=False)
     hits = retriever.search("beta", session_id="sess-2")
     assert isinstance(hits, FallbackResult)
     assert hits.reason == "low confidence"
@@ -87,7 +87,7 @@ class DummyPatchLogger:
 
 
 def test_quick_fix_engine_uses_service_layer(monkeypatch, tmp_path):
-    retr = Retriever(retriever=DummyUR())
+    retr = Retriever(retriever=DummyUR(), content_filtering=False)
     plog = DummyPatchLogger()
     engine = qfe.QuickFixEngine(
         error_db=SimpleNamespace(),

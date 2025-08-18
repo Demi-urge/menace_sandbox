@@ -14,7 +14,7 @@ class DummyHit:
         self.origin_db = "db"
         self.record_id = "1"
         self.score = score
-        self.metadata = {}
+        self.metadata = {"redacted": True}
 
     def to_dict(self):
         return {"origin_db": self.origin_db, "score": self.score}
@@ -33,14 +33,14 @@ class DummyRetriever:
 
 
 def test_retriever_search_success():
-    r = Retriever(retriever=DummyRetriever(confidence=0.9))
+    r = Retriever(retriever=DummyRetriever(confidence=0.9), content_filtering=False)
     results = r.search("query", session_id="s")
     assert results[0]["record_id"] == "1"
 
 
 def test_retriever_low_confidence_fallback():
     dr = DummyRetriever(confidence=0.01)
-    r = Retriever(retriever=dr, similarity_threshold=0.1)
+    r = Retriever(retriever=dr, similarity_threshold=0.1, content_filtering=False)
     res = r.search("question", session_id="s")
     assert isinstance(res, FallbackResult)
     assert res.reason == "low confidence"
@@ -49,7 +49,7 @@ def test_retriever_low_confidence_fallback():
 
 
 def test_retriever_malformed_query():
-    r = Retriever(retriever=DummyRetriever())
+    r = Retriever(retriever=DummyRetriever(), content_filtering=False)
     with pytest.raises(MalformedPromptError):
         r.search("", session_id="s")
 

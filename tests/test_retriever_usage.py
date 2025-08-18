@@ -5,7 +5,11 @@ class _Hit:
     def __init__(self, origin: str, rid: int):
         self.origin_db = origin
         self.score = 0.9
-        self.metadata = {"id": rid, "contextual_metrics": {"model_score": 1.0}}
+        self.metadata = {
+            "id": rid,
+            "contextual_metrics": {"model_score": 1.0},
+            "redacted": True,
+        }
         self.reason = "match"
 
 
@@ -15,7 +19,7 @@ class _DummyUR:
 
 
 def test_retriever_search():
-    retriever = Retriever(retriever=_DummyUR())
+    retriever = Retriever(retriever=_DummyUR(), content_filtering=False)
     hits = retriever.search("q", top_k=5)
     assert hits and {h["origin_db"] for h in hits} == {"bot", "workflow"}
 
