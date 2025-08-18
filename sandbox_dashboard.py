@@ -168,10 +168,11 @@ class SandboxDashboard(MetricsDashboard):
                 "Failed to load scenario summary from %s", self.summary_file
             )
             return jsonify({'error': str(exc)}), 500
-        labels = list(data.keys())
-        roi = [float(data[k].get('roi', 0.0)) for k in labels]
-        failures = [float(data[k].get('failures', 0)) for k in labels]
-        successes = [float(data[k].get('successes', 0)) for k in labels]
+        scen_map = data.get('scenarios', {}) if isinstance(data, dict) else {}
+        labels = list(scen_map.keys())
+        roi = [float(scen_map[k].get('roi', 0.0)) for k in labels]
+        failures = [float(scen_map[k].get('failures', 0)) for k in labels]
+        successes = [float(scen_map[k].get('successes', 0)) for k in labels]
         return jsonify({'labels': labels, 'roi': roi, 'failures': failures, 'successes': successes}), 200
 
     def relevancy_data(self) -> tuple[str, int]:

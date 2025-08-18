@@ -335,9 +335,12 @@ def _scenario_summary_path() -> Path:
 
 
 def save_scenario_summary(
-    synergy_data: Dict[str, Dict[str, list]]
-) -> Dict[str, Dict[str, float]]:
+    synergy_data: Dict[str, Dict[str, list]],
+    roi_deltas: Dict[str, float] | None = None,
+    worst_scenario: str | None = None,
+) -> Dict[str, Any]:
     """Persist aggregated ROI and success metrics per scenario."""
+
     summary: Dict[str, Dict[str, float]] = {}
     for scen, data in synergy_data.items():
         roi_total = sum(float(r) for r in data.get("roi", []))
@@ -354,14 +357,18 @@ def save_scenario_summary(
             "successes": max(0, len(metrics) - failure_runs),
             "failures": failure_runs,
         }
+    if roi_deltas:
+        for scen, delta in roi_deltas.items():
+            summary.setdefault(scen, {})["roi_delta"] = float(delta)
+    result = {"scenarios": summary, "worst_scenario": worst_scenario}
     path = _scenario_summary_path()
     try:  # pragma: no cover - best effort only
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
-            json.dump(summary, fh, indent=2, sort_keys=True)
+            json.dump(result, fh, indent=2, sort_keys=True)
     except Exception as exc:
         logger.exception("failed to save scenario summary: %s", exc)
-    return summary
+    return result
 
 
 def load_scenario_summary() -> Dict[str, Any]:
@@ -5268,9 +5275,17 @@ def run_scenarios(
                     for k in set(metrics_on) | set(baseline_metrics)
                 }
 
-            synergy_metrics = tracker.record_scenario_delta(
-                scenario, roi_on, baseline_roi, metrics_delta
-            )
+            delta = roi_on - baseline_roi
+            tracker.record_scenario_delta(scenario, delta)
+            synergy_metrics = {
+                f"synergy_{k}": float(v) for k, v in metrics_delta.items()
+            }
+            synergy_metrics["synergy_roi"] = delta
+            synergy_metrics.setdefault("synergy_profitability", delta)
+            synergy_metrics.setdefault("synergy_revenue", delta)
+            synergy_metrics.setdefault("synergy_projected_lucrativity", delta)
+            tracker.scenario_synergy.setdefault(scenario, []).append(synergy_metrics)
+            tracker.register_metrics(*synergy_metrics.keys())
             tracker.update(
                 baseline_roi,
                 roi_on,
@@ -5301,17 +5316,11 @@ def run_scenarios(
 
     asyncio.run(_run())
 
-    worst = (
-        min(results.items(), key=lambda kv: kv[1]["roi_delta"])[0]
-        if results
-        else ""
-    )
-
-    tracker.worst_scenario = worst
+    worst, _ = tracker.worst_scenario()
 
     export = {
-        scen: {"roi_delta": info.get("roi_delta", 0.0), "worst": scen == worst}
-        for scen, info in results.items()
+        scen: {"roi_delta": delta, "worst": scen == worst}
+        for scen, delta in tracker.scenario_roi_deltas.items()
     }
     try:
         out_path = Path("sandbox_data") / "scenario_deltas.json"
@@ -5815,7 +5824,12 @@ def run_repo_section_simulations(
                             "all", []
                         ).append({"preset": preset, "stub": stub, "result": res})
 
-        summary = save_scenario_summary(synergy_data)
+        worst_label, _ = tracker.worst_scenario() if hasattr(tracker, "worst_scenario") else (None, 0.0)
+        summary = save_scenario_summary(
+            synergy_data,
+            getattr(tracker, "scenario_roi_deltas", {}),
+            worst_label if worst_label else None,
+        )
         setattr(tracker, "scenario_summary", summary)
         if hasattr(tracker, "scenario_synergy"):
             tracker.scenario_synergy = scenario_synergy
@@ -6721,7 +6735,12 @@ def run_workflow_simulations(
         save_coverage_data()
         settings = SandboxSettings()
         verify_scenario_coverage(raise_on_missing=settings.fail_on_missing_scenarios)
-        summary = save_scenario_summary(synergy_data)
+        worst_label, _ = tracker.worst_scenario() if hasattr(tracker, "worst_scenario") else (None, 0.0)
+        summary = save_scenario_summary(
+            synergy_data,
+            getattr(tracker, "scenario_roi_deltas", {}),
+            worst_label if worst_label else None,
+        )
         setattr(tracker, "scenario_summary", summary)
         setattr(tracker, "coverage_summary", coverage_summary)
         return (tracker, details) if return_details else tracker

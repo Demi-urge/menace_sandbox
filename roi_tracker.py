@@ -199,7 +199,7 @@ class ROITracker:
         self.synergy_history: list[dict[str, float]] = []
         self.scenario_synergy: Dict[str, List[Dict[str, float]]] = {}
         self.scenario_roi_deltas: Dict[str, float] = {}
-        self.worst_scenario: Optional[str] = None
+        self._worst_scenario: str | None = None
         self._best_order: Optional[Tuple[int, int, int]] = None
         self._order_history: Tuple[float, ...] = ()
         self.resource_db = resource_db
@@ -892,7 +892,7 @@ class ROITracker:
             "mae_trend": self.rolling_mae_trend(window),
             "accuracy_trend": self.rolling_accuracy_trend(window),
             "scenario_roi_deltas": dict(self.scenario_roi_deltas),
-            "worst_scenario": self.worst_scenario,
+            "worst_scenario": self.worst_scenario()[0] if self.scenario_roi_deltas else None,
         }
 
     # ------------------------------------------------------------------
@@ -1849,47 +1849,32 @@ class ROITracker:
         return list(self.scenario_synergy.get(str(name), []))
 
     # ------------------------------------------------------------------
-    def record_scenario_delta(
-        self,
-        scenario: str,
-        roi_with: float,
-        roi_without: float,
-        metrics_delta: Dict[str, float] | None = None,
-    ) -> Dict[str, float]:
-        """Record ROI and metric deltas for a scenario.
+    def record_scenario_delta(self, name: str, delta: float) -> None:
+        """Record ROI ``delta`` for scenario ``name``.
 
-        Parameters
-        ----------
-        scenario:
-            Name of the scenario being evaluated.
-        roi_with:
-            ROI when the workflow is enabled under the scenario.
-        roi_without:
-            ROI for the counterfactual run without the workflow.
-        metrics_delta:
-            Mapping of metric name to the difference between the enabled and
-            counterfactual runs.
-
-        Returns
-        -------
-        Dict[str, float]
-            The synergy metric mapping stored for ``scenario``.
+        The method stores the ROI change associated with ``name`` and updates
+        the cached worst-scenario label when ``delta`` represents the largest
+        drop encountered so far.
         """
 
-        scen = str(scenario)
-        delta = float(roi_with) - float(roi_without)
+        scen = str(name)
+        delta = float(delta)
         self.scenario_roi_deltas[scen] = delta
-        metrics_delta = metrics_delta or {}
-        synergy_metrics = {
-            f"synergy_{k}": float(v) for k, v in metrics_delta.items()
-        }
-        synergy_metrics["synergy_roi"] = delta
-        synergy_metrics.setdefault("synergy_profitability", delta)
-        synergy_metrics.setdefault("synergy_revenue", delta)
-        synergy_metrics.setdefault("synergy_projected_lucrativity", delta)
-        self.scenario_synergy.setdefault(scen, []).append(synergy_metrics)
-        self.register_metrics(*synergy_metrics.keys())
-        return synergy_metrics
+        if (
+            self._worst_scenario is None
+            or delta < self.scenario_roi_deltas.get(self._worst_scenario, float("inf"))
+        ):
+            self._worst_scenario = scen
+
+    # ------------------------------------------------------------------
+    def worst_scenario(self) -> Tuple[str, float]:
+        """Return the scenario with the largest ROI drop."""
+
+        if not self.scenario_roi_deltas:
+            return "", 0.0
+        worst = min(self.scenario_roi_deltas.items(), key=lambda kv: kv[1])
+        self._worst_scenario = worst[0]
+        return worst
 
     # ------------------------------------------------------------------
     def get_scenario_roi_delta(self, name: str) -> float:
@@ -1928,7 +1913,7 @@ class ROITracker:
                 "synergy_history": self.synergy_history,
                 "scenario_synergy": self.scenario_synergy,
                 "scenario_roi_deltas": self.scenario_roi_deltas,
-                "worst_scenario": self.worst_scenario,
+                "worst_scenario": self.worst_scenario()[0] if self.scenario_roi_deltas else None,
                 "predicted_metrics": self.predicted_metrics,
                 "actual_metrics": self.actual_metrics,
                 "metric_predictions": metric_preds,
@@ -2112,10 +2097,11 @@ class ROITracker:
                 "CREATE TABLE IF NOT EXISTS worst_scenario (scenario TEXT)"
             )
             conn.execute("DELETE FROM worst_scenario")
-            if self.worst_scenario is not None:
+            worst_label, _ = self.worst_scenario()
+            if worst_label:
                 conn.execute(
                     "INSERT INTO worst_scenario (scenario) VALUES (?)",
-                    (self.worst_scenario,),
+                    (worst_label,),
                 )
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS drift_metrics (score REAL, flag INTEGER)"
@@ -2169,7 +2155,7 @@ class ROITracker:
                     self.synergy_history = []
                     self.scenario_synergy = {}
                     self.scenario_roi_deltas = {}
-                    self.worst_scenario = None
+                    self._worst_scenario = None
                 else:
                     self.roi_history = [float(x) for x in data.get("roi_history", [])]
                     self.confidence_history = [
@@ -2250,7 +2236,7 @@ class ROITracker:
                         for k, v in data.get("scenario_roi_deltas", {}).items()
                     }
                     worst = data.get("worst_scenario")
-                    self.worst_scenario = str(worst) if worst is not None else None
+                    self._worst_scenario = str(worst) if worst is not None else None
                     if not self.synergy_metrics_history:
                         for m, vals in data.get("metrics_history", {}).items():
                             if str(m).startswith("synergy_"):
@@ -2313,7 +2299,7 @@ class ROITracker:
                 self.metrics_history = {}
                 self.scenario_synergy = {}
                 self.scenario_roi_deltas = {}
-                self.worst_scenario = None
+                self._worst_scenario = None
             return
         try:
             with sqlite3.connect(path) as conn:
@@ -2415,7 +2401,7 @@ class ROITracker:
             self.actual_metrics = {}
             self.scenario_synergy = {}
             self.scenario_roi_deltas = {}
-            self.worst_scenario = None
+            self._worst_scenario = None
             self.category_history = []
             self.drift_scores = []
             self.drift_flags = []
@@ -2490,7 +2476,7 @@ class ROITracker:
         self.scenario_roi_deltas = {
             str(scen): float(delta) for scen, delta in scen_delta_rows
         }
-        self.worst_scenario = (
+        self._worst_scenario = (
             str(worst_row[0]) if worst_row and worst_row[0] is not None else None
         )
         n = len(self.roi_history)
