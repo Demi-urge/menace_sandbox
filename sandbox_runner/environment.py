@@ -5109,28 +5109,34 @@ def run_scenarios(
     workflow: Any,
     other_workflows: Iterable[Any] | None = None,
     tracker: "ROITracker" | None = None,
-) -> "ROITracker":
-    """Replay *workflow* under several scenarios and record ROI deltas.
+) -> Dict[str, Any]:
+    """Run *workflow* across several environment presets and compare ROI.
+
+    The workflow is executed in five predefined scenarios: a baseline "normal"
+    environment followed by ``concurrency_spike``, ``hostile_input``,
+    ``schema_drift`` and ``flaky_upstream``.  For each scenario the ROI and
+    metrics are recorded.  The ROI and metric deltas are calculated relative to
+    the baseline run and synergy metrics are tracked through
+    :class:`menace.roi_tracker.ROITracker`.
 
     Parameters
     ----------
     workflow:
-        Workflow record or object providing ``workflow`` (steps) and ``wid``
-        attributes. A plain list of steps is also accepted.
+        Workflow record or list of step strings.  Objects providing ``workflow``
+        and ``wid`` attributes are also accepted.
     other_workflows:
-        Optional iterable of additional workflows that remain constant across
-        runs. These are included in both the workflow-enabled and
-        counterfactual executions.
+        Optional iterable of additional workflows that are executed alongside
+        ``workflow`` in every scenario.
     tracker:
-        Optional :class:`ROITracker` used to record ROI deltas. When omitted a
-        new tracker is created.
+        Optional ROI tracker used to calculate diminishing returns and record
+        synergy metrics.  When omitted a new tracker is created.
 
     Returns
     -------
-    ROITracker
-        The tracker containing recorded metrics. The attribute
-        ``worst_scenario`` identifies the scenario with the most negative ROI
-        delta and ``scenario_roi_deltas`` maps each scenario to its ROI delta.
+    Dict[str, Any]
+        Mapping with per-scenario results and the worst performing scenario.
+        The ``scenarios`` key maps scenario names to dictionaries containing the
+        ROI, ROI delta, raw metrics, metric deltas and recorded synergy metrics.
     """
 
     from menace.roi_tracker import ROITracker
@@ -5169,8 +5175,7 @@ def run_scenarios(
     for wf in other_workflows:
         other_steps.extend(_steps(wf))
 
-    snippet_with = _wf_snippet(other_steps + wf_steps)
-    snippet_without = _wf_snippet(other_steps)
+    snippet = _wf_snippet(other_steps + wf_steps)
 
     presets = [
         {"SCENARIO_NAME": "normal"},
@@ -5180,46 +5185,57 @@ def run_scenarios(
         {"SCENARIO_NAME": "flaky_upstream"},
     ]
 
+    results: Dict[str, Dict[str, Any]] = {}
+    baseline_roi: float = 0.0
+    baseline_metrics: Dict[str, float] = {}
+
     async def _run() -> None:
-        for preset in presets:
+        nonlocal baseline_roi, baseline_metrics
+        for idx, preset in enumerate(presets):
             env_input = dict(preset)
             scenario = env_input.get("SCENARIO_NAME", "")
 
-            base_res, base_updates = await _section_worker(
-                snippet_without, env_input, tracker.diminishing()
-            )
-            base_roi = base_updates[-1][1] if base_updates else 0.0
-            base_metrics = base_updates[-1][2] if base_updates else {}
-
-            res, updates = await _section_worker(
-                snippet_with, env_input, tracker.diminishing()
+            _, updates = await _section_worker(
+                snippet, env_input, tracker.diminishing()
             )
             roi = updates[-1][1] if updates else 0.0
             metrics = updates[-1][2] if updates else {}
 
-            metrics_delta = {
-                k: metrics.get(k, 0.0) - base_metrics.get(k, 0.0)
-                for k in set(metrics) | set(base_metrics)
-            }
+            if idx == 0:
+                baseline_roi, baseline_metrics = roi, metrics
+                metrics_delta = {k: 0.0 for k in metrics}
+            else:
+                metrics_delta = {
+                    k: metrics.get(k, 0.0) - baseline_metrics.get(k, 0.0)
+                    for k in set(metrics) | set(baseline_metrics)
+                }
+
             synergy_metrics = tracker.record_scenario_delta(
-                scenario, roi, base_roi, metrics_delta
+                scenario, roi, baseline_roi, metrics_delta
             )
             tracker.update(
-                base_roi,
+                baseline_roi,
                 roi,
                 modules=[f"workflow_{wf_id}", scenario],
                 metrics={**metrics, **synergy_metrics},
             )
 
+            results[scenario] = {
+                "roi": roi,
+                "roi_delta": roi - baseline_roi,
+                "metrics": metrics,
+                "metrics_delta": metrics_delta,
+                "synergy": synergy_metrics,
+            }
+
     asyncio.run(_run())
 
     worst = (
-        min(tracker.scenario_roi_deltas.items(), key=lambda kv: kv[1])[0]
-        if tracker.scenario_roi_deltas
+        min(results.items(), key=lambda kv: kv[1]["roi_delta"])[0]
+        if results
         else ""
     )
-    tracker.worst_scenario = worst
-    return tracker
+    return {"scenarios": results, "worst_scenario": worst}
 
 
 # ----------------------------------------------------------------------

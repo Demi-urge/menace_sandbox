@@ -1651,10 +1651,10 @@ def main(argv: List[str] | None = None) -> None:
             print(f"workflow {args.workflow_id} not found")
             return
         wf = wf_db._row_to_record(row)
-        tracker = run_scenarios(wf)
-        for scen, delta in sorted(tracker.scenario_roi_deltas.items()):
-            print(f"{scen}: {delta:+.3f}")
-        print(f"worst_scenario: {tracker.worst_scenario}")
+        summary = run_scenarios(wf)
+        for scen, info in sorted(summary["scenarios"].items()):
+            print(f"{scen}: {info['roi_delta']:+.3f}")
+        print(f"worst_scenario: {summary['worst_scenario']}")
         return
 
     if args.workflow_sim:

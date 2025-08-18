@@ -46,49 +46,34 @@ def _setup_tracker(monkeypatch):
     return rt
 
 
-def test_scenario_roi_delta_persistence(monkeypatch, tmp_path):
+def test_scenario_roi_deltas_and_synergy(monkeypatch):
     _setup_mm_stubs(monkeypatch)
     rt = _setup_tracker(monkeypatch)
     import sandbox_runner.environment as env
 
     scenario_data = {
-        "normal": (1.0, 2.0, {"profitability": 1.0}, {"profitability": 2.0}),
-        "concurrency_spike": (1.0, 0.0, {"profitability": 1.0}, {"profitability": 0.0}),
-        "hostile_input": (1.0, 1.2, {"profitability": 1.0}, {"profitability": 1.2}),
-        "schema_drift": (1.0, 1.2, {"profitability": 1.0}, {"profitability": 1.2}),
-        "flaky_upstream": (1.0, 1.2, {"profitability": 1.0}, {"profitability": 1.2}),
+        "normal": (1.0, {"profitability": 1.0}),
+        "concurrency_spike": (0.0, {"profitability": 0.0}),
+        "hostile_input": (1.2, {"profitability": 1.2}),
+        "schema_drift": (1.2, {"profitability": 1.2}),
+        "flaky_upstream": (1.2, {"profitability": 1.2}),
     }
-    call_counts = {}
 
     async def fake_worker(snippet, env_input, threshold):
         scen = env_input.get("SCENARIO_NAME")
-        count = call_counts.get(scen, 0)
-        call_counts[scen] = count + 1
-        base, with_, base_metrics, with_metrics = scenario_data[scen]
-        if count == 0:
-            roi, metrics = base, base_metrics
-        else:
-            roi, metrics = with_, with_metrics
+        roi, metrics = scenario_data[scen]
         return {"exit_code": 0}, [(0.0, roi, metrics)]
 
     monkeypatch.setattr(env, "_section_worker", fake_worker)
 
-    tracker = env.run_scenarios([], tracker=rt.ROITracker())
-    assert tracker.scenario_roi_deltas["normal"] == pytest.approx(1.0)
-    assert tracker.scenario_roi_deltas["concurrency_spike"] == pytest.approx(-1.0)
-    assert tracker.worst_scenario == "concurrency_spike"
+    summary = env.run_scenarios([], tracker=rt.ROITracker())
 
-    path_json = tmp_path / "roi.json"
-    tracker.save_history(str(path_json))
-    t2 = rt.ROITracker()
-    t2.load_history(str(path_json))
-    assert t2.scenario_roi_deltas == tracker.scenario_roi_deltas
-    assert t2.worst_scenario == tracker.worst_scenario
-    assert t2.get_scenario_roi_delta("normal") == pytest.approx(1.0)
+    assert summary["scenarios"]["normal"]["roi_delta"] == pytest.approx(0.0)
+    assert summary["scenarios"]["concurrency_spike"]["roi_delta"] == pytest.approx(-1.0)
+    assert summary["worst_scenario"] == "concurrency_spike"
 
-    path_db = tmp_path / "roi.db"
-    tracker.save_history(str(path_db))
-    t3 = rt.ROITracker()
-    t3.load_history(str(path_db))
-    assert t3.scenario_roi_deltas == tracker.scenario_roi_deltas
-    assert t3.worst_scenario == tracker.worst_scenario
+    delta_profit = scenario_data["concurrency_spike"][1]["profitability"] - scenario_data["normal"][1]["profitability"]
+    scen_info = summary["scenarios"]["concurrency_spike"]
+    assert scen_info["metrics_delta"]["profitability"] == pytest.approx(delta_profit)
+    assert scen_info["synergy"]["synergy_roi"] == pytest.approx(-1.0)
+    assert scen_info["synergy"]["synergy_profitability"] == pytest.approx(delta_profit)
