@@ -1,5 +1,6 @@
 from gpt_memory import GPTMemoryManager
 import logging
+import json
 
 try:
     from security.secret_redactor import redact as redact_secrets
@@ -12,7 +13,7 @@ class DummyEmbedder:
         self.last = None
 
     def encode(self, text):
-        self.last = text
+        self.last = text[0] if isinstance(text, list) else text
         return [0.0]
 
     @property
@@ -63,4 +64,21 @@ def test_disallowed_license_skips_embedding(caplog):
     assert embedding is None
     assert emb.last is None  # encode was not called
     assert any("license" in r.msg for r in caplog.records)
+    mem.close()
+
+
+def test_semantic_risk_skips_embedding(caplog):
+    emb = DummyEmbedder()
+    mem = GPTMemoryManager(db_path=":memory:", embedder=emb)
+    prompt = "eval('data')"
+    with caplog.at_level(logging.WARNING):
+        mem.log_interaction(prompt, "resp")
+
+    cur = mem.conn.execute("SELECT embedding, alerts FROM interactions")
+    embedding, alerts_json = cur.fetchone()
+    assert embedding is None
+    alerts = json.loads(alerts_json)
+    assert alerts and any("eval" in a[1] for a in alerts)
+    assert emb.last is None
+    assert any("semantic" in r.msg for r in caplog.records)
     mem.close()
