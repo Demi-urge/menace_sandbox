@@ -7,7 +7,7 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
 
 import logging
-from governed_embeddings import governed_embed
+from security.secret_redactor import redact
 from analysis.semantic_diff_filter import find_semantic_risks
 
 logger = logging.getLogger(__name__)
@@ -35,13 +35,21 @@ def embed_text(text: str) -> list[float]:
     if model is None:
         raise RuntimeError("sentence-transformers is required for embed_text")
 
+    # Guard against embedding text that matches known unsafe patterns.
     alerts = find_semantic_risks(text.splitlines())
     if alerts:
         logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
         raise ValueError("Semantic risks detected")
 
-    vec = governed_embed(text, model)
-    if vec is None:
+    cleaned = redact(text)
+    if cleaned != text:
+        logger.warning("redacted secrets prior to embedding")
+    vec = model.encode(cleaned)
+    try:
+        vec = vec.tolist()
+    except AttributeError:
+        pass
+    if not isinstance(vec, list):
         raise RuntimeError("Embedding failed or skipped")
     return vec
 
