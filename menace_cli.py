@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         return _run(["python", "service_installer.py"] + (args.extra_args or []))
 
     if args.cmd == "new-db":
-        return _run([sys.executable, "scripts/scaffold_db.py", args.name])
+        return _run([sys.executable, "scripts/new_db_template.py", args.name])
 
     if args.cmd == "sandbox":
         if args.sandbox_cmd == "run":

@@ -1074,7 +1074,11 @@ number of cycles or ``RUN_UNTIL`` to stop at a Unix timestamp.
 - `menace retrieve "query" --db code` performs semantic search across databases. Results are cached on disk and reused until the underlying database timestamps change. If the vector retriever fails, the command falls back to database-specific full-text helpers before returning results.
 - `menace patch path/to/module.py --desc "message"` applies a patch using the self-coding engine and prints the new patch identifier followed by provenance records in JSON.
 - `menace embed --db workflows` backfills missing vector embeddings, restricting the run to a single database when `--db` is supplied.
-- `menace new-db demo` scaffolds a new database module and matching test.
+- `menace new-db demo` scaffolds a new database module and matching test. The
+  generated file already includes a `build_context` helper, FTS schema setup,
+  and safety hooks for license detection and secret redaction.  The module is
+  automatically added to `__all__` so it can be imported without further
+  wiring.
 
 ### Persistent service
 
