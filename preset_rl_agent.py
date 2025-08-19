@@ -10,6 +10,15 @@ from typing import Dict, Tuple
 from .self_improvement_policy import SelfImprovementPolicy
 from .roi_tracker import ROITracker
 
+try:  # pragma: no cover - optional dependency
+    from .logging_utils import log_record
+except Exception:  # pragma: no cover - fallback
+    try:
+        from logging_utils import log_record  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        def log_record(**fields: object) -> dict[str, object]:  # type: ignore
+            return fields
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,18 +86,32 @@ class PresetRLAgent:
 
     # ------------------------------------------------------------------
     def _state(self, tracker: ROITracker) -> Tuple[int, int]:
-        roi = float(tracker.roi_history[-1]) if tracker.roi_history else 0.0
+        base_roi = float(tracker.roi_history[-1]) if tracker.roi_history else 0.0
+        raroi = float(tracker.raroi_history[-1]) if tracker.raroi_history else base_roi
         syn_vals = tracker.metrics_history.get("synergy_roi", [])
         syn = float(syn_vals[-1]) if syn_vals else 0.0
-        roi_s = 1 if roi > 0 else (-1 if roi < 0 else 0)
+        roi_s = 1 if raroi > 0 else (-1 if raroi < 0 else 0)
         syn_s = 1 if syn > 0 else (-1 if syn < 0 else 0)
+        logger.debug(
+            "preset state", extra=log_record(base_roi=base_roi, raroi=raroi)
+        )
         return roi_s, syn_s
 
     def _reward(self, tracker: ROITracker) -> float:
-        hist = tracker.roi_history
-        if len(hist) < 2:
+        base_hist = tracker.roi_history
+        raroi_hist = tracker.raroi_history
+        if len(raroi_hist) < 2:
             return 0.0
-        return float(hist[-1]) - float(hist[-2])
+        base_delta = (
+            float(base_hist[-1]) - float(base_hist[-2])
+            if len(base_hist) >= 2
+            else 0.0
+        )
+        raroi_delta = float(raroi_hist[-1]) - float(raroi_hist[-2])
+        logger.debug(
+            "preset reward", extra=log_record(base_roi_delta=base_delta, raroi_delta=raroi_delta)
+        )
+        return raroi_delta
 
     # ------------------------------------------------------------------
     def decide(self, tracker: ROITracker) -> Dict[str, int]:

@@ -275,6 +275,10 @@ class ActionPlanner:
                     raroi = base
             else:
                 raroi = base
+            logger.debug(
+                "roi lookup",
+                extra=log_record(action=action, base_roi=base, raroi=raroi),
+            )
             return base, raroi
         except Exception:
             return 0.0, 0.0

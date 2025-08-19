@@ -13,6 +13,21 @@ from pathlib import Path
 import threading
 import time
 from typing import Iterable, Sequence, Any, Optional
+import logging
+
+try:  # pragma: no cover - optional dependency
+    from .logging_utils import log_record
+except Exception:  # pragma: no cover - fallback
+    try:
+        from logging_utils import log_record  # type: ignore
+    except Exception:  # pragma: no cover - last resort
+        def log_record(**fields: object) -> dict[str, object]:  # type: ignore
+            return fields
+
+try:  # pragma: no cover - optional dependency
+    from .roi_tracker import ROITracker
+except Exception:  # pragma: no cover - fallback when executed directly
+    from roi_tracker import ROITracker  # type: ignore
 
 try:  # pragma: no cover - package-relative import
     from . import retrieval_ranker as rr
@@ -33,12 +48,14 @@ class RankingModelScheduler:
         metrics_db: Path | str = "metrics.db",
         model_path: Path | str = "retrieval_ranker.json",
         interval: int = 86400,
+        roi_tracker: ROITracker | None = None,
     ) -> None:
         self.services = list(services)
         self.vector_db = Path(vector_db)
         self.metrics_db = Path(metrics_db)
         self.model_path = Path(model_path)
         self.interval = interval
+        self.roi_tracker = roi_tracker
         self.running = False
         self._thread: Optional[threading.Thread] = None
 
@@ -47,6 +64,23 @@ class RankingModelScheduler:
         """Retrain ranking model and notify services to reload."""
         # Update reliability KPIs before training so latest values are joined
         compute_retriever_stats(self.metrics_db)
+
+        if self.roi_tracker is not None:
+            try:
+                base_roi = (
+                    float(self.roi_tracker.roi_history[-1])
+                    if self.roi_tracker.roi_history
+                    else 0.0
+                )
+                _base, raroi = self.roi_tracker.calculate_raroi(
+                    base_roi, "standard", 0.0, {}
+                )
+            except Exception:
+                base_roi = raroi = 0.0
+            logging.info(
+                "ranking retrain trigger",
+                extra=log_record(base_roi=base_roi, raroi=raroi),
+            )
 
         # Train model from latest vector metrics
         df = rr.load_training_data(
@@ -74,7 +108,15 @@ class RankingModelScheduler:
     def _loop(self) -> None:
         while self.running:
             self.retrain_and_reload()
-            time.sleep(self.interval)
+            sleep = self.interval
+            if self.roi_tracker and self.roi_tracker.raroi_history:
+                try:
+                    last_raroi = float(self.roi_tracker.raroi_history[-1])
+                    if last_raroi < 0:
+                        sleep = max(self.interval / 2, 1)
+                except Exception:
+                    pass
+            time.sleep(sleep)
 
     def start(self) -> None:
         if self.running:
