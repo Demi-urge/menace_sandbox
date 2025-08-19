@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Tuple
 from license_detector import detect as license_detect
 from security.secret_redactor import redact, redact_dict
 from analysis.semantic_diff_filter import find_semantic_risks
+from compliance.license_fingerprint import fingerprint as license_fingerprint
 
 
 def govern_retrieval(
@@ -48,6 +49,7 @@ def govern_retrieval(
         meta.setdefault("semantic_alerts", alerts)
     meta = redact_dict(meta)
     meta.setdefault("redacted", True)
+    meta.setdefault("license_fingerprint", license_fingerprint(text))
     cleaned_reason = redact(reason) if isinstance(reason, str) else reason
     return meta, cleaned_reason
 

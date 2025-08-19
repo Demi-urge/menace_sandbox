@@ -1666,6 +1666,9 @@ class UniversalRetriever:
                 "item": h.metadata,
                 "confidence": h.score,
                 "reason": h.reason,
+                "license": h.metadata.get("license"),
+                "license_fingerprint": h.metadata.get("license_fingerprint"),
+                "semantic_alerts": h.metadata.get("semantic_alerts"),
             }
             for h in hits
         ]

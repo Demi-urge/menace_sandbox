@@ -703,6 +703,7 @@ class SelfCodingEngine:
                     vid = item.get("vector_id") or item.get("id")
                     score = item.get("score") or item.get("similarity")
                     lic = item.get("license")
+                    fp = item.get("license_fingerprint")
                     alerts = item.get("semantic_alerts")
                 else:
                     if len(item) == 3:
@@ -713,11 +714,13 @@ class SelfCodingEngine:
                     else:
                         continue
                     lic = None
+                    fp = None
                     alerts = None
                 if origin is not None and vid is not None:
                     vectors.append((str(origin), str(vid), float(score or 0.0)))
                     retrieval_metadata[f"{origin}:{vid}"] = {
                         "license": lic,
+                        "license_fingerprint": fp,
                         "semantic_alerts": alerts,
                     }
         if not generated_code.strip():

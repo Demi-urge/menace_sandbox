@@ -277,6 +277,7 @@ class QuickFixEngine:
             retrieval_metadata = {
                 f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
                     "license": h.get("license"),
+                    "license_fingerprint": h.get("license_fingerprint"),
                     "semantic_alerts": h.get("semantic_alerts"),
                 }
                 for h in _hits
@@ -376,6 +377,7 @@ class QuickFixEngine:
                 retrieval_metadata = {
                     f"{h.get('origin_db', '')}:{h.get('record_id', '')}": {
                         "license": h.get("license"),
+                        "license_fingerprint": h.get("license_fingerprint"),
                         "semantic_alerts": h.get("semantic_alerts"),
                     }
                     for h in _hits
