@@ -205,3 +205,40 @@ def test_run_records_retrieval_metadata(tmp_path, monkeypatch):
     prov = get_patch_provenance(patch_id, patch_db=db)
     assert prov[0]["license"] == "mit"
     assert prov[0]["semantic_alerts"] == ["unsafe"]
+
+
+def test_run_records_ancestry_without_logger(tmp_path, monkeypatch):
+    os.environ["PATCH_HISTORY_DB_PATH"] = str(tmp_path / "patch_history.db")
+    sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+    from code_database import PatchHistoryDB, PatchRecord
+    from patch_provenance import get_patch_provenance
+
+    db = PatchHistoryDB()
+    patch_id = db.add(PatchRecord("mod.py", "desc", 1.0, 2.0))
+
+    class Manager:
+        def __init__(self):
+            self.engine = types.SimpleNamespace(patch_db=db)
+
+        def run_patch(self, path, desc, context_meta=None):
+            return types.SimpleNamespace(patch_id=patch_id)
+
+    class Retriever:
+        def search(self, query, top_k, session_id):
+            return [{"origin_db": "db1", "record_id": "vec1", "score": 0.4}]
+
+    engine = QuickFixEngine(
+        error_db=None,
+        manager=Manager(),
+        threshold=1,
+        graph=DummyGraph(),
+        retriever=Retriever(),
+    )
+    (tmp_path / "mod.py").write_text("x=1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(engine, "_top_error", lambda bot: ("err", "mod", {}, 1))
+    monkeypatch.setattr(quick_fix.subprocess, "run", lambda *a, **k: None)
+
+    engine.run("bot")
+    prov = get_patch_provenance(patch_id, patch_db=db)
+    assert prov[0]["vector_id"] == "vec1"

@@ -637,7 +637,7 @@ def _sandbox_cycle_runner(
 
     if getattr(ctx, "patch_logger", None) is None:
         try:
-            ctx.patch_logger = PatchLogger()
+            ctx.patch_logger = PatchLogger(patch_db=getattr(ctx, "patch_db", None))
         except VectorServiceError:
             ctx.patch_logger = None
 
