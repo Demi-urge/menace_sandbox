@@ -28,7 +28,13 @@ def test_calculate_raroi_formula(
     tracker = ROITracker()
     tracker.roi_history = roi_history
 
-    base, raroi = tracker.calculate_raroi(base_roi, workflow_type, errors, test_status)
+    failing = [k for k, v in test_status.items() if not v]
+    base, raroi = tracker.calculate_raroi(
+        base_roi,
+        workflow_type,
+        test_stats={"errors_per_minute": errors},
+        failing_tests=failing,
+    )
 
     recent = tracker.roi_history[-tracker.window :]
     instability = np.std(recent) if recent else 0.0
@@ -38,7 +44,7 @@ def test_calculate_raroi_formula(
     stability_factor = max(0.0, 1.0 - instability)
     safety_factor = 1.0
     for key in ("security", "alignment"):
-        if test_status.get(key) is False:
+        if key in failing:
             safety_factor *= 0.5
 
     expected = (
