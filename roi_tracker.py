@@ -2758,9 +2758,34 @@ class ROITracker:
     ) -> Tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
-        The risk-adjusted ROI (RAROI) scales the provided ``base_roi`` by
-        catastrophic risk, recent ROI stability and security/alignment safety
-        metrics.
+        Parameters
+        ----------
+        base_roi:
+            Raw ROI value before applying any risk adjustments.
+        workflow_type:
+            Identifier used to look up ``impact_severity`` in the configuration
+            mapping.
+        metrics:
+            Mapping of metric names to values. These provide the inputs for
+            rollback probability, safety calculation and recent ROI history.
+
+        Returns
+        -------
+        Tuple[float, float]
+            A tuple containing the original ``base_roi`` and the computed
+            risk-adjusted ROI (RAROI).
+
+        Notes
+        -----
+        RAROI is derived from the following relationship::
+
+            raroi = base_roi * (1 - catastrophic_risk)
+                    * stability_factor * safety_factor
+
+        where ``catastrophic_risk`` is the product of rollback probability and
+        ``impact_severity``; ``stability_factor`` is ``1 - std(recent_rois)``
+        over the last ``N`` ROI entries (``N = 10``); and ``safety_factor`` is
+        derived from security and alignment metrics.
         """
 
         rollback_probability = self._rollback_probability(metrics)
