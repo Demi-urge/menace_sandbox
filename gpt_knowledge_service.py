@@ -12,6 +12,7 @@ from collections import defaultdict
 from typing import Dict, List
 
 from gpt_memory import GPTMemoryManager, INSIGHT, _summarise_text
+from governed_retrieval import govern_retrieval, redact
 
 
 class GPTKnowledgeService:
@@ -75,4 +76,10 @@ class GPTKnowledgeService:
         """Return the latest stored insight for ``tag``."""
 
         entries = self.manager.retrieve("", tags=[INSIGHT, tag], limit=1)
-        return entries[0].response if entries else ""
+        if not entries:
+            return ""
+        text = entries[0].response
+        governed = govern_retrieval(text)
+        if governed is None:
+            return ""
+        return redact(text)
