@@ -25,7 +25,6 @@ import argparse
 import csv
 
 import json
-import yaml
 import os
 import sqlite3
 from collections import Counter, defaultdict
@@ -35,6 +34,10 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
 from .logging_utils import get_logger, log_record
+from .config_loader import (
+    get_impact_severity,
+    impact_severity_map as load_impact_severity_map,
+)
 from .truth_adapter import TruthAdapter
 try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
@@ -2770,51 +2773,17 @@ class ROITracker:
         return _estimate_rollback_probability(metrics)
 
     # ------------------------------------------------------------------
-    def _load_impact_severity_map(self) -> Mapping[str, float]:
-        """Return impact severity mapping from config or defaults."""
-
-        defaults = {
-            "experimental": 0.2,
-            "standard": 0.5,
-            "critical": 0.9,
-        }
-        path = os.getenv(
-            "IMPACT_SEVERITY_CONFIG",
-            os.path.join(os.path.dirname(__file__), "config", "impact_severity.yaml"),
-        )
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-            if isinstance(data, Mapping):
-                overrides = {
-                    str(k): float(v)
-                    for k, v in data.items()
-                    if isinstance(v, (int, float))
-                }
-            else:
-                overrides = {}
-        except Exception:
-            overrides = {}
-        defaults.update(overrides)
-        return defaults
-
-    # ------------------------------------------------------------------
     def impact_severity(self, workflow_type: str) -> float:
         """Return impact severity for ``workflow_type``."""
 
-        if not hasattr(self, "_impact_severity_map"):
-            setattr(self, "_impact_severity_map", self._load_impact_severity_map())
-        mapping = getattr(self, "_impact_severity_map")
-        return float(mapping.get(workflow_type, mapping.get("standard", 0.5)))
+        return float(get_impact_severity(workflow_type))
 
     # ------------------------------------------------------------------
     @property
     def impact_severity_map(self) -> Mapping[str, float]:
         """Expose the loaded impact severity mapping."""
 
-        if not hasattr(self, "_impact_severity_map"):
-            setattr(self, "_impact_severity_map", self._load_impact_severity_map())
-        return getattr(self, "_impact_severity_map")
+        return load_impact_severity_map()
 
     # ------------------------------------------------------------------
     def _safety_factor(self, metrics: Mapping[str, float]) -> float:
@@ -2876,7 +2845,7 @@ class ROITracker:
 
         if impact_severity is None:
             wf = workflow_type or "standard"
-            impact_severity = float(self.impact_severity(wf))
+            impact_severity = float(get_impact_severity(wf))
         else:
             impact_severity = float(impact_severity)
 

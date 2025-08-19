@@ -3,3 +3,4 @@
 experimental: 0.2
 standard: 0.5
 critical: 0.9
+low: 0.1

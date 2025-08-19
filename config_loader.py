@@ -6,7 +6,9 @@ import json
 import logging
 import os
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Mapping
+
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -97,4 +99,74 @@ def get_config_value(key_path: str, default: Any = None) -> Any:
     return current
 
 
-__all__ = ["load_config", "get_config_value", "_DEFAULT_PATH"]
+
+_IMPACT_MAP: Mapping[str, float] | None = None
+_IMPACT_PATH: str | None = None
+
+
+def _load_impact_severity_map(
+    path: str | None = None,
+) -> Mapping[str, float]:
+    """Return impact severity mapping from ``path`` or defaults.
+
+    The mapping defines numeric risk weights for workflow types. It defaults to
+    reading :mod:`config/impact_severity.yaml` but honours the
+    ``IMPACT_SEVERITY_CONFIG`` environment variable for overrides.
+    """
+
+    global _IMPACT_MAP, _IMPACT_PATH
+    defaults: dict[str, float] = {
+        "experimental": 0.2,
+        "standard": 0.5,
+        "critical": 0.9,
+    }
+    cfg_path = path or os.getenv(
+        "IMPACT_SEVERITY_CONFIG",
+        os.path.join(os.path.dirname(__file__), "config", "impact_severity.yaml"),
+    )
+    if _IMPACT_MAP is not None and cfg_path == _IMPACT_PATH:
+        return _IMPACT_MAP
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+        if isinstance(data, Mapping):
+            overrides = {
+                str(k): float(v)
+                for k, v in data.items()
+                if isinstance(v, (int, float))
+            }
+        else:
+            overrides = {}
+    except Exception:
+        overrides = {}
+    defaults.update(overrides)
+    _IMPACT_MAP = defaults
+    _IMPACT_PATH = cfg_path
+    return defaults
+
+
+def get_impact_severity(workflow_type: str, path: str | None = None) -> float:
+    """Return impact severity for ``workflow_type``.
+
+    ``workflow_type`` is looked up in the loaded impact severity mapping. If
+    the key is missing, the ``standard`` severity is used as a fallback.
+    ``path`` may be supplied to load an alternative configuration file.
+    """
+
+    mapping = _load_impact_severity_map(path)
+    return float(mapping.get(workflow_type, mapping.get("standard", 0.5)))
+
+
+def impact_severity_map(path: str | None = None) -> Mapping[str, float]:
+    """Expose the loaded impact severity mapping."""
+
+    return _load_impact_severity_map(path)
+
+
+__all__ = [
+    "load_config",
+    "get_config_value",
+    "get_impact_severity",
+    "impact_severity_map",
+    "_DEFAULT_PATH",
+]
