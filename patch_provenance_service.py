@@ -57,8 +57,14 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
     def list_patches():
         lic = request.args.get("license")
         alert = request.args.get("semantic_alert")
-        if lic or alert:
-            rows = search_patches(license=lic, semantic_alert=alert, patch_db=pdb)
+        fp = request.args.get("license_fingerprint")
+        if lic or alert or fp:
+            rows = search_patches(
+                license=lic,
+                semantic_alert=alert,
+                license_fingerprint=fp,
+                patch_db=pdb,
+            )
             patches = [
                 {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
                 for r in rows

@@ -31,7 +31,7 @@ def test_patch_logger_records_provenance(tmp_path):
     pl.track_contributors({"o1:v1": 0.8}, True, patch_id=str(pid), session_id="s", retrieval_metadata=meta)
     rows = db.get_ancestry(pid)
     assert rows[0][3] == "MIT"
-    assert json.loads(rows[0][4]) == ["unsafe"]
+    assert json.loads(rows[0][5]) == ["unsafe"]
     prov = get_patch_provenance(pid, patch_db=db)
     assert prov == [
         {
@@ -39,6 +39,7 @@ def test_patch_logger_records_provenance(tmp_path):
             "vector_id": "v1",
             "influence": 0.8,
             "license": "MIT",
+            "license_fingerprint": None,
             "semantic_alerts": ["unsafe"],
         }
     ]

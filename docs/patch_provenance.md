@@ -16,6 +16,7 @@ python tools/patch_provenance_cli.py chain 1
 python tools/patch_provenance_cli.py search vec123
 python tools/patch_provenance_cli.py search --hash <code_hash>
 python tools/patch_provenance_cli.py search --license MIT
+python tools/patch_provenance_cli.py search --license-fingerprint <fp>
 python tools/patch_provenance_cli.py search --semantic-alert malware
 python tools/patch_provenance_cli.py search --license MIT --semantic-alert malware
 ```
@@ -25,9 +26,11 @@ details for a patch including the vectors, their influence scores and any
 semantic alerts while `chain` returns only the ancestry chain for a patch.
 `search` performs a reverse lookup either by vector ID (default) or by code
 snippet hash when ``--hash`` is supplied.  It can also filter patches by
-detected license, semantic alert, or both using ``--license`` and
-``--semantic-alert``. These options mirror the `license` and
-`semantic_alert` parameters supported by the REST service.
+detected license, license fingerprint, semantic alert, or any combination of
+these using ``--license``, ``--license-fingerprint`` and
+``--semantic-alert``. These options mirror the `license`,
+`license_fingerprint` and `semantic_alert` parameters supported by the REST
+service.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
 SQLite database.
@@ -47,8 +50,9 @@ Endpoints:
 - `GET /patches/<patch_id>` – show a patch, its provenance and ancestry chain
 - `GET /vectors/<vector_id>` – find patches influenced by a vector ID
 - `GET /search?q=<term>` – search patches by vector ID or keyword
-- `GET /patches?license=<name>&semantic_alert=<alert>` – filter patches by
-  detected license and/or semantic alert
+- `GET /patches?license=<name>&license_fingerprint=<fp>&semantic_alert=<alert>` –
+  filter patches by detected license, license fingerprint and/or semantic
+  alert
 
 `/vectors/<vector_id>` and `/search` support pagination via `limit` and
 `offset` query parameters.  An optional `index_hint` parameter can force a
@@ -74,7 +78,7 @@ from patch_provenance import (
 )
 
 search_patches_by_vector("vec123")  # -> list of patches ordered by influence
-search_patches(license="MIT", semantic_alert="malware")  # -> filtered patches
+search_patches(license="MIT", license_fingerprint="abc", semantic_alert="malware")  # -> filtered patches
 get_patch_provenance(1)              # -> vectors for a patch
 ```
 

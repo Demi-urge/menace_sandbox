@@ -25,13 +25,15 @@ def get_patch_provenance(
     for row in rows:
         origin, vid, infl, *rest = row
         lic = rest[0] if len(rest) > 0 else None
-        alerts = rest[1] if len(rest) > 1 else None
+        fp = rest[1] if len(rest) > 1 else None
+        alerts = rest[2] if len(rest) > 2 else None
         result.append(
             {
                 "origin": origin,
                 "vector_id": vid,
                 "influence": float(infl),
                 "license": lic,
+                "license_fingerprint": fp,
                 "semantic_alerts": json.loads(alerts) if alerts else [],
             }
         )
@@ -114,14 +116,17 @@ def search_patches_by_semantic_alert(
 def search_patches(
     license: str | None = None,
     semantic_alert: str | None = None,
+    license_fingerprint: str | None = None,
     *,
     patch_db: PatchHistoryDB | None = None,
 ) -> List[Dict[str, Any]]:
-    """Return patches filtered by license and/or semantic alert."""
+    """Return patches filtered by license, fingerprint and/or semantic alert."""
 
     db = patch_db or PatchHistoryDB()
     rows = db.find_patches_by_provenance(
-        license=license, semantic_alert=semantic_alert
+        license=license,
+        semantic_alert=semantic_alert,
+        license_fingerprint=license_fingerprint,
     )
     return [
         {"patch_id": pid, "filename": filename, "description": desc}
