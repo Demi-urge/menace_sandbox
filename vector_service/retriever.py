@@ -67,6 +67,7 @@ class Retriever:
     content_filtering: bool = field(default=True)
     cache_path: str | None = None
     cache_size: int = 128
+    use_fts_fallback: bool = True
     _cache: "OrderedDict[str, List[Dict[str, Any]]]" = field(
         default_factory=OrderedDict
     )
@@ -203,6 +204,7 @@ class Retriever:
         session_id: str = "",
         similarity_threshold: float | None = None,
         dbs: Sequence[str] | None = None,
+        use_fts_fallback: bool | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Perform semantic search and return normalised results.
 
@@ -279,8 +281,19 @@ class Retriever:
             self._cache.move_to_end(cache_key)
             return cached
         reason = "no results" if not hits else "low confidence"
+        fts_hits: List[Dict[str, Any]] = []
+        if use_fts_fallback if use_fts_fallback is not None else self.use_fts_fallback:
+            fts_hits = fts_search(query, dbs=dbs, limit=k)
         fb_hits = self._fallback(query, limit=k)
-        return FallbackResult(reason, fb_hits, confidence)
+        merged: List[Dict[str, Any]] = []
+        seen = set()
+        for item in fts_hits + fb_hits:
+            key = (item.get("origin_db"), item.get("record_id"))
+            if key in seen:
+                continue
+            merged.append(item)
+            seen.add(key)
+        return FallbackResult(reason, merged, confidence)
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -292,6 +305,7 @@ class Retriever:
         session_id: str = "",
         similarity_threshold: float | None = None,
         dbs: Sequence[str] | None = None,
+        use_fts_fallback: bool | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Asynchronous wrapper for :meth:`search`.
 
@@ -307,6 +321,7 @@ class Retriever:
             session_id=session_id,
             similarity_threshold=similarity_threshold,
             dbs=dbs,
+            use_fts_fallback=use_fts_fallback,
         )
 
     # ------------------------------------------------------------------
