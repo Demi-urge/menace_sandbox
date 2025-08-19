@@ -89,6 +89,9 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.add_argument("query")
     p_retrieve.add_argument("--db", action="append", dest="dbs")
 
+    p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
+    p_embed.add_argument("--db", help="Restrict to a specific database class")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "setup":
@@ -202,6 +205,18 @@ def main(argv: list[str] | None = None) -> int:
                 cache.popitem(last=False)
             _save_cache(cache)
         print(json.dumps(results))
+        return 0
+
+    if args.cmd == "embed":
+        import logging
+        from vector_service import EmbeddingBackfill, VectorServiceError
+
+        logging.basicConfig(level=logging.INFO)
+        try:
+            EmbeddingBackfill().run(session_id="cli", db=args.db)
+        except VectorServiceError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
         return 0
 
     if args.cmd == "patches":

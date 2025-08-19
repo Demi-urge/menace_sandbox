@@ -64,10 +64,15 @@ Metrics emitted by `PatchLogger.track_contributors`:
 from vector_service import EmbeddingBackfill
 
 EmbeddingBackfill().run(session_id="bulk")
+
+# Only process WorkflowDB
+EmbeddingBackfill().run(session_id="bulk", db="workflows")
 ```
 
 `EmbeddingBackfill` discovers every `EmbeddableDBMixin` subclass and invokes
-`backfill_embeddings` on each, logging progress for visibility.
+`backfill_embeddings` on each, logging progress for visibility. When a `db`
+argument is supplied the run is restricted to matching subclasses. Records
+flagged by the lightweight license detector are skipped and logged.
 
 Metrics emitted by `EmbeddingBackfill.run`:
 
