@@ -899,6 +899,7 @@ class SelfImprovementEngine:
         else:
             self.error_predictor = error_predictor
         self.roi_history: list[float] = []
+        self.raroi_history: list[float] = []
         self.roi_group_history: dict[int, list[float]] = {}
         self.roi_delta_ema: float = 0.0
         self._last_growth_type: str | None = None
@@ -1208,6 +1209,7 @@ class SelfImprovementEngine:
             with open(self.state_path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
             self.roi_history = [float(x) for x in data.get("roi_history", [])]
+            self.raroi_history = [float(x) for x in data.get("raroi_history", [])]
             self.roi_group_history = {
                 int(k): [float(vv) for vv in v]
                 for k, v in data.get("roi_group_history", {}).items()
@@ -1229,6 +1231,7 @@ class SelfImprovementEngine:
                 json.dump(
                     {
                         "roi_history": self.roi_history,
+                        "raroi_history": self.raroi_history,
                         "roi_group_history": self.roi_group_history,
                         "last_run": self.last_run,
                         "roi_delta_ema": self.roi_delta_ema,
@@ -1960,9 +1963,9 @@ class SelfImprovementEngine:
                 self.logger.exception("evolution history stats failed: %s", exc)
                 avg_roi_delta = avg_eff = 0.0
         short_avg = 0.0
-        if self.roi_history:
-            n = min(len(self.roi_history), 5)
-            short_avg = float(sum(self.roi_history[-n:]) / n)
+        if self.raroi_history:
+            n = min(len(self.raroi_history), 5)
+            short_avg = float(sum(self.raroi_history[-n:]) / n)
         return (
             int(round(profit)),
             int(round(energy * 10)),
@@ -1998,7 +2001,7 @@ class SelfImprovementEngine:
         """
 
         feats: list[list[float]] = []
-        history = self.roi_history[-5:]
+        history = self.raroi_history[-5:]
         prev = 0.0
         allow_marginal = getattr(self, "allow_marginal_candidates", False)
 
@@ -2043,9 +2046,9 @@ class SelfImprovementEngine:
                             vectors.append((str(origin), str(vec_id), float(score or 0.0)))
                 if getattr(self, "data_bot", None):
                     try:  # pragma: no cover - best effort
-                        self.data_bot.db.log_patch_outcome(
-                            f"roi_history_{idx}",
-                            False,
+                    self.data_bot.db.log_patch_outcome(
+                        f"raroi_history_{idx}",
+                        False,
                             [(o, v) for o, v, _ in vectors],
                             session_id=session_id,
                             reverted=False,
@@ -2061,7 +2064,7 @@ class SelfImprovementEngine:
                         self.logger.exception("failed to log patch outcome")
                 try:  # pragma: no cover - best effort
                     self._log_action(
-                        "skip_candidate", f"roi_history_{idx}", roi_est, category
+                        "skip_candidate", f"raroi_history_{idx}", roi_est, category
                     )
                 except Exception:
                     pass
@@ -5445,7 +5448,12 @@ class SelfImprovementEngine:
                     self.logger.exception("group index lookup failed: %s", exc)
             if group_idx is not None:
                 self.roi_group_history.setdefault(int(group_idx), []).append(delta)
+            tracker = getattr(self, "tracker", None)
+            raroi_delta = 0.0
+            if tracker is not None and len(tracker.raroi_history) >= 2:
+                raroi_delta = tracker.raroi_history[-1] - tracker.raroi_history[-2]
             self.roi_history.append(delta)
+            self.raroi_history.append(raroi_delta)
             self._save_state()
             self._update_synergy_weights(delta)
             self.logger.info(

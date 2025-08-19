@@ -256,18 +256,28 @@ class ActionPlanner:
         ]
 
     # ------------------------------------------------------------------
-    def _roi(self, action: str) -> float:
-        """Return average ROI for *action* from ROIDB."""
+    def _roi(self, action: str) -> tuple[float, float]:
+        """Return ``(base_roi, raroi)`` for *action* from ROIDB."""
         try:
             df = self.roi_db.history(action, limit=5)
             if df.empty:
-                return 0.0
+                return 0.0, 0.0
             rev = float(df["revenue"].mean())
             cost = float(df["api_cost"].mean())
             cpu = float(df["cpu_seconds"].mean()) or 1.0
-            return (rev - cost) / cpu
+            base = (rev - cost) / cpu
+            if self.roi_tracker:
+                try:
+                    _base, raroi = self.roi_tracker.calculate_raroi(
+                        base, "standard", 0.0, {}
+                    )
+                except Exception:
+                    raroi = base
+            else:
+                raroi = base
+            return base, raroi
         except Exception:
-            return 0.0
+            return 0.0, 0.0
 
     def _predict_growth(
         self, action: str
@@ -328,7 +338,18 @@ class ActionPlanner:
                 logger.exception("reward_fn failed: %s", exc)
                 reward = 0.0
         else:
-            reward = self._roi(action) or rec.roi
+            base_roi, raroi = self._roi(action)
+            reward = raroi
+            if reward == 0.0:
+                if self.roi_tracker:
+                    try:
+                        _, reward = self.roi_tracker.calculate_raroi(
+                            rec.roi, "standard", 0.0, {}
+                        )
+                    except Exception:
+                        reward = rec.roi
+                else:
+                    reward = rec.roi
         success = str(rec.outcome).upper().startswith("SUCCESS")
         if (
             self.growth_weighting
@@ -345,9 +366,15 @@ class ActionPlanner:
                 reward *= conf
                 if self.roi_tracker:
                     try:
+                        pred_base, pred_raroi = self.roi_tracker.calculate_raroi(
+                            roi_est, "standard", 0.0, {}
+                        )
+                        actual_base, actual_raroi = self.roi_tracker.calculate_raroi(
+                            rec.roi, "standard", 0.0, {}
+                        )
                         self.roi_tracker.record_prediction(
-                            [roi_est],
-                            [rec.roi],
+                            [pred_raroi],
+                            [actual_raroi],
                             predicted_class=category,
                             actual_class=None,
                             confidence=growth_conf,
@@ -356,8 +383,8 @@ class ActionPlanner:
                             "roi prediction",
                             extra=log_record(
                                 action=action,
-                                predicted_roi=roi_est,
-                                actual_roi=rec.roi,
+                                predicted_roi=pred_raroi,
+                                actual_roi=actual_raroi,
                                 growth=category,
                             ),
                         )
@@ -490,30 +517,42 @@ class ActionPlanner:
                     roi_est = 0.0
                     category = "marginal"
             mult = self.growth_multipliers.get(category, 1.0)
-            score += roi_est * mult
+            raroi_est = roi_est
+            if self.roi_tracker:
+                try:
+                    _, raroi_est = self.roi_tracker.calculate_raroi(
+                        roi_est, "standard", 0.0, {}
+                    )
+                except Exception:
+                    raroi_est = roi_est
+            score += raroi_est * mult
             score *= self.priority_weights.get(action, 1.0)
             if ctx:
                 score += self._context_metric(action, ctx)
-            scored.append((action, score, roi_est, category))
+            scored.append((action, score, raroi_est, category))
         scored.sort(key=lambda x: x[1], reverse=True)
         if scored and self.roi_tracker:
             top_action, _, pred_roi, cat = scored[0]
             try:
-                actual_roi = self._roi(top_action)
+                _base, actual_raroi = self._roi(top_action)
                 ta = self.roi_tracker.truth_adapter
-                pred_cal, _ = ta.predict(np.array([[float(pred_roi)]], dtype=np.float64))
-                act_cal, _ = ta.predict(np.array([[float(actual_roi)]], dtype=np.float64))
+                pred_cal, _ = ta.predict(
+                    np.array([[float(pred_roi)]], dtype=np.float64)
+                )
+                act_cal, _ = ta.predict(
+                    np.array([[float(actual_raroi)]], dtype=np.float64)
+                )
                 pred_roi = float(pred_cal[0])
-                actual_roi = float(act_cal[0])
+                actual_raroi = float(act_cal[0])
                 self.roi_tracker.record_roi_prediction(
-                    [pred_roi], [actual_roi], predicted_class=cat
+                    [pred_roi], [actual_raroi], predicted_class=cat
                 )
                 logger.info(
                     "action prediction",
                     extra=log_record(
                         action=top_action,
                         predicted_roi=pred_roi,
-                        actual_roi=actual_roi,
+                        actual_roi=actual_raroi,
                         growth=cat,
                     ),
                 )
