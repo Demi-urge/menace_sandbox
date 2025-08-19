@@ -18,11 +18,14 @@ from typing import Optional, Dict
 # substrings; their normalized fingerprints are stored in ``DENYLIST`` for
 # quick comparisons.
 _SNIPPETS: Dict[str, str] = {
+    "gnu general public license version 2": "GPL-2.0",
     "gnu general public license": "GPL-3.0",
     "gnu lesser general public license": "LGPL-3.0",
     "gnu affero general public license": "AGPL-3.0",
     "creative commons attribution-noncommercial": "CC-BY-NC-4.0",
     "non-commercial": "CC-BY-NC-4.0",
+    "for non-commercial use only": "CC-BY-NC-4.0",
+    "not for commercial use": "CC-BY-NC-4.0",
 }
 
 

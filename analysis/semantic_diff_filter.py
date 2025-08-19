@@ -4,9 +4,10 @@ from __future__ import annotations
 
 This module embeds added code lines into lightweight token vectors and
 compares them against a catalogue of unsafe pattern examples defined in
-``unsafe_patterns``.  The similarity metric is cosine similarity over the
-bag-of-words representation which acts as a very small and fast embedding
-space.
+``unsafe_patterns``.  Examples include calls to ``eval``, ``subprocess`` with
+``shell=True`` or higher level deserialisers like ``pickle.loads`` and
+``yaml.load``.  The similarity metric is cosine similarity over the bag-of-words
+representation which acts as a very small and fast embedding space.
 
 The :func:`find_semantic_risks` helper is designed to be called with the
 added lines from a diff hunk and returns any matches above the supplied
