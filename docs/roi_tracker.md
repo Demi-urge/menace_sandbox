@@ -62,11 +62,19 @@ raroi = base_roi * (1 - catastrophic_risk) * stability_factor * safety_factor
 
 * **catastrophic_risk** – product of the estimated `rollback_probability` and the impact severity resolved for the workflow type.
 * **stability_factor** – `1 - instability` where `instability` is the standard deviation of recent ROI deltas.
-* **safety_factor** – `0.5` when any failing test belongs to `CRITICAL_SUITES`, otherwise `1.0`.
+* **safety_factor** – derived by `_safety_factor` from provided metrics and
+  penalised when critical suites fail.
 
 ### Impact severity and test metrics
 
 Impact severity levels live in `config/impact_severity.yaml` and can be overridden via the `IMPACT_SEVERITY_CONFIG` environment variable. `test_stats` may supply metrics such as `errors_per_minute`, `instability` or a pre-computed `rollback_probability`. Failing test names or boolean mappings can be passed via `failing_tests` so critical suites further reduce the score.
+
+`_safety_factor` expects a metrics mapping that may include scores like
+`safety_rating`, `security_score`, `synergy_safety_rating` and
+`synergy_security_score`. Penalties are applied for failure counters such as
+`hostile_failures`, `misuse_failures` or per-suite entries following the
+pattern `<suite>_failures` (for example `security_failures` or
+`alignment_failures`).
 
 Higher RAROI values promote a workflow in ranking while lower scores push it down. See the [RAROI overview](raroi.md) for additional background.
 

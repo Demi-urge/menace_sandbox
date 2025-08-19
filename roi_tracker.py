@@ -2841,6 +2841,15 @@ class ROITracker:
         ]
         failures = sum(float(metrics.get(k, 0.0)) for k in fail_keys)
         penalty = 1.0 / (1.0 + failures)
+
+        # Apply penalties for failing critical suites where metrics report
+        # ``<suite>_failures`` counts.  Each failure multiplies the safety
+        # factor by the configured suite penalty.
+        for name, mult in CRITICAL_TEST_PENALTIES.items():
+            count = float(metrics.get(f"{name}_failures", 0.0))
+            if count:
+                penalty *= mult ** count
+
         return max(0.0, min(1.0, base * penalty))
 
     # ------------------------------------------------------------------
@@ -2866,13 +2875,14 @@ class ROITracker:
         recent = self.roi_history[-self.window :]
         instability = float(np.std(recent)) if recent else 0.0
 
+        metrics_map: dict[str, float] = dict(metrics or {})
+        metrics_map.setdefault("instability", instability)
+        if hasattr(self, "_last_errors_per_minute"):
+            metrics_map.setdefault(
+                "errors_per_minute", float(self._last_errors_per_minute)
+            )
+
         if rollback_prob is None:
-            metrics_map: dict[str, float] = dict(metrics or {})
-            metrics_map.setdefault("instability", instability)
-            if hasattr(self, "_last_errors_per_minute"):
-                metrics_map.setdefault(
-                    "errors_per_minute", float(self._last_errors_per_minute)
-                )
             rollback_prob = self._rollback_probability(metrics_map)
         rollback_prob = max(0.0, min(1.0, float(rollback_prob)))
 
@@ -2886,7 +2896,7 @@ class ROITracker:
 
         stability_factor = max(0.0, 1.0 - instability)
 
-        safety_factor = 1.0
+        safety_metrics: dict[str, float] = dict(metrics_map)
         failures: Iterable[str] = []
         if _sts is not None:
             try:
@@ -2896,7 +2906,9 @@ class ROITracker:
             except Exception:
                 failures = []
         for name in failures:
-            safety_factor *= CRITICAL_TEST_PENALTIES.get(name, 1.0)
+            key = f"{name}_failures"
+            safety_metrics[key] = safety_metrics.get(key, 0.0) + 1.0
+        safety_factor = self._safety_factor(safety_metrics)
 
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
