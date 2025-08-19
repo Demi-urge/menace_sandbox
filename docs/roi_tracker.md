@@ -320,6 +320,15 @@ python -m menace.roi_tracker reliability history.json --window 10
 python -m menace.roi_tracker reliability history.json --metric profit
 ```
 
+### Per-workflow metrics
+
+`record_prediction()` optionally accepts a `workflow_id`. Predictions and
+outcomes are stored per workflow in `workflow_predicted_roi` and
+`workflow_actual_roi` using a rolling window controlled by the
+``workflow_window`` constructor argument. Call
+`workflow_mae(workflow_id)` or `workflow_variance(workflow_id)` to inspect the
+latest mean absolute error and ROI variance for a given workflow.
+
 ### ROI prediction chart
 
 ``EvaluationDashboard.roi_prediction_chart()`` provides sequences suitable for

@@ -168,6 +168,7 @@ class ROITracker:
         acc_threshold: float = 0.6,
         evaluate_every: int = 1,
         calibrate: bool | None = None,
+        workflow_window: int = 20,
     ) -> None:
         """Create a tracker for monitoring ROI deltas.
 
@@ -190,6 +191,8 @@ class ROITracker:
             Optional :class:`ResourcesBot.ROIHistoryDB` providing historical
             resource usage (CPU, memory, disk, time and GPU) to incorporate in
             forecasts.
+        workflow_window:
+            Size of the rolling window for per-workflow error metrics.
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
@@ -303,6 +306,12 @@ class ROITracker:
         self.resource_metrics: List[Tuple[float, float, float, float, float]] = []
         self.predicted_roi: List[float] = []
         self.actual_roi: List[float] = []
+        # store per-workflow prediction and actual ROI histories
+        self.workflow_window = int(workflow_window)
+        self.workflow_predicted_roi: Dict[str, List[float]] = defaultdict(list)
+        self.workflow_actual_roi: Dict[str, List[float]] = defaultdict(list)
+        self._workflow_mae: Dict[str, float] = {}
+        self._workflow_variance: Dict[str, float] = {}
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
@@ -523,6 +532,7 @@ class ROITracker:
         predicted_class: str | None = None,
         actual_class: str | None = None,
         confidence: float | None = None,
+        workflow_id: str | None = None,
     ) -> None:
         """Store prediction details and log prediction stats.
 
@@ -563,6 +573,24 @@ class ROITracker:
 
         self.predicted_roi.append(float(pred_seq[0]))
         self.actual_roi.append(float(act_seq[0]))
+        if workflow_id is not None:
+            preds = self.workflow_predicted_roi[workflow_id]
+            acts = self.workflow_actual_roi[workflow_id]
+            preds.append(float(pred_seq[0]))
+            acts.append(float(act_seq[0]))
+            window = self.workflow_window
+            if window > 0:
+                if len(preds) > window:
+                    preds.pop(0)
+                if len(acts) > window:
+                    acts.pop(0)
+            errors = [abs(p - a) for p, a in zip(preds, acts)]
+            self._workflow_mae[workflow_id] = (
+                float(np.mean(errors)) if errors else 0.0
+            )
+            self._workflow_variance[workflow_id] = (
+                float(np.var(acts)) if acts else 0.0
+            )
         try:
             ent_hist = self.metrics_history.get("synergy_shannon_entropy", [])
             if len(ent_hist) >= 2:
@@ -981,6 +1009,18 @@ class ROITracker:
             arr = np.abs(np.array(p_slice) - np.array(a_slice))
             trend.append(float(arr.mean()) if arr.size else 0.0)
         return trend[-w:]
+
+    # ------------------------------------------------------------------
+    def workflow_mae(self, workflow_id: str) -> float:
+        """Return MAE for ``workflow_id`` predictions."""
+
+        return self._workflow_mae.get(workflow_id, 0.0)
+
+    # ------------------------------------------------------------------
+    def workflow_variance(self, workflow_id: str) -> float:
+        """Return variance of actual ROI for ``workflow_id``."""
+
+        return self._workflow_variance.get(workflow_id, 0.0)
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
