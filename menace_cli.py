@@ -19,12 +19,6 @@ from patch_provenance import (
     search_patches_by_license,
     get_patch_provenance,
 )
-from vector_service.retriever import (
-    Retriever,
-    FallbackResult,
-    VectorServiceError,
-    fts_search,
-)
 from retrieval_cache import RetrievalCache
 
 
@@ -76,6 +70,104 @@ def _normalise_hits(hits, origin=None):
     return norm
 
 
+# ---------------------------------------------------------------------------
+# Subcommand handlers
+
+
+def handle_new_db(args: argparse.Namespace) -> int:
+    """Handle ``new-db`` command."""
+    return _run([sys.executable, "scripts/new_db_template.py", args.name])
+
+
+def handle_patch(args: argparse.Namespace) -> int:
+    """Handle ``patch`` command."""
+    from vector_service import ContextBuilder
+    import quick_fix_engine
+
+    ctx = None
+    if args.context:
+        try:
+            ctx = json.loads(args.context)
+        except json.JSONDecodeError:
+            print("invalid JSON context", file=sys.stderr)
+            return 1
+
+    patch_id = quick_fix_engine.generate_patch(
+        args.module,
+        context_builder=ContextBuilder(),
+        engine=None,
+        description=args.desc,
+        context=ctx,
+    )
+    if not patch_id:
+        return 1
+    provenance = get_patch_provenance(patch_id)
+    print(json.dumps({"patch_id": patch_id, "provenance": provenance}))
+    return 0
+
+
+def handle_retrieve(args: argparse.Namespace) -> int:
+    """Handle ``retrieve`` command."""
+    from vector_service.retriever import (
+        Retriever,
+        FallbackResult,
+        VectorServiceError,
+        fts_search,
+    )
+
+    cache = None if args.no_cache else RetrievalCache("metrics.db")
+    retriever = Retriever(cache=cache)
+    try:
+        res = retriever.search(
+            args.query,
+            session_id=uuid4().hex,
+            top_k=args.top_k,
+            dbs=args.dbs,
+        )
+    except VectorServiceError as exc:
+        res = FallbackResult(str(exc), [])
+    if isinstance(res, FallbackResult):
+        results = _normalise_hits(list(res))
+        if res.reason == "no results":
+            try:
+                extra = fts_search(args.query, dbs=args.dbs, limit=args.top_k)
+            except Exception:
+                extra = []
+            seen = {(r["origin_db"], r["record_id"]) for r in results}
+            for hit in _normalise_hits(extra):
+                key = (hit["origin_db"], hit["record_id"])
+                if key not in seen:
+                    results.append(hit)
+                    seen.add(key)
+    else:
+        results = _normalise_hits(res)
+    print(json.dumps(results))
+    return 0
+
+
+def handle_embed(args: argparse.Namespace) -> int:
+    """Handle ``embed`` command."""
+    import logging
+    from vector_service.embedding_backfill import EmbeddingBackfill
+    from vector_service.exceptions import VectorServiceError
+
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    try:
+        EmbeddingBackfill().run(
+            session_id="cli",
+            dbs=args.dbs,
+            batch_size=args.batch_size,
+            backend=args.backend,
+        )
+    except VectorServiceError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # pragma: no cover - defensive
+        print(str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Menace workflow helper")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -102,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
     p_quick.add_argument("module")
     p_quick.add_argument("--desc", required=True, help="Patch description")
     p_quick.add_argument("--context", help="JSON encoded context", default=None)
+    p_quick.set_defaults(func=handle_patch)
 
     p_patch = sub.add_parser("patches", help="Patch provenance helpers")
     patch_sub = p_patch.add_subparsers(dest="patches_cmd", required=True)
@@ -123,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.add_argument("--top-k", type=int, dest="top_k", default=5)
     p_retrieve.add_argument("--json", action="store_true", help="Output JSON results")
     p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
+    p_retrieve.set_defaults(func=handle_retrieve)
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
     p_embed.add_argument(
@@ -137,11 +231,16 @@ def main(argv: list[str] | None = None) -> int:
     p_embed.add_argument(
         "--backend", dest="backend", help="Vector backend to use"
     )
+    p_embed.set_defaults(func=handle_embed)
 
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
     p_newdb.add_argument("name", help="Base name for the new database")
+    p_newdb.set_defaults(func=handle_new_db)
 
     args = parser.parse_args(argv)
+
+    if hasattr(args, "func"):
+        return args.func(args)
 
     if args.cmd == "setup":
         return _run(["bash", "scripts/setup_autonomous.sh"])
@@ -158,90 +257,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "deploy":
         return _run(["python", "service_installer.py"] + (args.extra_args or []))
 
-    if args.cmd == "new-db":
-        return _run([sys.executable, "scripts/new_db_template.py", args.name])
-
     if args.cmd == "sandbox":
         if args.sandbox_cmd == "run":
             return _run(["python", "run_autonomous.py"] + (args.extra_args or []))
-
-    if args.cmd == "patch":
-        from vector_service import ContextBuilder
-        import quick_fix_engine
-
-        ctx = None
-        if args.context:
-            try:
-                ctx = json.loads(args.context)
-            except json.JSONDecodeError:
-                print("invalid JSON context", file=sys.stderr)
-                return 1
-
-        patch_id = quick_fix_engine.generate_patch(
-            args.module,
-            context_builder=ContextBuilder(),
-            engine=None,
-            description=args.desc,
-            context=ctx,
-        )
-        if not patch_id:
-            return 1
-        provenance = get_patch_provenance(patch_id)
-        print(json.dumps({"patch_id": patch_id, "provenance": provenance}))
-        return 0
-
-    if args.cmd == "retrieve":
-        cache = None if args.no_cache else RetrievalCache("metrics.db")
-        retriever = Retriever(cache=cache)
-        try:
-            res = retriever.search(
-                args.query,
-                session_id=uuid4().hex,
-                top_k=args.top_k,
-                dbs=args.dbs,
-            )
-        except VectorServiceError as exc:
-            res = FallbackResult(str(exc), [])
-        if isinstance(res, FallbackResult):
-            results = _normalise_hits(list(res))
-            if res.reason == "no results":
-                try:
-                    extra = fts_search(
-                        args.query, dbs=args.dbs, limit=args.top_k
-                    )
-                except Exception:
-                    extra = []
-                seen = {(r["origin_db"], r["record_id"]) for r in results}
-                for hit in _normalise_hits(extra):
-                    key = (hit["origin_db"], hit["record_id"])
-                    if key not in seen:
-                        results.append(hit)
-                        seen.add(key)
-        else:
-            results = _normalise_hits(res)
-        print(json.dumps(results))
-        return 0
-
-    if args.cmd == "embed":
-        import logging
-        from vector_service.embedding_backfill import EmbeddingBackfill
-        from vector_service.exceptions import VectorServiceError
-
-        logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-        try:
-            EmbeddingBackfill().run(
-                session_id="cli",
-                dbs=args.dbs,
-                batch_size=args.batch_size,
-                backend=args.backend,
-            )
-        except VectorServiceError as exc:
-            print(str(exc), file=sys.stderr)
-            return 1
-        except Exception as exc:  # pragma: no cover - defensive
-            print(str(exc), file=sys.stderr)
-            return 1
-        return 0
 
     if args.cmd == "patches":
         db = PatchHistoryDB()
