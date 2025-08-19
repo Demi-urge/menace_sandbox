@@ -99,6 +99,8 @@ class Retriever:
             item["metadata"] = meta
             if reason is not None:
                 item["reason"] = reason
+            item["license"] = meta.get("license")
+            item["semantic_alerts"] = meta.get("semantic_alerts")
             results.append(redact_dict(pii_redact_dict(item)))
         return results
 
@@ -112,6 +114,8 @@ class Retriever:
                 "score": 0.0,
                 "metadata": {},
                 "reason": reason,
+                "license": None,
+                "semantic_alerts": [],
             }
         ]
 
