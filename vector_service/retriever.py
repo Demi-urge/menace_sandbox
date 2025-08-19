@@ -112,20 +112,43 @@ class Retriever:
         return results
 
     # ------------------------------------------------------------------
-    def _fallback(self, reason: str) -> List[Dict[str, Any]]:
-        reason = redact(pii_redact_text(reason))
-        return [
-            {
-                "origin_db": "heuristic",
-                "record_id": None,
+    def _fallback(self, query: str, limit: int | None = None) -> List[Dict[str, Any]]:
+        query = redact(pii_redact_text(query))
+        try:  # pragma: no cover - best effort import
+            from code_database import CodeDB
+        except Exception:
+            return []
+        try:
+            rows = CodeDB().search_fts(query, limit or self.top_k)
+        except Exception:
+            return []
+        results: List[Dict[str, Any]] = []
+        for row in rows:
+            text = str(row.get("code") or row.get("summary") or "")
+            governed = govern_retrieval(text)
+            if governed is None:
+                continue
+            meta, reason = governed
+            fp = meta.get("license_fingerprint")
+            item = {
+                "origin_db": row.get("origin_db", "code"),
+                "record_id": row.get("id") or row.get("record_id"),
                 "score": 0.0,
-                "metadata": {},
-                "reason": reason,
-                "license": None,
-                "license_fingerprint": None,
-                "semantic_alerts": [],
+                "metadata": meta,
+                "text": text,
+                "license": meta.get("license"),
+                "license_fingerprint": fp,
+                "semantic_alerts": meta.get("semantic_alerts"),
             }
-        ]
+            if reason is not None:
+                item["reason"] = reason
+            item = redact_dict(pii_redact_dict(item))
+            if fp is not None:
+                item["license_fingerprint"] = fp
+                if isinstance(item.get("metadata"), dict):
+                    item["metadata"]["license_fingerprint"] = fp
+            results.append(item)
+        return results
 
     # ------------------------------------------------------------------
     @log_and_measure
@@ -202,10 +225,9 @@ class Retriever:
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
-        fb_hits = self._fallback("no results" if not hits else "low confidence")
-        return FallbackResult(
-            "no results" if not hits else "low confidence", fb_hits, confidence
-        )
+        reason = "no results" if not hits else "low confidence"
+        fb_hits = self._fallback(query, limit=k)
+        return FallbackResult(reason, fb_hits, confidence)
 
     # ------------------------------------------------------------------
     @log_and_measure
