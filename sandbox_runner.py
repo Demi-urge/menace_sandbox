@@ -381,6 +381,9 @@ def build_section_prompt(
         if vals and not m.startswith("synergy_")
     }
     metric_values["ROI"] = tracker.roi_history[-1] if tracker.roi_history else 0.0
+    metric_values["RAROI"] = (
+        tracker.raroi_history[-1] if tracker.raroi_history else 0.0
+    )
     top_metrics = sorted(metric_values.items(), key=lambda x: abs(x[1]), reverse=True)[
         :3
     ]
@@ -431,6 +434,11 @@ def build_section_prompt(
         for i in range(1, len(tracker.roi_history))
     ]
     roi_deltas = roi_deltas[-3:]
+    raroi_deltas = [
+        round(tracker.raroi_history[i] - tracker.raroi_history[i - 1], 2)
+        for i in range(1, len(tracker.raroi_history))
+    ]
+    raroi_deltas = raroi_deltas[-3:]
     discrepancy_hist = tracker.metrics_history.get("discrepancy_count", [])[-3:]
 
     tpl = _TPL
@@ -446,7 +454,7 @@ def build_section_prompt(
     if _AUTO_TEMPLATES:
         sec_drop = max(0.0, -_delta(sec_hist))
         eff_drop = max(0.0, -_delta(eff_hist))
-        roi_drop = max(0.0, -_delta(tracker.roi_history))
+        raroi_drop = max(0.0, -_delta(tracker.raroi_history))
         syn_deltas = [
             _delta(v) for k, v in tracker.metrics_history.items() if k.startswith("synergy_") and v
         ]
@@ -455,7 +463,7 @@ def build_section_prompt(
         weights = {
             "security": 1.0,
             "efficiency": 1.0,
-            "roi": 1.0,
+            "raroi": 1.0,
             "synergy": 0.5,
         }
 
@@ -468,7 +476,7 @@ def build_section_prompt(
             if "efficiency" in name:
                 score += weights["efficiency"] * eff_drop
             if "roi" in name:
-                score += weights["roi"] * roi_drop
+                score += weights["raroi"] * raroi_drop
             if score > best_score:
                 best_score = score
                 chosen = t
