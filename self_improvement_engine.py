@@ -2246,15 +2246,38 @@ class SelfImprovementEngine:
                 if self.roi_tracker
                 else (roi_est, roi_est)
             )
+            tracker = self.roi_tracker
             confidence = (
-                self.roi_tracker.workflow_confidence(mod)
-                if self.roi_tracker
+                tracker.workflow_confidence(mod) if tracker else 1.0
+            )
+            mult = (
+                self.growth_multipliers.get(category, 1.0)
+                if self.growth_weighting
                 else 1.0
             )
-            if self.roi_tracker:
-                final_score, needs_review = self.roi_tracker.final_score(mod)
-            else:
-                final_score, needs_review = raroi * confidence, False
+            weight = raroi * confidence * mult
+            if tracker and confidence < self.tau:
+                self.logger.info(
+                    "low confidence; deferring to human review/shadow testing",
+                    extra=log_record(
+                        module=mod,
+                        confidence=confidence,
+                        raroi=raroi,
+                        weight=weight,
+                        threshold=self.tau,
+                    ),
+                )
+                try:
+                    self._log_action("review", mod, weight, category, confidence)
+                except Exception:
+                    pass
+                continue
+            needs_review = False
+            if tracker:
+                try:
+                    _, needs_review = tracker.final_score(mod)
+                except Exception:
+                    needs_review = False
             if needs_review:
                 self.logger.info(
                     "needs review; deferring to human review",
@@ -2262,20 +2285,14 @@ class SelfImprovementEngine:
                         module=mod,
                         confidence=confidence,
                         raroi=raroi,
-                        final_score=final_score,
+                        weight=weight,
                     ),
                 )
                 try:
-                    self._log_action("review", mod, final_score, category, confidence)
+                    self._log_action("review", mod, weight, category, confidence)
                 except Exception:
                     pass
                 continue
-            mult = (
-                self.growth_multipliers.get(category, 1.0)
-                if self.growth_weighting
-                else 1.0
-            )
-            weight = final_score * mult
             scored.append((mod, base_roi, category, weight))
             self.logger.debug(
                 "scored modification",
@@ -2284,7 +2301,6 @@ class SelfImprovementEngine:
                     base_roi=base_roi,
                     raroi=raroi,
                     confidence=confidence,
-                    final_score=final_score,
                     weight=weight,
                 ),
             )
