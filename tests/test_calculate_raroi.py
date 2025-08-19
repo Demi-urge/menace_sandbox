@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
 
 
@@ -28,12 +29,11 @@ def test_calculate_raroi_formula(
     tracker = ROITracker()
     tracker.roi_history = roi_history
 
-    failing = [k for k, v in test_status.items() if not v]
     base, raroi = tracker.calculate_raroi(
         base_roi,
         workflow_type,
         test_stats={"errors_per_minute": errors},
-        failing_tests=failing,
+        failing_tests=test_status,
     )
 
     recent = tracker.roi_history[-tracker.window :]
@@ -42,10 +42,8 @@ def test_calculate_raroi_formula(
     rollback_probability = min(1.0, max(instability, error_prob))
     impact = tracker.impact_severity(workflow_type)
     stability_factor = max(0.0, 1.0 - instability)
-    safety_factor = 1.0
-    for key in ("security", "alignment"):
-        if key in failing:
-            safety_factor *= 0.5
+    failing = [k for k, v in test_status.items() if not v]
+    safety_factor = 0.5 if any(k in failing for k in rt.CRITICAL_SUITES) else 1.0
 
     expected = (
         base_roi

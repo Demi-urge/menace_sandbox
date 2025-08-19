@@ -1,4 +1,6 @@
 import pytest
+
+import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
 
 
@@ -16,14 +18,21 @@ def test_calculate_raroi_with_risk():
     tracker.roi_history = [1.0] * 20
     base_roi = 0.5
     metrics = {"errors_per_minute": 1.0}
+    failing = ["security", "alignment"]
     base, raroi = tracker.calculate_raroi(
         base_roi,
         "standard",
         test_stats=metrics,
-        failing_tests=["security", "alignment"],
+        failing_tests=failing,
     )
     assert base == base_roi
-    assert raroi < base_roi * 0.3
+    error_prob = max(0.0, min(1.0, metrics["errors_per_minute"] / 10.0))
+    rollback_probability = min(1.0, error_prob)
+    expected = base_roi * (
+        1.0 - rollback_probability * tracker.impact_severity("standard")
+    )
+    expected *= 0.5 if any(k in failing for k in rt.CRITICAL_SUITES) else 1.0
+    assert raroi == pytest.approx(expected)
 
 
 def test_update_records_raroi_and_rankings():

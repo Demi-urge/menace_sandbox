@@ -9,13 +9,15 @@ def test_raroi_formula(monkeypatch):
     base_roi = 2.0
     monkeypatch.setattr(rt.np, "std", lambda arr: 0.0)
     monkeypatch.setattr(rt.ROITracker, "impact_severity", lambda self, wf: 0.4)
+    failing = ["security"]
     base, raroi = tracker.calculate_raroi(
         base_roi,
         "standard",
         test_stats={"errors_per_minute": 2.5},
-        failing_tests=["security"],
+        failing_tests=failing,
     )
-    expected = base_roi * (1 - 0.25 * 0.4) * 1.0 * 0.5
+    expected = base_roi * (1 - 0.25 * 0.4)
+    expected *= 0.5 if any(k in failing for k in rt.CRITICAL_SUITES) else 1.0
     assert base == base_roi
     assert raroi == pytest.approx(expected)
 

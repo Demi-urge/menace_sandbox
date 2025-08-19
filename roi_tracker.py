@@ -13,8 +13,8 @@ and critical safety test modifiers::
 severity. Default severities live in ``config/impact_severity.yaml`` and may be
 overridden by setting the ``IMPACT_SEVERITY_CONFIG`` environment variable to a
 custom YAML mapping. ``stability_factor`` declines as recent ROI deltas grow
-more volatile. Each failing security or alignment test halves ``safety_factor``
-so RAROI drops below the raw ROI when risk rises. RAROI close to the raw ROI
+more volatile. Failing tests from critical suites (e.g. security, alignment)
+halve ``safety_factor`` so RAROI drops below the raw ROI when risk rises. RAROI close to the raw ROI
 indicates a stable, low-risk workflow; a large gap signals substantial
 operational risk.
 """
@@ -70,6 +70,11 @@ else:  # pragma: no cover - metrics optional
     _TA_LOW_CONF_GAUGE = None
 
 logger = get_logger(__name__)
+
+# Critical test suites that significantly impact safety if they fail. The
+# collection may be extended as the project grows but defaults cover the most
+# sensitive areas.
+CRITICAL_SUITES = {"security", "alignment"}
 
 if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .resources_bot import ROIHistoryDB
@@ -1183,7 +1188,7 @@ class ROITracker:
                     for k, v in metrics.get("test_status", {}).items()  # type: ignore[arg-type]
                 }
             else:
-                for key in ("security", "alignment"):
+                for key in CRITICAL_SUITES:
                     val = metrics.get(key)
                     if isinstance(val, bool):
                         tests[key] = val
@@ -2863,7 +2868,8 @@ class ROITracker:
             interpreted as ``errors_per_minute`` for backwards compatibility.
         failing_tests:
             Iterable of failing test suite names or mapping of test names to
-            boolean pass/fail values.
+            boolean pass/fail values. Any failure from :data:`CRITICAL_SUITES`
+            halves the safety factor; otherwise the factor remains ``1.0``.
         recent_deltas:
             Optional sequence of recent ROI deltas. When omitted the last
             ``self.window`` entries from ``self.roi_history`` are used.
@@ -2918,9 +2924,8 @@ class ROITracker:
         stability_factor = max(0.0, 1.0 - instability)
 
         safety_factor = 1.0
-        for name in failures:
-            if name.lower() in {"security", "alignment"}:
-                safety_factor *= 0.5
+        if any(name.lower() in CRITICAL_SUITES for name in failures):
+            safety_factor *= 0.5
 
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
