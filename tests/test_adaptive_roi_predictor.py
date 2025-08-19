@@ -298,17 +298,18 @@ def test_evaluate_model_retrains(monkeypatch, tmp_path):
             predicted_class TEXT,
             actual_class TEXT,
             confidence REAL,
+            workflow_id TEXT,
             ts DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     conn.execute(
-        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
-        (0.0, 1.0, "linear", "exponential", 0.5),
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, workflow_id) VALUES (?,?,?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential", 0.5, "wf"),
     )
     conn.execute(
-        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
-        (0.0, 1.0, "linear", "exponential", 0.4),
+        "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, workflow_id) VALUES (?,?,?,?,?,?)",
+        (0.0, 1.0, "linear", "exponential", 0.4, "wf"),
     )
     conn.commit()
     conn.close()
@@ -350,19 +351,20 @@ def test_evaluate_model_drift_retrains(monkeypatch, tmp_path):
             predicted_class TEXT,
             actual_class TEXT,
             confidence REAL,
+            workflow_id TEXT,
             ts DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
     for _ in range(5):
         conn.execute(
-            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
-            (0.0, 0.0, "linear", "linear", 0.1),
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, workflow_id) VALUES (?,?,?,?,?,?)",
+            (0.0, 0.0, "linear", "linear", 0.1, "wf"),
         )
     for _ in range(5):
         conn.execute(
-            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence) VALUES (?,?,?,?,?)",
-            (0.0, 1.0, "linear", "linear", 0.9),
+            "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, workflow_id) VALUES (?,?,?,?,?,?)",
+            (0.0, 1.0, "linear", "linear", 0.9, "wf"),
         )
     conn.commit()
     conn.close()

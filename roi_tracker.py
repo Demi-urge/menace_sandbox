@@ -321,6 +321,7 @@ class ROITracker:
         self.drift_scores: List[float] = []
         self.drift_flags: List[bool] = []
         self.drift_metrics: Dict[str, float] = {}
+        self.workflow_evaluation_metrics: Dict[str | None, Dict[str, float]] = {}
         # track horizon-wise errors and whether they compound over time
         self.horizon_mae_history: List[Dict[int, float]] = []
         self.compounding_flags: List[bool] = []
@@ -665,7 +666,7 @@ class ROITracker:
             pass
 
         self.record_roi_prediction(
-            pred_seq, act_seq, predicted_class, actual_class, confidence
+            pred_seq, act_seq, predicted_class, actual_class, confidence, workflow_id
         )
         self.check_prediction_drift()
         self.drift_metrics["mae"] = self.rolling_mae()
@@ -678,6 +679,7 @@ class ROITracker:
         predicted_class: str | None = None,
         actual_class: str | None = None,
         confidence: float | None = None,
+        workflow_id: str | None = None,
     ) -> None:
         """Persist an ROI prediction event to ``roi_events.db``."""
         try:
@@ -695,12 +697,13 @@ class ROITracker:
                         actual_horizons TEXT,
                         predicted_categories TEXT,
                         actual_categories TEXT,
+                        workflow_id TEXT,
                         ts DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """
                 )
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons, predicted_categories, actual_categories) VALUES (?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
@@ -711,6 +714,7 @@ class ROITracker:
                         json.dumps([float(x) for x in actual]),
                         json.dumps([predicted_class] if predicted_class is not None else []),
                         json.dumps([actual_class] if actual_class is not None else []),
+                        workflow_id,
                     ),
                 )
         except Exception:
@@ -743,20 +747,20 @@ class ROITracker:
             conn = sqlite3.connect(roi_events_path)
             try:
                 cur = conn.execute(
-                    "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories "
+                    "SELECT workflow_id, predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons, predicted_categories, actual_categories "
                     "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
                     (int(window),),
                 )
             except sqlite3.OperationalError:
                 try:
                     cur = conn.execute(
-                        "SELECT predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons "
+                        "SELECT workflow_id, predicted_roi, actual_roi, predicted_class, actual_class, predicted_horizons, actual_horizons "
                         "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
                         (int(window),),
                     )
                 except sqlite3.OperationalError:
                     cur = conn.execute(
-                        "SELECT predicted_roi, actual_roi, predicted_class, actual_class "
+                        "SELECT workflow_id, predicted_roi, actual_roi, predicted_class, actual_class "
                         "FROM roi_prediction_events ORDER BY ts DESC LIMIT ?",
                         (int(window),),
                     )
@@ -769,21 +773,50 @@ class ROITracker:
             except Exception:
                 pass
 
-        preds = [float(r[0]) for r in rows]
-        acts = [float(r[1]) for r in rows[: len(preds)]]
-        errors = [abs(p - a) for p, a in zip(preds, acts)]
-        mae = float(np.mean(errors)) if errors else 0.0
-
-        horizon_errs: dict[int, list[float]] = defaultdict(list)
+        wf_groups: Dict[str | None, List[tuple]] = defaultdict(list)
         for r in rows:
-            if len(r) >= 6:
-                try:
-                    ph = json.loads(r[4] or "[]")
-                    ah = json.loads(r[5] or "[]")
-                except Exception:
-                    ph, ah = [], []
-                for i, (p, a) in enumerate(zip(ph, ah), start=1):
-                    horizon_errs[i].append(abs(float(p) - float(a)))
+            wf_groups[r[0]].append(r[1:])
+
+        preds: List[float] = []
+        acts: List[float] = []
+        errors: List[float] = []
+        cls_pairs_all: List[tuple] = []
+        horizon_errs: dict[int, list[float]] = defaultdict(list)
+        self.workflow_evaluation_metrics = {}
+        for wf_id, wf_rows in wf_groups.items():
+            wf_preds = [float(x[0]) for x in wf_rows]
+            wf_acts = [float(x[1]) for x in wf_rows[: len(wf_preds)]]
+            wf_errors = [abs(p - a) for p, a in zip(wf_preds, wf_acts)]
+            wf_mae = float(np.mean(wf_errors)) if wf_errors else 0.0
+            wf_cls_pairs = [
+                (x[2], x[3])
+                for x in wf_rows
+                if x[2] is not None and x[3] is not None
+            ]
+            if wf_cls_pairs:
+                pc, ac = zip(*wf_cls_pairs)
+                wf_acc = float((np.asarray(pc) == np.asarray(ac)).mean())
+            else:
+                wf_acc = 0.0
+            self.workflow_evaluation_metrics[wf_id] = {
+                "mae": wf_mae,
+                "accuracy": wf_acc,
+            }
+            preds.extend(wf_preds)
+            acts.extend(wf_acts)
+            errors.extend(wf_errors)
+            cls_pairs_all.extend(wf_cls_pairs)
+            for x in wf_rows:
+                if len(x) >= 6:
+                    try:
+                        ph = json.loads(x[4] or "[]")
+                        ah = json.loads(x[5] or "[]")
+                    except Exception:
+                        ph, ah = [], []
+                    for i, (p, a) in enumerate(zip(ph, ah), start=1):
+                        horizon_errs[i].append(abs(float(p) - float(a)))
+
+        mae = float(np.mean(errors)) if errors else 0.0
         mae_by_horizon = {
             h: float(np.mean(v)) for h, v in horizon_errs.items() if v
         }
@@ -811,13 +844,8 @@ class ROITracker:
         self.drift_scores.append(drift_score)
         self.drift_flags.append(drift_detected)
 
-        cls_pairs = [
-            (r[2], r[3])
-            for r in rows
-            if r[2] is not None and r[3] is not None
-        ]
-        if cls_pairs:
-            pc, ac = zip(*cls_pairs)
+        if cls_pairs_all:
+            pc, ac = zip(*cls_pairs_all)
             acc = float((np.asarray(pc) == np.asarray(ac)).mean())
         else:
             acc = 0.0
