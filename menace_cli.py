@@ -4,7 +4,6 @@ import argparse
 import json
 import subprocess
 import sys
-from uuid import uuid4
 
 
 def _run(cmd: list[str]) -> int:
@@ -19,7 +18,6 @@ from patch_provenance import (
     search_patches_by_license,
     get_patch_provenance,
 )
-from retrieval_cache import RetrievalCache
 
 
 def _normalise_hits(hits, origin=None):
@@ -108,39 +106,53 @@ def handle_patch(args: argparse.Namespace) -> int:
 
 def handle_retrieve(args: argparse.Namespace) -> int:
     """Handle ``retrieve`` command."""
-    from vector_service.retriever import (
-        Retriever,
-        FallbackResult,
-        VectorServiceError,
-        fts_search,
-    )
+    from pathlib import Path
+    from typing import Any
+    try:  # pragma: no cover - optional dependency
+        from universal_retriever import UniversalRetriever
+    except Exception:  # pragma: no cover - graceful fallback
+        print("universal retriever unavailable", file=sys.stderr)
+        return 1
+    try:  # pragma: no cover - optional dependency
+        from vector_service.retriever import fts_search
+    except Exception:  # pragma: no cover - fallback when module missing
+        fts_search = lambda q, dbs=None, limit=None: []  # type: ignore
 
-    cache = None if args.no_cache else RetrievalCache("metrics.db")
-    retriever = Retriever(cache=cache)
+    cache_path = Path.home() / ".cache" / "menace" / "retrieve.json"
+    cache_key = f"{args.query}||{'|'.join(sorted(args.dbs or []))}"
+    cache_data: dict[str, list[dict[str, Any]]] = {}
+    if not args.no_cache:
+        try:
+            cache_data = json.loads(cache_path.read_text())
+        except Exception:
+            cache_data = {}
+        if not args.rebuild_cache:
+            cached = cache_data.get(cache_key)
+            if cached:
+                print(json.dumps(cached))
+                return 0
+
+    retriever = UniversalRetriever()
+    hits = []
     try:
-        res = retriever.search(
-            args.query,
-            session_id=uuid4().hex,
-            top_k=args.top_k,
-            dbs=args.dbs,
-        )
-    except VectorServiceError as exc:
-        res = FallbackResult(str(exc), [])
-    if isinstance(res, FallbackResult):
-        results = _normalise_hits(list(res))
-        if res.reason == "no results":
-            try:
-                extra = fts_search(args.query, dbs=args.dbs, limit=args.top_k)
-            except Exception:
-                extra = []
-            seen = {(r["origin_db"], r["record_id"]) for r in results}
-            for hit in _normalise_hits(extra):
-                key = (hit["origin_db"], hit["record_id"])
-                if key not in seen:
-                    results.append(hit)
-                    seen.add(key)
-    else:
-        results = _normalise_hits(res)
+        hits, _, _ = retriever.retrieve(args.query, top_k=args.top_k, dbs=args.dbs)
+    except Exception:
+        hits = []
+    results = _normalise_hits(hits)
+    if not results:
+        try:
+            extra = fts_search(args.query, dbs=args.dbs, limit=args.top_k)
+        except Exception:
+            extra = []
+        results = _normalise_hits(extra)
+
+    if results and not args.no_cache:
+        cache_data[cache_key] = results
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(cache_data))
+        except Exception:
+            pass
     print(json.dumps(results))
     return 0
 
@@ -216,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.add_argument("--top-k", type=int, dest="top_k", default=5)
     p_retrieve.add_argument("--json", action="store_true", help="Output JSON results")
     p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
+    p_retrieve.add_argument(
+        "--rebuild-cache", action="store_true", help="Force recomputation of cache"
+    )
     p_retrieve.set_defaults(func=handle_retrieve)
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
