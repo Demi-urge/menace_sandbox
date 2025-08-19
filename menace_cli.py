@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from collections import OrderedDict
 
 
 def _run(cmd: list[str]) -> int:
@@ -20,29 +19,10 @@ from patch_provenance import (
     search_patches_by_license,
 )
 from vector_service import Retriever, FallbackResult, VectorServiceError
+from retrieval_cache import RetrievalCache, get_db_mtimes
 
-
-CACHE_PATH = Path(".retrieval_cache.json")
-MAX_CACHE_SIZE = 32
 
 FTS_HELPERS = {"code": lambda q: CodeDB().search_fallback(q)}
-
-
-def _load_cache() -> OrderedDict[str, list]:
-    try:
-        with CACHE_PATH.open() as fh:
-            data = json.load(fh)
-            return OrderedDict(data)
-    except Exception:
-        return OrderedDict()
-
-
-def _save_cache(cache: OrderedDict[str, list]) -> None:
-    try:
-        with CACHE_PATH.open("w") as fh:
-            json.dump(cache, fh)
-    except Exception:
-        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,10 +160,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "retrieve":
-        cache = _load_cache()
-        key = json.dumps({"q": args.query, "dbs": args.dbs or []}, sort_keys=True)
-        if key in cache:
-            print(json.dumps(cache[key]))
+        cache = RetrievalCache()
+        db_list = args.dbs or []
+        mtimes = get_db_mtimes(db_list)
+        cached = cache.get(args.query, db_list, mtimes)
+        if cached is not None:
+            print(json.dumps(cached))
             return 0
         retriever = Retriever()
         try:
@@ -206,10 +188,7 @@ def main(argv: list[str] | None = None) -> int:
                     except Exception:
                         pass
         if results:
-            cache[key] = results
-            while len(cache) > MAX_CACHE_SIZE:
-                cache.popitem(last=False)
-            _save_cache(cache)
+            cache.set(args.query, db_list, results, get_db_mtimes(db_list))
         print(json.dumps(results))
         return 0
 
