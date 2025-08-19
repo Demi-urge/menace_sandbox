@@ -809,6 +809,7 @@ class PatchHistoryDB:
                 retrieved_at TEXT,
                 position INTEGER,
                 license TEXT,
+                license_fingerprint TEXT,
                 semantic_alerts TEXT,
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
@@ -822,6 +823,7 @@ class PatchHistoryDB:
                 vector_id TEXT,
                 influence REAL,
                 license TEXT,
+                license_fingerprint TEXT,
                 semantic_alerts TEXT,
                 FOREIGN KEY(patch_id) REFERENCES patch_history(id)
             )
@@ -874,6 +876,10 @@ class PatchHistoryDB:
             ]
             if "license" not in cols:
                 conn.execute("ALTER TABLE patch_provenance ADD COLUMN license TEXT")
+            if "license_fingerprint" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_provenance ADD COLUMN license_fingerprint TEXT"
+                )
             if "semantic_alerts" not in cols:
                 conn.execute(
                     "ALTER TABLE patch_provenance ADD COLUMN semantic_alerts TEXT"
@@ -884,6 +890,10 @@ class PatchHistoryDB:
             ]
             if "license" not in cols:
                 conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+            if "license_fingerprint" not in cols:
+                conn.execute(
+                    "ALTER TABLE patch_ancestry ADD COLUMN license_fingerprint TEXT"
+                )
             if "semantic_alerts" not in cols:
                 conn.execute(
                     "ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT"
@@ -1107,10 +1117,33 @@ class PatchHistoryDB:
     ) -> None:
         ts = ts or datetime.utcnow().isoformat()
         for pos, vec in enumerate(vectors):
-            origin, vec_id, score, lic, alerts = (list(vec) + [None, None, None])[:5]
+            parts = list(vec)
+            origin = parts[0] if len(parts) > 0 else None
+            vec_id = parts[1] if len(parts) > 1 else None
+            score = parts[2] if len(parts) > 2 else None
+            lic = parts[3] if len(parts) > 3 else None
+            if len(parts) > 5:
+                fp = parts[4]
+                alerts = parts[5]
+            elif len(parts) > 4:
+                fp = None
+                alerts = parts[4]
+            else:
+                fp = None
+                alerts = None
             conn.execute(
-                "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position, license, semantic_alerts) VALUES(?,?,?,?,?,?,?,?)",
-                (patch_id, origin, vec_id, score, ts, pos, lic, json.dumps(alerts) if alerts is not None else None),
+                "INSERT INTO patch_provenance(patch_id, origin, vector_id, influence, retrieved_at, position, license, license_fingerprint, semantic_alerts) VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    patch_id,
+                    origin,
+                    vec_id,
+                    score,
+                    ts,
+                    pos,
+                    lic,
+                    fp,
+                    json.dumps(alerts) if alerts is not None else None,
+                ),
             )
 
     def record_provenance(self, patch_id: int, vectors: Sequence[tuple]) -> None:
@@ -1128,10 +1161,31 @@ class PatchHistoryDB:
         vectors: Sequence[tuple],
     ) -> None:
         for vec in vectors:
-            origin, vec_id, influence, lic, alerts = (list(vec) + [None, None, None])[:5]
+            parts = list(vec)
+            origin = parts[0] if len(parts) > 0 else None
+            vec_id = parts[1] if len(parts) > 1 else None
+            influence = parts[2] if len(parts) > 2 else None
+            lic = parts[3] if len(parts) > 3 else None
+            if len(parts) > 5:
+                fp = parts[4]
+                alerts = parts[5]
+            elif len(parts) > 4:
+                fp = None
+                alerts = parts[4]
+            else:
+                fp = None
+                alerts = None
             conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence, license, semantic_alerts) VALUES(?,?,?,?,?,?)",
-                (patch_id, origin, vec_id, influence, lic, json.dumps(alerts) if alerts is not None else None),
+                "INSERT INTO patch_ancestry(patch_id, origin, vector_id, influence, license, license_fingerprint, semantic_alerts) VALUES(?,?,?,?,?,?,?)",
+                (
+                    patch_id,
+                    origin,
+                    vec_id,
+                    influence,
+                    lic,
+                    fp,
+                    json.dumps(alerts) if alerts is not None else None,
+                ),
             )
 
     def _insert_contributors(
@@ -1182,16 +1236,18 @@ class PatchHistoryDB:
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
-    def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float, str | None, str | None]]:
+    def get_ancestry(self, patch_id: int) -> List[Tuple[str, str, float, str | None, str | None, str | None]]:
         """Return ancestry rows for ``patch_id`` ordered by influence."""
 
-        def op(conn: sqlite3.Connection) -> List[Tuple[str, str, float, str | None, str | None]]:
+        def op(
+            conn: sqlite3.Connection,
+        ) -> List[Tuple[str, str, float, str | None, str | None, str | None]]:
             rows = conn.execute(
-                "SELECT origin, vector_id, influence, license, semantic_alerts FROM patch_ancestry WHERE patch_id=? ORDER BY influence DESC",
+                "SELECT origin, vector_id, influence, license, license_fingerprint, semantic_alerts FROM patch_ancestry WHERE patch_id=? ORDER BY influence DESC",
                 (patch_id,),
             ).fetchall()
             return [
-                (o, v, float(i), lic, alerts) for o, v, i, lic, alerts in rows
+                (o, v, float(i), lic, fp, alerts) for o, v, i, lic, fp, alerts in rows
             ]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
@@ -1274,8 +1330,9 @@ class PatchHistoryDB:
         self,
         license: str | None = None,
         semantic_alert: str | None = None,
+        license_fingerprint: str | None = None,
     ) -> List[Tuple[int, str, str]]:
-        """Return patches filtered by license and/or semantic alert."""
+        """Return patches filtered by license, fingerprint and/or semantic alert."""
 
         def op(conn: sqlite3.Connection) -> List[Tuple[int, str, str]]:
             query = (
@@ -1287,6 +1344,9 @@ class PatchHistoryDB:
             if license is not None:
                 conditions.append("a.license=?")
                 params.append(license)
+            if license_fingerprint is not None:
+                conditions.append("a.license_fingerprint=?")
+                params.append(license_fingerprint)
             if semantic_alert is not None:
                 conditions.append("a.semantic_alerts LIKE ?")
                 params.append(f'%"{semantic_alert}"%')

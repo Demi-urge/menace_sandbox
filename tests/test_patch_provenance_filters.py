@@ -15,8 +15,8 @@ def _setup_db(path):
     db = PatchHistoryDB(path)
     pid1 = db.add(PatchRecord("a.py", "desc1", 1.0, 2.0))
     pid2 = db.add(PatchRecord("b.py", "desc2", 1.0, 2.0))
-    db.log_ancestry(pid1, [("o", "v1", 0.5, "GPL", ["malware"])])
-    db.log_ancestry(pid2, [("o", "v2", 0.7, "MIT", ["trojan"])])
+    db.log_ancestry(pid1, [("o", "v1", 0.5, "GPL", "fp1", ["malware"])])
+    db.log_ancestry(pid2, [("o", "v2", 0.7, "MIT", "fp2", ["trojan"])])
     return db, pid1, pid2
 
 
@@ -29,6 +29,10 @@ def test_service_filters(tmp_path):
         {"id": pid1, "filename": "a.py", "description": "desc1"}
     ]
     res = client.get("/patches", query_string={"semantic_alert": "trojan"})
+    assert res.get_json() == [
+        {"id": pid2, "filename": "b.py", "description": "desc2"}
+    ]
+    res = client.get("/patches", query_string={"license_fingerprint": "fp2"})
     assert res.get_json() == [
         {"id": pid2, "filename": "b.py", "description": "desc2"}
     ]
@@ -74,6 +78,21 @@ def test_cli_filters(tmp_path):
             "-m",
             "tools.patch_provenance_cli",
             "search",
+            "--license-fingerprint",
+            "fp1",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    patches = json.loads(out.stdout)
+    assert [p["id"] for p in patches] == [pid1]
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "tools.patch_provenance_cli",
+            "search",
             "--license",
             "GPL",
             "--semantic-alert",
@@ -106,6 +125,6 @@ def test_track_contributors_sorted(tmp_path):
     contributors = db.get_contributors(pid)
     assert [v for v, _, _ in contributors] == ["o:v2", "o:v1"]
     ancestry = db.get_ancestry(pid)
-    assert ancestry[0][3] == "GPL" and json.loads(ancestry[0][4]) == ["malware"]
-    assert ancestry[1][3] == "MIT" and json.loads(ancestry[1][4]) == ["trojan"]
+    assert ancestry[0][3] == "GPL" and json.loads(ancestry[0][5]) == ["malware"]
+    assert ancestry[1][3] == "MIT" and json.loads(ancestry[1][5]) == ["trojan"]
 

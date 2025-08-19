@@ -60,6 +60,7 @@ def main() -> None:
     )
     search_p.add_argument("--license")
     search_p.add_argument("--semantic-alert")
+    search_p.add_argument("--license-fingerprint")
 
     args = parser.parse_args()
     db = PatchHistoryDB()
@@ -93,9 +94,12 @@ def main() -> None:
         chain = build_chain(args.patch_id, patch_db=db)
         print(json.dumps(chain))
     elif args.cmd == "search":
-        if args.license or args.semantic_alert:
+        if args.license or args.semantic_alert or args.license_fingerprint:
             rows = search_patches(
-                license=args.license, semantic_alert=args.semantic_alert, patch_db=db
+                license=args.license,
+                semantic_alert=args.semantic_alert,
+                license_fingerprint=args.license_fingerprint,
+                patch_db=db,
             )
             patches = [
                 {
