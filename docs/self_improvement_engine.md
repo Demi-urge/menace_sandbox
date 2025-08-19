@@ -120,6 +120,17 @@ pd.Series(stats["class_counts"]["actual"]).plot.bar()
 pd.DataFrame(stats["confusion_matrix"]).plot.bar()
 ```
 
+### Confidence weighting and demotion
+
+`ROITracker` tracks per‑workflow mean absolute error and ROI variance and
+combines them into a confidence score via ``1 / (1 + mae + variance)``. The
+engine multiplies a candidate's risk‑adjusted ROI by this confidence to compute
+the final score used for ranking. A threshold ``tau`` (default ``0.5``)
+demotes modules whose confidence falls below the cutoff, logging a review
+action instead of automatically applying patches. The evaluation dashboard
+surfaces these metrics through ``workflow_mae``, ``workflow_variance`` and
+``workflow_confidence`` fields.
+
 ## Scenario Types
 
 Improvement cycles inherit the sandbox scenario presets. Use profiles such as
