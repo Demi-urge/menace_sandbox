@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-governed-embeddings
+        name: Check for ungoverned embedding calls
+        entry: python scripts/check_governed_embeddings.py
+        language: system
+        pass_filenames: false
+        files: '\.py$'

@@ -30,8 +30,10 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: bash ./setup_env.sh
+      - name: Install pre-commit
+        run: pip install pre-commit
       - name: Check for ungoverned embedding calls
-        run: python scripts/check_governed_embeddings.py
+        run: pre-commit run check-governed-embeddings --all-files
       - name: Run unit and integration tests
         run: pytest -k "not fuzz"
       - name: Run fuzz and property-based tests

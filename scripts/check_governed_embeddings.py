@@ -12,6 +12,12 @@ from pathlib import Path
 import re
 import sys
 
+# Match ``SentenceTransformer(...).encode(`` or ``SentenceTransformer.encode(``
+# directly.  The ``.*`` is non-greedy so multi-line constructions are handled.
+DIRECT_ST_ENCODE = re.compile(
+    r"SentenceTransformer\s*(?:\([^)]*\)\s*)?\.encode\(", re.DOTALL
+)
+
 # Match ``something.encode(`` but ignore ``tokenizer.encode`` which is valid
 # for token counting.  Additional exclusions can be added as needed.
 ENCODE_CALL = re.compile(r"\b(?!tokenizer\.)[A-Za-z_][A-Za-z0-9_]*\.encode\(")
@@ -32,10 +38,20 @@ def main() -> int:
         ):
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
+
+        # Find direct ``SentenceTransformer.encode`` calls including inline
+        # instantiations like ``SentenceTransformer("model").encode(...)``.
+        flagged_lines: set[int] = set()
+        for match in DIRECT_ST_ENCODE.finditer(text):
+            lineno = text[: match.start()].count("\n") + 1
+            line = text.splitlines()[lineno - 1].strip()
+            offenders.append(f"{path.relative_to(root)}:{lineno}:{line}")
+            flagged_lines.add(lineno)
+
         if "SentenceTransformer" not in text:
             continue
         for lineno, line in enumerate(text.splitlines(), start=1):
-            if "encode(" not in line:
+            if lineno in flagged_lines or "encode(" not in line:
                 continue
             if ENCODE_CALL.search(line):
                 offenders.append(f"{path.relative_to(root)}:{lineno}:{line.strip()}")
