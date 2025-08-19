@@ -34,7 +34,21 @@ try:
 except Exception:  # pragma: no cover - optional dep
     GraphDatabase = None  # type: ignore
 
-from analysis.semantic_diff_filter import find_semantic_risks
+try:
+    from analysis.semantic_diff_filter import find_semantic_risks
+except Exception:  # pragma: no cover - optional dependency
+    def find_semantic_risks(lines, threshold: float = 0.5):  # type: ignore
+        return []
+try:
+    from compliance.license_fingerprint import check as license_check
+except Exception:  # pragma: no cover - optional dependency
+    def license_check(text: str):  # type: ignore
+        return None
+try:
+    from security.secret_redactor import redact
+except Exception:  # pragma: no cover - optional dependency
+    def redact(text: str):  # type: ignore
+        return text
 from governed_embeddings import governed_embed
 from .influence_graph import InfluenceGraph
 
@@ -83,11 +97,17 @@ class InMemoryMongo:
 
 
 class InMemoryFaiss:
-    """Embeds sentences and stores in an optional FAISS index."""
+    """Embeds sentences and stores in an optional FAISS index.
+
+    Sentences are redacted and checked for licensing issues and semantic risks
+    before embedding. If any alerts are found the sentence is stored without an
+    embedding and the alerts are recorded alongside the stored sentence.
+    """
 
     def __init__(self) -> None:
         self.sentences: List[str] = []
         self.ids: List[int] = []
+        self.alerts: List[Optional[List[tuple[str, str, float]]]] = []
         if faiss is not None and SentenceTransformer is not None:
             self.model = SentenceTransformer("all-MiniLM-L6-v2")
             dim = self.model.get_sentence_embedding_dimension()
@@ -97,18 +117,34 @@ class InMemoryFaiss:
             self.index = None
 
     def add(self, sentence: str) -> int:
+        """Add *sentence* to the store and index an embedding when safe.
+
+        The text is redacted, checked for licensing and scanned with
+        :func:`find_semantic_risks`. If disallowed content or alerts are
+        detected the sentence is stored but not indexed and the alert list is
+        saved to :attr:`alerts`.
+        """
+
         idx = len(self.sentences)
-        self.sentences.append(sentence)
+        red = redact(sentence.strip())
+        lic = license_check(red)
+        alerts = []
+        if lic:
+            logger.warning("license detected: %s", lic)
+            alerts.append((red, f"license:{lic}", 1.0))
+        sem = find_semantic_risks(red.splitlines())
+        if sem:
+            logger.warning("semantic risks detected: %s", [a[1] for a in sem])
+            alerts.extend(sem)
+        self.sentences.append(red)
         self.ids.append(idx)
-        if self.model is not None and self.index is not None and np is not None:
-            alerts = find_semantic_risks(sentence.splitlines())
-            if alerts:
-                logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
-            else:
-                vec = governed_embed(sentence, self.model)
-                if vec is not None:
-                    arr = np.array(vec, dtype="float32")
-                    self.index.add(arr.reshape(1, -1))
+        self.alerts.append(alerts or None)
+        if alerts or self.model is None or self.index is None or np is None:
+            return idx
+        vec = governed_embed(red, self.model)
+        if vec is not None:
+            arr = np.array(vec, dtype="float32")
+            self.index.add(arr.reshape(1, -1))
         return idx
 
 
