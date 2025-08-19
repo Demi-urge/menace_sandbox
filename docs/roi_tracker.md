@@ -44,12 +44,12 @@ high-ROI databases.
 from menace_sandbox.roi_tracker import ROITracker
 
 tracker = ROITracker()
+tracker.roi_history = [0.2, 0.15, 0.18]
 base, raroi = tracker.calculate_raroi(
     1.2,
-    "standard",
-    test_stats={"errors_per_minute": 0.1},
+    workflow_type="standard",
+    metrics={"errors_per_minute": 0.1},
     failing_tests={"security_suite": False},
-    recent_deltas=[0.2, 0.15, 0.18],
 )
 print(base, raroi)
 ```
@@ -67,7 +67,7 @@ raroi = base_roi * (1 - catastrophic_risk) * stability_factor * safety_factor
 
 ### Impact severity and test metrics
 
-Impact severity levels live in `config/impact_severity.yaml` and can be overridden via the `IMPACT_SEVERITY_CONFIG` environment variable. `test_stats` may supply metrics such as `errors_per_minute`, `instability` or a pre-computed `rollback_probability`. Failing test names or boolean mappings can be passed via `failing_tests` so critical suites further reduce the score.
+Impact severity levels live in `config/impact_severity.yaml` and can be overridden via the `IMPACT_SEVERITY_CONFIG` environment variable. `metrics` may supply values such as `errors_per_minute`, `instability` or a pre-computed `rollback_probability`. Failing test names or boolean mappings can be passed via `failing_tests` so critical suites further reduce the score. In the autonomous sandbox these inputs come from each module's `collect_metrics` hook and self-test reports.
 
 `_safety_factor` expects a metrics mapping that may include scores like
 `safety_rating`, `security_score`, `synergy_safety_rating` and
@@ -76,7 +76,12 @@ Impact severity levels live in `config/impact_severity.yaml` and can be overridd
 pattern `<suite>_failures` (for example `security_failures` or
 `alignment_failures`).
 
-Higher RAROI values promote a workflow in ranking while lower scores push it down. See the [RAROI overview](raroi.md) for additional background.
+Higher RAROI values promote a workflow in ranking while lower scores push it
+down. Inside the autonomous sandbox the collected `metrics` and
+`failing_tests` are passed to `calculate_raroi`, and the resulting score is
+combined with raw ROI to rank modules and decide whether the self-improvement
+engine should continue iterating or deprioritise a workflow. See the
+[RAROI overview](raroi.md) for additional background.
 
 ## Entropy delta tracking
 

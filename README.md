@@ -88,14 +88,15 @@
 - ROI-driven autoscaling with `ROIScalingPolicy`
 - Profile-based ROI evaluation via `ROICalculator` using YAML-configured weights and veto rules
 - ROI history forecasting via `ROITracker` ([docs/roi_tracker.md](docs/roi_tracker.md))
-- `calculate_raroi` derives a risk-adjusted ROI (RAROI) by applying
-  catastrophic risk, recent stability and safety multipliers. Impact
-  severities load from `config/impact_severity.yaml` or a file referenced by
-  the `IMPACT_SEVERITY_CONFIG` environment variable. Each failing security or
-  alignment test halves the `safety_factor`, so RAROI close to the raw ROI
-  signals a stable,
-  low-risk workflow while a much lower RAROI highlights risk and
-  volatility.
+ - `calculate_raroi` derives a risk-adjusted ROI (RAROI) by applying
+   catastrophic risk, recent stability and safety multipliers. Impact
+   severities load from `config/impact_severity.yaml` or a file referenced by
+   the `IMPACT_SEVERITY_CONFIG` environment variable. Runtime `metrics`
+   from sandbox modules and failing test results passed via `failing_tests`
+   shape the `safety_factor`. Each failing security or alignment test halves
+   the factor, so RAROI close to the raw ROI signals a stable, low-risk
+   workflow while a much lower RAROI highlights risk and volatility. RAROI
+   feeds into module ranking and guides self-improvement decisions.
 - Debug logs report the EMA and standard deviation used for ROI thresholds along
   with per-metric synergy EMA, deviation and confidence. Window sizes and weight
   parameters are included in each `log_record` entry.
