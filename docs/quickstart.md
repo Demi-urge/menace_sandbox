@@ -31,6 +31,24 @@ This guide walks you through the common Menace workflows using the new `menace` 
    menace deploy
    ```
 
+### Utility commands
+
+```bash
+# Semantic search with caching and full-text fallback
+menace retrieve "missing config" --db code
+
+# Apply a patch using the self-coding engine
+menace patch bots/example.py --desc "handle edge case"
+
+# Backfill embeddings for a specific database
+menace embed --db workflows
+
+# Scaffold a new database module and test
+menace new-db demo
+```
+
+`retrieve` caches results on disk and reuses them until the underlying databases change. When the vector retriever raises an error, database-specific full-text helpers are consulted as a fallback.
+
 ### Recursive module discovery
 
 Passing modules are merged into the sandbox automatically and a simple
