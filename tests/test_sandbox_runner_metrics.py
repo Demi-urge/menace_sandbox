@@ -6,6 +6,8 @@ import os
 import asyncio
 import json
 import pytest
+import numpy as np
+import menace.roi_tracker as rt
 
 os.environ.setdefault("MENACE_LIGHT_IMPORTS", "1")
 
@@ -2093,3 +2095,27 @@ def test_modules_marked_complete_skip_improvement(monkeypatch):
             sandbox_runner._sandbox_cycle_runner(ctx, section_name, "", ctx.tracker)
 
     assert calls == ["m.py:sec"]
+
+
+def test_ranking_prefers_raroi():
+    tracker = rt.ROITracker()
+    tracker.update(
+        0.0,
+        1.0,
+        ["risky.py"],
+        metrics={"workflow_type": "critical", "rollback_probability": 0.8},
+    )
+    tracker.update(
+        0.0,
+        0.6,
+        ["safe.py"],
+        metrics={"workflow_type": "standard", "rollback_probability": 0.0},
+    )
+    ranking = tracker.rankings()
+    assert ranking[0][0] == "safe.py"
+    assert ranking[0][1] > ranking[1][1]
+    assert ranking[0][2] < ranking[1][2]
+    expected_safe = 0.6 * (1 - np.std([1.0, 0.6]))
+    expected_risky = 1.0 * (1 - 0.8 * 0.9)
+    assert ranking[0][1] == pytest.approx(expected_safe)
+    assert ranking[1][1] == pytest.approx(expected_risky)

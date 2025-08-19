@@ -1,5 +1,6 @@
 import json
 import pytest
+import numpy as np
 import menace.roi_tracker as rt
 import types
 import sys
@@ -655,4 +656,44 @@ def test_synergy_history_multi_metric(tmp_path):
     another = rt.ROITracker()
     another.load_history(str(path2))
     assert another.synergy_history == tracker.synergy_history
+
+
+def test_raroi_high_risk():
+    tracker = rt.ROITracker()
+    base, raroi = tracker.calculate_raroi(
+        1.0,
+        "critical",
+        test_stats={"rollback_probability": 0.8},
+        recent_deltas=[0.1, 0.1, 0.1],
+    )
+    expected = 1.0 * (1 - 0.8 * 0.9) * (1 - np.std([0.1, 0.1, 0.1]))
+    assert base == pytest.approx(1.0)
+    assert raroi == pytest.approx(expected)
+
+
+def test_raroi_unstable_roi():
+    tracker = rt.ROITracker()
+    deltas = [0.5, -0.5, 0.5]
+    base, raroi = tracker.calculate_raroi(
+        1.0,
+        "standard",
+        test_stats={"rollback_probability": 0.0},
+        recent_deltas=deltas,
+    )
+    expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std(deltas))
+    assert raroi == pytest.approx(expected)
+    assert raroi < base
+
+
+def test_raroi_failing_tests():
+    tracker = rt.ROITracker()
+    base, raroi = tracker.calculate_raroi(
+        1.0,
+        "standard",
+        test_stats={"rollback_probability": 0.0},
+        failing_tests=["security"],
+        recent_deltas=[0.1, 0.1, 0.1],
+    )
+    expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std([0.1, 0.1, 0.1])) * 0.5
+    assert raroi == pytest.approx(expected)
 
