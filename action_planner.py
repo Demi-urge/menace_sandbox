@@ -228,7 +228,20 @@ class ActionPlanner:
                         if self.growth_weighting
                         else 1.0
                     )
-                    weight *= roi_est * mult
+                    base_roi, raroi = (
+                        self.roi_tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                        if self.roi_tracker
+                        else (roi_est, roi_est)
+                    )
+                    weight *= raroi * mult
+                    logger.debug(
+                        "priority roi scaled",
+                        extra=log_record(
+                            action=action,
+                            base_roi=base_roi,
+                            raroi=raroi,
+                        ),
+                    )
                 except Exception:
                     logger.exception("roi prediction failed for %s", action)
             self.priority_weights[action] = weight

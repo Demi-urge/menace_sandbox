@@ -2225,13 +2225,27 @@ class SelfImprovementEngine:
                         roi_est = float(seq[-1])
                 except Exception:
                     roi_est, category = 0.0, "unknown"
+            base_roi, raroi = (
+                self.roi_tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                if self.roi_tracker
+                else (roi_est, roi_est)
+            )
             mult = (
                 self.growth_multipliers.get(category, 1.0)
                 if self.growth_weighting
                 else 1.0
             )
-            weight = roi_est * mult
-            scored.append((mod, roi_est, category, weight))
+            weight = raroi * mult
+            scored.append((mod, base_roi, category, weight))
+            self.logger.debug(
+                "scored modification",
+                extra=log_record(
+                    module=mod,
+                    base_roi=base_roi,
+                    raroi=raroi,
+                    weight=weight,
+                ),
+            )
         if self.use_adaptive_roi:
             scored = [s for s in scored if s[3] > 0]
             scored.sort(key=lambda x: -x[3])
@@ -2613,21 +2627,27 @@ class SelfImprovementEngine:
                     confidence = float(conf[-1]) if conf else 0.0
                 except Exception:
                     roi_est, growth, confidence = 0.0, "unknown", 0.0
+                base_roi, raroi = (
+                    tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                    if tracker
+                    else (roi_est, roi_est)
+                )
                 mult = (
                     self.growth_multipliers.get(growth, 1.0)
                     if self.growth_weighting
                     else 1.0
                 )
-                weight = roi_est * confidence * mult
+                weight = raroi * confidence * mult
                 if tracker:
-                    tracker._next_prediction = roi_est
+                    tracker._next_prediction = base_roi
                     tracker._next_category = growth
                 if weight <= 0:
                     self.logger.info(
                         "self optimisation skipped",
                         extra=log_record(
                             growth_type=growth,
-                            roi_estimate=roi_est,
+                            roi_estimate=base_roi,
+                            raroi=raroi,
                             weight=weight,
                             confidence=confidence,
                         ),
