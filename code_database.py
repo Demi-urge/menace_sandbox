@@ -1328,7 +1328,12 @@ class PatchHistoryDB:
         semantic_alert: str | None = None,
         license_fingerprint: str | None = None,
     ) -> List[Tuple[int, str, str]]:
-        """Return patches filtered by license, fingerprint and/or semantic alert."""
+        """Return patches filtered by license, fingerprint and/or semantic alert.
+
+        ``license_fingerprint`` matches the exact fingerprint string stored in
+        the ancestry tables, while ``semantic_alert`` performs a substring match
+        against the JSON encoded alerts list.
+        """
 
         def op(conn: sqlite3.Connection) -> List[Tuple[int, str, str]]:
             query = (

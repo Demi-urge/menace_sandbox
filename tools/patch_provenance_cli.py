@@ -6,6 +6,7 @@ Examples:
     python -m tools.patch_provenance_cli search --license MIT
     python -m tools.patch_provenance_cli search --semantic-alert malware
     python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware
+    python -m tools.patch_provenance_cli search --license-fingerprint fp1
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from patch_provenance import (
     search_patches_by_vector,
     search_patches_by_hash,
     search_patches,
+    search_patches_by_license_fingerprint,
 )
 
 
@@ -35,7 +37,8 @@ def main() -> None:
             "  python -m tools.patch_provenance_cli chain 42\n"
             "  python -m tools.patch_provenance_cli search --license MIT\n"
             "  python -m tools.patch_provenance_cli search --semantic-alert malware\n"
-            "  python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware"
+            "  python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware\n"
+            "  python -m tools.patch_provenance_cli search --license-fingerprint fp1"
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -95,12 +98,17 @@ def main() -> None:
         print(json.dumps(chain))
     elif args.cmd == "search":
         if args.license or args.semantic_alert or args.license_fingerprint:
-            rows = search_patches(
-                license=args.license,
-                semantic_alert=args.semantic_alert,
-                license_fingerprint=args.license_fingerprint,
-                patch_db=db,
-            )
+            if args.license_fingerprint and not args.license and not args.semantic_alert:
+                rows = search_patches_by_license_fingerprint(
+                    args.license_fingerprint, patch_db=db
+                )
+            else:
+                rows = search_patches(
+                    license=args.license,
+                    semantic_alert=args.semantic_alert,
+                    license_fingerprint=args.license_fingerprint,
+                    patch_db=db,
+                )
             patches = [
                 {
                     "id": r["patch_id"],

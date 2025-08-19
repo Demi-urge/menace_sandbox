@@ -1,4 +1,8 @@
-"""Flask service exposing patch provenance queries."""
+"""Flask service exposing patch provenance queries.
+
+Supports filtering by license, semantic alerts and license fingerprints when
+listing patches.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,7 @@ from patch_provenance import (
     search_patches_by_vector,
     build_chain,
     search_patches,
+    search_patches_by_license_fingerprint,
 )
 
 
@@ -59,12 +64,15 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
         alert = request.args.get("semantic_alert")
         fp = request.args.get("license_fingerprint")
         if lic or alert or fp:
-            rows = search_patches(
-                license=lic,
-                semantic_alert=alert,
-                license_fingerprint=fp,
-                patch_db=pdb,
-            )
+            if fp and not lic and not alert:
+                rows = search_patches_by_license_fingerprint(fp, patch_db=pdb)
+            else:
+                rows = search_patches(
+                    license=lic,
+                    semantic_alert=alert,
+                    license_fingerprint=fp,
+                    patch_db=pdb,
+                )
             patches = [
                 {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
                 for r in rows
