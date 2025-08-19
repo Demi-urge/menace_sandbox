@@ -90,9 +90,10 @@
 - ROI history forecasting via `ROITracker` ([docs/roi_tracker.md](docs/roi_tracker.md))
 - `calculate_raroi` derives a risk-adjusted ROI (RAROI) by applying
   catastrophic risk, recent stability and safety multipliers. Impact
-  severities load from `config/impact_severity.json` or an override
-  mapping. Each failing security or alignment test halves the
-  `safety_factor`, so RAROI close to the raw ROI signals a stable,
+  severities load from `config/impact_severity.yaml` or a file referenced by
+  the `IMPACT_SEVERITY_CONFIG` environment variable. Each failing security or
+  alignment test halves the `safety_factor`, so RAROI close to the raw ROI
+  signals a stable,
   low-risk workflow while a much lower RAROI highlights risk and
   volatility.
 - Debug logs report the EMA and standard deviation used for ROI thresholds along

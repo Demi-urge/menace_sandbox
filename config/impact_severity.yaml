@@ -1,0 +1,5 @@
+# Default workflow impact severity scores used by ROITracker.
+# Adjust numeric values to tune catastrophic risk weighting per workflow type.
+experimental: 0.2
+standard: 0.5
+critical: 0.9
