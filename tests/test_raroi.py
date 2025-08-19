@@ -8,7 +8,7 @@ def test_raroi_formula(monkeypatch):
     tracker.roi_history = [1.0] * 10
     base_roi = 2.0
     monkeypatch.setattr(rt.np, "std", lambda arr: 0.0)
-    monkeypatch.setattr(rt.ROITracker, "_impact_severity", lambda self, wf: 0.4)
+    monkeypatch.setattr(rt.ROITracker, "impact_severity", lambda self, wf: 0.4)
     base, raroi = tracker.calculate_raroi(
         base_roi,
         "standard",

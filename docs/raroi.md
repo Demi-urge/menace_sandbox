@@ -31,17 +31,16 @@ workflows.
 
 ## Configuring impact severity
 
-Impact severity values may be customized by creating
-`config/impact_severity.json`. A minimal example looks like:
+Impact severity values live in `config/impact_severity.yaml`. A minimal example
+looks like:
 
-```json
-{
-  "experimental": 0.2,
-  "standard": 0.5,
-  "critical": 0.9
-}
+```yaml
+experimental: 0.2
+standard: 0.5
+critical: 0.9
 ```
 
-These values represent the perceived impact if a workflow must be rolled back
-and can be tuned to match deployment environments. Missing entries default to
-`standard`.
+Set the `IMPACT_SEVERITY_CONFIG` environment variable to point to a custom YAML
+file if different defaults are required. These values represent the perceived
+impact if a workflow must be rolled back and can be tuned to match deployment
+environments. Missing entries default to `standard`.

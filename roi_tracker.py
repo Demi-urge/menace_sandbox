@@ -10,12 +10,13 @@ and critical safety test modifiers::
             * stability_factor * safety_factor
 
 ``catastrophic_risk`` multiplies rollback probability by workflow impact
-severity. Default severities live in ``config/impact_severity.json`` and can be
-overridden per call via the ``impact_config`` argument. ``stability_factor``
-declines as recent ROI deltas grow more volatile. Each failing security or
-alignment test halves ``safety_factor`` so RAROI drops below the raw ROI when
-risk rises. RAROI close to the raw ROI indicates a stable, low-risk workflow;
-a large gap signals substantial operational risk.
+severity. Default severities live in ``config/impact_severity.yaml`` and may be
+overridden by setting the ``IMPACT_SEVERITY_CONFIG`` environment variable to a
+custom YAML mapping. ``stability_factor`` declines as recent ROI deltas grow
+more volatile. Each failing security or alignment test halves ``safety_factor``
+so RAROI drops below the raw ROI when risk rises. RAROI close to the raw ROI
+indicates a stable, low-risk workflow; a large gap signals substantial
+operational risk.
 """
 
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping
@@ -24,6 +25,7 @@ import argparse
 import csv
 
 import json
+import yaml
 import os
 import sqlite3
 from collections import Counter, defaultdict
@@ -2727,36 +2729,51 @@ class ROITracker:
         return max(0.0, min(1.0, prob))
 
     # ------------------------------------------------------------------
-    def _impact_severity(self, workflow_type: str) -> float:
-        """Return impact severity for ``workflow_type``.
+    def _load_impact_severity_map(self) -> Mapping[str, float]:
+        """Return impact severity mapping from config or defaults."""
 
-        Severity values may be overridden by ``config/impact_severity.json``.
-        """
+        defaults = {
+            "experimental": 0.2,
+            "standard": 0.5,
+            "critical": 0.9,
+        }
+        path = os.getenv(
+            "IMPACT_SEVERITY_CONFIG",
+            os.path.join(os.path.dirname(__file__), "config", "impact_severity.yaml"),
+        )
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = yaml.safe_load(fh) or {}
+            if isinstance(data, Mapping):
+                overrides = {
+                    str(k): float(v)
+                    for k, v in data.items()
+                    if isinstance(v, (int, float))
+                }
+            else:
+                overrides = {}
+        except Exception:
+            overrides = {}
+        defaults.update(overrides)
+        return defaults
+
+    # ------------------------------------------------------------------
+    def impact_severity(self, workflow_type: str) -> float:
+        """Return impact severity for ``workflow_type``."""
 
         if not hasattr(self, "_impact_severity_map"):
-            defaults = {
-                "experimental": 0.2,
-                "standard": 0.5,
-                "critical": 0.9,
-            }
-            path = os.path.join(
-                os.path.dirname(__file__), "config", "impact_severity.json"
-            )
-            try:
-                with open(path, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                if isinstance(data, Mapping):
-                    overrides = {
-                        str(k): float(v) for k, v in data.items() if isinstance(v, (int, float))
-                    }
-                else:
-                    overrides = {}
-            except Exception:
-                overrides = {}
-            defaults.update(overrides)
-            setattr(self, "_impact_severity_map", defaults)
+            setattr(self, "_impact_severity_map", self._load_impact_severity_map())
         mapping = getattr(self, "_impact_severity_map")
         return float(mapping.get(workflow_type, mapping.get("standard", 0.5)))
+
+    # ------------------------------------------------------------------
+    @property
+    def impact_severity_map(self) -> Mapping[str, float]:
+        """Expose the loaded impact severity mapping."""
+
+        if not hasattr(self, "_impact_severity_map"):
+            setattr(self, "_impact_severity_map", self._load_impact_severity_map())
+        return getattr(self, "_impact_severity_map")
 
     # ------------------------------------------------------------------
     def _safety_factor(self, metrics: Mapping[str, float]) -> float:
@@ -2866,7 +2883,7 @@ class ROITracker:
             rollback_probability = max(error_prob, instability_metric)
             rollback_probability = max(0.0, min(1.0, rollback_probability))
 
-        impact_severity = float(self._impact_severity(workflow_type))
+        impact_severity = float(self.impact_severity(workflow_type))
         catastrophic_risk = rollback_probability * impact_severity
 
         stability_factor = max(0.0, 1.0 - instability)

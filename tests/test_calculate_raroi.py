@@ -40,7 +40,7 @@ def test_calculate_raroi_formula(
     instability = np.std(recent) if recent else 0.0
     error_prob = max(0.0, min(1.0, errors / 10.0))
     rollback_probability = min(1.0, max(instability, error_prob))
-    impact = tracker._impact_severity(workflow_type)
+    impact = tracker.impact_severity(workflow_type)
     stability_factor = max(0.0, 1.0 - instability)
     safety_factor = 1.0
     for key in ("security", "alignment"):
