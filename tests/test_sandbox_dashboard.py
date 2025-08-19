@@ -40,6 +40,7 @@ def test_roi_route(tmp_path):
     data = resp.get_json()
     assert data["roi"] == [1.0, 1.0]
     assert data["security"] == [0.8, 0.9]
+    assert data["workflows"] == {}
 
 
 def test_roi_route_includes_alignment_warnings(tmp_path):
@@ -55,6 +56,7 @@ def test_roi_route_includes_alignment_warnings(tmp_path):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["warnings"][0] == "warn"
+    assert "workflows" in data
 
 
 def test_load_error(tmp_path, monkeypatch, caplog):

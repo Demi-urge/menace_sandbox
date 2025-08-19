@@ -7,6 +7,7 @@ from menace.roi_tracker import ROITracker
 
 pkg = sys.modules.setdefault("menace", types.ModuleType("menace"))
 pkg.__path__ = [str(Path(__file__).resolve().parents[1])]
+pkg.RAISE_ERRORS = False
 spec_me = importlib.util.spec_from_file_location(
     "menace.metrics_exporter",
     Path(__file__).resolve().parents[1] / "metrics_exporter.py",

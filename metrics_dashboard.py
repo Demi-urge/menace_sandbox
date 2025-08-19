@@ -144,6 +144,16 @@ class MetricsDashboard:
                 except Exception:
                     metrics["relevancy_flagged_modules_impact_total"] = {}
 
+            for name in ("confidence", "workflow_mae", "workflow_variance"):
+                gauge = getattr(exporter, name, None)
+                if gauge is not None:
+                    try:
+                        metrics[name] = {
+                            k[0]: v.get() for k, v in getattr(gauge, "_values", {}).items()
+                        }
+                    except Exception:
+                        metrics[name] = {}
+
         try:
             from . import synergy_auto_trainer as sat
 

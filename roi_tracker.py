@@ -632,6 +632,19 @@ class ROITracker:
                 actual_class = None
         if predicted_class is not None and actual_class is not None:
             self.record_class_prediction(predicted_class, actual_class)
+        wf_mae = (
+            self.workflow_mae(workflow_id)
+            if workflow_id is not None
+            else self.rolling_mae()
+        )
+        wf_var = (
+            self.workflow_variance(workflow_id)
+            if workflow_id is not None
+            else float(np.var(self.actual_roi)) if self.actual_roi else 0.0
+        )
+        conf_val = confidence if confidence is not None else (
+            self.workflow_confidence(workflow_id) if workflow_id is not None else 0.0
+        )
 
         logger.info(
             "roi prediction",
@@ -641,7 +654,10 @@ class ROITracker:
                 actual=float(act_seq[0]),
                 predicted_class=predicted_class,
                 actual_class=actual_class,
-                confidence=confidence,
+                confidence=conf_val,
+                workflow_id=workflow_id,
+                workflow_mae=wf_mae,
+                workflow_variance=wf_var,
             ),
         )
         try:
@@ -662,6 +678,13 @@ class ROITracker:
             _me.prediction_reliability.labels(metric="roi").set(
                 self.reliability()
             )
+            if workflow_id is not None:
+                try:
+                    _me.workflow_mae.labels(workflow=workflow_id).set(wf_mae)
+                    _me.workflow_variance.labels(workflow=workflow_id).set(wf_var)
+                    _me.confidence.labels(workflow=workflow_id).set(conf_val)
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -693,6 +716,8 @@ class ROITracker:
                         predicted_class TEXT,
                         actual_class TEXT,
                         confidence REAL,
+                        mae REAL,
+                        variance REAL,
                         predicted_horizons TEXT,
                         actual_horizons TEXT,
                         predicted_categories TEXT,
@@ -702,14 +727,18 @@ class ROITracker:
                     )
                 """
                 )
+                mae_val = self.workflow_mae(workflow_id) if workflow_id is not None else self.rolling_mae()
+                var_val = self.workflow_variance(workflow_id) if workflow_id is not None else (float(np.var(self.actual_roi)) if self.actual_roi else 0.0)
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, variance, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
                         predicted_class,
                         actual_class,
                         None if confidence is None else float(confidence),
+                        mae_val,
+                        var_val,
                         json.dumps([float(x) for x in predicted]),
                         json.dumps([float(x) for x in actual]),
                         json.dumps([predicted_class] if predicted_class is not None else []),
