@@ -1237,6 +1237,7 @@ class ROITracker:
                 adjusted,
                 workflow_type=str(metrics.get("workflow_type", "standard")),
                 rollback_prob=rb,
+                metrics=metrics,
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
@@ -2850,22 +2851,29 @@ class ROITracker:
         workflow_type: str | None = None,
         rollback_prob: float | None = None,
         impact_severity: float | None = None,
+        metrics: Mapping[str, float] | None = None,
     ) -> tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
         The method estimates the catastrophic risk of continuing a workflow by
         combining rollback probability, workflow impact severity and recent
         stability metrics. Safety is further reduced when critical suites such
-        as ``security`` or ``alignment`` fail.
+        as ``security`` or ``alignment`` fail. When ``rollback_prob`` is not
+        provided, ``metrics`` supplies runtime information for estimating
+        rollback probability via :meth:`_rollback_probability`.
         """
 
         recent = self.roi_history[-self.window :]
         instability = float(np.std(recent)) if recent else 0.0
 
         if rollback_prob is None:
-            errors = float(getattr(self, "_last_errors_per_minute", 0.0))
-            error_prob = errors / 10.0 if errors > 0 else 0.0
-            rollback_prob = max(instability, error_prob)
+            metrics_map: dict[str, float] = dict(metrics or {})
+            metrics_map.setdefault("instability", instability)
+            if hasattr(self, "_last_errors_per_minute"):
+                metrics_map.setdefault(
+                    "errors_per_minute", float(self._last_errors_per_minute)
+                )
+            rollback_prob = self._rollback_probability(metrics_map)
         rollback_prob = max(0.0, min(1.0, float(rollback_prob)))
 
         if impact_severity is None:
