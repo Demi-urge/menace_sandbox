@@ -1,4 +1,3 @@
-import json
 import sys
 import types
 import io
@@ -41,7 +40,13 @@ def _load_cli(monkeypatch):
             search_patches_by_vector=lambda *a, **k: [],
             search_patches_by_license=lambda *a, **k: [],
             get_patch_provenance=lambda pid: [{"id": pid}],
+            PatchLogger=object,
         ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "quick_fix_engine",
+        types.SimpleNamespace(generate_patch=lambda *a, **k: None),
     )
     import importlib
     menace_cli = importlib.import_module("menace_cli")
@@ -54,21 +59,17 @@ def _cleanup_cli():
 def test_patch_command(monkeypatch, tmp_path):
     menace_cli = _load_cli(monkeypatch)
 
-    class DummyEngine:
-        def __init__(self, *a, **kw):
-            pass
-        def apply_patch(self, path, desc, **kw):
-            return (42, None, None)
+    calls = {}
 
-    monkeypatch.setitem(
-        sys.modules,
-        "self_coding_engine",
-        types.SimpleNamespace(SelfCodingEngine=DummyEngine),
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "menace_memory_manager",
-        types.SimpleNamespace(MenaceMemoryManager=object),
+    def fake_generate_patch(module, *, context_builder, engine, description, **kw):
+        calls["module"] = module
+        calls["builder"] = context_builder
+        calls["engine"] = engine
+        calls["description"] = description
+        return 42
+
+    monkeypatch.setattr(
+        sys.modules["quick_fix_engine"], "generate_patch", fake_generate_patch
     )
 
     mod = tmp_path / "m.py"
@@ -79,9 +80,11 @@ def test_patch_command(monkeypatch, tmp_path):
 
     res = menace_cli.main(["patch", str(mod), "--desc", "fix it"])
     assert res == 0
-    lines = out_buf.getvalue().strip().splitlines()
-    assert lines[0] == "42"
-    assert json.loads(lines[1]) == {"id": 42}
+    assert out_buf.getvalue().strip() == "42"
+    assert calls["module"] == str(mod)
+    assert calls["engine"] is None
+    assert calls["description"] == "fix it"
+    assert isinstance(calls["builder"], sys.modules["vector_service"].ContextBuilder)
 
     _cleanup_cli()
 

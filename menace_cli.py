@@ -159,62 +159,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "patch":
         from vector_service import ContextBuilder
-        from patch_provenance import get_patch_provenance
-        try:
-            from self_coding_engine import SelfCodingEngine
-            from menace_memory_manager import MenaceMemoryManager
-        except Exception as exc:  # pragma: no cover - optional deps
-            print(f"self coding engine unavailable: {exc}", file=sys.stderr)
-            return 1
-        path = Path(args.module)
-        if path.suffix == "":
-            path = path.with_suffix(".py")
-        if not path.exists():
-            print(f"module not found: {args.module}", file=sys.stderr)
-            return 1
-        builder = ContextBuilder()
-        import uuid
-        cb_session = uuid.uuid4().hex
-        ctx_block = ""
-        vectors = []
-        try:
-            ctx_block, _, vectors = builder.build(
-                args.desc, session_id=cb_session, include_vectors=True
-            )
-        except Exception:
-            ctx_block = ""
-            vectors = []
-        desc = args.desc
-        if ctx_block:
-            desc = f"{desc}\n\n{ctx_block}"
-        context_meta = {
-            "module": str(path),
-            "retrieval_session_id": cb_session,
-            "retrieval_vectors": [
-                {"origin": o, "vector_id": vid, "score": score}
-                for o, vid, score in vectors
-            ],
-        }
-        try:
-            engine = SelfCodingEngine(
-                CodeDB(), MenaceMemoryManager(), context_builder=builder
-            )
-            patch_id, _, _ = engine.apply_patch(
-                path,
-                desc,
-                reason="cli_patch",
-                trigger="menace_cli_patch",
-                context_meta=context_meta,
-            )
-        except Exception as exc:  # pragma: no cover - runtime issues
-            print(f"patch failed: {exc}", file=sys.stderr)
-            return 1
+        import quick_fix_engine
+
+        patch_id = quick_fix_engine.generate_patch(
+            args.module,
+            context_builder=ContextBuilder(),
+            engine=None,
+            description=args.desc,
+        )
         if not patch_id:
             return 1
         print(patch_id)
-        prov = get_patch_provenance(patch_id)
-        for item in prov:
-            print(json.dumps(item))
         return 0
 
     if args.cmd == "retrieve":

@@ -20,7 +20,8 @@ except Exception:  # pragma: no cover - optional dependency
 from .error_bot import ErrorDB
 from .self_coding_manager import SelfCodingManager
 from .knowledge_graph import KnowledgeGraph
-from vector_service import ContextBuilder, Retriever, PatchLogger, FallbackResult
+from vector_service import ContextBuilder, Retriever, FallbackResult
+from patch_provenance import PatchLogger
 try:  # pragma: no cover - optional dependency
     from vector_service import ErrorResult  # type: ignore
 except Exception:  # pragma: no cover - fallback when unavailable
@@ -49,7 +50,10 @@ _VEC_METRICS = None
 def generate_patch(
     module: str,
     engine: "SelfCodingEngine" | None = None,
+    *,
     context_builder: ContextBuilder | None = None,
+    description: str | None = None,
+    patch_logger: PatchLogger | None = None,
 ) -> int | None:
     """Attempt a quick patch for *module* and return the patch id.
 
@@ -61,6 +65,15 @@ def generate_patch(
         Optional :class:`~self_coding_engine.SelfCodingEngine` instance.  If not
         provided, a minimal engine is instantiated on demand.  The function
         tolerates missing dependencies and simply returns ``None`` on failure.
+    context_builder:
+        Optional :class:`vector_service.ContextBuilder` used to build context and
+        retrieve contributing vectors.
+    description:
+        Optional patch description.  When omitted, a generic description is
+        used.
+    patch_logger:
+        Optional :class:`patch_provenance.PatchLogger` for recording vector
+        provenance.
     """
 
     logger = logging.getLogger("QuickFixEngine")
@@ -71,21 +84,36 @@ def generate_patch(
         logger.error("module not found: %s", module)
         return None
 
+    description = description or f"preemptive fix for {path.name}"
     context_meta: Dict[str, Any] = {"module": str(path), "reason": "preemptive_fix"}
     builder = context_builder
-    description = f"preemptive fix for {path.name}"
     context_block = ""
+    cb_session = ""
+    vectors: List[Tuple[str, str, float]] = []
     if builder is not None:
         cb_session = uuid.uuid4().hex
         context_meta["context_session_id"] = cb_session
         try:
-            context_block = builder.build(description, session_id=cb_session)
+            ctx_res = builder.build(
+                description, session_id=cb_session, include_vectors=True
+            )
+            if isinstance(ctx_res, tuple):
+                context_block, _, vectors = ctx_res
+            else:
+                context_block = ctx_res
             if isinstance(context_block, (FallbackResult, ErrorResult)):
                 context_block = ""
         except Exception:
             context_block = ""
+            vectors = []
         if context_block:
             description += "\n\n" + context_block
+
+    if patch_logger is None:
+        try:
+            patch_logger = PatchLogger()
+        except Exception:
+            patch_logger = None
 
     if engine is None:
         try:  # pragma: no cover - heavy dependencies
@@ -142,6 +170,16 @@ def generate_patch(
                         {"warnings": warnings},
                         alignment_warning=True,
                     )
+            if patch_logger is not None:
+                try:
+                    patch_logger.track_contributors(
+                        [(f"{o}:{vid}", score) for o, vid, score in vectors],
+                        patch_id is not None,
+                        patch_id=str(patch_id) if patch_id is not None else "",
+                        session_id=cb_session,
+                    )
+                except Exception:
+                    pass
             return patch_id
     except Exception as exc:  # pragma: no cover - runtime issues
         logger.error("quick fix generation failed for %s: %s", module, exc)
