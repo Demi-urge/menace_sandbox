@@ -125,7 +125,12 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
-    p_embed.add_argument("--db", help="Restrict to a specific database class")
+    p_embed.add_argument(
+        "--db",
+        action="append",
+        dest="dbs",
+        help="Restrict to a specific database class (can be used multiple times)",
+    )
     p_embed.add_argument(
         "--batch-size", type=int, dest="batch_size", help="Batch size for backfill"
     )
@@ -230,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             EmbeddingBackfill().run(
                 session_id="cli",
-                db=args.db,
+                dbs=args.dbs,
                 batch_size=args.batch_size,
                 backend=args.backend,
             )

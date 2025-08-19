@@ -183,7 +183,7 @@ def test_embedding_backfill_run_retries_and_skips(monkeypatch):
     call, lat, size, _, _, run_outcome, run_duration = patch_metrics(monkeypatch)
     _processed.clear()
     monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [RetryDB, FailDB]
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [RetryDB, FailDB]
     )
     eb = EmbeddingBackfill(batch_size=5)
     eb.run(session_id="sid")

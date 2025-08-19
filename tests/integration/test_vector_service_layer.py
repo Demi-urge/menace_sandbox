@@ -20,7 +20,9 @@ class DummyDB(EmbeddableDBMixin):
 def test_embedding_backfill_run(monkeypatch, caplog):
     caplog.set_level(logging.INFO)
     eb = EmbeddingBackfill(batch_size=10)
-    monkeypatch.setattr(EmbeddingBackfill, "_load_known_dbs", lambda self: [DummyDB])
+    monkeypatch.setattr(
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [DummyDB]
+    )
     eb.run(session_id="s1")
     assert DummyDB.instances and DummyDB.instances[0].processed
     assert DummyDB.instances[0].batch_size == 10
