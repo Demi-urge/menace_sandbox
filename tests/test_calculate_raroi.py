@@ -97,3 +97,27 @@ def test_multiple_failing_suites_penalties(monkeypatch) -> None:
     assert raroi == pytest.approx(2.0 * penalty)
     assert called["metrics"]["security_failures"] == 1.0
     assert called["metrics"]["alignment_failures"] == 1.0
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [
+        ["security"],
+        {"security": False, "alignment": True},
+    ],
+)
+def test_explicit_failing_tests(failing) -> None:
+    tracker = ROITracker()
+    tracker.roi_history = [0.1, 0.1, 0.1]
+    sts.set_failed_critical_tests([])
+    base, raroi = tracker.calculate_raroi(
+        1.0,
+        workflow_type="standard",
+        rollback_prob=0.0,
+        failing_tests=failing,
+        metrics={},
+    )
+    penalty = rt.CRITICAL_TEST_PENALTIES["security"]
+    expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std([0.1, 0.1, 0.1])) * penalty
+    assert base == 1.0
+    assert raroi == pytest.approx(expected)

@@ -1238,6 +1238,7 @@ class ROITracker:
                 workflow_type=str(metrics.get("workflow_type", "standard")),
                 rollback_prob=rb,
                 metrics=metrics,
+                failing_tests=failing,
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
@@ -2851,6 +2852,7 @@ class ROITracker:
         rollback_prob: float | None = None,
         impact_severity: float | None = None,
         metrics: Mapping[str, float] | None = None,
+        failing_tests: Iterable[str] | Mapping[str, bool] | None = None,
     ) -> tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
@@ -2860,6 +2862,10 @@ class ROITracker:
         as ``security`` or ``alignment`` fail. When ``rollback_prob`` is not
         provided, ``metrics`` supplies runtime information for estimating
         rollback probability via :func:`_estimate_rollback_probability`.
+
+        ``failing_tests`` may explicitly list failing critical suites or map
+        suite names to boolean pass/fail flags. When omitted, failing suites are
+        looked up via :func:`self_test_service.get_failed_critical_tests`.
         """
 
         recent = self.roi_history[-self.window :]
@@ -2887,14 +2893,22 @@ class ROITracker:
         stability_factor = max(0.0, 1.0 - instability)
 
         safety_metrics: dict[str, float] = dict(metrics_map)
-        failures: Iterable[str] = []
-        if _sts is not None:
+        if failing_tests is not None:
+            if isinstance(failing_tests, Mapping):
+                failures: Iterable[str] = [
+                    str(name).lower()
+                    for name, passed in failing_tests.items()
+                    if not passed
+                ]
+            else:
+                failures = [str(f).lower() for f in failing_tests]
+        elif _sts is not None:
             try:
-                failures = {
-                    str(f).lower() for f in _sts.get_failed_critical_tests()
-                }
+                failures = [str(f).lower() for f in _sts.get_failed_critical_tests()]
             except Exception:
                 failures = []
+        else:
+            failures = []
         for name in failures:
             key = f"{name}_failures"
             safety_metrics[key] = safety_metrics.get(key, 0.0) + 1.0

@@ -66,6 +66,10 @@ except Exception:  # pragma: no cover - fallback for flat layout
     import security_auditor  # type: ignore
 import sandbox_runner.environment as environment
 from .self_test_service import SelfTestService
+try:
+    from . import self_test_service as sts
+except Exception:  # pragma: no cover - fallback for flat layout
+    import self_test_service as sts  # type: ignore
 from orphan_analyzer import classify_module, analyze_redundancy
 
 import numpy as np
@@ -2230,7 +2234,10 @@ class SelfImprovementEngine:
                     roi_est, category = 0.0, "unknown"
             base_roi, raroi = (
                 self.roi_tracker.calculate_raroi(
-                    roi_est, workflow_type="standard", metrics={}
+                    roi_est,
+                    workflow_type="standard",
+                    metrics={},
+                    failing_tests=sts.get_failed_critical_tests(),
                 )
                 if self.roi_tracker
                 else (roi_est, roi_est)
@@ -2634,7 +2641,10 @@ class SelfImprovementEngine:
                     roi_est, growth, confidence = 0.0, "unknown", 0.0
                 base_roi, raroi = (
                     tracker.calculate_raroi(
-                        roi_est, workflow_type="standard", metrics={}
+                        roi_est,
+                        workflow_type="standard",
+                        metrics={},
+                        failing_tests=sts.get_failed_critical_tests(),
                     )
                     if tracker
                     else (roi_est, roi_est)
