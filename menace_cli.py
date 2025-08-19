@@ -92,6 +92,9 @@ def main(argv: list[str] | None = None) -> int:
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
     p_embed.add_argument("--db", help="Restrict to a specific database class")
 
+    p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
+    p_newdb.add_argument("name", help="Base name for the new database")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "setup":
@@ -108,6 +111,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "deploy":
         return _run(["python", "service_installer.py"] + (args.extra_args or []))
+
+    if args.cmd == "new-db":
+        return _run([sys.executable, "scripts/new_db.py", args.name])
 
     if args.cmd == "sandbox":
         if args.sandbox_cmd == "run":
