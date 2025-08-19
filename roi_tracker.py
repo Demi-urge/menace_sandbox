@@ -2813,10 +2813,12 @@ class ROITracker:
         error_prob = max(0.0, min(1.0, errors_per_minute / error_threshold))
         rollback_probability = min(1.0, max(instability, error_prob))
 
-        defaults = {"experimental": 0.2, "standard": 0.5, "critical": 0.9}
+        impact_severity = self._impact_severity(workflow_type)
         if impact_config:
-            defaults.update({str(k): float(v) for k, v in impact_config.items()})
-        impact_severity = float(defaults.get(workflow_type, defaults.get("standard", 0.5)))
+            overrides = {str(k): float(v) for k, v in impact_config.items()}
+            impact_severity = float(
+                overrides.get(workflow_type, impact_severity)
+            )
         catastrophic_risk = rollback_probability * impact_severity
 
         stability_factor = max(0.0, 1.0 - instability)
