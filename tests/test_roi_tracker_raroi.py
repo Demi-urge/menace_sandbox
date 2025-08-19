@@ -1,4 +1,5 @@
 import pytest
+
 import numpy as np
 import menace.roi_tracker as rt
 from menace.roi_tracker import ROITracker
