@@ -2119,3 +2119,87 @@ def test_ranking_prefers_raroi():
     expected_risky = 1.0 * (1 - 0.8 * 0.9)
     assert ranking[0][1] == pytest.approx(expected_safe)
     assert ranking[1][1] == pytest.approx(expected_risky)
+
+def test_scheduler_raroi_shortens_interval(monkeypatch):
+    monkeypatch.setenv("MENACE_LIGHT_IMPORTS", "1")
+    import menace.ranking_model_scheduler as rms
+    from menace.roi_tracker import ROITracker
+
+    tracker = ROITracker()
+    tracker.roi_history = [1.0]
+    # produce negative RAROI via failing tests and high rollback probability
+    _base, raroi = tracker.calculate_raroi(
+        -1.0,
+        rollback_prob=0.9,
+        impact_severity=1.0,
+        failing_tests=["security"],
+        metrics={"errors_per_minute": 5.0},
+    )
+    tracker.raroi_history = [raroi]
+    sched = rms.RankingModelScheduler([], interval=10, roi_tracker=tracker)
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(rms.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(sched, "retrain_and_reload", lambda: setattr(sched, "running", False))
+    sched.running = True
+    sched._loop()
+    assert sleeps == [5.0]
+
+
+def test_self_improvement_engine_raroi_prioritisation(monkeypatch):
+    import menace.self_test_service as sts
+    from menace.roi_tracker import ROITracker
+    from types import SimpleNamespace
+
+    # sequential metrics to simulate risk differences
+    probs = [0.9, 0.0]
+    monkeypatch.setattr(rt, "_estimate_rollback_probability", lambda m: probs.pop(0))
+    instabilities = [0.9, 0.0]
+    monkeypatch.setattr(rt.np, "std", lambda arr: instabilities.pop(0))
+    failures = [["security", "alignment"], []]
+    monkeypatch.setattr(sts, "get_failed_critical_tests", lambda: failures.pop(0))
+
+    tracker = ROITracker()
+    tracker.roi_history = [1.0, 1.0]
+    tracker._last_errors_per_minute = 5.0
+
+    class Predictor:
+        def predict(self, features, horizon=None):
+            return [2.0], "growth", 0, 0
+
+    class DummyEngine:
+        def __init__(self, tracker):
+            self.roi_tracker = tracker
+            self.roi_predictor = Predictor()
+            self.entropy_ceiling_modules = set()
+            self.growth_multipliers = {}
+            self.growth_weighting = False
+            self.use_adaptive_roi = True
+            self.logger = SimpleNamespace(debug=lambda *a, **k: None)
+            self.action_planner = None
+
+        def _candidate_features(self, mod):
+            return []
+
+        def _score_modifications(self, modules):
+            scored = []
+            for mod in modules:
+                seq, category, _, _ = self.roi_predictor.predict(
+                    self._candidate_features(mod)
+                )
+                roi_est = float(seq[-1]) if isinstance(seq, (list, tuple)) and seq else 0.0
+                base_roi, raroi = self.roi_tracker.calculate_raroi(
+                    roi_est,
+                    workflow_type="standard",
+                    metrics={},
+                    failing_tests=sts.get_failed_critical_tests(),
+                )
+                scored.append((mod, base_roi, category, raroi))
+            scored = [s for s in scored if s[3] > 0]
+            scored.sort(key=lambda x: -x[3])
+            return scored
+
+    engine = DummyEngine(tracker)
+    scored = engine._score_modifications(["risky", "safe"])
+    assert [s[0] for s in scored] == ["safe", "risky"]
+    assert scored[0][3] > scored[1][3]
