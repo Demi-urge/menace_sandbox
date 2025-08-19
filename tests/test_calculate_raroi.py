@@ -28,12 +28,12 @@ def test_calculate_raroi_formula(
 ) -> None:
     tracker = ROITracker()
     tracker.roi_history = roi_history
+    tracker._last_errors_per_minute = errors
+    tracker._last_test_failures = [k for k, v in test_status.items() if not v]
 
     base, raroi = tracker.calculate_raroi(
         base_roi,
-        workflow_type,
-        test_stats={"errors_per_minute": errors},
-        failing_tests=test_status,
+        workflow_type=workflow_type,
     )
 
     recent = tracker.roi_history[-tracker.window :]

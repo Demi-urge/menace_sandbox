@@ -182,3 +182,4 @@ metrics.db
 qemu_images/
 !qemu_images/.gitkeep
 evolution_history.db
+roi_events.db
