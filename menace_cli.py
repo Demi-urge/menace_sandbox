@@ -20,7 +20,6 @@ from patch_provenance import (
     search_patches_by_license,
 )
 from vector_service import Retriever, FallbackResult, VectorServiceError
-from retrieval_cache import RetrievalCache, get_db_mtimes
 
 
 def _search_memory(q: str):
@@ -126,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve = sub.add_parser("retrieve", help="Semantic code retrieval")
     p_retrieve.add_argument("query")
     p_retrieve.add_argument("--db", action="append", dest="dbs")
+    p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
     p_embed.add_argument("--db", help="Restrict to a specific database class")
@@ -179,14 +179,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "retrieve":
-        cache = RetrievalCache()
-        db_list = args.dbs or []
-        mtimes = get_db_mtimes(db_list)
-        cached = cache.get(args.query, db_list, mtimes)
-        if cached is not None:
-            print(json.dumps(cached))
-            return 0
-        retriever = Retriever()
+        cache_path = Path(".retriever_cache.json")
+        retriever = Retriever(
+            cache_path=None if args.no_cache else str(cache_path)
+        )
         try:
             res = retriever.search(args.query, session_id=uuid4().hex, dbs=args.dbs)
         except VectorServiceError as exc:
@@ -204,8 +200,8 @@ def main(argv: list[str] | None = None) -> int:
                         pass
         else:
             results = _normalise_hits(res)
-        if results:
-            cache.set(args.query, db_list, results, get_db_mtimes(db_list))
+        if results and not args.no_cache:
+            retriever.save_cache()
         print(json.dumps(results))
         return 0
 
