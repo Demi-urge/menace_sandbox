@@ -7,9 +7,10 @@ components:
 
 1. **Catastrophic risk** – combines the probability that a workflow must be
    rolled back with the severity of the potential impact. The probability is
-   derived from runtime metrics and the severity is looked up using the
-   `impact_severity` configuration mapping. RAROI reduces the base ROI by this
-   product: `1 - (rollback_probability * impact_severity)`.
+   estimated from runtime metrics (error rates, test flakiness or recent
+   failure rates) normalised to a 0–1 range, while the severity is looked up
+   using the `impact_severity` configuration mapping. RAROI reduces the base
+   ROI by this product: `1 - (rollback_probability * impact_severity)`.
 2. **Stability factor** – measures how consistent recent ROI deltas have been.
    The standard deviation of the last ten deltas is subtracted from one,
    yielding a number between 0 and 1. Highly volatile histories therefore
