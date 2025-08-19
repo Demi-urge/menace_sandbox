@@ -8,7 +8,7 @@ import sys
 
 
 class _StubCodeDB:
-    def search_fallback(self, q):
+    def search_fts(self, q):
         return []
 
 
@@ -47,7 +47,7 @@ def test_retrieve_cache_and_invalidation(monkeypatch, tmp_path):
 
     def fts_stub(q):
         fts_calls["n"] += 1
-        return ["fts"]
+        return [{"id": 1, "code": "fts"}]
 
     def fts_fail(q):
         raise AssertionError("FTS should not run")

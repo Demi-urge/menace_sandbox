@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from uuid import uuid4
 
 
 def _run(cmd: list[str]) -> int:
@@ -22,7 +23,64 @@ from vector_service import Retriever, FallbackResult, VectorServiceError
 from retrieval_cache import RetrievalCache, get_db_mtimes
 
 
-FTS_HELPERS = {"code": lambda q: CodeDB().search_fallback(q)}
+def _search_memory(q: str):
+    from menace_memory_manager import MenaceMemoryManager
+
+    return MenaceMemoryManager().search(q)
+
+
+FTS_HELPERS = {
+    "code": lambda q: CodeDB().search_fts(q),
+    "memory": _search_memory,
+}
+
+
+def _normalise_hits(hits, origin=None):
+    norm = []
+    for h in hits:
+        if isinstance(h, dict):
+            origin_db = h.get("origin_db", origin or "")
+            record_id = h.get("record_id") or h.get("id") or h.get("key")
+            snippet = (
+                h.get("text")
+                or h.get("snippet")
+                or h.get("code")
+                or h.get("data")
+                or h.get("summary")
+                or ""
+            )
+            norm.append(
+                {
+                    "origin_db": origin_db,
+                    "record_id": record_id,
+                    "score": h.get("score", 0.0),
+                    "snippet": snippet,
+                }
+            )
+        else:
+            origin_db = getattr(h, "origin_db", origin or "")
+            record_id = (
+                getattr(h, "record_id", None)
+                or getattr(h, "id", None)
+                or getattr(h, "key", None)
+            )
+            snippet = (
+                getattr(h, "text", None)
+                or getattr(h, "snippet", None)
+                or getattr(h, "code", None)
+                or getattr(h, "data", None)
+                or getattr(h, "summary", "")
+            )
+            score = getattr(h, "score", 0.0)
+            norm.append(
+                {
+                    "origin_db": origin_db,
+                    "record_id": record_id,
+                    "score": score,
+                    "snippet": snippet,
+                }
+            )
+    return norm
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,24 +227,22 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         retriever = Retriever()
         try:
-            res = retriever.search(args.query, session_id="cli", dbs=args.dbs)
+            res = retriever.search(args.query, session_id=uuid4().hex, dbs=args.dbs)
         except VectorServiceError as exc:
             res = FallbackResult(str(exc), [])
-        results = []
-        need_fallback = False
         if isinstance(res, FallbackResult):
-            results.extend(list(res))
-            need_fallback = True
-        else:
-            results.extend(res)
-        if need_fallback:
+            results = _normalise_hits(list(res))
             for db_name in (args.dbs or ["code"]):
                 helper = FTS_HELPERS.get(db_name)
                 if helper:
                     try:
-                        results.extend(helper(args.query))
+                        results.extend(
+                            _normalise_hits(helper(args.query), origin=db_name)
+                        )
                     except Exception:
                         pass
+        else:
+            results = _normalise_hits(res)
         if results:
             cache.set(args.query, db_list, results, get_db_mtimes(db_list))
         print(json.dumps(results))
