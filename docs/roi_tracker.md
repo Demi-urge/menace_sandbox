@@ -38,20 +38,20 @@ high-ROI databases.
 
 ## Risk-adjusted ROI
 
-`calculate_raroi()` derives a risk-adjusted score that penalises unstable or unsafe workflows. It returns the original ROI together with the adjusted value:
+`calculate_raroi()` derives a risk-adjusted score that penalises unstable or unsafe workflows. It returns a `(base_roi, raroi)` tuple so the raw ROI remains visible alongside the adjusted value:
 
 ```python
 from menace_sandbox.roi_tracker import ROITracker
 
 tracker = ROITracker()
 tracker.roi_history = [0.2, 0.15, 0.18]
-base, raroi = tracker.calculate_raroi(
+base_roi, raroi = tracker.calculate_raroi(
     1.2,
     workflow_type="standard",
     metrics={"errors_per_minute": 0.1},
     failing_tests={"security_suite": False},
 )
-print(base, raroi)
+print(base_roi, raroi)  # raw ROI followed by risk-adjusted ROI
 ```
 
 ### Formula components
