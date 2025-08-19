@@ -35,12 +35,23 @@ def get_patch_provenance(
 
 # ---------------------------------------------------------------------------
 def search_patches_by_vector(
-    vector_id: str, *, patch_db: PatchHistoryDB | None = None
+    vector_id: str,
+    *,
+    patch_db: PatchHistoryDB | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    index_hint: str | None = None,
 ) -> List[Dict[str, Any]]:
-    """Return patches influenced by ``vector_id`` ordered by influence."""
+    """Return patches influenced by ``vector_id`` ordered by influence.
+
+    ``limit`` and ``offset`` provide pagination while ``index_hint`` forces a
+    specific SQLite index when querying ``patch_ancestry``.
+    """
 
     db = patch_db or PatchHistoryDB()
-    rows = db.find_patches_by_vector(vector_id)
+    rows = db.find_patches_by_vector(
+        vector_id, limit=limit, offset=offset, index_hint=index_hint
+    )
     return [
         {
             "patch_id": pid,
