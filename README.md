@@ -1069,6 +1069,13 @@ cycle (use ``0`` for continuous execution). Target models can be supplied via
 ``MODELS`` as a comma separated list. Use ``RUN_CYCLES`` to stop after a fixed
 number of cycles or ``RUN_UNTIL`` to stop at a Unix timestamp.
 
+### CLI helpers
+
+- `menace retrieve "query" --db code` performs semantic search across databases. Results are cached on disk and reused until the underlying database timestamps change. If the vector retriever fails, the command falls back to database-specific full-text helpers before returning results.
+- `menace patch path/to/module.py --desc "message"` applies a patch using the self-coding engine and prints the new patch identifier followed by provenance records in JSON.
+- `menace embed --db workflows` backfills missing vector embeddings, restricting the run to a single database when `--db` is supplied.
+- `menace new-db demo` scaffolds a new database module and matching test.
+
 ### Persistent service
 
 Install Menace as a background service using `service_installer.py`:

@@ -1,0 +1,130 @@
+import json
+import sys
+import types
+import io
+
+class _FallbackResult(list):
+    def __init__(self, reason: str, hits: list):
+        super().__init__(hits)
+        self.reason = reason
+
+class _VectorServiceError(Exception):
+    pass
+
+class _DummyContextBuilder:
+    def build(self, desc, session_id=None, include_vectors=False):
+        return ("ctx", session_id or "s", [("o", "v", 0.1)])
+
+class _DummyEmbeddingBackfill:
+    def run(self, session_id="cli", db=None):
+        pass
+
+def _load_cli(monkeypatch):
+    vs = types.SimpleNamespace(
+        Retriever=object,
+        FallbackResult=_FallbackResult,
+        VectorServiceError=_VectorServiceError,
+        ContextBuilder=_DummyContextBuilder,
+        EmbeddingBackfill=_DummyEmbeddingBackfill,
+    )
+    monkeypatch.setitem(sys.modules, "vector_service", vs)
+    monkeypatch.setitem(
+        sys.modules,
+        "code_database",
+        types.SimpleNamespace(PatchHistoryDB=object, CodeDB=object),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "patch_provenance",
+        types.SimpleNamespace(
+            build_chain=lambda *a, **k: [],
+            search_patches_by_vector=lambda *a, **k: [],
+            search_patches_by_license=lambda *a, **k: [],
+            get_patch_provenance=lambda pid: [{"id": pid}],
+        ),
+    )
+    import importlib
+    menace_cli = importlib.import_module("menace_cli")
+    return menace_cli
+
+def _cleanup_cli():
+    sys.modules.pop("menace_cli", None)
+
+
+def test_patch_command(monkeypatch, tmp_path):
+    menace_cli = _load_cli(monkeypatch)
+
+    class DummyEngine:
+        def __init__(self, *a, **kw):
+            pass
+        def apply_patch(self, path, desc, **kw):
+            return (42, None, None)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "self_coding_engine",
+        types.SimpleNamespace(SelfCodingEngine=DummyEngine),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "menace_memory_manager",
+        types.SimpleNamespace(MenaceMemoryManager=object),
+    )
+
+    mod = tmp_path / "m.py"
+    mod.write_text("x=1")
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    out_buf = sys.stdout
+
+    res = menace_cli.main(["patch", str(mod), "--desc", "fix it"])
+    assert res == 0
+    lines = out_buf.getvalue().strip().splitlines()
+    assert lines[0] == "42"
+    assert json.loads(lines[1]) == {"id": 42}
+
+    _cleanup_cli()
+
+
+def test_embed_command(monkeypatch):
+    menace_cli = _load_cli(monkeypatch)
+
+    calls = {}
+    class DummyBackfill:
+        def run(self, session_id="cli", db=None):
+            calls["args"] = (session_id, db)
+
+    monkeypatch.setattr(
+        sys.modules["vector_service"], "EmbeddingBackfill", lambda: DummyBackfill()
+    )
+    res = menace_cli.main(["embed", "--db", "code"])
+    assert res == 0
+    assert calls["args"] == ("cli", "code")
+
+    class FailBackfill:
+        def run(self, session_id="cli", db=None):
+            raise _VectorServiceError("boom")
+
+    monkeypatch.setattr(
+        sys.modules["vector_service"], "EmbeddingBackfill", lambda: FailBackfill()
+    )
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    res = menace_cli.main(["embed"])
+    assert res == 1
+
+    _cleanup_cli()
+
+
+def test_new_db_command(monkeypatch):
+    menace_cli = _load_cli(monkeypatch)
+
+    calls = {}
+    def fake_run(cmd):
+        calls["cmd"] = cmd
+        return 0
+    monkeypatch.setattr(menace_cli, "_run", fake_run)
+    res = menace_cli.main(["new-db", "demo"])
+    assert res == 0
+    assert calls["cmd"][-1] == "demo"
+
+    _cleanup_cli()
