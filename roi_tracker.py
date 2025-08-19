@@ -1179,7 +1179,11 @@ class ROITracker:
         if filtered is not None:
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
+
+            # Extract recent runtime metrics used for risk calculation
             errors_per_minute = float(metrics.get("errors_per_minute", 0.0))
+            self._last_errors_per_minute = errors_per_minute
+
             # Collect critical test results if provided in metrics
             tests: Dict[str, bool] = {}
             if isinstance(metrics.get("test_status"), Mapping):
@@ -1193,18 +1197,18 @@ class ROITracker:
                     if isinstance(val, bool):
                         tests[key] = val
             failing = [name for name, passed in tests.items() if not passed]
-            test_stats = {"errors_per_minute": errors_per_minute}
-            for key in ("rollback_probability", "instability", "error_threshold"):
-                if key in metrics:
-                    try:
-                        test_stats[key] = float(metrics[key])
-                    except Exception:
-                        pass
+            self._last_test_failures = failing
+
+            rb: float | None
+            try:
+                rb = float(metrics["rollback_probability"])  # type: ignore[index]
+            except Exception:
+                rb = None
+
             _base_roi, raroi = self.calculate_raroi(
                 adjusted,
-                str(metrics.get("workflow_type", "standard")),
-                test_stats=test_stats,
-                failing_tests=failing,
+                workflow_type=str(metrics.get("workflow_type", "standard")),
+                rollback_prob=rb,
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
@@ -2848,83 +2852,41 @@ class ROITracker:
     def calculate_raroi(
         self,
         base_roi: float,
-        workflow_type: str,
-        test_stats: Mapping[str, float] | None = None,
-        failing_tests: Iterable[str] | Mapping[str, bool] | None = None,
-        recent_deltas: Sequence[float] | None = None,
-    ) -> Tuple[float, float]:
+        *,
+        workflow_type: str | None = None,
+        rollback_prob: float | None = None,
+        impact_severity: float | None = None,
+    ) -> tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
-        Parameters
-        ----------
-        base_roi:
-            Raw ROI value before applying any risk adjustments.
-        workflow_type:
-            Workflow identifier used to resolve the impact severity.
-        test_stats:
-            Optional mapping of runtime statistics used to estimate rollback
-            probability. Keys such as ``errors_per_minute``, ``instability`` or
-            ``rollback_probability`` are recognised. A plain number is
-            interpreted as ``errors_per_minute`` for backwards compatibility.
-        failing_tests:
-            Iterable of failing test suite names or mapping of test names to
-            boolean pass/fail values. Any failure from :data:`CRITICAL_SUITES`
-            halves the safety factor; otherwise the factor remains ``1.0``.
-        recent_deltas:
-            Optional sequence of recent ROI deltas. When omitted the last
-            ``self.window`` entries from ``self.roi_history`` are used.
-
-        Returns
-        -------
-        Tuple[float, float]
-            The original ``base_roi`` and the calculated risk-adjusted ROI.
+        The method estimates the catastrophic risk of continuing a workflow by
+        combining rollback probability, workflow impact severity and recent
+        stability metrics. Safety is further reduced when critical suites such
+        as ``security`` or ``alignment`` fail.
         """
 
-        stats: Dict[str, float]
-        if test_stats is None:
-            stats = {}
-        elif isinstance(test_stats, Mapping):
-            stats = {
-                str(k): float(v)
-                for k, v in test_stats.items()
-                if isinstance(v, (int, float))
-            }
-        else:
-            try:
-                stats = {"errors_per_minute": float(test_stats)}
-            except Exception:
-                stats = {}
-
-        if failing_tests is None:
-            failures: List[str] = []
-        elif isinstance(failing_tests, Mapping):
-            failures = [str(k) for k, v in failing_tests.items() if not v]
-        else:
-            failures = [str(x) for x in failing_tests]
-
-        recent = (
-            list(recent_deltas)
-            if recent_deltas is not None
-            else self.roi_history[-self.window :]
-        )
+        recent = self.roi_history[-self.window :]
         instability = float(np.std(recent)) if recent else 0.0
 
-        if "rollback_probability" in stats:
-            rollback_probability = max(
-                0.0, min(1.0, float(stats["rollback_probability"]))
-            )
-        else:
-            metrics = dict(stats)
-            metrics.setdefault("instability", instability)
-            rollback_probability = _estimate_rollback_probability(metrics)
+        if rollback_prob is None:
+            errors = float(getattr(self, "_last_errors_per_minute", 0.0))
+            error_prob = errors / 10.0 if errors > 0 else 0.0
+            rollback_prob = max(instability, error_prob)
+        rollback_prob = max(0.0, min(1.0, float(rollback_prob)))
 
-        impact_severity = float(self.impact_severity(workflow_type))
-        catastrophic_risk = rollback_probability * impact_severity
+        if impact_severity is None:
+            wf = workflow_type or "standard"
+            impact_severity = float(self.impact_severity(wf))
+        else:
+            impact_severity = float(impact_severity)
+
+        catastrophic_risk = rollback_prob * impact_severity
 
         stability_factor = max(0.0, 1.0 - instability)
 
         safety_factor = 1.0
-        if any(name.lower() in CRITICAL_SUITES for name in failures):
+        failures = [str(f).lower() for f in getattr(self, "_last_test_failures", [])]
+        if any(name in CRITICAL_SUITES for name in failures):
             safety_factor *= 0.5
 
         raroi = float(

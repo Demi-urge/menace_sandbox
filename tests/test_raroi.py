@@ -1,4 +1,5 @@
 import pytest
+import pytest
 import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
 
@@ -10,12 +11,9 @@ def test_raroi_formula(monkeypatch):
     monkeypatch.setattr(rt.np, "std", lambda arr: 0.0)
     monkeypatch.setattr(rt.ROITracker, "impact_severity", lambda self, wf: 0.4)
     failing = ["security"]
-    base, raroi = tracker.calculate_raroi(
-        base_roi,
-        "standard",
-        test_stats={"errors_per_minute": 2.5},
-        failing_tests=failing,
-    )
+    tracker._last_errors_per_minute = 2.5
+    tracker._last_test_failures = failing
+    base, raroi = tracker.calculate_raroi(base_roi, workflow_type="standard")
     expected = base_roi * (1 - 0.25 * 0.4)
     expected *= 0.5 if any(k in failing for k in rt.CRITICAL_SUITES) else 1.0
     assert base == base_roi

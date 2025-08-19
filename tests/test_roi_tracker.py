@@ -660,11 +660,11 @@ def test_synergy_history_multi_metric(tmp_path):
 
 def test_raroi_high_risk():
     tracker = rt.ROITracker()
+    tracker.roi_history = [0.1, 0.1, 0.1]
     base, raroi = tracker.calculate_raroi(
         1.0,
-        "critical",
-        test_stats={"rollback_probability": 0.8},
-        recent_deltas=[0.1, 0.1, 0.1],
+        workflow_type="critical",
+        rollback_prob=0.8,
     )
     expected = 1.0 * (1 - 0.8 * 0.9) * (1 - np.std([0.1, 0.1, 0.1]))
     assert base == pytest.approx(1.0)
@@ -674,11 +674,11 @@ def test_raroi_high_risk():
 def test_raroi_unstable_roi():
     tracker = rt.ROITracker()
     deltas = [0.5, -0.5, 0.5]
+    tracker.roi_history = deltas
     base, raroi = tracker.calculate_raroi(
         1.0,
-        "standard",
-        test_stats={"rollback_probability": 0.0},
-        recent_deltas=deltas,
+        workflow_type="standard",
+        rollback_prob=0.0,
     )
     expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std(deltas))
     assert raroi == pytest.approx(expected)
@@ -687,12 +687,12 @@ def test_raroi_unstable_roi():
 
 def test_raroi_failing_tests():
     tracker = rt.ROITracker()
+    tracker.roi_history = [0.1, 0.1, 0.1]
+    tracker._last_test_failures = ["security"]
     base, raroi = tracker.calculate_raroi(
         1.0,
-        "standard",
-        test_stats={"rollback_probability": 0.0},
-        failing_tests=["security"],
-        recent_deltas=[0.1, 0.1, 0.1],
+        workflow_type="standard",
+        rollback_prob=0.0,
     )
     expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std([0.1, 0.1, 0.1])) * 0.5
     assert raroi == pytest.approx(expected)
