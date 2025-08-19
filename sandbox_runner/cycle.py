@@ -781,7 +781,34 @@ def _sandbox_cycle_runner(
                 "roi actual",
                 extra={"iteration": idx, "predicted": ctx.predicted_roi, "actual": roi},
             )
-            tracker.record_prediction(ctx.predicted_roi, roi)
+            wf_id = getattr(ctx, "workflow_id", "_global")
+            tracker.record_prediction(ctx.predicted_roi, roi, workflow_id=wf_id)
+            wf_mae = tracker.workflow_mae(wf_id)
+            wf_var = tracker.workflow_variance(wf_id)
+            conf_val = tracker.workflow_confidence(wf_id)
+            needs_review = conf_val < tracker.confidence_threshold
+            logger.info(
+                "workflow prediction evaluation",
+                extra=log_record(
+                    workflow=wf_id,
+                    predicted=ctx.predicted_roi,
+                    actual=roi,
+                    mae=wf_mae,
+                    variance=wf_var,
+                    confidence=conf_val,
+                    human_review=needs_review if needs_review else None,
+                ),
+            )
+            if needs_review:
+                logger.info(
+                    "workflow flagged for human review",
+                    extra=log_record(
+                        workflow=wf_id,
+                        confidence=conf_val,
+                        threshold=tracker.confidence_threshold,
+                        human_review=True,
+                    ),
+                )
         if ctx.predicted_lucrativity is not None:
             tracker.record_metric_prediction(
                 "projected_lucrativity", ctx.predicted_lucrativity, roi

@@ -641,14 +641,35 @@ class ROITracker:
             data["actual"].append(float(act_seq[0]))
             conf = self.workflow_confidence(wf, self.workflow_window)
             self.workflow_confidence_history[wf].append(conf)
+            mae_val = self.workflow_mae(wf, self.workflow_window)
+            var_val = self.workflow_variance(wf, self.workflow_window)
+            needs_review = conf < self.confidence_threshold
+            logger.info(
+                "workflow prediction metrics",
+                extra=log_record(
+                    workflow=wf,
+                    predicted=float(pred_seq[0]),
+                    actual=float(act_seq[0]),
+                    mae=mae_val,
+                    variance=var_val,
+                    confidence=conf,
+                    human_review=needs_review if needs_review else None,
+                ),
+            )
+            if needs_review:
+                logger.info(
+                    "workflow flagged for human review",
+                    extra=log_record(
+                        workflow=wf,
+                        confidence=conf,
+                        threshold=self.confidence_threshold,
+                        human_review=True,
+                    ),
+                )
             try:
                 if _me is not None:
-                    _me.workflow_mae.labels(workflow=wf).set(
-                        self.workflow_mae(wf, self.workflow_window)
-                    )
-                    _me.workflow_variance.labels(workflow=wf).set(
-                        self.workflow_variance(wf, self.workflow_window)
-                    )
+                    _me.workflow_mae.labels(workflow=wf).set(mae_val)
+                    _me.workflow_variance.labels(workflow=wf).set(var_val)
                     _me.confidence.labels(workflow=wf).set(conf)
             except Exception:
                 pass
