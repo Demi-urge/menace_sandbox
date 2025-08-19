@@ -624,6 +624,22 @@ class CodeDB:
 
         return self._with_retry(lambda: self._conn_wrapper(op))
 
+    def search_fallback(self, term: str) -> List[Dict[str, Any]]:
+        """Search using the non-FTS fallback query directly."""
+        pattern = f"%{term}%"
+
+        def op(conn: Any) -> List[Dict[str, Any]]:
+            if isinstance(conn, sqlite3.Connection):
+                conn.row_factory = sqlite3.Row
+            rows = self._execute(
+                conn,
+                SQL_SEARCH_FALLBACK,
+                (pattern, pattern),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+        return self._with_retry(lambda: self._conn_wrapper(op))
+
     def codes_for_bot(self, bot_id: str) -> List[int]:
         """Return IDs of code templates associated with a bot."""
 

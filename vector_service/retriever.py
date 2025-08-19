@@ -136,6 +136,7 @@ class Retriever:
         top_k: int | None = None,
         session_id: str = "",
         similarity_threshold: float | None = None,
+        dbs: Sequence[str] | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Perform semantic search and return normalised results.
 
@@ -153,6 +154,7 @@ class Retriever:
         k = top_k or self.top_k
         thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
         retriever = self._get_retriever()
+        cache_key = f"{query}::{'|'.join(dbs) if dbs else ''}"
 
         attempts = 2
         backoff = 1.0
@@ -160,12 +162,12 @@ class Retriever:
         confidence = 0.0
         for attempt in range(attempts):
             try:
-                if hasattr(retriever, "retrieve_with_confidence"):
+                if dbs is None and hasattr(retriever, "retrieve_with_confidence"):
                     hits, confidence, _ = retriever.retrieve_with_confidence(  # type: ignore[attr-defined]
                         query, top_k=k
                     )
                 else:
-                    hits, _, _ = retriever.retrieve(query, top_k=k)  # type: ignore[arg-type]
+                    hits, _, _ = retriever.retrieve(query, top_k=k, dbs=dbs)  # type: ignore[arg-type]
                     confidence = (
                         max(getattr(h, "score", 0.0) for h in hits) if hits else 0.0
                     )
@@ -190,13 +192,14 @@ class Retriever:
             if hits and confidence >= thresh:
                 results = self._parse_hits(hits)
                 if results:
-                    self._cache[query] = results
+                    cache_key = f"{query}::{'|'.join(dbs) if dbs else ''}"
+                    self._cache[cache_key] = results
                     return results
 
             # Broaden parameters and retry once
             k *= 2
 
-        cached = self._cache.get(query)
+        cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
         fb_hits = self._fallback("no results" if not hits else "low confidence")
@@ -213,6 +216,7 @@ class Retriever:
         top_k: int | None = None,
         session_id: str = "",
         similarity_threshold: float | None = None,
+        dbs: Sequence[str] | None = None,
     ) -> List[Dict[str, Any]] | FallbackResult:
         """Asynchronous wrapper for :meth:`search`.
 
@@ -227,6 +231,7 @@ class Retriever:
             top_k=top_k,
             session_id=session_id,
             similarity_threshold=similarity_threshold,
+            dbs=dbs,
         )
 
     # ------------------------------------------------------------------
