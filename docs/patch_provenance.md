@@ -17,6 +17,7 @@ python tools/patch_provenance_cli.py search vec123
 python tools/patch_provenance_cli.py search --hash <code_hash>
 python tools/patch_provenance_cli.py search --license MIT
 python tools/patch_provenance_cli.py search --semantic-alert malware
+python tools/patch_provenance_cli.py search --license MIT --semantic-alert malware
 ```
 
 `list` displays recent patches with their IDs.  `show` prints the ancestry
@@ -24,7 +25,7 @@ details for a patch including the vectors, their influence scores and any
 semantic alerts while `chain` returns only the ancestry chain for a patch.
 `search` performs a reverse lookup either by vector ID (default) or by code
 snippet hash when ``--hash`` is supplied.  It can also filter patches by
-detected license or semantic alert using ``--license`` and
+detected license, semantic alert, or both using ``--license`` and
 ``--semantic-alert``.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
@@ -56,9 +57,14 @@ locate the database.
 Two helpers are available for programmatic access:
 
 ```python
-from patch_provenance import search_patches_by_vector, get_patch_provenance
+from patch_provenance import (
+    search_patches_by_vector,
+    search_patches,
+    get_patch_provenance,
+)
 
 search_patches_by_vector("vec123")  # -> list of patches ordered by influence
+search_patches(license="MIT", semantic_alert="malware")  # -> filtered patches
 get_patch_provenance(1)              # -> vectors for a patch
 ```
 

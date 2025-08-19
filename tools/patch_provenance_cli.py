@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""CLI for querying patch provenance information."""
+"""CLI for querying patch provenance information.
+
+Examples:
+    python -m tools.patch_provenance_cli chain 42
+    python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware
+"""
 
 from __future__ import annotations
 
@@ -16,13 +21,19 @@ from patch_provenance import (
     build_chain,
     search_patches_by_vector,
     search_patches_by_hash,
-    search_patches_by_license,
-    search_patches_by_semantic_alert,
+    search_patches,
 )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Patch provenance queries")
+    parser = argparse.ArgumentParser(
+        description="Patch provenance queries",
+        epilog=(
+            "Examples:\n"
+            "  python -m tools.patch_provenance_cli chain 42\n"
+            "  python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware"
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     list_p = sub.add_parser("list", help="list recent patches")
@@ -78,18 +89,10 @@ def main() -> None:
         chain = build_chain(args.patch_id, patch_db=db)
         print(json.dumps(chain))
     elif args.cmd == "search":
-        if args.license:
-            rows = search_patches_by_license(args.license, patch_db=db)
-            patches = [
-                {
-                    "id": r["patch_id"],
-                    "filename": r["filename"],
-                    "description": r["description"],
-                }
-                for r in rows
-            ]
-        elif args.semantic_alert:
-            rows = search_patches_by_semantic_alert(args.semantic_alert, patch_db=db)
+        if args.license or args.semantic_alert:
+            rows = search_patches(
+                license=args.license, semantic_alert=args.semantic_alert, patch_db=db
+            )
             patches = [
                 {
                     "id": r["patch_id"],
