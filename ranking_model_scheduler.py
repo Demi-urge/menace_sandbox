@@ -78,6 +78,15 @@ class RankingModelScheduler:
                 final_score, needs_review, confidence = self.roi_tracker.score_workflow(
                     "ranking_model", raroi
                 )
+                if needs_review:
+                    try:
+                        self.roi_tracker.borderline_bucket.add_candidate(
+                            "ranking_model", float(raroi), confidence
+                        )
+                    except Exception:  # pragma: no cover - best effort
+                        logging.exception(
+                            "failed to enqueue ranking_model workflow for review"
+                        )
             except Exception:
                 base_roi = raroi = final_score = confidence = 0.0
                 needs_review = False

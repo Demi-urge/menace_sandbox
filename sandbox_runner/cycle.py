@@ -800,6 +800,19 @@ def _sandbox_cycle_runner(
                 ),
             )
             if needs_review:
+                try:
+                    raroi = roi - getattr(ctx, "prev_roi", 0.0)
+                except Exception:
+                    raroi = roi
+                try:
+                    tracker.borderline_bucket.add_candidate(
+                        wf_id, float(raroi), conf_val
+                    )
+                except Exception:  # pragma: no cover - best effort
+                    logger.exception(
+                        "failed to enqueue workflow for borderline review",
+                        extra=log_record(workflow=wf_id),
+                    )
                 logger.info(
                     "workflow flagged for human review",
                     extra=log_record(
