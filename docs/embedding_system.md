@@ -39,14 +39,19 @@ record-to-vector logic:
 ## Backfilling Embeddings
 
 Use `scripts/backfill_embeddings.py` to generate embeddings for existing
-records:
+records. Pass `--db` multiple times to target specific stores or `--all` to
+refresh every registered database:
 
 ```bash
-python scripts/backfill_embeddings.py --db bot workflow --backend annoy --batch-size 200
+python scripts/backfill_embeddings.py --db bot --db workflow --backend annoy --batch-size 200
+# refresh everything
+python scripts/backfill_embeddings.py --all
 ```
 
-Omit `--db` to process all supported databases. `--backend` selects the vector
-backend and `--batch-size` controls how many records are processed at once.
+Progress and token/latency metrics derived from `governed_embeddings` and
+`embedding_stats_db` are printed for each processed database. The `--backend`
+flag selects the vector backend and `--batch-size` controls how many records are
+processed at once.
 
 ## Universal Retriever
 
