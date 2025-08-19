@@ -1110,8 +1110,24 @@ class ROITracker:
         if filtered is not None:
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
+            errors_per_minute = float(metrics.get("errors_per_minute", 0.0))
+            # Collect critical test results if provided in metrics
+            tests: Dict[str, bool] = {}
+            if isinstance(metrics.get("test_status"), Mapping):
+                tests = {
+                    str(k): bool(v)
+                    for k, v in metrics.get("test_status", {}).items()  # type: ignore[arg-type]
+                }
+            else:
+                for key in ("security", "alignment"):
+                    val = metrics.get(key)
+                    if isinstance(val, bool):
+                        tests[key] = val
             _base_roi, raroi = self.calculate_raroi(
-                adjusted, str(metrics.get("workflow_type", "standard")), metrics
+                adjusted,
+                str(metrics.get("workflow_type", "standard")),
+                errors_per_minute,
+                tests,
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
@@ -2754,7 +2770,9 @@ class ROITracker:
         self,
         base_roi: float,
         workflow_type: str,
-        metrics: Mapping[str, float],
+        errors_per_minute: float,
+        test_status: Mapping[str, bool],
+        impact_config: Mapping[str, float] | None = None,
     ) -> Tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
@@ -2763,38 +2781,51 @@ class ROITracker:
         base_roi:
             Raw ROI value before applying any risk adjustments.
         workflow_type:
-            Identifier used to look up ``impact_severity`` in the configuration
-            mapping.
-        metrics:
-            Mapping of metric names to values. These provide the inputs for
-            rollback probability, safety calculation and recent ROI history.
+            Workflow identifier used to resolve the impact severity.
+        errors_per_minute:
+            Observed error rate for the workflow.
+        test_status:
+            Mapping of critical test names to boolean pass/fail values.
+        impact_config:
+            Optional mapping overriding the default impact severity values.
 
         Returns
         -------
         Tuple[float, float]
-            A tuple containing the original ``base_roi`` and the computed
-            risk-adjusted ROI (RAROI).
+            The original ``base_roi`` and the calculated risk-adjusted ROI.
 
         Notes
         -----
-        RAROI is derived from the following relationship::
+        The risk-adjusted ROI (RAROI) combines catastrophic risk, recent
+        stability and critical safety tests::
 
             raroi = base_roi * (1 - catastrophic_risk)
                     * stability_factor * safety_factor
 
-        where ``catastrophic_risk`` is the product of rollback probability and
-        ``impact_severity``; ``stability_factor`` is ``1 - std(recent_rois)``
-        over the last ``N`` ROI entries (``N = 10``); and ``safety_factor`` is
-        derived from security and alignment metrics.
+        ``catastrophic_risk`` is the product of rollback probability and impact
+        severity. ``stability_factor`` reflects the volatility of recent ROI
+        history and ``safety_factor`` penalises failed security/alignment tests.
         """
 
-        rollback_probability = self._rollback_probability(metrics)
-        impact_severity = self._impact_severity(workflow_type)
+        recent = self.roi_history[-self.window :]
+        instability = float(np.std(recent)) if recent else 0.0
+        error_threshold = 10.0
+        error_prob = max(0.0, min(1.0, errors_per_minute / error_threshold))
+        rollback_probability = min(1.0, max(instability, error_prob))
+
+        defaults = {"experimental": 0.2, "standard": 0.5, "critical": 0.9}
+        if impact_config:
+            defaults.update({str(k): float(v) for k, v in impact_config.items()})
+        impact_severity = float(defaults.get(workflow_type, defaults.get("standard", 0.5)))
         catastrophic_risk = rollback_probability * impact_severity
-        N = 10
-        recent = self.roi_history[-N:]
-        stability_factor = max(0.0, 1.0 - float(np.std(recent))) if recent else 1.0
-        safety_factor = self._safety_factor(metrics)
+
+        stability_factor = max(0.0, 1.0 - instability)
+
+        safety_factor = 1.0
+        for key in ("security", "alignment"):
+            if test_status.get(key) is False:
+                safety_factor *= 0.5
+
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
         )
