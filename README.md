@@ -287,13 +287,22 @@ The command prints the patch ID and affected files. The `--context` value must b
 
 ### Semantic retrieval
 
-Search across databases with optional caching:
+Search across databases with optional caching. By default results are rendered
+as a text table:
+
+```bash
+python menace_cli.py retrieve "database connector" --db code --top-k 3
+```
+
+To emit raw JSON, add `--json`:
 
 ```bash
 python menace_cli.py retrieve "database connector" --db code --top-k 3 --json
 ```
 
-Results are cached under `~/.cache/menace/retrieve.json`. Use `--no-cache` to bypass the cache or `--rebuild-cache` to refresh. When no vector hits are found the CLI falls back to a full‑text search.
+Results are cached under `~/.cache/menace/retrieve.json`. Use `--no-cache` to
+bypass the cache or `--rebuild-cache` to refresh. When no vector hits are found
+the CLI falls back to a full‑text search.
 
 ### Embedding backfill
 

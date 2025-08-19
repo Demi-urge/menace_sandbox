@@ -1,4 +1,5 @@
 import io
+import io
 import json
 import sys
 import types
@@ -14,6 +15,9 @@ def _load_cli(monkeypatch, tmp_path, retriever_impl, fts_impl=None):
     vs = types.ModuleType("vector_service.retriever")
     vs.fts_search = fts_impl or (lambda q, dbs=None, limit=None: [])
     monkeypatch.setitem(sys.modules, "vector_service.retriever", vs)
+    vspkg = types.ModuleType("vector_service")
+    vspkg.PatchLogger = object
+    monkeypatch.setitem(sys.modules, "vector_service", vspkg)
     monkeypatch.setitem(
         sys.modules, "code_database", types.SimpleNamespace(PatchHistoryDB=object)
     )
@@ -38,6 +42,24 @@ def test_vector_success(monkeypatch, tmp_path):
     assert out == [
         {"origin_db": "code", "record_id": 1, "score": 0.5, "snippet": "vec"}
     ]
+
+
+def test_default_text_output(monkeypatch, tmp_path):
+    class DummyRetriever:
+        def retrieve(self, query, top_k=5, dbs=None):
+            hit = types.SimpleNamespace(
+                origin_db="code", record_id=1, score=0.5, text="vec"
+            )
+            return [hit], "s", []
+
+    menace_cli = _load_cli(monkeypatch, tmp_path, DummyRetriever)
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", buf)
+    res = menace_cli.main(["retrieve", "q", "--no-cache"])
+    assert res == 0
+    lines = buf.getvalue().strip().splitlines()
+    assert lines[0].split()[0] == "origin_db"
+    assert "code" in lines[1]
 
 
 def test_vector_fallback(monkeypatch, tmp_path):

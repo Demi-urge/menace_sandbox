@@ -37,6 +37,9 @@ This guide walks you through the common Menace workflows using the new `menace` 
 # Semantic search with caching and full-text fallback
 menace retrieve "missing config" --db code
 
+# Emit raw JSON instead of a table
+menace retrieve "missing config" --db code --json
+
 # Apply a patch using the self-coding engine
 menace patch bots/example.py --desc "handle edge case"
 
