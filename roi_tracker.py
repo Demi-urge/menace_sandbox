@@ -77,6 +77,51 @@ if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .vector_metrics_db import VectorMetricsDB
 
 
+def _estimate_rollback_probability(metrics: Mapping[str, float]) -> float:
+    """Return the chance that a workflow will require rollback.
+
+    The helper interprets a variety of runtime metrics and normalises them into
+    a probability between 0 and 1.  Recognised metrics include
+    ``errors_per_minute`` (scaled by ``error_threshold"), ``test_flakiness`` or
+    ``flaky_tests`` counts (scaled by ``flakiness_threshold"), direct
+    ``recent_failure_rate``/``failure_rate`` values and an ``instability`` score.
+    Unrecognised metrics are ignored.
+    """
+
+    if not metrics:
+        return 0.0
+
+    errors_per_minute = float(metrics.get("errors_per_minute", 0.0))
+    error_threshold = float(metrics.get("error_threshold", 10.0))
+    error_prob = (
+        errors_per_minute / error_threshold if error_threshold > 0 else 0.0
+    )
+
+    flakiness = float(metrics.get("test_flakiness", metrics.get("flaky_tests", 0.0)))
+    flakiness_threshold = float(metrics.get("flakiness_threshold", 5.0))
+    flakiness_prob = (
+        flakiness / flakiness_threshold if flakiness_threshold > 0 else 0.0
+    )
+
+    recent_failure_rate = float(
+        metrics.get("recent_failure_rate", metrics.get("failure_rate", 0.0))
+    )
+
+    instability = float(metrics.get("instability", 0.0))
+
+    probs = [
+        error_prob,
+        flakiness_prob,
+        recent_failure_rate,
+        instability,
+    ]
+    probs = [p for p in probs if p > 0]
+    if not probs:
+        return 0.0
+    prob = max(probs)
+    return max(0.0, min(1.0, prob))
+
+
 class ROITracker:
     """Monitor ROI change and determine when improvements diminish."""
 
@@ -2707,26 +2752,13 @@ class ROITracker:
 
     # ------------------------------------------------------------------
     def _rollback_probability(self, metrics: Mapping[str, float]) -> float:
-        """Estimate probability a workflow needs rollback based on errors.
+        """Estimate rollback probability from ``metrics``.
 
-        A simple heuristic is used combining any available error rate metrics.
-        The result is clamped to the ``[0.0, 1.0]`` interval.
+        This method proxies to :func:`_estimate_rollback_probability` for
+        backwards compatibility with older callers expecting a method.
         """
 
-        if not metrics:
-            return 0.0
-        keys = [
-            "errors_per_minute",
-            "latency_error_rate",
-            "hostile_failures",
-            "misuse_failures",
-        ]
-        vals = [float(metrics.get(k, 0.0)) for k in keys]
-        non_zero = [v for v in vals if v > 0]
-        if not non_zero:
-            return 0.0
-        prob = float(np.mean(non_zero))
-        return max(0.0, min(1.0, prob))
+        return _estimate_rollback_probability(metrics)
 
     # ------------------------------------------------------------------
     def _load_impact_severity_map(self) -> Mapping[str, float]:
@@ -2876,12 +2908,9 @@ class ROITracker:
                 0.0, min(1.0, float(stats["rollback_probability"]))
             )
         else:
-            errors_per_minute = float(stats.get("errors_per_minute", 0.0))
-            error_threshold = float(stats.get("error_threshold", 10.0))
-            error_prob = max(0.0, min(1.0, errors_per_minute / error_threshold))
-            instability_metric = float(stats.get("instability", instability))
-            rollback_probability = max(error_prob, instability_metric)
-            rollback_probability = max(0.0, min(1.0, rollback_probability))
+            metrics = dict(stats)
+            metrics.setdefault("instability", instability)
+            rollback_probability = _estimate_rollback_probability(metrics)
 
         impact_severity = float(self.impact_severity(workflow_type))
         catastrophic_risk = rollback_probability * impact_severity
