@@ -13,19 +13,16 @@ import time
 import asyncio
 from typing import Any, Dict, Iterable, List, Sequence
 
-from redaction_utils import redact_dict as pii_redact_dict, redact_text
-from security.secret_redactor import redact, redact_dict as secret_redact_dict
-from license_detector import detect as license_detect
-from analysis.semantic_diff_filter import find_semantic_risks
+from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_redact_text
+from governed_retrieval import govern_retrieval, redact, redact_dict
 from .decorators import log_and_measure
 from .exceptions import MalformedPromptError, RateLimitError, VectorServiceError
 
 
 try:  # pragma: no cover - optional dependency
-    from universal_retriever import UniversalRetriever, ResultBundle  # type: ignore
+    from universal_retriever import UniversalRetriever  # type: ignore
 except Exception:  # pragma: no cover - fallback when not available
     UniversalRetriever = None  # type: ignore
-    ResultBundle = object  # type: ignore
 
 
 @dataclass
@@ -82,11 +79,7 @@ class Retriever:
             meta = getattr(h, "metadata", {})
             if not isinstance(meta, dict) or not meta.get("redacted"):
                 continue
-            if isinstance(h, ResultBundle):
-                item = h.to_dict()
-                item["record_id"] = getattr(h, "record_id", None)
-                meta = item.get("metadata", meta)
-            elif hasattr(h, "to_dict"):
+            if hasattr(h, "to_dict"):
                 item = h.to_dict()
                 item.setdefault("record_id", getattr(h, "record_id", None))
                 meta = item.get("metadata", meta)
@@ -99,18 +92,19 @@ class Retriever:
                     "metadata": meta,
                 }
             text = str(item.get("text") or "")
-            lic = license_detect(text)
-            if lic:
+            governed = govern_retrieval(text, meta, item.get("reason"))
+            if governed is None:
                 continue
-            alerts = find_semantic_risks(text.splitlines())
-            if alerts:
-                meta.setdefault("semantic_alerts", alerts)
-            results.append(secret_redact_dict(pii_redact_dict(item)))
+            meta, reason = governed
+            item["metadata"] = meta
+            if reason is not None:
+                item["reason"] = reason
+            results.append(redact_dict(pii_redact_dict(item)))
         return results
 
     # ------------------------------------------------------------------
     def _fallback(self, reason: str) -> List[Dict[str, Any]]:
-        reason = redact(redact_text(reason))
+        reason = redact(pii_redact_text(reason))
         return [
             {
                 "origin_db": "heuristic",
@@ -143,7 +137,7 @@ class Retriever:
         if not isinstance(query, str) or not query.strip():
             raise MalformedPromptError("query must be a non-empty string")
 
-        query = redact(redact_text(query))
+        query = redact(pii_redact_text(query))
         k = top_k or self.top_k
         thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
         retriever = self._get_retriever()
@@ -213,7 +207,7 @@ class Retriever:
         Executes the synchronous :meth:`search` implementation in a separate
         thread so it can be awaited without blocking the event loop.
         """
-        query = redact(redact_text(query))
+        query = redact(pii_redact_text(query))
         return await asyncio.to_thread(
             self.search.__wrapped__,
             self,

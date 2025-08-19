@@ -12,9 +12,7 @@ from typing import Any, Iterable, List, Sequence, Tuple, Union, Dict
 import logging
 import sys
 from datetime import datetime
-from secret_redactor import redact_secrets, redact_secrets_dict
-from license_detector import detect as license_detect
-from analysis.semantic_diff_filter import find_semantic_risks
+from governed_retrieval import govern_retrieval
 
 _ALIASES = (
     "universal_retriever",
@@ -1460,14 +1458,10 @@ class UniversalRetriever:
             if self._last_fallback_sources:
                 meta["fallback_sources"] = list(self._last_fallback_sources)
             text = str(meta.get("text") or "")
-            lic = license_detect(text)
-            if lic:
+            governed = govern_retrieval(text, meta, reason)
+            if governed is None:
                 continue
-            alerts = find_semantic_risks(text.splitlines())
-            if alerts:
-                meta.setdefault("semantic_alerts", alerts)
-            meta = redact_secrets_dict(meta)
-            reason = redact_secrets(reason)
+            meta, reason = governed
             hits.append(
                 ResultBundle(
                     origin_db=entry["source"],
