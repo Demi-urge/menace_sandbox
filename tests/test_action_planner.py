@@ -1,3 +1,18 @@
+from menace.roi_tracker import ROITracker
+import types
+import sys
+
+roi_stub = types.ModuleType("menace.resource_allocation_optimizer")
+class ROIDB:
+    def history(self, bot: str | None = None, limit: int = 50):
+        class _DF:
+            empty = True
+            def __getitem__(self, key: str):
+                return []
+        return _DF()
+roi_stub.ROIDB = ROIDB
+sys.modules.setdefault("menace.resource_allocation_optimizer", roi_stub)
+
 import menace.action_planner as ap
 from menace.neuroplasticity import PathwayDB, PathwayRecord, Outcome
 from menace.unified_event_bus import UnifiedEventBus
@@ -279,3 +294,34 @@ def test_priority_queue_reflects_growth(tmp_path):
     queue = planner.get_priority_queue()
     assert queue[0] == "C"
     assert planner.priority_weights["B"] == pytest.approx(1.0)
+
+def test_plan_actions_ranks_by_raroi(monkeypatch, tmp_path):
+    pdb = PathwayDB(tmp_path / "p.db")
+    roi = DummyROIDB()
+    tracker = ROITracker()
+    planner = ap.ActionPlanner(
+        pdb,
+        roi,
+        epsilon=0.0,
+        use_adaptive_roi=True,
+        roi_tracker=tracker,
+        feature_fn=lambda a: [0.0],
+    )
+
+    def fake_predict_growth(action):
+        if action == "A":
+            return [1.0], "linear", None
+        return [0.5], "linear", None
+
+    monkeypatch.setattr(planner, "_predict_growth", fake_predict_growth)
+
+    def fake_calculate(base_roi, *args, **kwargs):
+        if base_roi == 1.0:
+            return base_roi, 0.1
+        return base_roi, 0.9
+
+    monkeypatch.setattr(planner.roi_tracker, "calculate_raroi", fake_calculate)
+
+    ranked = planner.plan_actions("start", ["A", "B"])
+    assert fake_predict_growth("A")[0][-1] > fake_predict_growth("B")[0][-1]
+    assert ranked[0] == "B"
