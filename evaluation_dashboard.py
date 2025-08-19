@@ -116,8 +116,17 @@ class EvaluationDashboard:
         self, tracker: ROITracker, window: int | None = None
     ) -> Dict[str, Any]:
         """Return ROI prediction stats including trend and confusion metrics."""
-
-        return tracker.prediction_summary(window)
+        summary = tracker.prediction_summary(window)
+        workflows: Dict[str, Any] = {}
+        for wf in tracker.workflow_predictions:
+            workflows[str(wf)] = {
+                "confidence": tracker.workflow_confidence(str(wf), window),
+                "mae": tracker.workflow_mae(str(wf), window),
+                "variance": tracker.workflow_variance(str(wf), window),
+                "needs_review": str(wf) in tracker.needs_review,
+            }
+        summary["workflows"] = workflows
+        return summary
 
     # ------------------------------------------------------------------
     def roi_prediction_chart(
@@ -178,12 +187,21 @@ class EvaluationDashboard:
         drift_metrics = getattr(predictor, "drift_metrics", {}) if predictor else {}
         if not drift_metrics:
             drift_metrics = getattr(tracker, "drift_metrics", {})
+        workflows: Dict[str, Any] = {}
+        for wf in tracker.workflow_predictions:
+            workflows[str(wf)] = {
+                "confidence": tracker.workflow_confidence(str(wf), window),
+                "mae": tracker.workflow_mae(str(wf), window),
+                "variance": tracker.workflow_variance(str(wf), window),
+                "needs_review": str(wf) in tracker.needs_review,
+            }
         return {
             "mae_by_horizon": mae_by_horizon,
             "growth_class_accuracy": tracker.classification_accuracy(window),
             "drift_flags": drift_flags,
             "growth_type_accuracy": drift_metrics.get("accuracy", 0.0),
             "drift_metrics": drift_metrics,
+            "workflows": workflows,
         }
 
     # ------------------------------------------------------------------

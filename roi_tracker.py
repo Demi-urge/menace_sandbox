@@ -201,6 +201,8 @@ class ROITracker:
         self.raroi_history: List[float] = []
         self.last_raroi: float | None = None
         self.confidence_history: List[float] = []
+        self.mae_history: List[float] = []
+        self.variance_history: List[float] = []
         self.final_roi_history: Dict[str, List[float]] = defaultdict(list)
         self.category_history: List[str] = []
         self.entropy_history: List[float] = []
@@ -439,6 +441,8 @@ class ROITracker:
         self.roi_history.extend(other.roi_history)
         self.raroi_history.extend(getattr(other, "raroi_history", []))
         self.confidence_history.extend(other.confidence_history)
+        self.mae_history.extend(getattr(other, "mae_history", []))
+        self.variance_history.extend(getattr(other, "variance_history", []))
         for wf, hist in getattr(other, "final_roi_history", {}).items():
             self.final_roi_history.setdefault(wf, []).extend(hist)
         self.needs_review.update(getattr(other, "needs_review", set()))
@@ -543,6 +547,7 @@ class ROITracker:
         confidence: float | None = None,
         workflow_id: str | None = None,
         modules: Optional[List[str]] = None,
+        final_score: float | None = None,
     ) -> None:
         """Store prediction details and log prediction stats.
 
@@ -700,7 +705,13 @@ class ROITracker:
             pass
 
         self.record_roi_prediction(
-            pred_seq, act_seq, predicted_class, actual_class, confidence, workflow_id
+            pred_seq,
+            act_seq,
+            predicted_class,
+            actual_class,
+            confidence,
+            workflow_id,
+            final_score=final_score,
         )
         self.check_prediction_drift()
         self.drift_metrics["mae"] = self.rolling_mae()
@@ -714,6 +725,7 @@ class ROITracker:
         actual_class: str | None = None,
         confidence: float | None = None,
         workflow_id: str | None = None,
+        final_score: float | None = None,
     ) -> None:
         """Persist an ROI prediction event to ``roi_events.db``."""
         try:
@@ -728,7 +740,8 @@ class ROITracker:
                         actual_class TEXT,
                         confidence REAL,
                         mae REAL,
-                        variance REAL,
+                        roi_variance REAL,
+                        final_score REAL,
                         predicted_horizons TEXT,
                         actual_horizons TEXT,
                         predicted_categories TEXT,
@@ -741,7 +754,7 @@ class ROITracker:
                 mae_val = self.workflow_mae(workflow_id) if workflow_id is not None else self.rolling_mae()
                 var_val = self.workflow_variance(workflow_id) if workflow_id is not None else (float(np.var(self.actual_roi)) if self.actual_roi else 0.0)
                 conn.execute(
-                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, variance, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roi_prediction_events (predicted_roi, actual_roi, predicted_class, actual_class, confidence, mae, roi_variance, final_score, predicted_horizons, actual_horizons, predicted_categories, actual_categories, workflow_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         float(predicted[0]) if predicted else None,
                         float(actual[0]) if actual else None,
@@ -750,6 +763,7 @@ class ROITracker:
                         None if confidence is None else float(confidence),
                         mae_val,
                         var_val,
+                        None if final_score is None else float(final_score),
                         json.dumps([float(x) for x in predicted]),
                         json.dumps([float(x) for x in actual]),
                         json.dumps([predicted_class] if predicted_class is not None else []),
@@ -1310,16 +1324,6 @@ class ROITracker:
         falls below the configured tolerance.
         """
         predicted_class = self._next_category
-        if self._next_prediction is not None:
-            self.record_prediction(
-                self._next_prediction,
-                roi_after,
-                predicted_class=predicted_class,
-                confidence=confidence,
-                modules=modules,
-            )
-        self._next_prediction = None
-        self._next_category = None
         if metrics is None:
             metrics = {}
         metrics.setdefault("roi_reliability", self.reliability())
@@ -1342,6 +1346,8 @@ class ROITracker:
             weight = 1.5
         elif category == "marginal":
             weight = 0.5
+        adjusted: float | None = None
+        final_score = 0.0
         if filtered is not None:
             adjusted = filtered * weight
             self.roi_history.append(adjusted)
@@ -1386,7 +1392,9 @@ class ROITracker:
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
             final_score = raroi * float(confidence or 0.0)
-            targets = [str(m) for m in modules] if modules else ["_global"]
+            targets = ["_global"]
+            if modules:
+                targets.extend(str(m) for m in modules)
             for wf in targets:
                 self.final_roi_history.setdefault(wf, []).append(final_score)
                 if confidence is not None and confidence < self.confidence_threshold:
@@ -1484,10 +1492,44 @@ class ROITracker:
                         else 0.0
                     )
                     self.synergy_metrics_history[name].append(last)
-            logger.info(
-                "roi update",
-                extra=log_record(delta=delta, category=category, adjusted=adjusted),
+
+        if self._next_prediction is not None:
+            self.record_prediction(
+                self._next_prediction,
+                roi_after,
+                predicted_class=predicted_class,
+                confidence=confidence,
+                modules=modules,
+                final_score=final_score,
             )
+        self._next_prediction = None
+        self._next_category = None
+
+        mae_val = self.rolling_mae()
+        roi_var_val = float(np.var(self.actual_roi)) if self.actual_roi else 0.0
+        if filtered is not None:
+            self.mae_history.append(mae_val)
+            self.variance_history.append(roi_var_val)
+        if _me is not None:
+            try:
+                _me.roi_confidence.set(float(confidence or 0.0))
+                _me.roi_mae.set(mae_val)
+                _me.roi_variance.set(roi_var_val)
+            except Exception:
+                pass
+        logger.info(
+            "roi update",
+            extra=log_record(
+                delta=delta,
+                category=category,
+                adjusted=adjusted,
+                confidence=confidence,
+                mae=mae_val,
+                roi_variance=roi_var_val,
+                final_score=final_score,
+            ),
+        )
+
         iteration = len(self.roi_history) - 1
         vertex, preds = self._regression()
         should_stop = False
@@ -2270,11 +2312,12 @@ class ROITracker:
             return
         with sqlite3.connect(path) as conn:
             conn.execute(
-                "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL, raroi REAL)"
+                "CREATE TABLE IF NOT EXISTS roi_history (delta REAL, confidence REAL, raroi REAL, mae REAL, roi_variance REAL, final_score REAL)"
             )
             conn.execute("DELETE FROM roi_history")
+            global_final = self.final_roi_history.get("_global", [])
             conn.executemany(
-                "INSERT INTO roi_history (delta, confidence, raroi) VALUES (?, ?, ?)",
+                "INSERT INTO roi_history (delta, confidence, raroi, mae, roi_variance, final_score) VALUES (?, ?, ?, ?, ?, ?)",
                 [
                     (
                         float(d),
@@ -2286,6 +2329,21 @@ class ROITracker:
                         float(
                             self.raroi_history[i]
                             if i < len(self.raroi_history)
+                            else 0.0
+                        ),
+                        float(
+                            self.mae_history[i]
+                            if i < len(self.mae_history)
+                            else 0.0
+                        ),
+                        float(
+                            self.variance_history[i]
+                            if i < len(self.variance_history)
+                            else 0.0
+                        ),
+                        float(
+                            global_final[i]
+                            if i < len(global_final)
                             else 0.0
                         ),
                     )
@@ -2711,19 +2769,25 @@ class ROITracker:
             with sqlite3.connect(path) as conn:
                 try:
                     rows = conn.execute(
-                        "SELECT delta, confidence, raroi FROM roi_history ORDER BY rowid"
+                        "SELECT delta, confidence, raroi, mae, roi_variance, final_score FROM roi_history ORDER BY rowid"
                     ).fetchall()
                 except Exception:
                     try:
                         rows = conn.execute(
-                            "SELECT delta, confidence FROM roi_history ORDER BY rowid"
+                            "SELECT delta, confidence, raroi FROM roi_history ORDER BY rowid"
                         ).fetchall()
-                        rows = [(r[0], r[1], 0.0) for r in rows]
+                        rows = [(*r, 0.0, 0.0, 0.0) for r in rows]
                     except Exception:
-                        rows = conn.execute(
-                            "SELECT delta FROM roi_history ORDER BY rowid"
-                        ).fetchall()
-                        rows = [(r[0], 0.0, 0.0) for r in rows]
+                        try:
+                            rows = conn.execute(
+                                "SELECT delta, confidence FROM roi_history ORDER BY rowid"
+                            ).fetchall()
+                            rows = [(r[0], r[1], 0.0, 0.0, 0.0, 0.0) for r in rows]
+                        except Exception:
+                            rows = conn.execute(
+                                "SELECT delta FROM roi_history ORDER BY rowid"
+                            ).fetchall()
+                            rows = [(r[0], 0.0, 0.0, 0.0, 0.0, 0.0) for r in rows]
                 try:
                     mod_rows = conn.execute(
                         "SELECT module, delta, raroi FROM module_deltas ORDER BY rowid"
@@ -2841,6 +2905,9 @@ class ROITracker:
         self.roi_history = [float(r[0]) for r in rows]
         self.confidence_history = [float(r[1]) for r in rows]
         self.raroi_history = [float(r[2]) for r in rows]
+        self.mae_history = [float(r[3]) for r in rows]
+        self.variance_history = [float(r[4]) for r in rows]
+        self.final_roi_history["_global"] = [float(r[5]) for r in rows]
         self.module_deltas = {}
         self.module_raroi = {}
         for mod, delta, raroi in mod_rows:
