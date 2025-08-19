@@ -2888,6 +2888,8 @@ class ROITracker:
         else:
             impact_severity = float(impact_severity)
 
+        impact_severity = max(0.0, min(1.0, impact_severity))
+
         catastrophic_risk = rollback_prob * impact_severity
 
         stability_factor = max(0.0, 1.0 - instability)
