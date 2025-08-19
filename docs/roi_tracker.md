@@ -327,7 +327,14 @@ outcomes are stored per workflow in `workflow_predicted_roi` and
 `workflow_actual_roi` using a rolling window controlled by the
 ``workflow_window`` constructor argument. Call
 `workflow_mae(workflow_id)` or `workflow_variance(workflow_id)` to inspect the
-latest mean absolute error and ROI variance for a given workflow.
+latest mean absolute error and ROI variance for a given workflow. These values
+combine into a per‑workflow confidence score using ``1 / (1 + mae + variance)``
+which is clipped to ``[0, 1]`` and stored in ``workflow_confidence_history``.
+`SelfImprovementEngine` multiplies risk‑adjusted ROI by this confidence and
+defers modules whose confidence falls below a threshold ``tau`` (default
+``0.5``). The evaluation dashboard exposes ``workflow_mae``,
+``workflow_variance`` and ``workflow_confidence`` fields for visualising these
+trends.
 
 ### ROI prediction chart
 

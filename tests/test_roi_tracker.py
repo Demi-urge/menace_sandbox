@@ -721,3 +721,13 @@ def test_workflow_metrics():
     assert tracker.workflow_mae("wf1") == pytest.approx(np.mean([0.2, 0.0, 1.0]))
     assert tracker.workflow_variance("wf1") == pytest.approx(np.var([0.8, 1.0, 2.0]))
 
+
+def test_workflow_confidence_formula():
+    tracker = rt.ROITracker()
+    tracker.record_prediction(0.0, 0.0, workflow_id="wf")
+    tracker.record_prediction(1.0, 2.0, workflow_id="wf")
+    assert tracker.workflow_mae("wf") == pytest.approx(0.5)
+    assert tracker.workflow_variance("wf") == pytest.approx(1.0)
+    expected = 1.0 / (1.0 + 0.5 + 1.0)
+    assert tracker.workflow_confidence("wf") == pytest.approx(expected)
+
