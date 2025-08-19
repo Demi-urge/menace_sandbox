@@ -70,3 +70,30 @@ def test_calculate_raroi_formula(
     assert base == base_roi
     assert raroi == pytest.approx(expected)
     assert called["metrics"] == metrics_map
+
+
+def test_multiple_failing_suites_penalties(monkeypatch) -> None:
+    tracker = ROITracker()
+    tracker.roi_history = [1.0] * 5
+    sts.set_failed_critical_tests(["security", "alignment"])
+
+    called: dict[str, Mapping[str, float]] = {}
+    orig = ROITracker._safety_factor
+
+    def fake_safety(self, metrics: Mapping[str, float]) -> float:
+        called["metrics"] = dict(metrics)
+        return orig(self, metrics)
+
+    monkeypatch.setattr(ROITracker, "_safety_factor", fake_safety)
+
+    base, raroi = tracker.calculate_raroi(2.0, rollback_prob=0.0)
+
+    penalty = (
+        rt.CRITICAL_TEST_PENALTIES["security"]
+        * rt.CRITICAL_TEST_PENALTIES["alignment"]
+    )
+
+    assert base == 2.0
+    assert raroi == pytest.approx(2.0 * penalty)
+    assert called["metrics"]["security_failures"] == 1.0
+    assert called["metrics"]["alignment_failures"] == 1.0
