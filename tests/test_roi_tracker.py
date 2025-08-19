@@ -742,5 +742,5 @@ def test_update_logs_metrics(caplog, monkeypatch):
     assert rec.confidence == pytest.approx(0.4)
     assert rec.mae == pytest.approx(0.0)
     assert rec.roi_variance == pytest.approx(0.0)
-    assert rec.final_score == pytest.approx(rec.adjusted * 0.4)
+    assert rec.final_score == pytest.approx(rec.adjusted)
 

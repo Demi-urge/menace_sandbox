@@ -40,6 +40,10 @@ class _DummyTracker:
     def workflow_confidence(self, workflow_id):
         return {"mod1": 0.9, "mod2": 0.3}.get(workflow_id, 0.0)
 
+    def score_workflow(self, workflow_id, raroi, tau=None):
+        conf = self.workflow_confidence(workflow_id)
+        return raroi * conf, conf < (tau or 0.5), conf
+
 
 class _DummyEngine:
     def __init__(self) -> None:

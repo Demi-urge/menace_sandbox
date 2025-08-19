@@ -148,10 +148,6 @@ from .human_alignment_agent import HumanAlignmentAgent
 from .audit_logger import log_event as audit_log_event, get_recent_events
 from .violation_logger import log_violation
 from .alignment_review_agent import AlignmentReviewAgent
-try:  # persistent review queue for human oversight
-    from .review_queue import enqueue_for_review
-except Exception:  # pragma: no cover - flat layout fallback
-    from review_queue import enqueue_for_review  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -2251,17 +2247,20 @@ class SelfImprovementEngine:
                 else (roi_est, roi_est)
             )
             tracker = self.roi_tracker
-            confidence = (
-                tracker.workflow_confidence(mod) if tracker else 1.0
-            )
             mult = (
                 self.growth_multipliers.get(category, 1.0)
                 if self.growth_weighting
                 else 1.0
             )
-            weight = raroi * confidence * mult
-            if tracker and confidence < self.tau:
-                enqueue_for_review(mod)
+            if tracker:
+                final_score, needs_review, confidence = tracker.score_workflow(
+                    mod, raroi, tau=self.tau
+                )
+            else:
+                confidence = 1.0
+                final_score, needs_review = raroi, False
+            weight = final_score * mult
+            if needs_review:
                 self.logger.info(
                     "low confidence; deferring to human review/shadow testing",
                     extra=log_record(
@@ -2271,27 +2270,6 @@ class SelfImprovementEngine:
                         weight=weight,
                         threshold=self.tau,
                         shadow_test=True,
-                    ),
-                )
-                try:
-                    self._log_action("review", mod, weight, category, confidence)
-                except Exception:
-                    pass
-                continue
-            needs_review = False
-            if tracker:
-                try:
-                    _, needs_review = tracker.final_score(mod)
-                except Exception:
-                    needs_review = False
-            if needs_review:
-                self.logger.info(
-                    "needs review; deferring to human review",
-                    extra=log_record(
-                        module=mod,
-                        confidence=confidence,
-                        raroi=raroi,
-                        weight=weight,
                     ),
                 )
                 try:
@@ -2701,10 +2679,12 @@ class SelfImprovementEngine:
                     else (roi_est, roi_est)
                 )
                 if tracker:
-                    confidence = tracker.workflow_confidence(bot_name)
-                    final_score, needs_review = tracker.final_score(bot_name)
+                    final_score, needs_review, confidence = tracker.score_workflow(
+                        bot_name, raroi, tau=self.tau
+                    )
                 else:
-                    final_score, needs_review = raroi * confidence, False
+                    confidence = 1.0
+                    final_score, needs_review = raroi, False
                 if needs_review:
                     self.logger.info(
                         "self optimisation deferred: needs review",

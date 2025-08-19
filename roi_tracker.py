@@ -47,6 +47,13 @@ try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - best effort
     _me = None
+try:  # pragma: no cover - optional dependency
+    from .review_queue import enqueue_for_review as _enqueue_for_review
+except Exception:  # pragma: no cover - best effort
+    try:
+        from review_queue import enqueue_for_review as _enqueue_for_review  # type: ignore
+    except Exception:  # pragma: no cover - optional
+        _enqueue_for_review = None  # type: ignore
 
 if _me is not None:  # pragma: no cover - metrics optional
     try:
@@ -1256,6 +1263,40 @@ class ROITracker:
         return confidence
 
     # ------------------------------------------------------------------
+    def score_workflow(
+        self, workflow_id: str, raroi: float, tau: float | None = None
+    ) -> Tuple[float, bool, float]:
+        """Return ``(final_score, needs_review, confidence)`` for ``workflow_id``.
+
+        The final score scales ``raroi`` by the workflow's confidence. When the
+        confidence falls below ``tau`` (or ``self.confidence_threshold`` when
+        ``tau`` is ``None``) the workflow is flagged for manual review and
+        automatic demotion is bypassed.
+        """
+
+        wf = str(workflow_id)
+        conf = self.workflow_confidence(wf, self.workflow_window)
+        self.workflow_confidence_history[wf].append(conf)
+        if len(self.workflow_confidence_history[wf]) > self.workflow_window:
+            self.workflow_confidence_history[wf] = self.workflow_confidence_history[wf][
+                -self.workflow_window :
+            ]
+        final_score = float(raroi) * conf
+        self.final_roi_history.setdefault(wf, []).append(final_score)
+        threshold = self.confidence_threshold if tau is None else float(tau)
+        needs_review = conf < threshold
+        if needs_review:
+            self.needs_review.add(wf)
+            if _enqueue_for_review is not None:
+                try:
+                    _enqueue_for_review(wf)
+                except Exception:
+                    pass
+        else:
+            self.needs_review.discard(wf)
+        return final_score, needs_review, conf
+
+    # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
         """Return rolling error metrics and class stats for ``window``."""
         wf_mae = {
@@ -1523,14 +1564,12 @@ class ROITracker:
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
-            final_score = raroi * float(confidence or 0.0)
             targets = ["_global"]
             if modules:
                 targets.extend(str(m) for m in modules)
-            for wf in targets:
-                self.final_roi_history.setdefault(wf, []).append(final_score)
-                if confidence is not None and confidence < self.confidence_threshold:
-                    self.needs_review.add(wf)
+            final_score, _nr, _conf = self.score_workflow(targets[0], raroi)
+            for wf in targets[1:]:
+                self.score_workflow(wf, raroi)
             if modules:
                 for m in modules:
                     cid = self.cluster_map.get(m)
