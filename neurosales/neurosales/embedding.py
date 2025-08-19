@@ -30,7 +30,10 @@ def embed_text(text: str) -> list[float]:
     ``sentence-transformers`` must be installed.  The previous behaviour
     returned a deterministic hash when the library was missing, but this
     hid errors in production.  Now a ``RuntimeError`` is raised so that the
-    caller can ensure the dependency is available.
+    caller can ensure the dependency is available.  Before embedding, the
+    text is scanned with :func:`find_semantic_risks` and a ``ValueError`` is
+    raised when any unsafe patterns are detected so that callers can take
+    appropriate action.
     """
     model = get_model()
     if model is None:
