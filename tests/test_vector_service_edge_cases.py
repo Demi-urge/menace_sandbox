@@ -87,7 +87,7 @@ def test_embedding_backfill_run_on_dummy_db(monkeypatch):
             calls.append((self.vector_backend, batch_size))
 
     monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [DummyDB]
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [DummyDB]
     )
     eb = EmbeddingBackfill()
     eb.run(batch_size=5, backend="vec", session_id="s")

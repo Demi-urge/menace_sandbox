@@ -49,8 +49,13 @@ class EmbeddingBackfill:
         self.backend = backend
 
     # ------------------------------------------------------------------
-    def _load_known_dbs(self) -> List[type]:
-        """Import common database modules and return discovered classes."""
+    def _load_known_dbs(self, names: List[str] | None = None) -> List[type]:
+        """Import common database modules and return discovered classes.
+
+        If ``names`` is provided, the returned list is filtered to only include
+        classes whose name matches any entry in ``names``.  Matching is
+        case-insensitive and ignores plural forms or a trailing ``DB`` suffix.
+        """
 
         modules = [
             "bot_database",
@@ -72,6 +77,17 @@ class EmbeddingBackfill:
             ]
         except Exception:  # pragma: no cover - defensive
             subclasses = []
+        if names:
+            keys = [n.lower().rstrip("s") for n in names]
+            filtered: List[type] = []
+            for cls in subclasses:
+                name = cls.__name__.lower()
+                base = name[:-2] if name.endswith("db") else name
+                for key in keys:
+                    if name.startswith(key) or base.startswith(key):
+                        filtered.append(cls)
+                        break
+            subclasses = filtered
         return subclasses
 
     # ------------------------------------------------------------------
@@ -117,28 +133,21 @@ class EmbeddingBackfill:
         batch_size: int | None = None,
         backend: str | None = None,
         db: str | None = None,
+        dbs: List[str] | None = None,
     ) -> None:
         """Backfill embeddings for ``EmbeddableDBMixin`` subclasses.
 
-        If ``db`` is provided, only classes whose name matches the value are
-        processed. Matching is case-insensitive and ignores plural forms or a
-        trailing ``DB`` suffix.
+        If ``db`` or ``dbs`` is provided, only classes whose name matches any
+        of the supplied values are processed. Matching is case-insensitive and
+        ignores plural forms or a trailing ``DB`` suffix.
         """
         start = time.time()
         status = "success"
         try:
             bs = batch_size if batch_size is not None else self.batch_size
             be = backend or self.backend
-            subclasses = self._load_known_dbs()
-            if db:
-                key = db.lower().rstrip("s")
-                filtered: List[type] = []
-                for cls in subclasses:
-                    name = cls.__name__.lower()
-                    base = name[:-2] if name.endswith("db") else name
-                    if name.startswith(key) or base.startswith(key):
-                        filtered.append(cls)
-                subclasses = filtered
+            names = dbs or ([db] if db else None)
+            subclasses = self._load_known_dbs(names=names)
             logger = logging.getLogger(__name__)
             total = len(subclasses)
             for idx, cls in enumerate(subclasses, 1):

@@ -12,10 +12,10 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 from vector_service import EmbeddingBackfill, VectorServiceError
 
 
-def main(*, session_id: str, backend: str, batch_size: int) -> None:
+def main(*, session_id: str, backend: str, batch_size: int, dbs: list[str] | None) -> None:
     try:
         EmbeddingBackfill(batch_size=batch_size, backend=backend).run(
-            session_id=session_id
+            session_id=session_id, dbs=dbs
         )
     except VectorServiceError:
         raise
@@ -42,8 +42,19 @@ def cli() -> None:
         default=100,
         help="Batch size for processing",
     )
+    parser.add_argument(
+        "--db",
+        action="append",
+        dest="dbs",
+        help="Restrict to a specific database class (can be used multiple times)",
+    )
     args = parser.parse_args()
-    main(session_id=args.session_id, backend=args.backend, batch_size=args.batch_size)
+    main(
+        session_id=args.session_id,
+        backend=args.backend,
+        batch_size=args.batch_size,
+        dbs=args.dbs,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entrypoint

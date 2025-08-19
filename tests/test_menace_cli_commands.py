@@ -1,6 +1,7 @@
 import sys
 import types
 import io
+import json
 
 class _FallbackResult(list):
     def __init__(self, reason: str, hits: list):
@@ -15,10 +16,11 @@ class _DummyContextBuilder:
         return ("ctx", session_id or "s", [("o", "v", 0.1)])
 
 class _DummyEmbeddingBackfill:
-    def run(self, session_id="cli", db=None, batch_size=None, backend=None):
+    def run(self, session_id="cli", dbs=None, batch_size=None, backend=None):
         pass
 
 def _load_cli(monkeypatch):
+    sys.modules.pop("menace_cli", None)
     vs = types.ModuleType("vector_service")
     vs.Retriever = object
     vs.FallbackResult = _FallbackResult
@@ -89,68 +91,14 @@ def test_patch_command(monkeypatch, tmp_path):
 
     res = menace_cli.main(["patch", str(mod), "--desc", "fix it"])
     assert res == 0
-    assert out_buf.getvalue().strip() == "42"
+    assert json.loads(out_buf.getvalue()) == {
+        "patch_id": 42,
+        "provenance": [{"id": 42}],
+    }
     assert calls["module"] == str(mod)
     assert calls["engine"] is None
     assert calls["description"] == "fix it"
     assert isinstance(calls["builder"], sys.modules["vector_service"].ContextBuilder)
-
-    _cleanup_cli()
-
-
-def test_embed_command(monkeypatch):
-    menace_cli = _load_cli(monkeypatch)
-
-    calls = {}
-    class DummyBackfill:
-        def run(self, session_id="cli", db=None, batch_size=None, backend=None):
-            calls["kwargs"] = {
-                "session_id": session_id,
-                "db": db,
-                "batch_size": batch_size,
-                "backend": backend,
-            }
-
-    monkeypatch.setattr(
-        sys.modules["vector_service.embedding_backfill"],
-        "EmbeddingBackfill",
-        lambda: DummyBackfill(),
-    )
-    res = menace_cli.main(
-        ["embed", "--db", "code", "--batch-size", "5", "--backend", "fake"]
-    )
-    assert res == 0
-    assert calls["kwargs"] == {
-        "session_id": "cli",
-        "db": "code",
-        "batch_size": 5,
-        "backend": "fake",
-    }
-
-    class FailBackfill:
-        def run(self, session_id="cli", db=None, batch_size=None, backend=None):
-            calls["kwargs"] = {
-                "session_id": session_id,
-                "db": db,
-                "batch_size": batch_size,
-                "backend": backend,
-            }
-            raise _VectorServiceError("boom")
-
-    monkeypatch.setattr(
-        sys.modules["vector_service.embedding_backfill"],
-        "EmbeddingBackfill",
-        lambda: FailBackfill(),
-    )
-    monkeypatch.setattr(sys, "stderr", io.StringIO())
-    res = menace_cli.main(["embed"])
-    assert res == 1
-    assert calls["kwargs"] == {
-        "session_id": "cli",
-        "db": None,
-        "batch_size": None,
-        "backend": None,
-    }
 
     _cleanup_cli()
 

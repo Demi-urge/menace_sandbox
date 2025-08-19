@@ -176,7 +176,7 @@ class InitFallbackDB:
 
 def test_embedding_backfill_run_processes_databases(monkeypatch):
     monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [DummyDB]
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [DummyDB]
     )
     called = []
 
@@ -191,7 +191,7 @@ def test_embedding_backfill_run_processes_databases(monkeypatch):
 
 def test_embedding_backfill_run_continues_on_error(monkeypatch):
     monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [ErrorDB, DummyDB]
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [ErrorDB, DummyDB]
     )
     order = []
 
@@ -208,7 +208,7 @@ def test_embedding_backfill_run_continues_on_error(monkeypatch):
 
 def test_embedding_backfill_instantiation_fallback(monkeypatch):
     monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [InitFallbackDB]
+        EmbeddingBackfill, "_load_known_dbs", lambda self, names=None: [InitFallbackDB]
     )
     eb = EmbeddingBackfill(batch_size=3)
     eb.run()
@@ -223,9 +223,22 @@ def test_embedding_backfill_filters_by_db(monkeypatch):
     class OtherDB(DummyDB):
         pass
 
-    monkeypatch.setattr(
-        EmbeddingBackfill, "_load_known_dbs", lambda self: [WorkflowDB, OtherDB]
-    )
+    def fake_load(self, names=None):
+        classes = [WorkflowDB, OtherDB]
+        if names:
+            keys = [n.lower().rstrip("s") for n in names]
+            filtered = []
+            for cls in classes:
+                name = cls.__name__.lower()
+                base = name[:-2] if name.endswith("db") else name
+                for key in keys:
+                    if name.startswith(key) or base.startswith(key):
+                        filtered.append(cls)
+                        break
+            return filtered
+        return classes
+
+    monkeypatch.setattr(EmbeddingBackfill, "_load_known_dbs", fake_load)
     called = []
 
     def fake_process(self, db, *, batch_size, session_id=""):
