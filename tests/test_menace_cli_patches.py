@@ -5,7 +5,9 @@ import types
 sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
 
 from code_database import PatchHistoryDB, PatchRecord
+import importlib
 import menace_cli
+menace_cli = importlib.reload(menace_cli)
 
 
 def setup_db(tmp_path, monkeypatch):

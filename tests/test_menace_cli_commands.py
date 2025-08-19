@@ -38,10 +38,28 @@ def _load_cli(monkeypatch):
         "vector_service.exceptions",
         types.SimpleNamespace(VectorServiceError=_VectorServiceError),
     )
+    class DummyPatchDB:
+        def __init__(self):
+            self.records = {}
+            self.next_id = 1
+            DummyPatchDB.instance = self
+
+        def add(self, rec):
+            pid = self.next_id
+            self.next_id += 1
+            self.records[pid] = rec
+            return pid
+
+        def get(self, pid):
+            return self.records.get(pid)
+
+        def list_patches(self, limit):  # pragma: no cover - not used
+            return []
+
     monkeypatch.setitem(
         sys.modules,
         "code_database",
-        types.SimpleNamespace(PatchHistoryDB=object, CodeDB=object),
+        types.SimpleNamespace(PatchHistoryDB=DummyPatchDB, CodeDB=object),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -50,8 +68,7 @@ def _load_cli(monkeypatch):
             build_chain=lambda *a, **k: [],
             search_patches_by_vector=lambda *a, **k: [],
             search_patches_by_license=lambda *a, **k: [],
-            get_patch_provenance=lambda pid: [{"id": pid}],
-            PatchLogger=object,
+            PatchLogger=lambda *a, **k: object(),
         ),
     )
     monkeypatch.setitem(
@@ -72,12 +89,14 @@ def test_patch_command(monkeypatch, tmp_path):
 
     calls = {}
 
-    def fake_generate_patch(module, *, context_builder, engine, description, **kw):
+    def fake_generate_patch(module, *, context_builder, engine, description, patch_logger=None, **kw):
         calls["module"] = module
         calls["builder"] = context_builder
         calls["engine"] = engine
         calls["description"] = description
-        return 42
+        db = sys.modules["code_database"].PatchHistoryDB.instance
+        pid = db.add(types.SimpleNamespace(filename=module))
+        return pid
 
     monkeypatch.setattr(
         sys.modules["quick_fix_engine"], "generate_patch", fake_generate_patch
@@ -92,8 +111,8 @@ def test_patch_command(monkeypatch, tmp_path):
     res = menace_cli.main(["patch", str(mod), "--desc", "fix it"])
     assert res == 0
     assert json.loads(out_buf.getvalue()) == {
-        "patch_id": 42,
-        "provenance": [{"id": 42}],
+        "patch_id": 1,
+        "files": [str(mod)],
     }
     assert calls["module"] == str(mod)
     assert calls["engine"] is None

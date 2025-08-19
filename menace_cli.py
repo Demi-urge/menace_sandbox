@@ -13,10 +13,10 @@ def _run(cmd: list[str]) -> int:
 
 from code_database import PatchHistoryDB
 from patch_provenance import (
+    PatchLogger,
     build_chain,
     search_patches_by_vector,
     search_patches_by_license,
-    get_patch_provenance,
 )
 
 
@@ -90,17 +90,21 @@ def handle_patch(args: argparse.Namespace) -> int:
             print("invalid JSON context", file=sys.stderr)
             return 1
 
+    db = PatchHistoryDB()
+    patch_logger = PatchLogger(patch_db=db)
     patch_id = quick_fix_engine.generate_patch(
         args.module,
         context_builder=ContextBuilder(),
         engine=None,
         description=args.desc,
+        patch_logger=patch_logger,
         context=ctx,
     )
     if not patch_id:
         return 1
-    provenance = get_patch_provenance(patch_id)
-    print(json.dumps({"patch_id": patch_id, "provenance": provenance}))
+    record = db.get(patch_id)
+    files = [record.filename] if record else []
+    print(json.dumps({"patch_id": patch_id, "files": files}))
     return 0
 
 
