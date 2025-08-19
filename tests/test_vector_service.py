@@ -214,3 +214,24 @@ def test_embedding_backfill_instantiation_fallback(monkeypatch):
     eb.run()
     assert InitFallbackDB.instances and InitFallbackDB.instances[0].processed
     assert InitFallbackDB.instances[0].batch == 3
+
+
+def test_embedding_backfill_filters_by_db(monkeypatch):
+    class WorkflowDB(DummyDB):
+        pass
+
+    class OtherDB(DummyDB):
+        pass
+
+    monkeypatch.setattr(
+        EmbeddingBackfill, "_load_known_dbs", lambda self: [WorkflowDB, OtherDB]
+    )
+    called = []
+
+    def fake_process(self, db, *, batch_size, session_id=""):
+        called.append(db.__class__)
+
+    monkeypatch.setattr(EmbeddingBackfill, "_process_db", fake_process)
+    eb = EmbeddingBackfill()
+    eb.run(db="workflows")
+    assert called == [WorkflowDB]

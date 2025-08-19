@@ -287,6 +287,15 @@ python menace_cli.py patches search --vector v1
 python menace_cli.py patches search --license MIT
 ```
 
+### Embedding backfill
+
+Populate vector indices via the `embed` subcommand. Specify a database name to
+limit processing to a single class:
+
+```bash
+python menace_cli.py embed --db workflows
+```
+
 ## Self-Optimisation Loop
 
 1. **Monitor metrics** – `DataBot` tracks ROI, errors and energy scores and

@@ -116,14 +116,29 @@ class EmbeddingBackfill:
         session_id: str = "",
         batch_size: int | None = None,
         backend: str | None = None,
+        db: str | None = None,
     ) -> None:
-        """Backfill embeddings for all ``EmbeddableDBMixin`` subclasses."""
+        """Backfill embeddings for ``EmbeddableDBMixin`` subclasses.
+
+        If ``db`` is provided, only classes whose name matches the value are
+        processed. Matching is case-insensitive and ignores plural forms or a
+        trailing ``DB`` suffix.
+        """
         start = time.time()
         status = "success"
         try:
             bs = batch_size if batch_size is not None else self.batch_size
             be = backend or self.backend
             subclasses = self._load_known_dbs()
+            if db:
+                key = db.lower().rstrip("s")
+                filtered: List[type] = []
+                for cls in subclasses:
+                    name = cls.__name__.lower()
+                    base = name[:-2] if name.endswith("db") else name
+                    if name.startswith(key) or base.startswith(key):
+                        filtered.append(cls)
+                subclasses = filtered
             logger = logging.getLogger(__name__)
             total = len(subclasses)
             for idx, cls in enumerate(subclasses, 1):
