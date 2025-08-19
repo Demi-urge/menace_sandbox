@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Optional, Dict, List, Any, Tuple
+from typing import Iterable, Optional, Dict, List, Any, Tuple, Mapping
 import subprocess
 import os
 import sys
@@ -224,6 +224,7 @@ class SelfCodingEngine:
         vectors: List[Tuple[str, str]] | List[Tuple[str, str, float]],
         result: bool,
         patch_id: int | None = None,
+        retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         if self.patch_logger and session_id and vectors:
             detailed: List[Tuple[str, str, float]] = []
@@ -241,6 +242,7 @@ class SelfCodingEngine:
                     result,
                     patch_id=str(patch_id or ""),
                     session_id=session_id,
+                    retrieval_metadata=retrieval_metadata,
                 )
             except VectorServiceError:
                 self.logger.debug("patch logging failed", exc_info=True)
@@ -691,6 +693,7 @@ class SelfCodingEngine:
         generated_code = self.patch_file(path, description, context_meta=context_meta)
         vectors: List[Tuple[str, str, float]] = []
         session_id = ""
+        retrieval_metadata: Dict[str, Dict[str, Any]] = {}
         if context_meta:
             raw_vecs = context_meta.get("retrieval_vectors") or []
             session_id = context_meta.get("retrieval_session_id", "")
@@ -699,6 +702,8 @@ class SelfCodingEngine:
                     origin = item.get("origin_db") or item.get("origin")
                     vid = item.get("vector_id") or item.get("id")
                     score = item.get("score") or item.get("similarity")
+                    lic = item.get("license")
+                    alerts = item.get("semantic_alerts")
                 else:
                     if len(item) == 3:
                         origin, vid, score = item
@@ -707,8 +712,14 @@ class SelfCodingEngine:
                         score = 0.0
                     else:
                         continue
+                    lic = None
+                    alerts = None
                 if origin is not None and vid is not None:
                     vectors.append((str(origin), str(vid), float(score or 0.0)))
+                    retrieval_metadata[f"{origin}:{vid}"] = {
+                        "license": lic,
+                        "semantic_alerts": alerts,
+                    }
         if not generated_code.strip():
             self.logger.info("no code generated; skipping enhancement")
             path.write_text(original, encoding="utf-8")
@@ -736,7 +747,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False)
+            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
             return None, False, 0.0
         if self.formal_verifier and not self.formal_verifier.verify(path):
             path.write_text(original, encoding="utf-8")
@@ -814,7 +825,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False, patch_id)
+            self._track_contributors(session_id, vectors, False, patch_id, retrieval_metadata)
             return patch_id, True, roi_delta
         if not self._run_ci(path):
             self.logger.error("CI checks failed; skipping commit")
@@ -843,7 +854,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False)
+            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
             return None, False, 0.0
         if self.safety_monitor and not self.safety_monitor.validate_bot(self.bot_name):
             path.write_text(original, encoding="utf-8")
@@ -871,7 +882,7 @@ class SelfCodingEngine:
                     )
                 except Exception:
                     self.logger.exception("failed to log patch outcome")
-            self._track_contributors(session_id, vectors, False)
+            self._track_contributors(session_id, vectors, False, retrieval_metadata=retrieval_metadata)
             return None, False, 0.0
         if self.pipeline:
             try:
@@ -1029,7 +1040,7 @@ class SelfCodingEngine:
                 )
         except Exception:
             self.logger.exception("failed to log patch outcome")
-        self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id)
+        self._track_contributors(session_id, vectors, bool(patch_id) and not reverted, patch_id, retrieval_metadata)
         return patch_id, reverted, roi_delta
 
     def rollback_patch(self, patch_id: str) -> None:
