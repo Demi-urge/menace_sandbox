@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from gpt_memory import GPTMemoryManager
+from governed_retrieval import govern_retrieval
 from secret_redactor import redact_secrets, redact_secrets_dict
 try:  # pragma: no cover - allow flat imports
     from .gpt_knowledge_service import GPTKnowledgeService
@@ -34,8 +35,20 @@ __all__ = [
 # Raw interaction retrieval helpers
 
 
-def _redact(entries):
-    return [replace(e, **redact_secrets_dict(asdict(e))) for e in entries]
+def _govern(entries):
+    governed = []
+    for e in entries:
+        data = redact_secrets_dict(asdict(e))
+        text = f"{data.get('prompt', '')} {data.get('response', '')}".strip()
+        meta_in = {"tags": list(data.get("tags", []))}
+        governed_meta = govern_retrieval(text, meta_in)
+        if governed_meta is None:
+            continue
+        meta, _ = governed_meta
+        data["tags"] = meta.pop("tags", data.get("tags", []))
+        data["metadata"] = meta
+        governed.append(replace(e, **data))
+    return governed
 
 def get_feedback(
     manager: GPTMemoryManager, key: str, *, limit: int = 5, use_embeddings: bool = True
@@ -49,7 +62,7 @@ def get_feedback(
     res = manager.search_context(
         key, tags=[FEEDBACK], limit=limit, use_embeddings=use_embeddings
     )
-    return _redact(res)
+    return _govern(res)
 
 
 def get_error_fixes(
@@ -60,7 +73,7 @@ def get_error_fixes(
     res = manager.search_context(
         key, tags=[ERROR_FIX], limit=limit, use_embeddings=use_embeddings
     )
-    return _redact(res)
+    return _govern(res)
 
 
 def get_improvement_paths(
@@ -71,7 +84,7 @@ def get_improvement_paths(
     res = manager.search_context(
         key, tags=[IMPROVEMENT_PATH], limit=limit, use_embeddings=use_embeddings
     )
-    return _redact(res)
+    return _govern(res)
 
 
 # ---------------------------------------------------------------------------

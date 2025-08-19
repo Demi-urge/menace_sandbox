@@ -27,6 +27,7 @@ from typing import Any, List, Sequence, Mapping, Dict, Optional
 from gpt_memory_interface import GPTMemoryInterface
 from embeddable_db_mixin import log_embedding_metrics
 from analysis.semantic_diff_filter import find_semantic_risks
+from governed_retrieval import govern_retrieval
 
 try:
     from security.secret_redactor import redact as redact_secrets
@@ -95,6 +96,7 @@ class MemoryEntry:
     tags: List[str]
     timestamp: str
     score: float = 0.0
+    metadata: Dict[str, Any] | None = None
 
 
 class GPTMemoryManager(GPTMemoryInterface):
@@ -291,13 +293,22 @@ class GPTMemoryManager(GPTMemoryInterface):
                             emb = json.loads(emb_json)
                         except Exception:
                             continue
+                        tags_raw = [t for t in tag_str.split(",") if t]
+                        governed = govern_retrieval(
+                            f"{prompt}\n{response}", {"tags": tags_raw}
+                        )
+                        if governed is None:
+                            continue
+                        meta, _ = governed
+                        tags = meta.pop("tags", tags_raw)
                         score = _cosine_similarity(q_emb, emb)
                         entry = MemoryEntry(
                             redact_secrets(prompt),
                             redact_secrets(response),
-                            [redact_secrets(t) for t in tag_str.split(",") if t],
+                            tags,
                             ts,
                             score,
+                            meta,
                         )
                         scored.append((score, entry))
                     scored.sort(key=lambda x: x[0], reverse=True)
@@ -308,12 +319,22 @@ class GPTMemoryManager(GPTMemoryInterface):
         results: list[MemoryEntry] = []
         for prompt, response, tag_str, ts, _ in rows:
             if redacted_query.lower() in prompt.lower() or redacted_query.lower() in response.lower():
+                tags_raw = [t for t in tag_str.split(",") if t]
+                governed = govern_retrieval(
+                    f"{prompt}\n{response}", {"tags": tags_raw}
+                )
+                if governed is None:
+                    continue
+                meta, _ = governed
+                tags = meta.pop("tags", tags_raw)
                 results.append(
                     MemoryEntry(
                         redact_secrets(prompt),
                         redact_secrets(response),
-                        [redact_secrets(t) for t in tag_str.split(",") if t],
+                        tags,
                         ts,
+                        0.0,
+                        meta,
                     )
                 )
         return results[:limit]
