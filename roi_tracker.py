@@ -40,6 +40,10 @@ from .config_loader import (
 )
 from .truth_adapter import TruthAdapter
 try:  # pragma: no cover - optional dependency
+    from . import self_test_service as _sts
+except Exception:  # pragma: no cover - self-test service may be absent
+    _sts = None
+try:  # pragma: no cover - optional dependency
     from . import metrics_exporter as _me
 except Exception:  # pragma: no cover - best effort
     _me = None
@@ -78,6 +82,22 @@ logger = get_logger(__name__)
 # collection may be extended as the project grows but defaults cover the most
 # sensitive areas.
 CRITICAL_SUITES = {"security", "alignment"}
+
+# Penalties applied when critical test suites fail.  Values may be overridden
+# by setting the ``CRITICAL_TEST_PENALTIES`` environment variable to a JSON
+# mapping, e.g. ``{"security": 0.4, "alignment": 0.7}``.
+DEFAULT_PENALTY = 0.5
+CRITICAL_TEST_PENALTIES: dict[str, float] = {
+    name: DEFAULT_PENALTY for name in CRITICAL_SUITES
+}
+try:  # pragma: no cover - best effort
+    _pen = os.getenv("CRITICAL_TEST_PENALTIES")
+    if _pen:
+        CRITICAL_TEST_PENALTIES.update(
+            {str(k).lower(): float(v) for k, v in json.loads(_pen).items()}
+        )
+except Exception:
+    pass
 
 if TYPE_CHECKING:  # pragma: no cover - for typing only
     from .resources_bot import ROIHistoryDB
@@ -1201,6 +1221,11 @@ class ROITracker:
                         tests[key] = val
             failing = [name for name, passed in tests.items() if not passed]
             self._last_test_failures = failing
+            if _sts is not None:
+                try:
+                    _sts.set_failed_critical_tests(failing)
+                except Exception:
+                    pass
 
             rb: float | None
             try:
@@ -2854,9 +2879,16 @@ class ROITracker:
         stability_factor = max(0.0, 1.0 - instability)
 
         safety_factor = 1.0
-        failures = [str(f).lower() for f in getattr(self, "_last_test_failures", [])]
-        if any(name in CRITICAL_SUITES for name in failures):
-            safety_factor *= 0.5
+        failures: Iterable[str] = []
+        if _sts is not None:
+            try:
+                failures = {
+                    str(f).lower() for f in _sts.get_failed_critical_tests()
+                }
+            except Exception:
+                failures = []
+        for name in failures:
+            safety_factor *= CRITICAL_TEST_PENALTIES.get(name, 1.0)
 
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor

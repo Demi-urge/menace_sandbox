@@ -3,6 +3,7 @@ import pytest
 
 import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
+import menace_sandbox.self_test_service as sts
 
 
 @pytest.mark.parametrize(
@@ -29,7 +30,7 @@ def test_calculate_raroi_formula(
     tracker = ROITracker()
     tracker.roi_history = roi_history
     tracker._last_errors_per_minute = errors
-    tracker._last_test_failures = [k for k, v in test_status.items() if not v]
+    sts.set_failed_critical_tests([k for k, v in test_status.items() if not v])
 
     base, raroi = tracker.calculate_raroi(
         base_roi,
@@ -43,13 +44,15 @@ def test_calculate_raroi_formula(
     impact = tracker.impact_severity(workflow_type)
     stability_factor = max(0.0, 1.0 - instability)
     failing = [k for k, v in test_status.items() if not v]
-    safety_factor = 0.5 if any(k in failing for k in rt.CRITICAL_SUITES) else 1.0
+    penalty = 1.0
+    for k in failing:
+        penalty *= rt.CRITICAL_TEST_PENALTIES.get(k, 1.0)
 
     expected = (
         base_roi
         * (1.0 - rollback_probability * impact)
         * stability_factor
-        * safety_factor
+        * penalty
     )
 
     assert base == base_roi

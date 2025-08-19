@@ -91,6 +91,26 @@ setattr(_me, "self_test_container_timeouts_total", self_test_container_timeouts_
 _container_lock = Lock()
 _file_lock = FileLock(os.getenv("SELF_TEST_LOCK_FILE", "sandbox_data/self_test.lock"))
 
+# ---------------------------------------------------------------------------
+# Track failing critical test suites across runs
+CRITICAL_SUITES = {"security", "alignment"}
+_FAILED_CRITICAL_TESTS: set[str] = set()
+
+
+def set_failed_critical_tests(failed: Iterable[str]) -> None:
+    """Record names of critical test suites that failed in the last run."""
+
+    global _FAILED_CRITICAL_TESTS
+    _FAILED_CRITICAL_TESTS = {
+        str(f).lower() for f in failed if str(f).lower() in CRITICAL_SUITES
+    }
+
+
+def get_failed_critical_tests() -> set[str]:
+    """Return the set of failing critical test suites."""
+
+    return set(_FAILED_CRITICAL_TESTS)
+
 try:
     from sandbox_runner.dependency_utils import collect_local_dependencies
 except Exception:  # pragma: no cover - fallback when sandbox_runner is stubbed
@@ -1671,6 +1691,13 @@ class SelfTestService:
                 "runtime": runtime,
             }
             self.results["module_metrics"] = self.module_metrics
+            failed_modules = {
+                Path(m).stem.lower()
+                for m, info in self.module_metrics.items()
+                if "failed" in info.get("categories", [])
+                or "error" in info.get("categories", [])
+            }
+            set_failed_critical_tests(failed_modules)
             passed_set: list[str] = []
             if all_orphans:
                 passed_set = list(self.orphan_passed_modules)

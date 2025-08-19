@@ -1,7 +1,8 @@
 import json
 import pytest
 import numpy as np
-import menace.roi_tracker as rt
+import menace_sandbox.roi_tracker as rt
+import menace_sandbox.self_test_service as sts
 import types
 import sys
 
@@ -606,7 +607,7 @@ def test_predict_synergy_metric_uses_manager():
 
 def test_forecast_uses_advanced_predictor(monkeypatch):
     monkeypatch.setenv("ENABLE_ADVANCED_ROI_PREDICTOR", "1")
-    import menace.roi_predictor as rp
+    import menace_sandbox.roi_predictor as rp
 
     calls = []
 
@@ -688,12 +689,18 @@ def test_raroi_unstable_roi():
 def test_raroi_failing_tests():
     tracker = rt.ROITracker()
     tracker.roi_history = [0.1, 0.1, 0.1]
-    tracker._last_test_failures = ["security"]
+    sts.set_failed_critical_tests(["security"])
     base, raroi = tracker.calculate_raroi(
         1.0,
         workflow_type="standard",
         rollback_prob=0.0,
     )
-    expected = 1.0 * (1 - 0.0 * 0.5) * (1 - np.std([0.1, 0.1, 0.1])) * 0.5
+    penalty = rt.CRITICAL_TEST_PENALTIES.get("security", 1.0)
+    expected = (
+        1.0
+        * (1 - 0.0 * 0.5)
+        * (1 - np.std([0.1, 0.1, 0.1]))
+        * penalty
+    )
     assert raroi == pytest.approx(expected)
 
