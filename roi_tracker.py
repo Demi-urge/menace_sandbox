@@ -150,22 +150,6 @@ def _estimate_rollback_probability(metrics: Mapping[str, float]) -> float:
     return max(0.0, min(1.0, prob))
 
 
-class _WorkflowConfidence(defaultdict):
-    """Callable mapping storing per-workflow confidence scores."""
-
-    def __init__(self, tracker: "ROITracker") -> None:  # pragma: no cover - simple
-        super().__init__(float)
-        self._tracker = tracker
-
-    def __call__(self, workflow_id: str, window: int | None = None) -> float:
-        mae = self._tracker.workflow_mae(workflow_id, window)
-        variance = self._tracker.workflow_variance(workflow_id, window)
-        confidence = 1.0 / (1.0 + mae + variance)
-        confidence = max(0.0, min(1.0, confidence))
-        self[workflow_id] = confidence
-        return confidence
-
-
 class ROITracker:
     """Monitor ROI change and determine when improvements diminish."""
 
@@ -338,8 +322,8 @@ class ROITracker:
         self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
         self.workflow_mae_history: Dict[str, List[float]] = defaultdict(list)
         self.workflow_variance_history: Dict[str, List[float]] = defaultdict(list)
-        # latest confidence score per workflow (callable dict defined below)
-        self.workflow_confidence = _WorkflowConfidence(self)
+        # latest confidence score per workflow
+        self.workflow_confidence_scores: Dict[str, float] = defaultdict(float)
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
@@ -1254,6 +1238,22 @@ class ROITracker:
         if window > 0:
             acts = acts[-window:]
         return float(np.var(acts)) if acts else 0.0
+
+    # ------------------------------------------------------------------
+    def workflow_confidence(self, workflow_id: str, window: int | None = None) -> float:
+        """Return a confidence score for ``workflow_id`` predictions.
+
+        The score is based on the mean absolute error and variance of the
+        workflow's recent ROI predictions and is normalised to the ``[0, 1]``
+        range using ``1 / (1 + mae + variance)``.
+        """
+
+        mae = self.workflow_mae(workflow_id, window)
+        variance = self.workflow_variance(workflow_id, window)
+        confidence = 1.0 / (1.0 + mae + variance)
+        confidence = max(0.0, min(1.0, confidence))
+        self.workflow_confidence_scores[workflow_id] = confidence
+        return confidence
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
