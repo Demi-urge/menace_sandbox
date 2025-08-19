@@ -11,10 +11,9 @@ heuristic fallbacks used across the code base.
 from dataclasses import dataclass, field
 import time
 import asyncio
-import json
-from collections import OrderedDict
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
+
+from retrieval_cache import RetrievalCache
 
 from redaction_utils import redact_dict as pii_redact_dict, redact_text as pii_redact_text
 from governed_retrieval import govern_retrieval, redact, redact_dict
@@ -65,48 +64,8 @@ class Retriever:
     similarity_threshold: float = 0.1
     retriever_kwargs: Dict[str, Any] = field(default_factory=dict)
     content_filtering: bool = field(default=True)
-    cache_path: str | None = None
-    cache_size: int = 128
     use_fts_fallback: bool = True
-    _cache: "OrderedDict[str, List[Dict[str, Any]]]" = field(
-        default_factory=OrderedDict
-    )
-    _cache_dirty: bool = field(default=False, init=False)
-
-    def __post_init__(self) -> None:  # pragma: no cover - simple cache load
-        if self.cache_path:
-            self.load_cache(self.cache_path)
-
-    # ------------------------------------------------------------------
-    def load_cache(self, path: str | Path) -> None:
-        """Load cache entries from ``path`` if present."""
-
-        self.cache_path = str(path)
-        try:
-            with open(self.cache_path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-            if isinstance(data, list):
-                self._cache = OrderedDict((k, v) for k, v in data)
-            elif isinstance(data, dict):  # pragma: no cover - backwards compat
-                self._cache = OrderedDict(data.items())
-        except Exception:
-            self._cache = OrderedDict()
-        if self.cache_size:
-            while len(self._cache) > self.cache_size:
-                self._cache.popitem(last=False)
-
-    # ------------------------------------------------------------------
-    def save_cache(self) -> None:
-        """Persist cache to :attr:`cache_path` if set."""
-
-        if not self.cache_path or not self._cache_dirty:
-            return
-        try:  # pragma: no cover - best effort persistence
-            with open(self.cache_path, "w", encoding="utf-8") as fh:
-                json.dump(list(self._cache.items()), fh)
-            self._cache_dirty = False
-        except Exception:
-            pass
+    cache: RetrievalCache | None = field(default_factory=RetrievalCache)
 
     # ------------------------------------------------------------------
     def _get_retriever(self) -> UniversalRetriever:
@@ -220,13 +179,14 @@ class Retriever:
 
         query = redact(pii_redact_text(query))
         k = top_k or self.top_k
-        thresh = similarity_threshold if similarity_threshold is not None else self.similarity_threshold
-        cache_key = f"{query}::{'|'.join(dbs) if dbs else ''}"
-
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            self._cache.move_to_end(cache_key)
-            return cached
+        thresh = (
+            similarity_threshold if similarity_threshold is not None else self.similarity_threshold
+        )
+        cached: List[Dict[str, Any]] | None = None
+        if self.cache:
+            cached = self.cache.get(query, dbs)
+            if cached is not None:
+                return cached
 
         retriever = self._get_retriever()
 
@@ -266,20 +226,17 @@ class Retriever:
             if hits and confidence >= thresh:
                 results = self._parse_hits(hits)
                 if results:
-                    self._cache[cache_key] = results
-                    self._cache.move_to_end(cache_key)
-                    self._cache_dirty = True
-                    if self.cache_size and len(self._cache) > self.cache_size:
-                        self._cache.popitem(last=False)
+                    if self.cache:
+                        self.cache.set(query, dbs, results)
                     return results
 
             # Broaden parameters and retry once
             k *= 2
 
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            self._cache.move_to_end(cache_key)
-            return cached
+        if self.cache:
+            cached = self.cache.get(query, dbs)
+            if cached is not None:
+                return cached
         reason = "no results" if not hits else "low confidence"
         fts_hits: List[Dict[str, Any]] = []
         if use_fts_fallback if use_fts_fallback is not None else self.use_fts_fallback:

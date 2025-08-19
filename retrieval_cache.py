@@ -1,69 +1,92 @@
-"""Simple on-disk cache for CLI retrieval results.
-
-Stores (query, dbs) -> results mappings with associated database
-modification times. Cached entries are invalidated automatically when any
-underlying database file changes.
-"""
+"""SQLite-backed cache for retrieval results with TTL eviction."""
 
 from __future__ import annotations
 
 import json
-import os
-import shelve
+import sqlite3
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Any, Dict
+from typing import Any, Sequence, List
 
-__all__ = ["RetrievalCache", "get_db_mtimes"]
+__all__ = ["RetrievalCache"]
 
 
+@dataclass
 class RetrievalCache:
-    """Tiny shelve-backed cache for retrieval results."""
+    """Persist semantic retrieval results on disk.
 
-    def __init__(self, path: str | Path = ".retrieval_cache.shelve", max_entries: int = 128) -> None:
-        self.path = str(path)
-        self.max_entries = max_entries
-
-    def _key(self, query: str, dbs: Iterable[str]) -> str:
-        return json.dumps({"q": query, "dbs": sorted(dbs)}, sort_keys=True)
-
-    def get(self, query: str, dbs: Iterable[str], mtimes: Dict[str, float]) -> list[Any] | None:
-        """Return cached results if available and valid."""
-        key = self._key(query, dbs)
-        with shelve.open(self.path) as sh:
-            entry = sh.get(key)
-            if not entry:
-                return None
-            cached_mtimes = entry.get("mtimes", {})
-            for name, mtime in mtimes.items():
-                if cached_mtimes.get(name) != mtime:
-                    return None
-            return entry.get("results")
-
-    def set(self, query: str, dbs: Iterable[str], results: list[Any], mtimes: Dict[str, float]) -> None:
-        """Store results along with database modification times."""
-        key = self._key(query, dbs)
-        with shelve.open(self.path, writeback=True) as sh:
-            sh[key] = {"results": results, "mtimes": dict(mtimes), "ts": os.path.getmtime(self.path) if os.path.exists(self.path) else 0}
-            # enforce max size by removing oldest entries
-            if self.max_entries and len(sh) > self.max_entries:
-                oldest_key = min(sh, key=lambda k: sh[k].get("ts", 0))
-                del sh[oldest_key]
-
-
-def get_db_mtimes(dbs: Iterable[str] | None) -> Dict[str, float]:
-    """Return modification times for the given database names.
-
-    The function attempts to locate SQLite files named ``"<db>.db"`` and also
-    honours ``<DB>_DB_PATH`` environment variables. Missing files simply return
-    a timestamp of ``0`` so cache entries will be invalidated once the database
-    is created.
+    The cache is keyed by the search ``query`` and a canonicalised chain of
+    database names.  Entries expire automatically after ``ttl`` seconds.
     """
-    mtimes: Dict[str, float] = {}
-    for name in sorted(set(dbs or [])):
-        env_var = f"{name.upper()}_DB_PATH"
-        path = Path(os.getenv(env_var, f"{name}.db"))
+
+    path: str | Path = "metrics.db"
+    ttl: int = 3600
+    _conn: sqlite3.Connection = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.path = str(self.path)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS retrieval_cache(
+                query TEXT NOT NULL,
+                db_chain TEXT NOT NULL,
+                ts REAL NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY(query, db_chain)
+            )
+            """
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    def _key(self, query: str, dbs: Sequence[str] | None) -> tuple[str, str]:
+        db_chain = "|".join(dbs or [])
+        return query, db_chain
+
+    # ------------------------------------------------------------------
+    def get(self, query: str, dbs: Sequence[str] | None) -> List[dict[str, Any]] | None:
+        """Return cached results for ``query``/``dbs`` if present and fresh."""
+
+        q, db_chain = self._key(query, dbs)
+        row = self._conn.execute(
+            "SELECT payload, ts FROM retrieval_cache WHERE query=? AND db_chain=?",
+            (q, db_chain),
+        ).fetchone()
+        if not row:
+            return None
+        payload, ts = row
+        if self.ttl and time.time() - ts > self.ttl:
+            self._conn.execute(
+                "DELETE FROM retrieval_cache WHERE query=? AND db_chain=?",
+                (q, db_chain),
+            )
+            self._conn.commit()
+            return None
         try:
-            mtimes[name] = path.stat().st_mtime
-        except OSError:
-            mtimes[name] = 0.0
-    return mtimes
+            return json.loads(payload)
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    def set(
+        self, query: str, dbs: Sequence[str] | None, results: List[dict[str, Any]]
+    ) -> None:
+        """Store ``results`` for the given ``query``/``dbs`` combination."""
+
+        q, db_chain = self._key(query, dbs)
+        payload = json.dumps(results)
+        self._conn.execute(
+            "REPLACE INTO retrieval_cache(query, db_chain, ts, payload) VALUES (?,?,?,?)",
+            (q, db_chain, time.time(), payload),
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    def clear(self) -> None:
+        """Remove all cached entries."""
+
+        self._conn.execute("DELETE FROM retrieval_cache")
+        self._conn.commit()
+
