@@ -4,6 +4,8 @@ import argparse
 import json
 import subprocess
 import sys
+from pathlib import Path
+from collections import OrderedDict
 
 
 def _run(cmd: list[str]) -> int:
@@ -11,12 +13,36 @@ def _run(cmd: list[str]) -> int:
     return subprocess.call(cmd)
 
 
-from code_database import PatchHistoryDB
+from code_database import PatchHistoryDB, CodeDB
 from patch_provenance import (
     build_chain,
     search_patches_by_vector,
     search_patches_by_license,
 )
+from vector_service import Retriever, FallbackResult, VectorServiceError
+
+
+CACHE_PATH = Path(".retrieval_cache.json")
+MAX_CACHE_SIZE = 32
+
+FTS_HELPERS = {"code": lambda q: CodeDB().search_fallback(q)}
+
+
+def _load_cache() -> OrderedDict[str, list]:
+    try:
+        with CACHE_PATH.open() as fh:
+            data = json.load(fh)
+            return OrderedDict(data)
+    except Exception:
+        return OrderedDict()
+
+
+def _save_cache(cache: OrderedDict[str, list]) -> None:
+    try:
+        with CACHE_PATH.open("w") as fh:
+            json.dump(cache, fh)
+    except Exception:
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +81,10 @@ def main(argv: list[str] | None = None) -> int:
     grp.add_argument("--vector", help="Vector identifier")
     grp.add_argument("--license", help="License filter")
 
+    p_retrieve = sub.add_parser("retrieve", help="Semantic code retrieval")
+    p_retrieve.add_argument("query")
+    p_retrieve.add_argument("--db", action="append", dest="dbs")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "setup":
@@ -75,6 +105,40 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "sandbox":
         if args.sandbox_cmd == "run":
             return _run(["python", "run_autonomous.py"] + (args.extra_args or []))
+
+    if args.cmd == "retrieve":
+        cache = _load_cache()
+        key = json.dumps({"q": args.query, "dbs": args.dbs or []}, sort_keys=True)
+        if key in cache:
+            print(json.dumps(cache[key]))
+            return 0
+        retriever = Retriever()
+        try:
+            res = retriever.search(args.query, session_id="cli", dbs=args.dbs)
+        except VectorServiceError as exc:
+            res = FallbackResult(str(exc), [])
+        results = []
+        need_fallback = False
+        if isinstance(res, FallbackResult):
+            results.extend(list(res))
+            need_fallback = True
+        else:
+            results.extend(res)
+        if need_fallback:
+            for db_name in (args.dbs or ["code"]):
+                helper = FTS_HELPERS.get(db_name)
+                if helper:
+                    try:
+                        results.extend(helper(args.query))
+                    except Exception:
+                        pass
+        if results:
+            cache[key] = results
+            while len(cache) > MAX_CACHE_SIZE:
+                cache.popitem(last=False)
+            _save_cache(cache)
+        print(json.dumps(results))
+        return 0
 
     if args.cmd == "patches":
         db = PatchHistoryDB()
