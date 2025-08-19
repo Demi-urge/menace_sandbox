@@ -1,48 +1,23 @@
-import json
-from pathlib import Path
-
-from borderline_bucket import BorderlineBucket
+import importlib
+import os
 
 
-def test_add_record_promote(tmp_path):
-    path = tmp_path / "borderline_bucket.jsonl"
-    bucket = BorderlineBucket(str(path))
-    bucket.add_candidate("wf", 0.3, 0.8)
-    bucket.record_result("wf", 0.5)
-    bucket.promote("wf")
-
-    cand = bucket.get_candidate("wf")
-    assert cand["status"] == "promoted"
-    assert cand["raroi"] == [0.3, 0.5]
-
-    lines = [json.loads(l) for l in Path(path).read_text().splitlines()]
-    assert lines[-1]["action"] == "promote"
-    assert len(lines) == 3
-
-
-def test_terminate(tmp_path):
-    path = tmp_path / "b.jsonl"
-    bucket = BorderlineBucket(str(path))
-    bucket.add_candidate("a", 0.1, 0.2)
-    bucket.terminate("a")
-
-    cand = bucket.get_candidate("a")
-    assert cand["status"] == "terminated"
-
-    lines = [json.loads(l) for l in Path(path).read_text().splitlines()]
-    assert lines[-1]["action"] == "terminate"
-    assert len(lines) == 2
-
-
-def test_query_and_purge(tmp_path):
-    path = tmp_path / "c.jsonl"
-    bucket = BorderlineBucket(str(path))
-    bucket.add_candidate("w1", 0.2, 0.6)
-    assert bucket.get_candidate("w1") is not None
-    bucket.promote("w1")
-    bucket.purge("w1")
-    assert bucket.get_candidate("w1") is None
-
-    lines = [json.loads(l) for l in Path(path).read_text().splitlines()]
-    assert lines[-1]["action"] == "purge"
-    assert len(lines) == 3
+def test_basic_flow(tmp_path, monkeypatch):
+    db_path = tmp_path / "bb.db"
+    monkeypatch.setenv("BORDERLINE_BUCKET_DB", str(db_path))
+    if "borderline_bucket" in list(importlib.sys.modules.keys()):
+        del importlib.sys.modules["borderline_bucket"]
+    bb = importlib.import_module("borderline_bucket")
+    bb.add_candidate("wf1", 0.1, 0.9)
+    bb.record_outcome("wf1", True)
+    bb.promote("wf1")
+    data = bb.list_candidates()
+    assert data == [
+        {
+            "workflow_id": "wf1",
+            "raroi": 0.1,
+            "confidence": 0.9,
+            "status": "promoted",
+            "outcomes": [True],
+        }
+    ]
