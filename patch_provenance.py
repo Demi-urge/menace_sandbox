@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 import json
 
 from code_database import PatchHistoryDB
+from vector_service import PatchLogger
 
 
 # ---------------------------------------------------------------------------
@@ -182,5 +183,6 @@ __all__ = [
     "search_patches_by_semantic_alert",
     "search_patches",
     "build_chain",
+    "PatchLogger",
 ]
 

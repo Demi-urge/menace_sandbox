@@ -19,6 +19,23 @@ scm = types.ModuleType("menace.self_coding_manager")
 scm.SelfCodingManager = object
 sys.modules["menace.self_coding_manager"] = scm
 
+# Stubs for modules imported by patch_provenance/code_database
+def _auto_link(*a, **k):
+    def decorator(func):
+        return func
+    return decorator
+
+sys.modules.setdefault("auto_link", types.SimpleNamespace(auto_link=_auto_link))
+sys.modules.setdefault(
+    "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+)
+sys.modules.setdefault(
+    "retry_utils", types.SimpleNamespace(publish_with_retry=lambda *a, **k: None, with_retry=lambda *a, **k: None)
+)
+sys.modules.setdefault(
+    "alert_dispatcher", types.SimpleNamespace(send_discord_alert=lambda *a, **k: None, CONFIG={})
+)
+
 kg = types.ModuleType("menace.knowledge_graph")
 kg.KnowledgeGraph = object
 sys.modules["menace.knowledge_graph"] = kg
