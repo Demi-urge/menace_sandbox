@@ -2789,16 +2789,6 @@ class ROITracker:
             self.synergy_metrics_history.setdefault(key, [])
 
     # ------------------------------------------------------------------
-    def _rollback_probability(self, metrics: Mapping[str, float]) -> float:
-        """Estimate rollback probability from ``metrics``.
-
-        This method proxies to :func:`_estimate_rollback_probability` for
-        backwards compatibility with older callers expecting a method.
-        """
-
-        return _estimate_rollback_probability(metrics)
-
-    # ------------------------------------------------------------------
     def impact_severity(self, workflow_type: str) -> float:
         """Return impact severity for ``workflow_type``."""
 
@@ -2869,7 +2859,7 @@ class ROITracker:
         stability metrics. Safety is further reduced when critical suites such
         as ``security`` or ``alignment`` fail. When ``rollback_prob`` is not
         provided, ``metrics`` supplies runtime information for estimating
-        rollback probability via :meth:`_rollback_probability`.
+        rollback probability via :func:`_estimate_rollback_probability`.
         """
 
         recent = self.roi_history[-self.window :]
@@ -2883,7 +2873,7 @@ class ROITracker:
             )
 
         if rollback_prob is None:
-            rollback_prob = self._rollback_probability(metrics_map)
+            rollback_prob = _estimate_rollback_probability(metrics_map)
         rollback_prob = max(0.0, min(1.0, float(rollback_prob)))
 
         if impact_severity is None:

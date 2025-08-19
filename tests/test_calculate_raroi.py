@@ -86,7 +86,7 @@ def test_multiple_failing_suites_penalties(monkeypatch) -> None:
 
     monkeypatch.setattr(ROITracker, "_safety_factor", fake_safety)
 
-    base, raroi = tracker.calculate_raroi(2.0, rollback_prob=0.0)
+    base, raroi = tracker.calculate_raroi(2.0, rollback_prob=0.0, metrics={})
 
     penalty = (
         rt.CRITICAL_TEST_PENALTIES["security"]

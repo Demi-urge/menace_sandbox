@@ -2229,7 +2229,9 @@ class SelfImprovementEngine:
                 except Exception:
                     roi_est, category = 0.0, "unknown"
             base_roi, raroi = (
-                self.roi_tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                self.roi_tracker.calculate_raroi(
+                    roi_est, workflow_type="standard", metrics={}
+                )
                 if self.roi_tracker
                 else (roi_est, roi_est)
             )
@@ -2631,7 +2633,9 @@ class SelfImprovementEngine:
                 except Exception:
                     roi_est, growth, confidence = 0.0, "unknown", 0.0
                 base_roi, raroi = (
-                    tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                    tracker.calculate_raroi(
+                        roi_est, workflow_type="standard", metrics={}
+                    )
                     if tracker
                     else (roi_est, roi_est)
                 )

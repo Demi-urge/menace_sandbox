@@ -229,7 +229,9 @@ class ActionPlanner:
                         else 1.0
                     )
                     base_roi, raroi = (
-                        self.roi_tracker.calculate_raroi(roi_est, "standard", 0.0, {})
+                        self.roi_tracker.calculate_raroi(
+                            roi_est, workflow_type="standard", metrics={}
+                        )
                         if self.roi_tracker
                         else (roi_est, roi_est)
                     )
@@ -269,7 +271,7 @@ class ActionPlanner:
             if self.roi_tracker:
                 try:
                     _base, raroi = self.roi_tracker.calculate_raroi(
-                        base, "standard", 0.0, {}
+                        base, workflow_type="standard", metrics={}
                     )
                 except Exception:
                     raroi = base
@@ -348,7 +350,7 @@ class ActionPlanner:
                 if self.roi_tracker:
                     try:
                         _, reward = self.roi_tracker.calculate_raroi(
-                            rec.roi, "standard", 0.0, {}
+                            rec.roi, workflow_type="standard", metrics={}
                         )
                     except Exception:
                         reward = rec.roi
@@ -371,10 +373,10 @@ class ActionPlanner:
                 if self.roi_tracker:
                     try:
                         pred_base, pred_raroi = self.roi_tracker.calculate_raroi(
-                            roi_est, "standard", 0.0, {}
+                            roi_est, workflow_type="standard", metrics={}
                         )
                         actual_base, actual_raroi = self.roi_tracker.calculate_raroi(
-                            rec.roi, "standard", 0.0, {}
+                            rec.roi, workflow_type="standard", metrics={}
                         )
                         self.roi_tracker.record_prediction(
                             [pred_raroi],
@@ -525,7 +527,7 @@ class ActionPlanner:
             if self.roi_tracker:
                 try:
                     _, raroi_est = self.roi_tracker.calculate_raroi(
-                        roi_est, "standard", 0.0, {}
+                        roi_est, workflow_type="standard", metrics={}
                     )
                 except Exception:
                     raroi_est = roi_est
