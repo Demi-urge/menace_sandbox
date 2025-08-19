@@ -129,6 +129,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
     p_embed.add_argument("--db", help="Restrict to a specific database class")
+    p_embed.add_argument(
+        "--batch-size", type=int, dest="batch_size", help="Batch size for backfill"
+    )
+    p_embed.add_argument(
+        "--backend", dest="backend", help="Vector backend to use"
+    )
 
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
     p_newdb.add_argument("name", help="Base name for the new database")
@@ -205,12 +211,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "embed":
         import logging
-        from vector_service import EmbeddingBackfill, VectorServiceError
+        from vector_service.embedding_backfill import EmbeddingBackfill
+        from vector_service.exceptions import VectorServiceError
 
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, stream=sys.stdout)
         try:
-            EmbeddingBackfill().run(session_id="cli", db=args.db)
+            EmbeddingBackfill().run(
+                session_id="cli",
+                db=args.db,
+                batch_size=args.batch_size,
+                backend=args.backend,
+            )
         except VectorServiceError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except Exception as exc:  # pragma: no cover - defensive
             print(str(exc), file=sys.stderr)
             return 1
         return 0
