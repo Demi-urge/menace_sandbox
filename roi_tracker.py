@@ -337,6 +337,8 @@ class ROITracker:
             lambda: {"pred": [], "actual": []}
         )
         self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
+        self.workflow_mae_history: Dict[str, List[float]] = defaultdict(list)
+        self.workflow_variance_history: Dict[str, List[float]] = defaultdict(list)
         # latest confidence score per workflow (callable dict defined below)
         self.workflow_confidence = _WorkflowConfidence(self)
         self.predicted_metrics: Dict[str, List[float]] = {}
@@ -643,6 +645,14 @@ class ROITracker:
             self.workflow_confidence_history[wf].append(conf)
             mae_val = self.workflow_mae(wf, self.workflow_window)
             var_val = self.workflow_variance(wf, self.workflow_window)
+            self.workflow_mae_history[wf].append(mae_val)
+            self.workflow_variance_history[wf].append(var_val)
+            if len(self.workflow_confidence_history[wf]) > self.workflow_window:
+                self.workflow_confidence_history[wf] = self.workflow_confidence_history[wf][-self.workflow_window:]
+            if len(self.workflow_mae_history[wf]) > self.workflow_window:
+                self.workflow_mae_history[wf] = self.workflow_mae_history[wf][-self.workflow_window:]
+            if len(self.workflow_variance_history[wf]) > self.workflow_window:
+                self.workflow_variance_history[wf] = self.workflow_variance_history[wf][-self.workflow_window:]
             needs_review = conf < self.confidence_threshold
             logger.info(
                 "workflow prediction metrics",
@@ -1241,6 +1251,18 @@ class ROITracker:
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
         """Return rolling error metrics and class stats for ``window``."""
+        wf_mae = {
+            wf: vals[-window:] if window else list(vals)
+            for wf, vals in self.workflow_mae_history.items()
+        }
+        wf_var = {
+            wf: vals[-window:] if window else list(vals)
+            for wf, vals in self.workflow_variance_history.items()
+        }
+        wf_conf = {
+            wf: vals[-window:] if window else list(vals)
+            for wf, vals in self.workflow_confidence_history.items()
+        }
 
         return {
             "mae": self.rolling_mae(window),
@@ -1253,6 +1275,9 @@ class ROITracker:
             "scenario_metrics_delta": dict(self.scenario_metrics_delta),
             "scenario_synergy_delta": dict(self.scenario_synergy_delta),
             "worst_scenario": self.biggest_drop()[0] if self.scenario_roi_deltas else None,
+            "workflow_mae": wf_mae,
+            "workflow_variance": wf_var,
+            "workflow_confidence": wf_conf,
         }
 
     # ------------------------------------------------------------------
@@ -2406,6 +2431,15 @@ class ROITracker:
                 "metric_predictions": metric_preds,
                 "drift_metrics": self.drift_metrics,
                 "truth_adapter": self.truth_adapter.metadata if self.truth_adapter else {},
+                "workflow_mae_history": {
+                    k: list(v) for k, v in self.workflow_mae_history.items()
+                },
+                "workflow_variance_history": {
+                    k: list(v) for k, v in self.workflow_variance_history.items()
+                },
+                "workflow_confidence_history": {
+                    k: list(v) for k, v in self.workflow_confidence_history.items()
+                },
             }
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh)
@@ -2766,6 +2800,27 @@ class ROITracker:
                         for entry in data.get("synergy_history", [])
                         if isinstance(entry, dict)
                     ]
+                    self.workflow_mae_history = defaultdict(
+                        list,
+                        {
+                            str(k): [float(v) for v in vals]
+                            for k, vals in data.get("workflow_mae_history", {}).items()
+                        },
+                    )
+                    self.workflow_variance_history = defaultdict(
+                        list,
+                        {
+                            str(k): [float(v) for v in vals]
+                            for k, vals in data.get("workflow_variance_history", {}).items()
+                        },
+                    )
+                    self.workflow_confidence_history = defaultdict(
+                        list,
+                        {
+                            str(k): [float(v) for v in vals]
+                            for k, vals in data.get("workflow_confidence_history", {}).items()
+                        },
+                    )
                     self.scenario_synergy = {
                         str(n): [
                             {

@@ -118,12 +118,16 @@ class EvaluationDashboard:
         """Return ROI prediction stats including trend and confusion metrics."""
         summary = tracker.prediction_summary(window)
         workflows: Dict[str, Any] = {}
+        wf_conf = summary.get("workflow_confidence", {})
+        wf_mae = summary.get("workflow_mae", {})
+        wf_var = summary.get("workflow_variance", {})
         for wf in tracker.workflow_predictions:
-            workflows[str(wf)] = {
-                "confidence": tracker.workflow_confidence(str(wf), window),
-                "mae": tracker.workflow_mae(str(wf), window),
-                "variance": tracker.workflow_variance(str(wf), window),
-                "needs_review": str(wf) in tracker.needs_review,
+            wid = str(wf)
+            workflows[wid] = {
+                "confidence": wf_conf.get(wid, []),
+                "mae": wf_mae.get(wid, []),
+                "variance": wf_var.get(wid, []),
+                "needs_review": wid in tracker.needs_review,
             }
         summary["workflows"] = workflows
         return summary
@@ -187,13 +191,18 @@ class EvaluationDashboard:
         drift_metrics = getattr(predictor, "drift_metrics", {}) if predictor else {}
         if not drift_metrics:
             drift_metrics = getattr(tracker, "drift_metrics", {})
+        summary = tracker.prediction_summary(window)
+        wf_conf = summary.get("workflow_confidence", {})
+        wf_mae = summary.get("workflow_mae", {})
+        wf_var = summary.get("workflow_variance", {})
         workflows: Dict[str, Any] = {}
         for wf in tracker.workflow_predictions:
-            workflows[str(wf)] = {
-                "confidence": tracker.workflow_confidence(str(wf), window),
-                "mae": tracker.workflow_mae(str(wf), window),
-                "variance": tracker.workflow_variance(str(wf), window),
-                "needs_review": str(wf) in tracker.needs_review,
+            wid = str(wf)
+            workflows[wid] = {
+                "confidence": wf_conf.get(wid, []),
+                "mae": wf_mae.get(wid, []),
+                "variance": wf_var.get(wid, []),
+                "needs_review": wid in tracker.needs_review,
             }
         return {
             "mae_by_horizon": mae_by_horizon,
