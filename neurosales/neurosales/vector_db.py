@@ -18,6 +18,16 @@ except Exception:  # pragma: no cover - optional heavy deps
 
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
+try:
+    from compliance.license_fingerprint import check as license_check
+except Exception:  # pragma: no cover - optional dependency
+    def license_check(text: str):  # type: ignore
+        return None
+try:
+    from security.secret_redactor import redact
+except Exception:  # pragma: no cover - optional dependency
+    def redact(text: str):  # type: ignore
+        return text
 from .external_integrations import PineconeLogger
 
 logger = logging.getLogger(__name__)
@@ -31,6 +41,7 @@ class VectorMessage:
     embedding: List[float]
     priority: float = 1.0
     synced: bool = False
+    alerts: Optional[List[tuple[str, str, float]]] = None
 
 
 class VectorDB:
@@ -91,20 +102,27 @@ class VectorDB:
 
     # ------------------------------------------------------------------
     def add_message(self, role: str, content: str) -> None:
+        cleaned = redact(content.strip())
+        if not cleaned:
+            return
+        lic = license_check(cleaned)
+        if lic:
+            logger.warning("license detected: %s", lic)
+            return
+        alerts = find_semantic_risks(cleaned.splitlines())
+        if alerts:
+            logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return
+        emb_list: List[float] = []
         if self._model is not None and np is not None:
-            alerts = find_semantic_risks(content.splitlines())
-            if alerts:
-                logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
-                return
-            vec = governed_embed(content, self._model)
+            vec = governed_embed(cleaned, self._model)
             if vec is None:
                 return
             emb_list = np.array(vec, dtype="float32").tolist()
-        else:
-            emb_list = []
-        msg = VectorMessage(time.time(), role, content, emb_list)
+        msg = VectorMessage(time.time(), role, cleaned, emb_list)
         self._messages.append(msg)
-        self._unsynced.append(msg)
+        if emb_list:
+            self._unsynced.append(msg)
         if len(self._messages) > self.max_messages:
             self._messages.popleft()
         self._decay_priorities()
@@ -123,16 +141,38 @@ class VectorDB:
             return []
         if not self._messages:
             return []
-        alerts = find_semantic_risks(text.splitlines())
+        cleaned = redact(text.strip())
+        if not cleaned:
+            return []
+        lic = license_check(cleaned)
+        if lic:
+            logger.warning("license detected: %s", lic)
+            return []
+        alerts = find_semantic_risks(cleaned.splitlines())
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
             return []
-        vec = governed_embed(text, self._model)
+        vec = governed_embed(cleaned, self._model)
         if vec is None:
             return []
         query = np.array(vec, dtype="float32")
         D, I = self._index.search(query.reshape(1, -1), min(top_k, len(self._messages)))
-        return [self._messages[i] for i in I[0]]
+        results: List[VectorMessage] = []
+        for idx in I[0]:
+            msg = self._messages[idx]
+            msg_alerts = find_semantic_risks(msg.content.splitlines())
+            if msg_alerts:
+                msg = VectorMessage(
+                    msg.timestamp,
+                    msg.role,
+                    msg.content,
+                    msg.embedding,
+                    msg.priority,
+                    msg.synced,
+                    msg_alerts,
+                )
+            results.append(msg)
+        return results
 
     # ------------------------------------------------------------------
     def sync(self) -> None:
@@ -191,7 +231,10 @@ class DatabaseVectorDB(VectorDB):
         self._prune()
 
     def add_message(self, role: str, content: str) -> None:  # type: ignore[override]
+        before = len(self._messages)
         super().add_message(role, content)
+        if len(self._messages) == before:
+            return
         from .sql_db import EmbeddingMessage
 
         Session = self.session_factory
