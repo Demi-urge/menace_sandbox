@@ -57,3 +57,17 @@ def test_raroi_extreme_values(failing_critical_tests):
     )
     assert base == 1.0
     assert raroi == 0.0
+
+
+def test_raroi_with_error_metrics(failing_critical_tests):
+    tracker = ROITracker()
+    failing_critical_tests([])
+    base_roi = 2.0
+    metrics = {"errors_per_minute": 5.0, "error_threshold": 10.0}
+    base, raroi = tracker.calculate_raroi(
+        base_roi, workflow_type="standard", metrics=metrics
+    )
+    expected = base_roi * (1.0 - (5.0 / 10.0) * 0.5)
+    assert base == base_roi
+    assert raroi == pytest.approx(expected)
+    assert raroi < base_roi
