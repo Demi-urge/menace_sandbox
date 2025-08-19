@@ -86,12 +86,31 @@ def search_patches_by_hash(
 
 # ---------------------------------------------------------------------------
 def search_patches_by_license(
-    license: str, *, patch_db: PatchHistoryDB | None = None
+    license: str,
+    *,
+    license_fingerprint: str | None = None,
+    patch_db: PatchHistoryDB | None = None,
 ) -> List[Dict[str, Any]]:
-    """Return patches matching ``license``."""
+    """Return patches matching ``license`` and optional fingerprint."""
 
     db = patch_db or PatchHistoryDB()
-    rows = db.find_patches_by_provenance(license=license)
+    rows = db.find_patches_by_provenance(
+        license=license, license_fingerprint=license_fingerprint
+    )
+    return [
+        {"patch_id": pid, "filename": filename, "description": desc}
+        for pid, filename, desc in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+def search_patches_by_license_fingerprint(
+    fingerprint: str, *, patch_db: PatchHistoryDB | None = None
+) -> List[Dict[str, Any]]:
+    """Return patches matching ``fingerprint``."""
+
+    db = patch_db or PatchHistoryDB()
+    rows = db.find_patches_by_provenance(license_fingerprint=fingerprint)
     return [
         {"patch_id": pid, "filename": filename, "description": desc}
         for pid, filename, desc in rows
@@ -159,6 +178,7 @@ __all__ = [
     "search_patches_by_vector",
     "search_patches_by_hash",
     "search_patches_by_license",
+    "search_patches_by_license_fingerprint",
     "search_patches_by_semantic_alert",
     "search_patches",
     "build_chain",
