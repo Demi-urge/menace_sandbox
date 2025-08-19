@@ -1,6 +1,4 @@
 import logging
-
-import logging
 import pytest
 
 from compliance.license_fingerprint import check as license_check
@@ -14,9 +12,20 @@ Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+GPL2_TEXT = "This code is released under the GNU General Public License version 2."
+NON_COMMERCIAL_TEXT = "This dataset is for non-commercial use only."
+
 
 def test_detect_license_gpl():
     assert license_check(GPL_TEXT) == "GPL-3.0"
+
+
+def test_detect_license_gpl_v2():
+    assert license_check(GPL2_TEXT) == "GPL-2.0"
+
+
+def test_detect_non_commercial_phrase():
+    assert license_check(NON_COMMERCIAL_TEXT) == "CC-BY-NC-4.0"
 
 
 class DummyDB(EmbeddableDBMixin):

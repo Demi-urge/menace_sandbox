@@ -36,6 +36,16 @@ UNSAFE_PATTERNS: List[UnsafePattern] = [
         ["subprocess.run", "subprocess.call", "subprocess.Popen"],
         "subprocess.run('cmd', shell=True)",
     ),
+    UnsafePattern(
+        "untrusted pickle load",
+        ["pickle.load", "pickle.loads"],
+        "pickle.loads(data)",
+    ),
+    UnsafePattern(
+        "yaml load without safe loader",
+        ["yaml.load"],
+        "yaml.load(data)",
+    ),
 ]
 
 
