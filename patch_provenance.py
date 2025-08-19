@@ -21,16 +21,21 @@ def get_patch_provenance(
 
     db = patch_db or PatchHistoryDB()
     rows = db.get_ancestry(patch_id)
-    return [
-        {
-            "origin": origin,
-            "vector_id": vid,
-            "influence": float(infl),
-            "license": lic,
-            "semantic_alerts": json.loads(alerts) if alerts else [],
-        }
-        for origin, vid, infl, lic, alerts in rows
-    ]
+    result: List[Dict[str, Any]] = []
+    for row in rows:
+        origin, vid, infl, *rest = row
+        lic = rest[0] if len(rest) > 0 else None
+        alerts = rest[1] if len(rest) > 1 else None
+        result.append(
+            {
+                "origin": origin,
+                "vector_id": vid,
+                "influence": float(infl),
+                "license": lic,
+                "semantic_alerts": json.loads(alerts) if alerts else [],
+            }
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

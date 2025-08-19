@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import json
 import sqlite3
 
 try:  # pragma: no cover - optional dependency
@@ -98,7 +99,9 @@ class VectorMetricsDB:
                 patch_id TEXT,
                 vector_id TEXT,
                 rank INTEGER,
-                contribution REAL
+                contribution REAL,
+                license TEXT,
+                semantic_alerts TEXT
             )
             """
         )
@@ -116,6 +119,12 @@ class VectorMetricsDB:
         for name, stmt in migrations.items():
             if name not in cols:
                 self.conn.execute(stmt)
+        self.conn.commit()
+        pcols = [r[1] for r in self.conn.execute("PRAGMA table_info(patch_ancestry)").fetchall()]
+        if "license" not in pcols:
+            self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN license TEXT")
+        if "semantic_alerts" not in pcols:
+            self.conn.execute("ALTER TABLE patch_ancestry ADD COLUMN semantic_alerts TEXT")
         self.conn.commit()
 
     # ------------------------------------------------------------------
@@ -328,12 +337,20 @@ class VectorMetricsDB:
         self.conn.commit()
 
     def record_patch_ancestry(
-        self, patch_id: str, vectors: list[tuple[str, float]]
+        self, patch_id: str, vectors: list[tuple]
     ) -> None:
-        for rank, (vec_id, contrib) in enumerate(vectors):
+        for rank, vec in enumerate(vectors):
+            vec_id, contrib, lic, alerts = (list(vec) + [None, None, None])[:4]
             self.conn.execute(
-                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution) VALUES(?,?,?,?)",
-                (patch_id, vec_id, rank, contrib),
+                "INSERT INTO patch_ancestry(patch_id, vector_id, rank, contribution, license, semantic_alerts) VALUES(?,?,?,?,?,?)",
+                (
+                    patch_id,
+                    vec_id,
+                    rank,
+                    contrib,
+                    lic,
+                    json.dumps(alerts) if alerts is not None else None,
+                ),
             )
         self.conn.commit()
 

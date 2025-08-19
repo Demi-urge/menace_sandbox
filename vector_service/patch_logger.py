@@ -101,15 +101,16 @@ class PatchLogger:
             detailed = self._parse_vectors(vector_ids)
             detailed.sort(key=lambda t: t[2], reverse=True)
             pairs = [(o, vid) for o, vid, _ in detailed]
-            scored = [(vid, score) for _, vid, score in detailed]
             meta = retrieval_metadata or {}
             detailed_meta = []
+            vm_vectors = []
             for o, vid, score in detailed:
                 key = f"{o}:{vid}" if o else vid
                 m = meta.get(key, {})
                 lic = m.get("license")
                 alerts = m.get("semantic_alerts")
                 detailed_meta.append((o, vid, score, lic, alerts))
+                vm_vectors.append((vid, score, lic, alerts))
 
             if self.metrics_db is not None:
                 try:  # pragma: no cover - legacy path
@@ -159,7 +160,7 @@ class PatchLogger:
                         pass
                     if patch_id:
                         try:
-                            self.vector_metrics.record_patch_ancestry(patch_id, scored)
+                            self.vector_metrics.record_patch_ancestry(patch_id, vm_vectors)
                         except Exception:
                             pass
         except Exception:
