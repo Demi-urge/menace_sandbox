@@ -908,6 +908,9 @@ class PatchHistoryDB:
                 "CREATE INDEX IF NOT EXISTS idx_ancestry_patch ON patch_ancestry(patch_id)"
             )
             conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ancestry_vector ON patch_ancestry(vector_id)"
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_contributors_patch ON patch_contributors(patch_id)"
             )
             conn.execute("PRAGMA user_version = 1")
@@ -1212,22 +1215,39 @@ class PatchHistoryDB:
         return chain
 
     def find_patches_by_vector(
-        self, vector_id: str
+        self,
+        vector_id: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        index_hint: str | None = None,
     ) -> List[Tuple[int, float, str, str]]:
         """Return patches influenced by ``vector_id`` ordered by influence.
 
+        Supports pagination via ``limit`` and ``offset`` and allows forcing a
+        specific SQLite ``index_hint`` for the ``patch_ancestry`` table.
         Results are joined with :class:`PatchRecord` metadata.
         """
 
         pattern = f"%{vector_id}%"
 
         def op(conn: sqlite3.Connection) -> List[Tuple[int, float, str, str]]:
-            rows = conn.execute(
+            query = (
                 "SELECT a.patch_id, a.influence, h.filename, h.description "
-                "FROM patch_ancestry a JOIN patch_history h ON h.id=a.patch_id "
-                "WHERE a.vector_id LIKE ? ORDER BY a.influence DESC",
-                (pattern,),
-            ).fetchall()
+                "FROM patch_ancestry"
+            )
+            if index_hint:
+                query += f" INDEXED BY {index_hint}"
+            query += " a JOIN patch_history h ON h.id=a.patch_id "
+            query += "WHERE a.vector_id LIKE ? ORDER BY a.influence DESC"
+            params: List[Any] = [pattern]
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            if offset:
+                query += " OFFSET ?"
+                params.append(offset)
+            rows = conn.execute(query, params).fetchall()
             return [
                 (int(pid), float(infl), fname, desc)
                 for pid, infl, fname, desc in rows
@@ -1410,15 +1430,32 @@ class PatchHistoryDB:
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)
 
     # ------------------------------------------------------------------
-    def search_with_ids(self, term: str) -> List[tuple[int, PatchRecord]]:
+    def search_with_ids(
+        self,
+        term: str,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        index_hint: str | None = None,
+    ) -> List[tuple[int, PatchRecord]]:
         """Search patches and include their IDs."""
         pattern = f"%{term}%"
 
         def op(conn: sqlite3.Connection) -> List[tuple[int, PatchRecord]]:
-            rows = conn.execute(
-                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE",
-                (pattern, pattern),
-            ).fetchall()
+            query = (
+                "SELECT id, filename, description, roi_before, roi_after, errors_before, errors_after, roi_delta, complexity_before, complexity_after, complexity_delta, entropy_before, entropy_after, entropy_delta, predicted_roi, predicted_errors, reverted, trending_topic, ts, code_id, code_hash, source_bot, version, parent_patch_id, reason, trigger FROM patch_history"
+            )
+            if index_hint:
+                query += f" INDEXED BY {index_hint}"
+            query += " WHERE description LIKE ? COLLATE NOCASE OR filename LIKE ? COLLATE NOCASE"
+            params: List[Any] = [pattern, pattern]
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            if offset:
+                query += " OFFSET ?"
+                params.append(offset)
+            rows = conn.execute(query, params).fetchall()
             return [(row[0], PatchRecord(*row[1:])) for row in rows]
 
         return with_retry(lambda: self._with_conn(op), exc=sqlite3.Error, logger=logger)

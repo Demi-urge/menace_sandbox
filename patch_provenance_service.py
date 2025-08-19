@@ -88,7 +88,16 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
 
     @app.get("/vectors/<vector_id>")
     def by_vector(vector_id: str):
-        res = search_patches_by_vector(vector_id, patch_db=pdb)
+        limit = request.args.get("limit", type=int)
+        offset = request.args.get("offset", type=int, default=0)
+        index_hint = request.args.get("index_hint")
+        res = search_patches_by_vector(
+            vector_id,
+            patch_db=pdb,
+            limit=limit,
+            offset=offset,
+            index_hint=index_hint,
+        )
         patches = [
             {
                 "id": r["patch_id"],
@@ -105,7 +114,16 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
         term = request.args.get("q", "")
         if not term:
             return jsonify([])
-        res = search_patches_by_vector(term, patch_db=pdb)
+        limit = request.args.get("limit", type=int)
+        offset = request.args.get("offset", type=int, default=0)
+        index_hint = request.args.get("index_hint")
+        res = search_patches_by_vector(
+            term,
+            patch_db=pdb,
+            limit=limit,
+            offset=offset,
+            index_hint=index_hint,
+        )
         if res:
             patches = [
                 {
@@ -123,7 +141,9 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
                     "filename": rec.filename,
                     "description": rec.description,
                 }
-                for pid, rec in pdb.search_with_ids(term)
+                for pid, rec in pdb.search_with_ids(
+                    term, limit=limit, offset=offset, index_hint=index_hint
+                )
             ]
         return jsonify(patches)
 

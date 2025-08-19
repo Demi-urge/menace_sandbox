@@ -3,6 +3,8 @@
 
 Examples:
     python -m tools.patch_provenance_cli chain 42
+    python -m tools.patch_provenance_cli search --license MIT
+    python -m tools.patch_provenance_cli search --semantic-alert malware
     python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware
 """
 
@@ -31,6 +33,8 @@ def main() -> None:
         epilog=(
             "Examples:\n"
             "  python -m tools.patch_provenance_cli chain 42\n"
+            "  python -m tools.patch_provenance_cli search --license MIT\n"
+            "  python -m tools.patch_provenance_cli search --semantic-alert malware\n"
             "  python -m tools.patch_provenance_cli search --license MIT --semantic-alert malware"
         ),
     )

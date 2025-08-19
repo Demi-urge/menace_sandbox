@@ -26,7 +26,8 @@ semantic alerts while `chain` returns only the ancestry chain for a patch.
 `search` performs a reverse lookup either by vector ID (default) or by code
 snippet hash when ``--hash`` is supplied.  It can also filter patches by
 detected license, semantic alert, or both using ``--license`` and
-``--semantic-alert``.
+``--semantic-alert``. These options mirror the `license` and
+`semantic_alert` parameters supported by the REST service.
 
 Set the `PATCH_HISTORY_DB_PATH` environment variable to point to a specific
 SQLite database.
@@ -48,6 +49,15 @@ Endpoints:
 - `GET /search?q=<term>` – search patches by vector ID or keyword
 - `GET /patches?license=<name>&semantic_alert=<alert>` – filter patches by
   detected license and/or semantic alert
+
+`/vectors/<vector_id>` and `/search` support pagination via `limit` and
+`offset` query parameters.  An optional `index_hint` parameter can force a
+specific SQLite index such as `idx_ancestry_vector` or `idx_patch_filename`.
+For example:
+
+```bash
+curl "http://localhost:5000/vectors/vec123?limit=50&offset=100&index_hint=idx_ancestry_vector"
+```
 
 The service uses the same `PATCH_HISTORY_DB_PATH` environment variable to
 locate the database.
