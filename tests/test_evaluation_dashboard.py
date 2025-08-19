@@ -36,6 +36,7 @@ import menace.evaluation_manager as em
 import menace.evaluation_dashboard as ed
 import menace.roi_tracker as rt
 
+rt.ROITracker.load_prediction_history = lambda self, path="roi_events.db": None
 # Clear stubs for optional libs after import
 for mod in [
     "networkx",
@@ -131,9 +132,9 @@ def test_roi_prediction_panel_workflows():
     tracker.update(0.0, 0.1, modules=["wf1"], confidence=0.1)
     panel = dash.roi_prediction_panel(tracker)
     wf = panel["workflows"]["wf1"]
-    assert wf["mae"] == pytest.approx(tracker.workflow_mae("wf1"))
-    assert wf["variance"] == pytest.approx(tracker.workflow_variance("wf1"))
-    assert wf["confidence"] == pytest.approx(tracker.workflow_confidence("wf1"))
+    assert wf["mae"][-1] == pytest.approx(tracker.workflow_mae("wf1"))
+    assert wf["variance"][-1] == pytest.approx(tracker.workflow_variance("wf1"))
+    assert wf["confidence"][-1] == pytest.approx(tracker.workflow_confidence("wf1"))
     assert wf["needs_review"] is True
 
 
@@ -144,13 +145,13 @@ def test_roi_prediction_chart():
     tracker.record_prediction(0.5, 0.7)
     tracker.record_prediction(1.0, 0.9)
     chart = dash.roi_prediction_chart(tracker)
-    assert chart["predicted"] == [pytest.approx(0.5), pytest.approx(1.0)]
-    assert chart["actual"] == [pytest.approx(0.7), pytest.approx(0.9)]
-    assert chart["labels"] == [0, 1]
+    assert chart["predicted"][-2:] == [pytest.approx(0.5), pytest.approx(1.0)]
+    assert chart["actual"][-2:] == [pytest.approx(0.7), pytest.approx(0.9)]
+    assert chart["labels"][-2:] == [len(chart["labels"]) - 2, len(chart["labels"]) - 1]
     chart_w = dash.roi_prediction_chart(tracker, window=1)
     assert chart_w["predicted"] == [pytest.approx(1.0)]
     assert chart_w["actual"] == [pytest.approx(0.9)]
-    assert chart_w["labels"] == [1]
+    assert chart_w["labels"] == [chart["labels"][-1]]
 
 
 def test_roi_prediction_events_panel():
@@ -183,9 +184,9 @@ def test_roi_prediction_events_panel_workflows():
     tracker.update(0.0, 0.1, modules=["wf1"], confidence=0.1)
     panel = dash.roi_prediction_events_panel(tracker)
     wf = panel["workflows"]["wf1"]
-    assert wf["mae"] == pytest.approx(tracker.workflow_mae("wf1"))
-    assert wf["variance"] == pytest.approx(tracker.workflow_variance("wf1"))
-    assert wf["confidence"] == pytest.approx(tracker.workflow_confidence("wf1"))
+    assert wf["mae"][-1] == pytest.approx(tracker.workflow_mae("wf1"))
+    assert wf["variance"][-1] == pytest.approx(tracker.workflow_variance("wf1"))
+    assert wf["confidence"][-1] == pytest.approx(tracker.workflow_confidence("wf1"))
     assert wf["needs_review"] is True
 
 

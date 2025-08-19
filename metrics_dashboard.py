@@ -291,6 +291,9 @@ class MetricsDashboard:
             "actual": tracker.actual_roi,
             "category_counts": tracker.category_summary(),
         }
+        data["workflow_mae"] = {k: v for k, v in tracker.workflow_mae_history.items()}
+        data["workflow_variance"] = {k: v for k, v in tracker.workflow_variance_history.items()}
+        data["workflow_confidence"] = {k: v for k, v in tracker.workflow_confidence_history.items()}
         synergy_names = {
             n for n in tracker.metrics_history if n.startswith("synergy_")
         } | set(tracker.synergy_metrics_history)

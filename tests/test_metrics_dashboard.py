@@ -74,6 +74,9 @@ def test_roi_and_metric_routes(tmp_path):
     assert data["synergy_risk_index"] == [0.4]
     assert data["synergy_risk_index_predicted"] == [0.5]
     assert data["synergy_risk_index_actual"] == [0.4]
+    assert data["workflow_mae"] == {}
+    assert data["workflow_variance"] == {}
+    assert data["workflow_confidence"] == {}
 
     resp = client.get("/metrics/security_score")
     assert resp.status_code == 200
