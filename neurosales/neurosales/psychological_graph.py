@@ -85,12 +85,10 @@ class PsychologicalGraph:
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
             return None
-        if self._model is None or np is None:
+        if self._model is None:
             return []
-        try:
-            return self._model.encode([cleaned])[0].tolist()
-        except Exception:
-            return []
+        vec = governed_embed(cleaned, self._model)
+        return vec if vec is not None else []
 
     def _add_to_index(self, rule: RuleNode) -> None:
         if self._index is None or np is None:

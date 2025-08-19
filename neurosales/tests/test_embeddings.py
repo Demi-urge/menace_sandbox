@@ -27,6 +27,8 @@ def test_shared_embedder_consistency_and_similarity():
         model = MagicMock()
         model.get_sentence_embedding_dimension.return_value = 2
         def fake_encode(txt, convert_to_numpy=True):
+            if isinstance(txt, list):
+                txt = txt[0]
             flag = 1.0 if "hello" in txt else 0.0
             return np.array([flag, float(len(txt))], dtype="float32")
 

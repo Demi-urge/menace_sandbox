@@ -7,8 +7,9 @@ except Exception:  # pragma: no cover - optional heavy deps
     SentenceTransformer = None  # type: ignore
 
 import logging
-from security.secret_redactor import redact
+from governed_embeddings import governed_embed
 from analysis.semantic_diff_filter import find_semantic_risks
+from security.secret_redactor import redact
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,8 @@ def embed_text(text: str) -> list[float]:
     cleaned = redact(text)
     if cleaned != text:
         logger.warning("redacted secrets prior to embedding")
-    vec = model.encode(cleaned)
-    try:
-        vec = vec.tolist()
-    except AttributeError:
-        pass
-    if not isinstance(vec, list):
+    vec = governed_embed(cleaned, model)
+    if vec is None:
         raise RuntimeError("Embedding failed or skipped")
     return vec
 
