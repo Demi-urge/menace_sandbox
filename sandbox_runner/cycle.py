@@ -1259,6 +1259,7 @@ def _sandbox_cycle_runner(
                     continue
                 session_id = ""
                 vectors: list[tuple[str, str, float]] = []
+                retrieval_metadata: Dict[str, Dict[str, Any]] = {}
                 retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
@@ -1272,14 +1273,15 @@ def _sandbox_cycle_runner(
                                     getattr(hits, "reason", ""),
                                 )
                             hits = []
-                        vectors = [
-                            (
-                                h.get("origin_db", ""),
-                                str(h.get("record_id", "")),
-                                float(h.get("score") or 0.0),
-                            )
-                            for h in hits
-                        ]
+                        for h in hits:
+                            origin = h.get("origin_db", "")
+                            vid = str(h.get("record_id", ""))
+                            score = float(h.get("score") or 0.0)
+                            vectors.append((origin, vid, score))
+                            retrieval_metadata[f"{origin}:{vid}"] = {
+                                "license": h.get("license"),
+                                "semantic_alerts": h.get("semantic_alerts"),
+                            }
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None
@@ -1290,7 +1292,7 @@ def _sandbox_cycle_runner(
                     }
                 try:
                     target_path = ctx.repo / module_name
-                    patch_id, _reverted, _ = ctx.engine.apply_patch(
+                    patch_id, reverted, _ = ctx.engine.apply_patch(
                         target_path,
                         suggestion,
                         reason=suggestion,
@@ -1303,9 +1305,10 @@ def _sandbox_cycle_runner(
                         try:
                             patch_logger.track_contributors(
                                 ids,
-                                bool(patch_id),
+                                bool(patch_id) and not reverted,
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
+                                retrieval_metadata=retrieval_metadata,
                             )
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
@@ -1361,7 +1364,7 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
-                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                            ids = {f"{o}:{v}": s for o, v, s in vectors}
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1369,13 +1372,14 @@ def _sandbox_cycle_runner(
                                     patch_id=str(patch_id),
                                     session_id=session_id,
                                     contribution=roi_delta,
+                                    retrieval_metadata=retrieval_metadata,
                                 )
                             except VectorServiceError:
                                 logger.debug("patch logging failed", exc_info=True)
                     else:
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors and patch_id:
-                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                            ids = {f"{o}:{v}": s for o, v, s in vectors}
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1383,6 +1387,7 @@ def _sandbox_cycle_runner(
                                     patch_id=str(patch_id),
                                     session_id=session_id,
                                     contribution=roi_delta,
+                                    retrieval_metadata=retrieval_metadata,
                                 )
                             except VectorServiceError:
                                 logger.debug("patch logging failed", exc_info=True)
@@ -1391,7 +1396,7 @@ def _sandbox_cycle_runner(
                     logger.exception("patch from gpt failed for %s", mod)
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                        ids = {f"{o}:{v}": s for o, v, s in vectors}
                         try:
                             patch_logger.track_contributors(
                                 ids,
@@ -1399,6 +1404,7 @@ def _sandbox_cycle_runner(
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
                                 contribution=0.0,
+                                retrieval_metadata=retrieval_metadata,
                             )
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
@@ -1406,7 +1412,7 @@ def _sandbox_cycle_runner(
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
-                    ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                    ids = {f"{o}:{v}": s for o, v, s in vectors}
                     try:
                         patch_logger.track_contributors(
                             ids,
@@ -1414,6 +1420,7 @@ def _sandbox_cycle_runner(
                             patch_id=str(patch_id or ""),
                             session_id=session_id,
                             contribution=0.0,
+                            retrieval_metadata=retrieval_metadata,
                         )
                     except VectorServiceError:
                         logger.debug("patch logging failed", exc_info=True)
@@ -1610,6 +1617,7 @@ def _sandbox_cycle_runner(
                 suggestion = _choose_suggestion(ctx, module_name)
                 session_id = ""
                 vectors: list[tuple[str, str, float]] = []
+                retrieval_metadata: Dict[str, Dict[str, Any]] = {}
                 retriever: Retriever | None = getattr(ctx, "retriever", None)
                 if retriever is not None:
                     session_id = uuid.uuid4().hex
@@ -1623,14 +1631,15 @@ def _sandbox_cycle_runner(
                                     getattr(hits, "reason", ""),
                                 )
                             hits = []
-                        vectors = [
-                            (
-                                h.get("origin_db", ""),
-                                str(h.get("record_id", "")),
-                                float(h.get("score") or 0.0),
-                            )
-                            for h in hits
-                        ]
+                        for h in hits:
+                            origin = h.get("origin_db", "")
+                            vid = str(h.get("record_id", ""))
+                            score = float(h.get("score") or 0.0)
+                            vectors.append((origin, vid, score))
+                            retrieval_metadata[f"{origin}:{vid}"] = {
+                                "license": h.get("license"),
+                                "semantic_alerts": h.get("semantic_alerts"),
+                            }
                     except Exception:
                         logger.debug("retriever lookup failed", exc_info=True)
                 context_meta: Dict[str, Any] | None = None
@@ -1641,7 +1650,7 @@ def _sandbox_cycle_runner(
                     }
                 try:
                     target_path = ctx.repo / module_name
-                    patch_id, _reverted, _ = ctx.engine.apply_patch(
+                    patch_id, reverted, _ = ctx.engine.apply_patch(
                         target_path,
                         suggestion,
                         reason=suggestion,
@@ -1657,9 +1666,10 @@ def _sandbox_cycle_runner(
                         try:
                             patch_logger.track_contributors(
                                 ids,
-                                bool(patch_id),
+                                bool(patch_id) and not reverted,
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
+                                retrieval_metadata=retrieval_metadata,
                             )
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
@@ -1695,7 +1705,7 @@ def _sandbox_cycle_runner(
                         early_exit = True
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors:
-                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                            ids = {f"{o}:{v}": s for o, v, s in vectors}
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1703,13 +1713,14 @@ def _sandbox_cycle_runner(
                                     patch_id=str(patch_id),
                                     session_id=session_id,
                                     contribution=roi_delta,
+                                    retrieval_metadata=retrieval_metadata,
                                 )
                             except VectorServiceError:
                                 logger.debug("patch logging failed", exc_info=True)
                     else:
                         patch_logger = ctx.patch_logger
                         if patch_logger and session_id and vectors and patch_id:
-                            ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                            ids = {f"{o}:{v}": s for o, v, s in vectors}
                             try:
                                 patch_logger.track_contributors(
                                     ids,
@@ -1717,6 +1728,7 @@ def _sandbox_cycle_runner(
                                     patch_id=str(patch_id),
                                     session_id=session_id,
                                     contribution=roi_delta,
+                                    retrieval_metadata=retrieval_metadata,
                                 )
                             except VectorServiceError:
                                 logger.debug("patch logging failed", exc_info=True)
@@ -1725,7 +1737,7 @@ def _sandbox_cycle_runner(
                     logger.exception("offline suggestion failed for %s", mod)
                     patch_logger = ctx.patch_logger
                     if patch_logger and session_id and vectors:
-                        ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                        ids = {f"{o}:{v}": s for o, v, s in vectors}
                         try:
                             patch_logger.track_contributors(
                                 ids,
@@ -1733,6 +1745,7 @@ def _sandbox_cycle_runner(
                                 patch_id=str(patch_id or ""),
                                 session_id=session_id,
                                 contribution=0.0,
+                                retrieval_metadata=retrieval_metadata,
                             )
                         except VectorServiceError:
                             logger.debug("patch logging failed", exc_info=True)
@@ -1740,7 +1753,7 @@ def _sandbox_cycle_runner(
                     continue
                 patch_logger = ctx.patch_logger
                 if patch_id is None and patch_logger and session_id and vectors:
-                    ids = [f"{o}:{v}" for o, v, *_ in vectors]
+                    ids = {f"{o}:{v}": s for o, v, s in vectors}
                     try:
                         patch_logger.track_contributors(
                             ids,
@@ -1748,6 +1761,7 @@ def _sandbox_cycle_runner(
                             patch_id=str(patch_id or ""),
                             session_id=session_id,
                             contribution=0.0,
+                            retrieval_metadata=retrieval_metadata,
                         )
                     except VectorServiceError:
                         logger.debug("patch logging failed", exc_info=True)
