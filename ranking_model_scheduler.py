@@ -75,11 +75,21 @@ class RankingModelScheduler:
                 _base, raroi = self.roi_tracker.calculate_raroi(
                     base_roi, workflow_type="standard", metrics={}
                 )
+                final_score, needs_review, confidence = self.roi_tracker.score_workflow(
+                    "ranking_model", raroi
+                )
             except Exception:
-                base_roi = raroi = 0.0
+                base_roi = raroi = final_score = confidence = 0.0
+                needs_review = False
             logging.info(
                 "ranking retrain trigger",
-                extra=log_record(base_roi=base_roi, raroi=raroi),
+                extra=log_record(
+                    base_roi=base_roi,
+                    raroi=raroi,
+                    final_score=final_score,
+                    confidence=confidence,
+                    human_review=needs_review if needs_review else None,
+                ),
             )
 
         # Train model from latest vector metrics

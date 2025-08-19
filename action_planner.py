@@ -235,15 +235,34 @@ class ActionPlanner:
                         if self.roi_tracker
                         else (roi_est, roi_est)
                     )
-                    weight *= raroi * mult
+                    if self.roi_tracker:
+                        final_score, needs_review, confidence = self.roi_tracker.score_workflow(
+                            action, raroi
+                        )
+                    else:
+                        final_score, needs_review, confidence = raroi, False, 1.0
+                    if not needs_review:
+                        weight *= final_score * mult
                     logger.debug(
                         "priority roi scaled",
                         extra=log_record(
                             action=action,
                             base_roi=base_roi,
                             raroi=raroi,
+                            final_score=final_score,
+                            confidence=confidence,
                         ),
                     )
+                    if needs_review:
+                        logger.info(
+                            "priority weighting deferred for review",
+                            extra=log_record(
+                                action=action,
+                                confidence=confidence,
+                                threshold=getattr(self.roi_tracker, "confidence_threshold", 0.5),
+                                human_review=True,
+                            ),
+                        )
                 except Exception:
                     logger.exception("roi prediction failed for %s", action)
             self.priority_weights[action] = weight
@@ -345,18 +364,28 @@ class ActionPlanner:
                 reward = 0.0
         else:
             base_roi, raroi = self._roi(action)
-            reward = raroi
-            if reward == 0.0:
-                if self.roi_tracker:
-                    try:
-                        _, reward = self.roi_tracker.calculate_raroi(
-                            rec.roi, workflow_type="standard", metrics={}
-                        )
-                    except Exception:
-                        reward = rec.roi
-                else:
+            if self.roi_tracker:
+                final_score, needs_review, confidence = self.roi_tracker.score_workflow(
+                    action, raroi
+                )
+                reward = final_score
+            else:
+                reward, needs_review, confidence = raroi, False, 1.0
+            if reward == 0.0 and self.roi_tracker:
+                try:
+                    _, raroi = self.roi_tracker.calculate_raroi(
+                        rec.roi, workflow_type="standard", metrics={}
+                    )
+                    reward, needs_review, confidence = self.roi_tracker.score_workflow(
+                        action, raroi
+                    )
+                except Exception:
                     reward = rec.roi
-        success = str(rec.outcome).upper().startswith("SUCCESS")
+                    needs_review = False
+                    confidence = 1.0
+            elif reward == 0.0:
+                reward = rec.roi
+            success = str(rec.outcome).upper().startswith("SUCCESS")
         if (
             self.growth_weighting
             and self.use_adaptive_roi
@@ -524,14 +553,19 @@ class ActionPlanner:
                     category = "marginal"
             mult = self.growth_multipliers.get(category, 1.0)
             raroi_est = roi_est
+            final_score = raroi_est
             if self.roi_tracker:
                 try:
                     _, raroi_est = self.roi_tracker.calculate_raroi(
                         roi_est, workflow_type="standard", metrics={}
                     )
+                    final_score, _needs_review, _conf = self.roi_tracker.score_workflow(
+                        action, raroi_est
+                    )
                 except Exception:
                     raroi_est = roi_est
-            score += raroi_est * mult
+                    final_score = raroi_est
+            score += final_score * mult
             score *= self.priority_weights.get(action, 1.0)
             if ctx:
                 score += self._context_metric(action, ctx)
