@@ -5312,8 +5312,10 @@ class SelfImprovementEngine:
             if self.roi_tracker and predicted is not None:
                 try:
                     self.roi_tracker.record_roi_prediction(
-                        [float(pred_realish)], [float(roi_realish)],
+                        [float(pred_realish)],
+                        [float(roi_realish)],
                         predicted_class=self._last_growth_type,
+                        workflow_id="self_improvement",
                     )
                 except Exception:
                     self.logger.exception("roi tracker record failed")
