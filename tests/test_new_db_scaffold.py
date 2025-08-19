@@ -1,18 +1,23 @@
+import importlib
+import shutil
+import sys
 from pathlib import Path
 
-from scripts.new_db import create_db_scaffold
+from scripts.scaffold_db import create_db_scaffold
 
 
 def test_scaffold(tmp_path):
-    # Prepare minimal embedding_backfill file for registration updates
-    vs = tmp_path / "vector_service"
-    vs.mkdir()
-    (vs / "embedding_backfill.py").write_text("modules = [\n]\n")
+    # Provide the SQL template expected by the scaffold helper
+    repo_root = Path(__file__).resolve().parents[1]
+    sql_dir = tmp_path / "sql_templates"
+    sql_dir.mkdir()
+    shutil.copy(repo_root / "sql_templates" / "create_fts.sql", sql_dir / "create_fts.sql")
+
+    # Minimal package to allow __init__ updates
+    (tmp_path / "__init__.py").write_text("__all__ = []\n")
 
     create_db_scaffold("demo", root=tmp_path)
 
-    assert (tmp_path / "demo_db.py").exists()
-    assert (tmp_path / "tests" / "test_demo_db.py").exists()
-
-    reg = (vs / "embedding_backfill.py").read_text()
-    assert '"demo_db"' in reg
+    sys.path.insert(0, str(tmp_path))
+    mod = importlib.import_module("demo_db")
+    assert hasattr(mod, "DemoDB")
