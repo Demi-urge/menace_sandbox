@@ -674,6 +674,7 @@ class SelfImprovementEngine:
         gpt_memory: GPTMemoryInterface | None = None,
         knowledge_service: GPTKnowledgeService | None = None,
         relevancy_radar: RelevancyRadar | None = None,
+        tau: float = 0.5,
         **kwargs: Any,
     ) -> None:
         if gpt_memory is None:
@@ -717,6 +718,7 @@ class SelfImprovementEngine:
             except Exception:
                 self.metrics_db = None
         self.auto_refresh_map = bool(auto_refresh_map)
+        self.tau = tau
         self.pre_roi_bot = pre_roi_bot
         self.pre_roi_scale = (
             pre_roi_scale if pre_roi_scale is not None else PRE_ROI_SCALE
@@ -2050,9 +2052,9 @@ class SelfImprovementEngine:
                             vectors.append((str(origin), str(vec_id), float(score or 0.0)))
                 if getattr(self, "data_bot", None):
                     try:  # pragma: no cover - best effort
-                    self.data_bot.db.log_patch_outcome(
-                        f"raroi_history_{idx}",
-                        False,
+                        self.data_bot.db.log_patch_outcome(
+                            f"raroi_history_{idx}",
+                            False,
                             [(o, v) for o, v, _ in vectors],
                             session_id=session_id,
                             reverted=False,
@@ -2209,10 +2211,13 @@ class SelfImprovementEngine:
         Each candidate is weighted by its predicted ROI and an optional
         growth-type multiplier from :class:`AdaptiveROIPredictor`.  If the
         predictor is unavailable or fails, the candidate receives zero weight.
+        Confidence scores from the ROI tracker modulate the risk-adjusted ROI
+        to produce the final score used for ranking.
         """
 
         completed = {Path(m).as_posix() for m in self.entropy_ceiling_modules}
         scored: list[tuple[str, float, str, float]] = []
+        tau = getattr(self, "tau", 0.5)
         for mod in modules:
             if Path(mod).as_posix() in completed:
                 continue
@@ -2242,12 +2247,33 @@ class SelfImprovementEngine:
                 if self.roi_tracker
                 else (roi_est, roi_est)
             )
+            confidence = (
+                self.roi_tracker.workflow_confidence(mod)
+                if self.roi_tracker
+                else 1.0
+            )
+            final_score = raroi * confidence
+            if confidence < tau:
+                self.logger.info(
+                    "low confidence; deferring to human review",
+                    extra=log_record(
+                        module=mod,
+                        confidence=confidence,
+                        raroi=raroi,
+                        final_score=final_score,
+                    ),
+                )
+                try:
+                    self._log_action("review", mod, final_score, category, confidence)
+                except Exception:
+                    pass
+                continue
             mult = (
                 self.growth_multipliers.get(category, 1.0)
                 if self.growth_weighting
                 else 1.0
             )
-            weight = raroi * mult
+            weight = final_score * mult
             scored.append((mod, base_roi, category, weight))
             self.logger.debug(
                 "scored modification",
@@ -2255,6 +2281,8 @@ class SelfImprovementEngine:
                     module=mod,
                     base_roi=base_roi,
                     raroi=raroi,
+                    confidence=confidence,
+                    final_score=final_score,
                     weight=weight,
                 ),
             )
@@ -2616,12 +2644,13 @@ class SelfImprovementEngine:
         try:
             roi_est = 0.0
             growth = "unknown"
-            confidence = 0.0
             weight = 0.0
             predictor = getattr(self, "roi_predictor", None)
             use_adaptive = getattr(self, "use_adaptive_roi", False)
             tracker = getattr(self, "roi_tracker", None)
             bot_name = getattr(self, "bot_name", "")
+            tau = getattr(self, "tau", 0.5)
+            confidence = 1.0
             if predictor and use_adaptive:
                 try:
                     features = self._candidate_features(bot_name)
@@ -2629,16 +2658,15 @@ class SelfImprovementEngine:
                     features = [[0.0, 0.0, 0.0]]
                 try:
                     try:
-                        seq, growth, conf, _ = predictor.predict(
+                        seq, growth, _conf, _ = predictor.predict(
                             features, horizon=len(features)
                         )
                     except TypeError:
-                        val, growth, conf, _ = predictor.predict(features)
+                        val, growth, _conf, _ = predictor.predict(features)
                         seq = [float(val)]
                     roi_est = float(seq[-1]) if seq else 0.0
-                    confidence = float(conf[-1]) if conf else 0.0
                 except Exception:
-                    roi_est, growth, confidence = 0.0, "unknown", 0.0
+                    roi_est, growth = 0.0, "unknown"
                 base_roi, raroi = (
                     tracker.calculate_raroi(
                         roi_est,
@@ -2649,12 +2677,31 @@ class SelfImprovementEngine:
                     if tracker
                     else (roi_est, roi_est)
                 )
+                if tracker:
+                    confidence = tracker.workflow_confidence(bot_name)
+                final_score = raroi * confidence
+                if confidence < tau:
+                    self.logger.info(
+                        "self optimisation deferred: low confidence",
+                        extra=log_record(
+                            growth_type=growth,
+                            roi_estimate=base_roi,
+                            raroi=raroi,
+                            confidence=confidence,
+                            final_score=final_score,
+                        ),
+                    )
+                    try:
+                        self._log_action("review", bot_name, final_score, growth, confidence)
+                    except Exception:
+                        pass
+                    return None, False, 0.0
                 mult = (
                     self.growth_multipliers.get(growth, 1.0)
                     if self.growth_weighting
                     else 1.0
                 )
-                weight = raroi * confidence * mult
+                weight = final_score * mult
                 if tracker:
                     tracker._next_prediction = base_roi
                     tracker._next_category = growth
@@ -2667,6 +2714,7 @@ class SelfImprovementEngine:
                             raroi=raroi,
                             weight=weight,
                             confidence=confidence,
+                            final_score=final_score,
                         ),
                     )
                     return None, False, 0.0
