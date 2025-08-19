@@ -19,7 +19,7 @@ indicates a stable, low-risk workflow; a large gap signals substantial
 operational risk.
 """
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING, Iterable, Sequence, Mapping, Callable
 
 import argparse
 import csv
@@ -1316,6 +1316,33 @@ class ROITracker:
         else:
             self.needs_review.discard(wf)
         return final_score, needs_review, conf
+
+    # ------------------------------------------------------------------
+    def process_borderline_candidates(
+        self,
+        evaluator: Callable[[str, Dict[str, Any]], float] | None = None,
+    ) -> None:
+        """Run micro-pilot tests for pending borderline candidates.
+
+        Parameters
+        ----------
+        evaluator:
+            Optional callable ``(workflow_id, candidate_info) -> raroi`` used to
+            produce a test RAROI. When omitted, the candidate's last recorded
+            RAROI is re-used.
+        """
+
+        evaluate = evaluator or (lambda wf, info: info["raroi"][-1])
+        for wf, info in self.borderline_bucket.all_candidates(status="candidate").items():
+            try:
+                result = float(evaluate(wf, info))
+                self.borderline_bucket.record_result(wf, result)
+                if result > self.borderline_threshold:
+                    self.borderline_bucket.promote(wf)
+                else:
+                    self.borderline_bucket.terminate(wf)
+            except Exception:  # pragma: no cover - best effort
+                logger.exception("failed processing borderline candidate %s", wf)
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:

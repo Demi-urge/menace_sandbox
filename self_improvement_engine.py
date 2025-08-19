@@ -2276,6 +2276,16 @@ class SelfImprovementEngine:
                     self._log_action("review", mod, weight, category, confidence)
                 except Exception:
                     pass
+                try:
+                    if (
+                        self.roi_tracker.borderline_bucket.get_candidate(mod)
+                        is None
+                    ):
+                        self.roi_tracker.borderline_bucket.add_candidate(
+                            mod, raroi, confidence
+                        )
+                except Exception:
+                    pass
                 continue
             scored.append((mod, base_roi, category, weight))
             self.logger.debug(
