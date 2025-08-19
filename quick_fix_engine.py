@@ -174,6 +174,13 @@ class QuickFixEngine:
         self.predictor = predictor
         self.retriever = retriever
         self.context_builder = context_builder
+        if patch_logger is None:
+            try:
+                eng = getattr(manager, "engine", None)
+                pdb = getattr(eng, "patch_db", None)
+                patch_logger = PatchLogger(patch_db=pdb)
+            except Exception:
+                patch_logger = None
         self.patch_logger = patch_logger
         self.logger = logging.getLogger(self.__class__.__name__)
         env_min_rel = float(os.getenv("DB_MIN_RELIABILITY", "0.0"))

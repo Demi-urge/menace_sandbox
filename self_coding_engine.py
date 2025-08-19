@@ -165,6 +165,11 @@ class SelfCodingEngine:
         self.logger = logging.getLogger("SelfCodingEngine")
         self.event_bus = event_bus
         self.patch_suggestion_db = patch_suggestion_db
+        if patch_logger is None:
+            try:
+                patch_logger = PatchLogger(patch_db=self.patch_db)
+            except Exception:
+                patch_logger = None
         self.patch_logger = patch_logger
         # Optional contextual information builder for prompts; may be ``None``
         # when the dependency is unavailable.  No automatic initialisation is
@@ -226,26 +231,27 @@ class SelfCodingEngine:
         patch_id: int | None = None,
         retrieval_metadata: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
-        if self.patch_logger and session_id and vectors:
-            detailed: List[Tuple[str, str, float]] = []
-            for item in vectors:
-                if len(item) == 3:
-                    o, v, s = item  # type: ignore[misc]
-                else:
-                    o, v = item  # type: ignore[misc]
-                    s = 0.0
-                detailed.append((o, v, float(s)))
-            ids = {f"{o}:{v}": s for o, v, s in detailed}
-            try:
-                self.patch_logger.track_contributors(
-                    ids,
-                    result,
-                    patch_id=str(patch_id or ""),
-                    session_id=session_id,
-                    retrieval_metadata=retrieval_metadata,
-                )
-            except VectorServiceError:
-                self.logger.debug("patch logging failed", exc_info=True)
+        if not self.patch_logger:
+            return
+        detailed: List[Tuple[str, str, float]] = []
+        for item in vectors:
+            if len(item) == 3:
+                o, v, s = item  # type: ignore[misc]
+            else:
+                o, v = item  # type: ignore[misc]
+                s = 0.0
+            detailed.append((o, v, float(s)))
+        ids = {f"{o}:{v}": s for o, v, s in detailed}
+        try:
+            self.patch_logger.track_contributors(
+                ids,
+                result,
+                patch_id=str(patch_id or ""),
+                session_id=session_id,
+                retrieval_metadata=retrieval_metadata,
+            )
+        except VectorServiceError:
+            self.logger.debug("patch logging failed", exc_info=True)
 
     # --------------------------------------------------------------
     def suggest_snippets(self, description: str, limit: int = 3) -> Iterable[CodeRecord]:
