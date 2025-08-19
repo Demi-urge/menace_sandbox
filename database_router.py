@@ -9,7 +9,7 @@ import hashlib
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Callable
+from typing import Any, Dict, Iterable, List, Optional, Callable, Sequence
 import sqlite3
 import logging
 
@@ -360,6 +360,53 @@ class DatabaseRouter:
             results.append(item)
 
         return results[:top_k]
+
+    def search_fts(
+        self,
+        query: str,
+        *,
+        dbs: Sequence[str] | None = None,
+        limit: int | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Run SQLite FTS queries across registered databases."""
+
+        limit = limit or 5
+        targets = list(dbs) if dbs else ["code", "memory"]
+        results: List[Dict[str, Any]] = []
+        for name in targets:
+            try:
+                if name == "code":
+                    rows = self.code_db.search_fts(query, limit)
+                elif name == "memory":
+                    rows = self.memory_mgr.search(query)[:limit]
+                else:
+                    db_obj = getattr(self, f"{name}_db", None)
+                    if db_obj and hasattr(db_obj, "search_fts"):
+                        rows = db_obj.search_fts(query, limit)
+                    else:
+                        continue
+                for row in rows:
+                    snippet = (
+                        row.get("text")
+                        or row.get("snippet")
+                        or row.get("code")
+                        or row.get("data")
+                        or row.get("summary")
+                        or ""
+                    )
+                    record_id = row.get("id") or row.get("record_id") or row.get("key")
+                    score = row.get("score", 0.0)
+                    results.append(
+                        {
+                            "origin_db": name,
+                            "record_id": record_id,
+                            "score": score,
+                            "snippet": snippet,
+                        }
+                    )
+            except Exception:
+                continue
+        return results
 
     def execute_query(
         self, db: str, query: str, params: Iterable[Any] | None = None, *, requesting_bot: str | None = None

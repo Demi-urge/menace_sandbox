@@ -13,25 +13,18 @@ def _run(cmd: list[str]) -> int:
     return subprocess.call(cmd)
 
 
-from code_database import PatchHistoryDB, CodeDB
+from code_database import PatchHistoryDB
 from patch_provenance import (
     build_chain,
     search_patches_by_vector,
     search_patches_by_license,
 )
-from vector_service import Retriever, FallbackResult, VectorServiceError
-
-
-def _search_memory(q: str):
-    from menace_memory_manager import MenaceMemoryManager
-
-    return MenaceMemoryManager().search(q)
-
-
-FTS_HELPERS = {
-    "code": lambda q: CodeDB().search_fts(q),
-    "memory": _search_memory,
-}
+from vector_service.retriever import (
+    Retriever,
+    FallbackResult,
+    VectorServiceError,
+    fts_search,
+)
 
 
 def _normalise_hits(hits, origin=None):
@@ -125,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     p_retrieve = sub.add_parser("retrieve", help="Semantic code retrieval")
     p_retrieve.add_argument("query")
     p_retrieve.add_argument("--db", action="append", dest="dbs")
+    p_retrieve.add_argument("--top-k", type=int, dest="top_k", default=5)
+    p_retrieve.add_argument("--json", action="store_true", help="Output JSON results")
     p_retrieve.add_argument("--no-cache", action="store_true", help="Bypass retrieval cache")
 
     p_embed = sub.add_parser("embed", help="Backfill vector embeddings")
@@ -184,20 +179,29 @@ def main(argv: list[str] | None = None) -> int:
             cache_path=None if args.no_cache else str(cache_path)
         )
         try:
-            res = retriever.search(args.query, session_id=uuid4().hex, dbs=args.dbs)
+            res = retriever.search(
+                args.query,
+                session_id=uuid4().hex,
+                top_k=args.top_k,
+                dbs=args.dbs,
+            )
         except VectorServiceError as exc:
             res = FallbackResult(str(exc), [])
         if isinstance(res, FallbackResult):
             results = _normalise_hits(list(res))
-            for db_name in (args.dbs or ["code"]):
-                helper = FTS_HELPERS.get(db_name)
-                if helper:
-                    try:
-                        results.extend(
-                            _normalise_hits(helper(args.query), origin=db_name)
-                        )
-                    except Exception:
-                        pass
+            if res.reason == "no results":
+                try:
+                    extra = fts_search(
+                        args.query, dbs=args.dbs, limit=args.top_k
+                    )
+                except Exception:
+                    extra = []
+                seen = {(r["origin_db"], r["record_id"]) for r in results}
+                for hit in _normalise_hits(extra):
+                    key = (hit["origin_db"], hit["record_id"])
+                    if key not in seen:
+                        results.append(hit)
+                        seen.add(key)
         else:
             results = _normalise_hits(res)
         if results and not args.no_cache:

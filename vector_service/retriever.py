@@ -337,5 +337,29 @@ class Retriever:
             return 0.0
 
 
-__all__ = ["Retriever", "FallbackResult"]
+def fts_search(
+    query: str,
+    *,
+    dbs: Sequence[str] | None = None,
+    limit: int | None = None,
+) -> List[Dict[str, Any]]:
+    """Run SQLite FTS queries via :class:`DatabaseRouter`.
+
+    The helper is intentionally lightweight and returns an empty list on any
+    failure so callers can use it opportunistically.
+    """
+
+    try:  # pragma: no cover - optional dependency
+        from database_router import DatabaseRouter
+    except Exception:
+        return []
+
+    try:
+        router = DatabaseRouter()
+        return router.search_fts(query, dbs=dbs, limit=limit)
+    except Exception:
+        return []
+
+
+__all__ = ["Retriever", "FallbackResult", "fts_search"]
 
