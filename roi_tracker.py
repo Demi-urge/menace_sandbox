@@ -308,10 +308,8 @@ class ROITracker:
         self.actual_roi: List[float] = []
         # store per-workflow prediction and actual ROI histories
         self.workflow_window = int(workflow_window)
-        self.workflow_predicted_roi: Dict[str, List[float]] = defaultdict(list)
-        self.workflow_actual_roi: Dict[str, List[float]] = defaultdict(list)
-        self._workflow_mae: Dict[str, float] = {}
-        self._workflow_variance: Dict[str, float] = {}
+        self.workflow_predictions: Dict[str, List[float]] = defaultdict(list)
+        self.workflow_actuals: Dict[str, List[float]] = defaultdict(list)
         self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
@@ -535,6 +533,7 @@ class ROITracker:
         actual_class: str | None = None,
         confidence: float | None = None,
         workflow_id: str | None = None,
+        modules: Optional[List[str]] = None,
     ) -> None:
         """Store prediction details and log prediction stats.
 
@@ -575,26 +574,29 @@ class ROITracker:
 
         self.predicted_roi.append(float(pred_seq[0]))
         self.actual_roi.append(float(act_seq[0]))
+        workflows: List[str] = []
+        if modules:
+            workflows.extend(str(m) for m in modules)
         if workflow_id is not None:
-            preds = self.workflow_predicted_roi[workflow_id]
-            acts = self.workflow_actual_roi[workflow_id]
+            workflows.append(str(workflow_id))
+        for wf in workflows:
+            preds = self.workflow_predictions[wf]
+            acts = self.workflow_actuals[wf]
             preds.append(float(pred_seq[0]))
             acts.append(float(act_seq[0]))
-            window = self.workflow_window
-            if window > 0:
-                if len(preds) > window:
-                    preds.pop(0)
-                if len(acts) > window:
-                    acts.pop(0)
-            errors = [abs(p - a) for p, a in zip(preds, acts)]
-            self._workflow_mae[workflow_id] = (
-                float(np.mean(errors)) if errors else 0.0
-            )
-            self._workflow_variance[workflow_id] = (
-                float(np.var(acts)) if acts else 0.0
-            )
-            conf = self.workflow_confidence(workflow_id)
-            self.workflow_confidence_history[workflow_id].append(conf)
+            conf = self.workflow_confidence(wf, self.workflow_window)
+            self.workflow_confidence_history[wf].append(conf)
+            try:
+                if _me is not None:
+                    _me.workflow_mae.labels(workflow=wf).set(
+                        self.workflow_mae(wf, self.workflow_window)
+                    )
+                    _me.workflow_variance.labels(workflow=wf).set(
+                        self.workflow_variance(wf, self.workflow_window)
+                    )
+                    _me.confidence.labels(workflow=wf).set(conf)
+            except Exception:
+                pass
         try:
             ent_hist = self.metrics_history.get("synergy_shannon_entropy", [])
             if len(ent_hist) >= 2:
@@ -1071,19 +1073,36 @@ class ROITracker:
         return trend[-w:]
 
     # ------------------------------------------------------------------
-    def workflow_mae(self, workflow_id: str) -> float:
-        """Return MAE for ``workflow_id`` predictions."""
+    def workflow_mae(self, workflow_id: str, window: int | None = None) -> float:
+        """Return mean absolute error for ``workflow_id`` predictions."""
 
-        return self._workflow_mae.get(workflow_id, 0.0)
+        preds = self.workflow_predictions.get(workflow_id, [])
+        acts = self.workflow_actuals.get(workflow_id, [])
+        if not preds or not acts:
+            return 0.0
+        if window is None:
+            window = self.workflow_window
+        if window > 0:
+            preds = preds[-window:]
+            acts = acts[-window:]
+        arr = np.abs(np.array(preds) - np.array(acts))
+        return float(arr.mean()) if arr.size else 0.0
 
     # ------------------------------------------------------------------
-    def workflow_variance(self, workflow_id: str) -> float:
+    def workflow_variance(self, workflow_id: str, window: int | None = None) -> float:
         """Return variance of actual ROI for ``workflow_id``."""
 
-        return self._workflow_variance.get(workflow_id, 0.0)
+        acts = self.workflow_actuals.get(workflow_id, [])
+        if not acts:
+            return 0.0
+        if window is None:
+            window = self.workflow_window
+        if window > 0:
+            acts = acts[-window:]
+        return float(np.var(acts)) if acts else 0.0
 
     # ------------------------------------------------------------------
-    def workflow_confidence(self, workflow_id: str) -> float:
+    def workflow_confidence(self, workflow_id: str, window: int | None = None) -> float:
         """Return confidence score for ``workflow_id`` predictions.
 
         The confidence combines mean absolute error and variance of the
@@ -1091,8 +1110,8 @@ class ROITracker:
         clipped to the ``[0, 1]`` interval.
         """
 
-        mae = self._workflow_mae.get(workflow_id, 0.0)
-        variance = self._workflow_variance.get(workflow_id, 0.0)
+        mae = self.workflow_mae(workflow_id, window)
+        variance = self.workflow_variance(workflow_id, window)
         confidence = 1.0 / (1.0 + mae + variance)
         return max(0.0, min(1.0, confidence))
 
@@ -1288,6 +1307,7 @@ class ROITracker:
                 roi_after,
                 predicted_class=predicted_class,
                 confidence=confidence,
+                modules=modules,
             )
         self._next_prediction = None
         self._next_category = None
