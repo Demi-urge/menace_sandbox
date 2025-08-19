@@ -6,15 +6,16 @@ from flask import Flask, jsonify, request
 import sys
 import types
 
-sys.modules.setdefault("unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object))
+sys.modules.setdefault(
+    "unified_event_bus", types.SimpleNamespace(UnifiedEventBus=object)
+)
 
 from code_database import PatchHistoryDB
 from patch_provenance import (
     get_patch_provenance,
     search_patches_by_vector,
     build_chain,
-    search_patches_by_license,
-    search_patches_by_semantic_alert,
+    search_patches,
 )
 
 
@@ -56,14 +57,8 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
     def list_patches():
         lic = request.args.get("license")
         alert = request.args.get("semantic_alert")
-        if alert:
-            rows = search_patches_by_semantic_alert(alert, patch_db=pdb)
-            patches = [
-                {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
-                for r in rows
-            ]
-        elif lic:
-            rows = search_patches_by_license(lic, patch_db=pdb)
+        if lic or alert:
+            rows = search_patches(license=lic, semantic_alert=alert, patch_db=pdb)
             patches = [
                 {"id": r["patch_id"], "filename": r["filename"], "description": r["description"]}
                 for r in rows
@@ -138,3 +133,4 @@ def create_app(db: PatchHistoryDB | None = None) -> Flask:
 if __name__ == "__main__":
     app = create_app()
     app.run()
+
