@@ -6,7 +6,7 @@ def test_calculate_raroi_basic():
     tracker = ROITracker()
     tracker.roi_history = [1.0] * 20
     base_roi = 0.5
-    base, raroi = tracker.calculate_raroi(base_roi, "standard", 0.0, {})
+    base, raroi = tracker.calculate_raroi(base_roi, "standard")
     assert base == base_roi
     assert raroi == pytest.approx(base_roi)
 
@@ -15,8 +15,13 @@ def test_calculate_raroi_with_risk():
     tracker = ROITracker()
     tracker.roi_history = [1.0] * 20
     base_roi = 0.5
-    metrics = {"security": False, "alignment": False}
-    base, raroi = tracker.calculate_raroi(base_roi, "standard", 1.0, metrics)
+    metrics = {"errors_per_minute": 1.0}
+    base, raroi = tracker.calculate_raroi(
+        base_roi,
+        "standard",
+        test_stats=metrics,
+        failing_tests=["security", "alignment"],
+    )
     assert base == base_roi
     assert raroi < base_roi * 0.3
 

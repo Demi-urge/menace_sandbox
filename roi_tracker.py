@@ -118,6 +118,7 @@ class ROITracker:
         """
         self.roi_history: List[float] = []
         self.raroi_history: List[float] = []
+        self.last_raroi: float | None = None
         self.confidence_history: List[float] = []
         self.category_history: List[str] = []
         self.entropy_history: List[float] = []
@@ -1139,11 +1140,19 @@ class ROITracker:
                     val = metrics.get(key)
                     if isinstance(val, bool):
                         tests[key] = val
+            failing = [name for name, passed in tests.items() if not passed]
+            test_stats = {"errors_per_minute": errors_per_minute}
+            for key in ("rollback_probability", "instability", "error_threshold"):
+                if key in metrics:
+                    try:
+                        test_stats[key] = float(metrics[key])
+                    except Exception:
+                        pass
             _base_roi, raroi = self.calculate_raroi(
                 adjusted,
                 str(metrics.get("workflow_type", "standard")),
-                errors_per_minute,
-                tests,
+                test_stats=test_stats,
+                failing_tests=failing,
             )
             self.raroi_history.append(raroi)
             self.confidence_history.append(float(confidence or 0.0))
@@ -2786,9 +2795,9 @@ class ROITracker:
         self,
         base_roi: float,
         workflow_type: str,
-        errors_per_minute: float,
-        test_status: Mapping[str, bool],
-        impact_config: Mapping[str, float] | None = None,
+        test_stats: Mapping[str, float] | None = None,
+        failing_tests: Iterable[str] | Mapping[str, bool] | None = None,
+        recent_deltas: Sequence[float] | None = None,
     ) -> Tuple[float, float]:
         """Return ``(base_roi, risk_adjusted_roi)`` for ``workflow_type``.
 
@@ -2798,55 +2807,79 @@ class ROITracker:
             Raw ROI value before applying any risk adjustments.
         workflow_type:
             Workflow identifier used to resolve the impact severity.
-        errors_per_minute:
-            Observed error rate for the workflow.
-        test_status:
-            Mapping of critical test names to boolean pass/fail values.
-        impact_config:
-            Optional mapping overriding the default impact severity values.
+        test_stats:
+            Optional mapping of runtime statistics used to estimate rollback
+            probability. Keys such as ``errors_per_minute``, ``instability`` or
+            ``rollback_probability`` are recognised. A plain number is
+            interpreted as ``errors_per_minute`` for backwards compatibility.
+        failing_tests:
+            Iterable of failing test suite names or mapping of test names to
+            boolean pass/fail values.
+        recent_deltas:
+            Optional sequence of recent ROI deltas. When omitted the last
+            ``self.window`` entries from ``self.roi_history`` are used.
 
         Returns
         -------
         Tuple[float, float]
             The original ``base_roi`` and the calculated risk-adjusted ROI.
-
-        Notes
-        -----
-        The risk-adjusted ROI (RAROI) combines catastrophic risk, recent
-        stability and critical safety tests::
-
-            raroi = base_roi * (1 - catastrophic_risk)
-                    * stability_factor * safety_factor
-
-        ``catastrophic_risk`` is the product of rollback probability and impact
-        severity. ``stability_factor`` reflects the volatility of recent ROI
-        history and ``safety_factor`` penalises failed security/alignment tests.
         """
 
-        recent = self.roi_history[-self.window :]
-        instability = float(np.std(recent)) if recent else 0.0
-        error_threshold = 10.0
-        error_prob = max(0.0, min(1.0, errors_per_minute / error_threshold))
-        rollback_probability = min(1.0, max(instability, error_prob))
+        stats: Dict[str, float]
+        if test_stats is None:
+            stats = {}
+        elif isinstance(test_stats, Mapping):
+            stats = {
+                str(k): float(v)
+                for k, v in test_stats.items()
+                if isinstance(v, (int, float))
+            }
+        else:
+            try:
+                stats = {"errors_per_minute": float(test_stats)}
+            except Exception:
+                stats = {}
 
-        impact_severity = self._impact_severity(workflow_type)
-        if impact_config:
-            overrides = {str(k): float(v) for k, v in impact_config.items()}
-            impact_severity = float(
-                overrides.get(workflow_type, impact_severity)
+        if failing_tests is None:
+            failures: List[str] = []
+        elif isinstance(failing_tests, Mapping):
+            failures = [str(k) for k, v in failing_tests.items() if not v]
+        else:
+            failures = [str(x) for x in failing_tests]
+
+        recent = (
+            list(recent_deltas)
+            if recent_deltas is not None
+            else self.roi_history[-self.window :]
+        )
+        instability = float(np.std(recent)) if recent else 0.0
+
+        if "rollback_probability" in stats:
+            rollback_probability = max(
+                0.0, min(1.0, float(stats["rollback_probability"]))
             )
+        else:
+            errors_per_minute = float(stats.get("errors_per_minute", 0.0))
+            error_threshold = float(stats.get("error_threshold", 10.0))
+            error_prob = max(0.0, min(1.0, errors_per_minute / error_threshold))
+            instability_metric = float(stats.get("instability", instability))
+            rollback_probability = max(error_prob, instability_metric)
+            rollback_probability = max(0.0, min(1.0, rollback_probability))
+
+        impact_severity = float(self._impact_severity(workflow_type))
         catastrophic_risk = rollback_probability * impact_severity
 
         stability_factor = max(0.0, 1.0 - instability)
 
         safety_factor = 1.0
-        for key in ("security", "alignment"):
-            if test_status.get(key) is False:
+        for name in failures:
+            if name.lower() in {"security", "alignment"}:
                 safety_factor *= 0.5
 
         raroi = float(
             base_roi * (1.0 - catastrophic_risk) * stability_factor * safety_factor
         )
+        self.last_raroi = raroi
         return float(base_roi), raroi
 
     # ------------------------------------------------------------------
