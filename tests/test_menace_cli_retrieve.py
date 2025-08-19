@@ -85,3 +85,32 @@ def test_retriever_cache(monkeypatch, tmp_path):
     menace_cli.main(["retrieve", "q", "--json"])
     assert calls["n"] == 3
 
+
+def test_retrieve_arg_parsing(monkeypatch, tmp_path):
+    captured = {}
+
+    class DummyRetriever:
+        def retrieve(self, query, top_k=5, dbs=None):
+            captured["query"] = query
+            captured["top_k"] = top_k
+            captured["dbs"] = dbs
+            return [], "s", []
+
+    menace_cli = _load_cli(monkeypatch, tmp_path, DummyRetriever)
+    menace_cli.main(
+        [
+            "retrieve",
+            "q",
+            "--db",
+            "code",
+            "--db",
+            "errors",
+            "--top-k",
+            "7",
+            "--json",
+            "--no-cache",
+        ]
+    )
+
+    assert captured == {"query": "q", "top_k": 7, "dbs": ["code", "errors"]}
+

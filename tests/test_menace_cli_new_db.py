@@ -53,3 +53,9 @@ def test_new_db_scaffold(tmp_path, monkeypatch):
     init_text = (tmp_path / "__init__.py").read_text()
     assert "from .sample_db import SampleDB" in init_text
     assert '"sample_db"' in init_text
+
+
+def test_new_db_failure(monkeypatch):
+    monkeypatch.setattr(menace_cli, "_run", lambda cmd: 1)
+    rc = menace_cli.main(["new-db", "demo"])
+    assert rc == 1

@@ -275,6 +275,45 @@ Example `sandbox_data/orphan_modules.json`:
 
 A new `menace` CLI wraps common workflows so you no longer need to remember individual scripts.
 
+### Quick patches
+
+Apply a patch to a module and log provenance:
+
+```bash
+python menace_cli.py patch path/to/module.py --desc "Fix bug" --context '{"foo": "bar"}'
+```
+
+The command prints the patch ID and affected files. The `--context` value must be valid JSON.
+
+### Semantic retrieval
+
+Search across databases with optional caching:
+
+```bash
+python menace_cli.py retrieve "database connector" --db code --top-k 3 --json
+```
+
+Results are cached under `~/.cache/menace/retrieve.json`. Use `--no-cache` to bypass the cache or `--rebuild-cache` to refresh. When no vector hits are found the CLI falls back to a full‑text search.
+
+### Embedding backfill
+
+Populate vector indices via the `embed` subcommand. Specify a database name to
+limit processing to a single class:
+
+```bash
+python menace_cli.py embed --db workflows --batch-size 100 --backend faiss
+```
+
+### New database scaffold
+
+Generate a database module skeleton:
+
+```bash
+python menace_cli.py new-db sample
+```
+
+This creates `sample_db.py` and updates `__init__.py` in the current directory.
+
 ### Patch provenance queries
 
 Use the `patches` subcommand to inspect the patch history database. Commands
@@ -285,15 +324,6 @@ python menace_cli.py patches list --limit 5
 python menace_cli.py patches ancestry 42
 python menace_cli.py patches search --vector v1
 python menace_cli.py patches search --license MIT
-```
-
-### Embedding backfill
-
-Populate vector indices via the `embed` subcommand. Specify a database name to
-limit processing to a single class:
-
-```bash
-python menace_cli.py embed --db workflows
 ```
 
 ## Self-Optimisation Loop
