@@ -4,7 +4,6 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path
 from uuid import uuid4
 
 
@@ -26,6 +25,7 @@ from vector_service.retriever import (
     VectorServiceError,
     fts_search,
 )
+from retrieval_cache import RetrievalCache
 
 
 def _normalise_hits(hits, origin=None):
@@ -191,10 +191,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "retrieve":
-        cache_path = Path(".retriever_cache.json")
-        retriever = Retriever(
-            cache_path=None if args.no_cache else str(cache_path)
-        )
+        cache = None if args.no_cache else RetrievalCache("metrics.db")
+        retriever = Retriever(cache=cache)
         try:
             res = retriever.search(
                 args.query,
@@ -221,8 +219,6 @@ def main(argv: list[str] | None = None) -> int:
                         seen.add(key)
         else:
             results = _normalise_hits(res)
-        if results and not args.no_cache:
-            retriever.save_cache()
         print(json.dumps(results))
         return 0
 
