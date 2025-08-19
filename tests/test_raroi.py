@@ -57,3 +57,31 @@ def test_raroi_ranking_order(monkeypatch):
     assert ranking[0][0] == "a"
     assert ranking[0][2] < ranking[1][2]
     assert ranking[0][1] > ranking[1][1]
+
+def test_raroi_high_risk_instability_and_failures(monkeypatch):
+    tracker = ROITracker()
+    tracker.roi_history = [1.0, 2.0, 3.0]
+    base_roi = 2.0
+    # High instability
+    monkeypatch.setattr(rt.np, "std", lambda arr: 0.8)
+    # High impact severity and rollback probability via metrics
+    called: dict[str, Mapping[str, float]] = {}
+    def fake_estimate(metrics: Mapping[str, float]) -> float:
+        called["metrics"] = metrics
+        return 0.9
+    monkeypatch.setattr(rt, "_estimate_rollback_probability", fake_estimate)
+    monkeypatch.setattr(rt, "get_impact_severity", lambda wf: 0.9)
+    failing = ["security", "alignment"]
+    base, raroi = tracker.calculate_raroi(
+        base_roi,
+        metrics={"errors_per_minute": 10.0},
+        failing_tests=failing,
+    )
+    catastrophic_risk = 0.9 * 0.9
+    stability_factor = 1 - 0.8
+    penalty = rt.CRITICAL_TEST_PENALTIES["security"] * rt.CRITICAL_TEST_PENALTIES["alignment"]
+    expected = base_roi * (1 - catastrophic_risk) * stability_factor * penalty
+    assert base == base_roi
+    assert raroi == pytest.approx(expected)
+    assert called["metrics"]["errors_per_minute"] == 10.0
+    assert called["metrics"]["instability"] == 0.8
