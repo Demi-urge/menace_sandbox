@@ -274,6 +274,23 @@ prediction_reliability = Gauge(
     ["metric"],
 )
 
+# Gauges capturing per-workflow prediction metrics
+confidence = Gauge(
+    "confidence",
+    "Model confidence for ROI predictions",
+    ["workflow"],
+)
+workflow_mae = Gauge(
+    "workflow_mae",
+    "Rolling mean absolute error for ROI predictions",
+    ["workflow"],
+)
+workflow_variance = Gauge(
+    "workflow_variance",
+    "Rolling variance of actual ROI for workflows",
+    ["workflow"],
+)
+
 # Gauge tracking modules flagged by relevancy radar
 relevancy_flagged_modules_total = Gauge(
     "relevancy_flagged_modules_total",
@@ -794,6 +811,9 @@ __all__ = [
     "prediction_error",
     "prediction_mae",
     "prediction_reliability",
+    "confidence",
+    "workflow_mae",
+    "workflow_variance",
     "relevancy_flagged_modules_total",
     "relevancy_flags_total",
     "relevancy_flags_retire_total",

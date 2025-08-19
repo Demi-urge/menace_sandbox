@@ -29,6 +29,9 @@ _TEMPLATE = """
 <canvas id="weights" width="400" height="200"></canvas>
 <canvas id="scenarios" width="400" height="200"></canvas>
 <canvas id="relevancy" width="400" height="200"></canvas>
+<canvas id="workflow_mae" width="400" height="200"></canvas>
+<canvas id="workflow_variance" width="400" height="200"></canvas>
+<canvas id="workflow_confidence" width="400" height="200"></canvas>
 <div id="warnings"></div>
 <script>
 async function load() {
@@ -49,17 +52,26 @@ async function load() {
   if (!sdata.error && sdata.labels.length) {
     new Chart(document.getElementById('scenarios'), {type:'bar',data:{labels:sdata.labels,datasets:[{label:'ROI',data:sdata.roi},{label:'Failures',data:sdata.failures}]}});
   }
-  const rdata = await fetch('/relevancy').then(r => r.json());
-  const rlabels = Object.keys(rdata.counts || {});
-  if (rlabels.length) {
-    const rvalues = rlabels.map(k => rdata.counts[k]);
-    new Chart(document.getElementById('relevancy'), {type:'bar',data:{labels:rlabels,datasets:[{label:'Flagged modules',data:rvalues}]}});
-  }
-  if (data.warnings && data.warnings.some(w => w)) {
-    let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
-    for (let i = 0; i < data.roi.length; i++) {
-      html += `<tr><td>${i}</td><td>${data.roi[i]}</td><td>${data.warnings[i] || ''}</td></tr>`;
+    const rdata = await fetch('/relevancy').then(r => r.json());
+    const rlabels = Object.keys(rdata.counts || {});
+    if (rlabels.length) {
+      const rvalues = rlabels.map(k => rdata.counts[k]);
+      new Chart(document.getElementById('relevancy'), {type:'bar',data:{labels:rlabels,datasets:[{label:'Flagged modules',data:rvalues}]}});
     }
+    const wfids = Object.keys(data.workflows || {});
+    if (wfids.length) {
+      const maeVals = wfids.map(id => data.workflows[id].mae);
+      const varVals = wfids.map(id => data.workflows[id].variance);
+      const confVals = wfids.map(id => data.workflows[id].confidence);
+      new Chart(document.getElementById('workflow_mae'), {type:'bar',data:{labels:wfids,datasets:[{label:'MAE',data:maeVals}]}});
+      new Chart(document.getElementById('workflow_variance'), {type:'bar',data:{labels:wfids,datasets:[{label:'Variance',data:varVals}]}});
+      new Chart(document.getElementById('workflow_confidence'), {type:'bar',data:{labels:wfids,datasets:[{label:'Confidence',data:confVals}]}});
+    }
+    if (data.warnings && data.warnings.some(w => w)) {
+      let html = '<h2>Alignment Warnings</h2><table><tr><th>Cycle</th><th>ROI delta</th><th>Warning</th></tr>';
+      for (let i = 0; i < data.roi.length; i++) {
+        html += `<tr><td>${i}</td><td>${data.roi[i]}</td><td>${data.warnings[i] || ''}</td></tr>`;
+      }
     html += '</table>';
     document.getElementById('warnings').innerHTML = html;
   }
@@ -133,6 +145,14 @@ class SandboxDashboard(MetricsDashboard):
             'needs_retrain': bool(ta_meta.get('needs_retrain', False)),
             'last_retrained': ta_meta.get('last_retrained'),
         }
+        workflows = {
+            wf: {
+                'mae': tracker.workflow_mae(wf),
+                'variance': tracker.workflow_variance(wf),
+                'confidence': tracker.workflow_confidence(wf),
+            }
+            for wf in sorted(tracker.workflow_predicted_roi.keys())
+        }
         return jsonify({
             'labels': labels,
             'roi': tracker.roi_history,
@@ -140,6 +160,7 @@ class SandboxDashboard(MetricsDashboard):
             'category_counts': tracker.category_summary(),
             'warnings': warnings,
             'truth_adapter': ta_status,
+            'workflows': workflows,
         }), 200
 
     def weights_data(self) -> tuple[str, int]:
