@@ -704,3 +704,20 @@ def test_raroi_failing_tests():
     )
     assert raroi == pytest.approx(expected)
 
+
+def test_workflow_metrics():
+    tracker = rt.ROITracker(workflow_window=3)
+    tracker.record_prediction(1.0, 1.2, workflow_id="wf1")
+    tracker.record_prediction(1.0, 0.8, workflow_id="wf1")
+    tracker.record_prediction(1.0, 1.0, workflow_id="wf1")
+    assert tracker.workflow_predicted_roi["wf1"] == [1.0, 1.0, 1.0]
+    assert tracker.workflow_actual_roi["wf1"] == [1.2, 0.8, 1.0]
+    errors = [0.2, 0.2, 0.0]
+    assert tracker.workflow_mae("wf1") == pytest.approx(np.mean(errors))
+    assert tracker.workflow_variance("wf1") == pytest.approx(np.var([1.2, 0.8, 1.0]))
+    tracker.record_prediction(1.0, 2.0, workflow_id="wf1")
+    assert tracker.workflow_predicted_roi["wf1"] == [1.0, 1.0, 1.0]
+    assert tracker.workflow_actual_roi["wf1"] == [0.8, 1.0, 2.0]
+    assert tracker.workflow_mae("wf1") == pytest.approx(np.mean([0.2, 0.0, 1.0]))
+    assert tracker.workflow_variance("wf1") == pytest.approx(np.var([0.8, 1.0, 2.0]))
+
