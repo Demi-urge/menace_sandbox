@@ -72,6 +72,27 @@ def test_calculate_raroi_formula(
     assert called["metrics"] == metrics_map
 
 
+@pytest.mark.parametrize(
+    "impact_input, expected_clamped",
+    [
+        (1.5, 1.0),
+        (-0.5, 0.0),
+    ],
+)
+def test_calculate_raroi_clamps_impact_severity(
+    impact_input: float, expected_clamped: float
+) -> None:
+    tracker = ROITracker()
+    tracker.roi_history = [1.0] * 5
+    base, raroi = tracker.calculate_raroi(
+        1.0, rollback_prob=0.5, impact_severity=impact_input, metrics={}
+    )
+
+    expected = 1.0 * (1.0 - 0.5 * expected_clamped)
+    assert base == 1.0
+    assert raroi == pytest.approx(expected)
+
+
 def test_multiple_failing_suites_penalties(monkeypatch) -> None:
     tracker = ROITracker()
     tracker.roi_history = [1.0] * 5
