@@ -77,6 +77,22 @@ def handle_new_db(args: argparse.Namespace) -> int:
     return _run([sys.executable, "scripts/new_db_template.py", args.name])
 
 
+def handle_new_vector(args: argparse.Namespace) -> int:
+    """Handle ``new-vector`` command."""
+    cmd = [
+        sys.executable,
+        "scripts/new_vector_module.py",
+        args.name,
+    ]
+    if args.root:
+        cmd += ["--root", args.root]
+    if args.register_router:
+        cmd.append("--register-router")
+    if args.create_migration:
+        cmd.append("--create-migration")
+    return _run(cmd)
+
+
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
     from vector_service import ContextBuilder
@@ -255,6 +271,19 @@ def main(argv: list[str] | None = None) -> int:
     p_newdb = sub.add_parser("new-db", help="Scaffold a new database module")
     p_newdb.add_argument("name", help="Base name for the new database")
     p_newdb.set_defaults(func=handle_new_db)
+
+    p_newvec = sub.add_parser(
+        "new-vector", help="Scaffold a new vector_service module"
+    )
+    p_newvec.add_argument("name", help="Base name for the module")
+    p_newvec.add_argument("--root", help="Target directory", default=None)
+    p_newvec.add_argument(
+        "--register-router", action="store_true", help="Update database_router"
+    )
+    p_newvec.add_argument(
+        "--create-migration", action="store_true", help="Create alembic migration"
+    )
+    p_newvec.set_defaults(func=handle_new_vector)
 
     args = parser.parse_args(argv)
 
