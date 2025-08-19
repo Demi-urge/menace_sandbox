@@ -1,5 +1,5 @@
 import pytest
-import pytest
+from typing import Mapping
 import menace_sandbox.roi_tracker as rt
 from menace_sandbox.roi_tracker import ROITracker
 import menace_sandbox.self_test_service as sts
@@ -12,9 +12,21 @@ def test_raroi_formula(monkeypatch):
     monkeypatch.setattr(rt.np, "std", lambda arr: 0.0)
     monkeypatch.setattr(rt, "get_impact_severity", lambda wf: 0.4)
     failing = ["security"]
-    tracker._last_errors_per_minute = 2.5
     sts.set_failed_critical_tests(failing)
-    base, raroi = tracker.calculate_raroi(base_roi, workflow_type="standard")
+
+    called: dict[str, Mapping[str, float]] = {}
+
+    def fake_estimate(metrics: Mapping[str, float]) -> float:
+        called["metrics"] = metrics
+        return 0.25
+
+    monkeypatch.setattr(rt, "_estimate_rollback_probability", fake_estimate)
+
+    base, raroi = tracker.calculate_raroi(
+        base_roi,
+        workflow_type="standard",
+        metrics={"errors_per_minute": 2.5},
+    )
     expected = base_roi * (1 - 0.25 * 0.4)
     penalty = 1.0
     for k in failing:
@@ -22,6 +34,7 @@ def test_raroi_formula(monkeypatch):
     expected *= penalty
     assert base == base_roi
     assert raroi == pytest.approx(expected)
+    assert called["metrics"] == {"errors_per_minute": 2.5, "instability": 0.0}
 
 
 def test_raroi_ranking_order(monkeypatch):
