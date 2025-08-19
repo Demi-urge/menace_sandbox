@@ -9,7 +9,10 @@ import logging
 try:
     from neo4j import GraphDatabase  # type: ignore
 except Exception:  # pragma: no cover - optional dep
-    GraphDatabase = None  # type: ignore
+    class GraphDatabase:  # type: ignore
+        @staticmethod
+        def driver(*args, **kwargs):  # pragma: no cover - stub
+            raise RuntimeError("neo4j driver not installed")
 
 try:
     import faiss  # type: ignore
@@ -21,6 +24,8 @@ except Exception:  # pragma: no cover - optional heavy deps
     np = None  # type: ignore
 
 from analysis.semantic_diff_filter import find_semantic_risks
+from compliance.license_fingerprint import check as license_check
+from security.secret_redactor import redact
 from governed_embeddings import governed_embed
 from .engagement_graph import pagerank, shortest_path
 
@@ -66,17 +71,26 @@ class PsychologicalGraph:
             self._index = faiss.IndexFlatL2(dim)
         
     # ------------------------------------------------------------------
-    def _encode(self, text: str) -> List[float]:
-        if self._model is None or np is None:
-            return []
-        alerts = find_semantic_risks(text.splitlines())
+    def _encode(self, text: str) -> Optional[List[float]]:
+        cleaned = redact(text)
+        if not cleaned:
+            return None
+        if cleaned != text:
+            logger.warning("redacted secrets prior to embedding")
+        lic = license_check(cleaned)
+        if lic:
+            logger.warning("license detected: %s", lic)
+            return None
+        alerts = find_semantic_risks(cleaned.splitlines())
         if alerts:
             logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+            return None
+        if self._model is None or np is None:
             return []
-        vec = governed_embed(text, self._model)
-        if vec is None:
+        try:
+            return self._model.encode([cleaned])[0].tolist()
+        except Exception:
             return []
-        return vec
 
     def _add_to_index(self, rule: RuleNode) -> None:
         if self._index is None or np is None:
@@ -86,9 +100,17 @@ class PsychologicalGraph:
         self._ids.append(rule.rule_id)
 
     # ------------------------------------------------------------------
-    def add_rule(self, condition: str, response: str, weight: float = 1.0, decay: float = 0.01) -> str:
-        rule_id = f"r{len(self.rules)}"
+    def add_rule(
+        self,
+        condition: str,
+        response: str,
+        weight: float = 1.0,
+        decay: float = 0.01,
+    ) -> Optional[str]:
         emb = self._encode(condition + " " + response)
+        if emb is None:
+            return None
+        rule_id = f"r{len(self.rules)}"
         node = RuleNode(rule_id, condition, response, weight, decay, time.time(), emb)
         self.rules[rule_id] = node
         self.edges.setdefault(rule_id, {})
