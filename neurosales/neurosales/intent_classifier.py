@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from collections import defaultdict
 import logging
 
@@ -20,6 +20,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
 from analysis.semantic_diff_filter import find_semantic_risks
 from governed_embeddings import governed_embed
+try:
+    from compliance.license_fingerprint import check as license_check
+except Exception:  # pragma: no cover - optional dependency
+    def license_check(text: str):  # type: ignore
+        return None
+try:
+    from security.secret_redactor import redact
+except Exception:  # pragma: no cover - optional dependency
+    def redact(text: str):  # type: ignore
+        return text
 
 logger = logging.getLogger(__name__)
 
@@ -59,36 +69,58 @@ class IntentClassifier:
         if self.backend == "tfidf" or (self._sbert is None and self._use is None):
             self.vectorizer = TfidfVectorizer(stop_words="english")
 
-    def _embed(self, texts: Sequence[str]):
+    def _sanitize_texts(self, texts: Sequence[str]) -> Tuple[List[str], List[int]]:
+        clean: List[str] = []
+        skipped: List[int] = []
+        for idx, t in enumerate(texts):
+            red = redact(t.strip())
+            if not red:
+                skipped.append(idx)
+                continue
+            lic = license_check(red)
+            if lic:
+                logger.warning("license detected: %s", lic)
+                skipped.append(idx)
+                continue
+            alerts = find_semantic_risks(red.splitlines())
+            if alerts:
+                logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
+                skipped.append(idx)
+                continue
+            clean.append(red)
+        return clean, skipped
+
+    def _embed(self, texts: Sequence[str]) -> Tuple[Any, List[int]]:
+        texts, skipped = self._sanitize_texts(texts)
         if self._sbert is not None:
             vectors = []
             for t in texts:
-                alerts = find_semantic_risks(t.splitlines())
-                if alerts:
-                    logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
-                    raise ValueError("Semantic risks detected")
                 vec = governed_embed(t, self._sbert)
                 if vec is None:
                     raise RuntimeError("Embedding failed")
                 vectors.append(vec)
-            return vectors
+            return vectors, skipped
         if self._use is not None:
-            for t in texts:
-                alerts = find_semantic_risks(t.splitlines())
-                if alerts:
-                    logger.warning("semantic risks detected: %s", [a[1] for a in alerts])
-                    raise ValueError("Semantic risks detected")
-            return self._use(texts).numpy()
+            return self._use(texts).numpy(), skipped
         assert self.vectorizer is not None
-        return self.vectorizer.transform(texts)
+        return self.vectorizer.transform(texts), skipped
 
     def fit(self, dialogues: Iterable[Tuple[Sequence[str], Sequence[str]]]) -> None:
         joined = [" ".join(d[-self.context_size :]) for d, _ in dialogues]
         labels = [set(l) for _, l in dialogues]
         if self.vectorizer is not None:
-            X = self.vectorizer.fit_transform(joined)
+            texts, skipped = self._sanitize_texts(joined)
+            if skipped:
+                logger.info("skipping %d training inputs", len(skipped))
+            labels = [lab for i, lab in enumerate(labels) if i not in skipped]
+            if not texts:
+                raise ValueError("No valid training data after sanitization")
+            X = self.vectorizer.fit_transform(texts)
         else:
-            X = self._embed(joined)
+            X, skipped = self._embed(joined)
+            if skipped:
+                logger.info("skipping %d training inputs", len(skipped))
+            labels = [lab for i, lab in enumerate(labels) if i not in skipped]
         Y = self.mlb.fit_transform(labels)
         self.classifier = OneVsRestClassifier(LogisticRegression(max_iter=1000))
         self.classifier.fit(X, Y)
@@ -98,9 +130,16 @@ class IntentClassifier:
             raise RuntimeError("Model not fitted")
         joined = " ".join(messages[-self.context_size :])
         if self.vectorizer is not None:
-            X = self.vectorizer.transform([joined])
+            texts, skipped = self._sanitize_texts([joined])
+            if skipped:
+                logger.warning("input skipped due to policy checks")
+                return {}
+            X = self.vectorizer.transform(texts)
         else:
-            X = self._embed([joined])
+            X, skipped = self._embed([joined])
+            if skipped:
+                logger.warning("input skipped due to policy checks")
+                return {}
         probs = self.classifier.predict_proba(X)[0]
         labels = self.mlb.classes_
         scores = {label: float(p) * self.trend_bias[label] for label, p in zip(labels, probs)}
