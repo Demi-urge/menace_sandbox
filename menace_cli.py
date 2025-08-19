@@ -18,6 +18,7 @@ from patch_provenance import (
     search_patches_by_vector,
     search_patches_by_license,
 )
+from cache_utils import get_cached_chain, set_cached_chain, _get_cache
 
 
 def _normalise_hits(hits, origin=None):
@@ -96,7 +97,10 @@ def handle_new_vector(args: argparse.Namespace) -> int:
 def handle_patch(args: argparse.Namespace) -> int:
     """Handle ``patch`` command."""
     from vector_service import ContextBuilder
+    from vector_service.retriever import Retriever
     import quick_fix_engine
+
+    retriever = Retriever(cache=_get_cache())
 
     ctx = None
     if args.context:
@@ -110,7 +114,7 @@ def handle_patch(args: argparse.Namespace) -> int:
     patch_logger = PatchLogger(patch_db=db)
     patch_id = quick_fix_engine.generate_patch(
         args.module,
-        context_builder=ContextBuilder(),
+        context_builder=ContextBuilder(retriever=retriever),
         engine=None,
         description=args.desc,
         patch_logger=patch_logger,
@@ -126,38 +130,37 @@ def handle_patch(args: argparse.Namespace) -> int:
 
 def handle_retrieve(args: argparse.Namespace) -> int:
     """Handle ``retrieve`` command."""
-    from pathlib import Path
-    from typing import Any
-    try:  # pragma: no cover - optional dependency
-        from universal_retriever import UniversalRetriever
-    except Exception:  # pragma: no cover - graceful fallback
-        print("universal retriever unavailable", file=sys.stderr)
-        return 1
-    try:  # pragma: no cover - optional dependency
-        from vector_service.retriever import fts_search
-    except Exception:  # pragma: no cover - fallback when module missing
-        fts_search = lambda q, dbs=None, limit=None: []  # type: ignore
-
-    cache_path = Path.home() / ".cache" / "menace" / "retrieve.json"
-    cache_key = f"{args.query}||{'|'.join(sorted(args.dbs or []))}"
-    cache_data: dict[str, list[dict[str, Any]]] = {}
-    if not args.no_cache:
-        try:
-            cache_data = json.loads(cache_path.read_text())
-        except Exception:
-            cache_data = {}
-        if not args.rebuild_cache:
-            cached = cache_data.get(cache_key)
-            if cached:
-                print(json.dumps(cached))
-                return 0
-
-    retriever = UniversalRetriever()
-    hits = []
     try:
-        hits, _, _ = retriever.retrieve(args.query, top_k=args.top_k, dbs=args.dbs)
+        from vector_service.retriever import Retriever, FallbackResult, fts_search
+        retriever = Retriever(cache=None if args.no_cache else _get_cache())
+        search_fn = lambda q, k, dbs: retriever.search(q, top_k=k, dbs=dbs)
+        fallback_cls = FallbackResult
+    except Exception:
+        try:  # pragma: no cover - optional dependency
+            from universal_retriever import UniversalRetriever
+        except Exception:  # pragma: no cover - graceful fallback
+            print("universal retriever unavailable", file=sys.stderr)
+            return 1
+        retriever = UniversalRetriever()
+        try:
+            from vector_service.retriever import fts_search
+        except Exception:  # pragma: no cover - fallback when module missing
+            fts_search = lambda q, dbs=None, limit=None: []  # type: ignore
+        search_fn = lambda q, k, dbs: retriever.retrieve(q, top_k=k, dbs=dbs)[0]
+        fallback_cls = tuple()  # type: ignore
+
+    if not args.no_cache and not args.rebuild_cache:
+        cached = get_cached_chain(args.query, args.dbs)
+        if cached is not None:
+            print(json.dumps(cached))
+            return 0
+
+    try:
+        hits = search_fn(args.query, args.top_k, args.dbs)
     except Exception:
         hits = []
+    if fallback_cls and isinstance(hits, fallback_cls):
+        hits = list(hits)
     results = _normalise_hits(hits)
     if not results:
         try:
@@ -167,12 +170,7 @@ def handle_retrieve(args: argparse.Namespace) -> int:
         results = _normalise_hits(extra)
 
     if results and not args.no_cache:
-        cache_data[cache_key] = results
-        try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(cache_data))
-        except Exception:
-            pass
+        set_cached_chain(args.query, args.dbs, results)
     print(json.dumps(results))
     return 0
 
