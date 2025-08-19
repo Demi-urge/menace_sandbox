@@ -150,6 +150,22 @@ def _estimate_rollback_probability(metrics: Mapping[str, float]) -> float:
     return max(0.0, min(1.0, prob))
 
 
+class _WorkflowConfidence(defaultdict):
+    """Callable mapping storing per-workflow confidence scores."""
+
+    def __init__(self, tracker: "ROITracker") -> None:  # pragma: no cover - simple
+        super().__init__(float)
+        self._tracker = tracker
+
+    def __call__(self, workflow_id: str, window: int | None = None) -> float:
+        mae = self._tracker.workflow_mae(workflow_id, window)
+        variance = self._tracker.workflow_variance(workflow_id, window)
+        confidence = 1.0 / (1.0 + mae + variance)
+        confidence = max(0.0, min(1.0, confidence))
+        self[workflow_id] = confidence
+        return confidence
+
+
 class ROITracker:
     """Monitor ROI change and determine when improvements diminish."""
 
@@ -316,9 +332,13 @@ class ROITracker:
         self.actual_roi: List[float] = []
         # store per-workflow prediction and actual ROI histories
         self.workflow_window = int(workflow_window)
-        self.workflow_predictions: Dict[str, List[float]] = defaultdict(list)
-        self.workflow_actuals: Dict[str, List[float]] = defaultdict(list)
+        # track per-workflow predicted and actual ROI values
+        self.workflow_predictions: Dict[str, Dict[str, List[float]]] = defaultdict(
+            lambda: {"pred": [], "actual": []}
+        )
         self.workflow_confidence_history: Dict[str, List[float]] = defaultdict(list)
+        # latest confidence score per workflow (callable dict defined below)
+        self.workflow_confidence = _WorkflowConfidence(self)
         self.predicted_metrics: Dict[str, List[float]] = {}
         self.actual_metrics: Dict[str, List[float]] = {}
         self.predicted_classes: List[str] = []
@@ -368,6 +388,22 @@ class ROITracker:
                         self.resource_metrics.append(tuple(vals[:5]))
             except Exception:
                 logger.exception("resource history fetch failed")
+
+    @property
+    def workflow_predicted_roi(self) -> Dict[str, List[float]]:
+        """Return per-workflow predicted ROI sequences."""
+        return {
+            wf: data["pred"][-self.workflow_window :]
+            for wf, data in self.workflow_predictions.items()
+        }
+
+    @property
+    def workflow_actual_roi(self) -> Dict[str, List[float]]:
+        """Return per-workflow actual ROI sequences."""
+        return {
+            wf: data["actual"][-self.workflow_window :]
+            for wf, data in self.workflow_predictions.items()
+        }
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -594,10 +630,9 @@ class ROITracker:
         if workflow_id is not None:
             workflows.append(str(workflow_id))
         for wf in workflows:
-            preds = self.workflow_predictions[wf]
-            acts = self.workflow_actuals[wf]
-            preds.append(float(pred_seq[0]))
-            acts.append(float(act_seq[0]))
+            data = self.workflow_predictions[wf]
+            data["pred"].append(float(pred_seq[0]))
+            data["actual"].append(float(act_seq[0]))
             conf = self.workflow_confidence(wf, self.workflow_window)
             self.workflow_confidence_history[wf].append(conf)
             try:
@@ -1099,8 +1134,9 @@ class ROITracker:
     def workflow_mae(self, workflow_id: str, window: int | None = None) -> float:
         """Return mean absolute error for ``workflow_id`` predictions."""
 
-        preds = self.workflow_predictions.get(workflow_id, [])
-        acts = self.workflow_actuals.get(workflow_id, [])
+        data = self.workflow_predictions.get(workflow_id, {"pred": [], "actual": []})
+        preds = data["pred"]
+        acts = data["actual"]
         if not preds or not acts:
             return 0.0
         if window is None:
@@ -1115,7 +1151,9 @@ class ROITracker:
     def workflow_variance(self, workflow_id: str, window: int | None = None) -> float:
         """Return variance of actual ROI for ``workflow_id``."""
 
-        acts = self.workflow_actuals.get(workflow_id, [])
+        acts = self.workflow_predictions.get(workflow_id, {"actual": []}).get(
+            "actual", []
+        )
         if not acts:
             return 0.0
         if window is None:
@@ -1123,20 +1161,6 @@ class ROITracker:
         if window > 0:
             acts = acts[-window:]
         return float(np.var(acts)) if acts else 0.0
-
-    # ------------------------------------------------------------------
-    def workflow_confidence(self, workflow_id: str, window: int | None = None) -> float:
-        """Return confidence score for ``workflow_id`` predictions.
-
-        The confidence combines mean absolute error and variance of the
-        workflow's ROI predictions using ``1 / (1 + mae + variance)`` and is
-        clipped to the ``[0, 1]`` interval.
-        """
-
-        mae = self.workflow_mae(workflow_id, window)
-        variance = self.workflow_variance(workflow_id, window)
-        confidence = 1.0 / (1.0 + mae + variance)
-        return max(0.0, min(1.0, confidence))
 
     # ------------------------------------------------------------------
     def prediction_summary(self, window: int | None = None) -> Dict[str, Any]:
