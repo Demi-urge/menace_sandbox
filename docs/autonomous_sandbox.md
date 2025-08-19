@@ -86,6 +86,17 @@ scenarios. A low `synergy_resilience` during a `hostile_input` run highlights
 weak resistance to malicious stubs. The `sandbox_dashboard.py` utility and the
 metrics dashboard expose these per-scenario values.
 
+## RAROI-driven ranking
+
+`ROITracker.calculate_raroi()` converts raw ROI into a risk-adjusted value that
+penalises volatile or unsafe workflows. The autonomous sandbox uses this
+RAROI when ranking modules and deciding whether to integrate or skip them.
+Impact severities come from `config/impact_severity.yaml` (override with
+`IMPACT_SEVERITY_CONFIG`) and `SelfTestService` feeds error rates and failing
+test names so high-risk modules drop in priority. See the
+[ROI tracker](roi_tracker.md#risk-adjusted-roi) and [RAROI overview](raroi.md)
+for the full formula.
+
 ## Entropy delta tracking and module completion
 
 `ROITracker` derives a Shannon entropy ratio for each patched module by comparing

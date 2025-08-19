@@ -36,6 +36,40 @@ high-ROI databases.
 
 `ROITracker` can incorporate CPU, memory, disk and time usage when predicting the next delta. Pass a `ROIHistoryDB` instance to the constructor and provide the `resources` argument to `update()`. These values act as exogenous variables for ARIMA or as additional regression features.
 
+## Risk-adjusted ROI
+
+`calculate_raroi()` derives a risk-adjusted score that penalises unstable or unsafe workflows. It returns the original ROI together with the adjusted value:
+
+```python
+from menace_sandbox.roi_tracker import ROITracker
+
+tracker = ROITracker()
+base, raroi = tracker.calculate_raroi(
+    1.2,
+    "standard",
+    test_stats={"errors_per_minute": 0.1},
+    failing_tests={"security_suite": False},
+    recent_deltas=[0.2, 0.15, 0.18],
+)
+print(base, raroi)
+```
+
+### Formula components
+
+```
+raroi = base_roi * (1 - catastrophic_risk) * stability_factor * safety_factor
+```
+
+* **catastrophic_risk** – product of the estimated `rollback_probability` and the impact severity resolved for the workflow type.
+* **stability_factor** – `1 - instability` where `instability` is the standard deviation of recent ROI deltas.
+* **safety_factor** – `0.5` when any failing test belongs to `CRITICAL_SUITES`, otherwise `1.0`.
+
+### Impact severity and test metrics
+
+Impact severity levels live in `config/impact_severity.yaml` and can be overridden via the `IMPACT_SEVERITY_CONFIG` environment variable. `test_stats` may supply metrics such as `errors_per_minute`, `instability` or a pre-computed `rollback_probability`. Failing test names or boolean mappings can be passed via `failing_tests` so critical suites further reduce the score.
+
+Higher RAROI values promote a workflow in ranking while lower scores push it down. See the [RAROI overview](raroi.md) for additional background.
+
 ## Entropy delta tracking
 
 The constructor also accepts ``entropy_threshold`` which sets the minimum ROI
