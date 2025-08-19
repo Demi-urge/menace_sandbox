@@ -73,7 +73,7 @@ class RankingModelScheduler:
                     else 0.0
                 )
                 _base, raroi = self.roi_tracker.calculate_raroi(
-                    base_roi, "standard", 0.0, {}
+                    base_roi, workflow_type="standard", metrics={}
                 )
             except Exception:
                 base_roi = raroi = 0.0
